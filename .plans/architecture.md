@@ -11,10 +11,10 @@ prioritizing clean data model and scriptability over UI polish.
 
 ### Repositories
 
-| Repository | Language | Role                                                                                                                              |
-|---|---|-----------------------------------------------------------------------------------------------------------------------------------|
-| **dinary** | Python (FastAPI + DuckDB) | Backend — REST API, data storage, rule-based classification, dashboards, Google Sheets sync. Manuals & configs to setup frontend. |
-| **dinary-analyst** | Rust | Local desktop tool — AI classification and spending analysis via `claude -p`, communicates with dinary-server API                 |
+| Repository         | Language | Role                                                                                                                              |
+|--------------------|---|-----------------------------------------------------------------------------------------------------------------------------------|
+| **dinary-server**  | Python (FastAPI + DuckDB) | Backend — REST API, data storage, rule-based classification, dashboards, Google Sheets sync. Manuals & configs to setup frontend. |
+| **dinary** | Rust | Local desktop tool — AI classification and spending analysis via `claude -p`, communicates with dinary-server API                 |
 
 ---
 
@@ -375,11 +375,11 @@ Example: pattern `MLEKO` matches category "Dairy", pattern `SREDSTVO ZA` matches
 Rules are applied immediately when items are ingested. This handles the majority of repeat purchases after an initial learning period.
 
 **Tier 2: AI batch classification (deferred, economical).** Unclassified items (`classification_status = 'pending'`) accumulate on dinary-server throughout the day.
-When the user runs dinary-analyst (manually or via scheduler), it fetches pending items from the server API and classifies them using `claude -p`:
+When the user runs dinary (manually or via scheduler), it fetches pending items from the server API and classifies them using `claude -p`:
 
 ```bash
-# dinary-analyst fetches pending items from dinary-server
-dinary-analyst classify
+# dinary fetches pending items from dinary-server
+dinary classify
 
 # Under the hood:
 # 1. GET https://server/api/tasks/pending-classifications
@@ -442,12 +442,12 @@ The dashboard is a view layer, not a data entry point.
 
 **Purpose:** "What should I pay attention to? What can I optimize?"
 
-**Trigger:** On demand, when the user runs dinary-analyst. Not automated — the user decides when to run it.
+**Trigger:** On demand, when the user runs dinary. Not automated — the user decides when to run it.
 
 **Flow:**
-1. dinary-analyst fetches aggregated data from dinary-server:
+1. dinary fetches aggregated data from dinary-server:
    ```bash
-   dinary-analyst analyze --period 2026-Q1
+   dinary analyze --period 2026-Q1
    ```
 2. Under the hood: fetches data from server API, feeds to `claude -p`, pushes the report back to dinary-server.
 3. The report is stored on the server and optionally displayed in the dashboard.
@@ -482,7 +482,7 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 
 ```
 ┌──────────────┐         ┌─────────────────────────────────────┐
-│  dinary-app  │────────▶│  dinary (VPS)                │
+│  dinary-app  │────────▶│  dinary-server (VPS)                │
 │  (mobile)    │         │                                     │
 │              │◀────────│  FastAPI + DuckDB                   │
 └──────────────┘         │  - receives expenses from mobile    │
@@ -496,7 +496,7 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
                               task queue API (REST)
                                         │
                          ┌──────────────▼──────────────────────┐
-                         │  dinary-analyst (user's laptop)     │
+                         │  dinary (user's laptop)             │
                          │                                     │
                          │  Rust binary + claude -p             │
                          │  - fetch pending classification tasks│
@@ -504,10 +504,12 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
                          │  - AI spending analysis (claude -p)  │
                          │  - push results back to server API   │
                          │  - any future AI-heavy tasks         │
+                         │  - quick manual enter including      │
+                         │    import from email/messages        │
                          └─────────────────────────────────────┘
 ```
 
-### dinary (VPS)
+### dinary-server (VPS)
 
 **What it does:**
 - Accepts expenses from dinary-app (REST API).
@@ -522,26 +524,27 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
   - `POST /api/tasks/analysis-report` — stores the AI-generated report.
 
 **What it does NOT do:**
-- Any AI/LLM calls. All AI work is delegated to dinary-analyst.
+- Any AI/LLM calls. All AI work is delegated to dinary.
 
 **Hosting:** Oracle Cloud Free Tier (free ARM VM, 4 cores, 24 GB RAM — permanent free tier). Alternative: any cheap VPS, or even a Raspberry Pi at home with Cloudflare Tunnel for external access.
 
 **Accessibility:** Dashboard and API served via Cloudflare Tunnel (free, no public IP needed) or directly from the VPS.
 
-### dinary-analyst (User's Laptop)
+### dinary (User's Laptop)
 
 **What it does:**
 - Runs on demand (manually or via scheduler) when the user is at the computer.
 - Fetches pending tasks from the dinary-server API.
 - Processes them using `claude -p` (Claude Code CLI, non-interactive mode) under the user's existing subscription — no API token costs.
 - Pushes results back to the dinary-server API.
+- Hot-key for quick manual enter, import spendings from email/messages like bank notifications of internet payments
 
 **Task types:**
 
 1. **Batch classification** (daily or on demand):
    ```bash
    # Fetch unclassified items from dinary-server
-   dinary-analyst classify
+   dinary classify
 
    # Under the hood:
    # 1. GET https://server/api/tasks/pending-classifications → pending.json
@@ -551,7 +554,7 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 
 2. **Spending analysis** (weekly/monthly/on demand):
    ```bash
-   dinary-analyst analyze --period 2026-Q1
+   dinary analyze --period 2026-Q1
 
    # Under the hood:
    # 1. GET https://server/api/tasks/analysis-export?period=2026-Q1 → data.json
@@ -559,7 +562,7 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
    # 3. POST https://server/api/tasks/analysis-report ← report
    ```
 
-3. **Future AI tasks** — any new AI-intensive operation follows the same pattern: dinary-server exposes a task endpoint, dinary-analyst fetches, processes with `claude -p`, pushes results back.
+3. **Future AI tasks** — any new AI-intensive operation follows the same pattern: dinary-server exposes a task endpoint, dinary fetches, processes with `claude -p`, pushes results back.
 
 **Built as a Rust binary** — single executable, no runtime dependencies, compact installer for macOS and Windows.
 
@@ -620,8 +623,8 @@ The fastest path to replacing manual spreadsheet editing. No new database, no re
   - Beneficiary selector.
   - Offline queue with sync-on-reconnect.
 
-### Phase 4: AI Classification (dinary-analyst)
-- Build dinary-analyst as a Rust CLI binary.
+### Phase 4: AI Classification (dinary)
+- Build dinary as a Rust CLI binary.
 - Implement the task queue API on dinary-server (`/api/tasks/*`).
 - Build the batch classification flow: fetch pending → `claude -p` → push results.
 - Implement the review/confirm flow (via dashboard or CLI).
@@ -631,9 +634,9 @@ The fastest path to replacing manual spreadsheet editing. No new database, no re
 - Operational dashboard (static HTML, current month snapshot).
 - Analytical dashboard (interactive SPA with time range selector and breakdowns).
 
-### Phase 6: AI Analysis & Google Sheets Sync (dinary-analyst + dinary-server)
+### Phase 6: AI Analysis & Google Sheets Sync (dinary + dinary-server)
 - Add analysis export endpoint to dinary-server API.
-- Build the dinary-analyst analysis flow: fetch aggregates → `claude -p` → push report.
+- Build the dinary analysis flow: fetch aggregates → `claude -p` → push report.
 - Build the Google Sheets sync script on dinary-server (if not already done in Phase 1).
 - Set up scheduled runs on the VPS (sync, dashboard regeneration).
 
