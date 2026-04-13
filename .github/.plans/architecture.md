@@ -1,6 +1,4 @@
-# dinary — your dinar diary
-
-## Architecture
+# Architecture
 
 ### Overview
 

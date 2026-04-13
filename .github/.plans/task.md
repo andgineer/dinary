@@ -1,4 +1,4 @@
-# Personal Expense Tracking System — Project Description
+# Project Description
 
 ## Current Setup
 
