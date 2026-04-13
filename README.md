@@ -2,7 +2,7 @@
 [![Coverage](https://raw.githubusercontent.com/andgineer/dinary/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary/blob/python-coverage-comment-action-data/htmlcov/index.html)
 # dinary
 
-Your dinar diary — track expenses, scan receipts, analyze spending with AI 
+Your dinar diary — track expenses, scan receipts, analyze spending with AI
 
 # Documentation
 

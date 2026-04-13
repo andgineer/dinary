@@ -1,6 +1,6 @@
 # dinary
 
-Your dinar diary — track expenses, scan receipts, analyze spending with AI 
+Your dinar diary — track expenses, scan receipts, analyze spending with AI
 
 
 ### Advanced
@@ -14,4 +14,3 @@ to see all available options.
 !!! info "About"
     ![About](images/about.jpg)
     [About][dinary.__about__]
-

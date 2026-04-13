@@ -4,11 +4,11 @@
 
 ### Overview
 
-A personal expense tracking system for a single user living in Serbia. 
-Receipts are entered via mobile (QR scan or manual), stored in a local database with item-level granularity, automatically categorized, 
+A personal expense tracking system for a single user living in Serbia.
+Receipts are entered via mobile (QR scan or manual), stored in a local database with item-level granularity, automatically categorized,
 and analyzed through dashboards and AI-powered insights.
 
-The system is designed to be built incrementally as a vibe-coding project by the user (an experienced developer), 
+The system is designed to be built incrementally as a vibe-coding project by the user (an experienced developer),
 prioritizing clean data model and scriptability over UI polish.
 
 ### Repositories
@@ -43,9 +43,9 @@ data/
     └── budget_2024.duckdb
 ```
 
-**Yearly files** contain transactional data (expenses, receipts, income). 
+**Yearly files** contain transactional data (expenses, receipts, income).
 
-**config.duckdb** contains classification metadata (categories, groups, stores, family members, events, tags, rules) 
+**config.duckdb** contains classification metadata (categories, groups, stores, family members, events, tags, rules)
 that is shared across all years and evolves independently of the transactional data.
 
 Archiving a year = moving the file to `archive/`. Cross-year queries use ATTACH:
@@ -214,8 +214,8 @@ CREATE TABLE exchange_rates (
 
 ### Five Orthogonal Dimensions
 
-The current spreadsheet mixes several unrelated concepts in the "envelope" field: hierarchical grouping (здоровье = медицина + БАД + лекарства), 
-beneficiary (ребенок, лариса), temporary context (путешествия), expense purpose (профессиональное), and relocation overhead (релокация). 
+The current spreadsheet mixes several unrelated concepts in the "envelope" field: hierarchical grouping (здоровье = медицина + БАД + лекарства),
+beneficiary (ребенок, лариса), temporary context (путешествия), expense purpose (профессиональное), and relocation overhead (релокация).
 This leads to duplicated category rows and makes cross-cutting analysis impossible.
 
 The new model separates five independent dimensions:
@@ -254,34 +254,34 @@ When a new expense is entered, the system checks if its date falls within any ac
 - **One matching event** → auto-assigned to that event. User sees it and can remove.
 - **Multiple matching events** (overlapping dates) → dropdown list of matching events. User picks one, or none.
 
-Manual override in both directions: assign an expense to an event outside its date range (fueling up before a trip), 
+Manual override in both directions: assign an expense to an event outside its date range (fueling up before a trip),
 or remove auto-assignment (a regular grocery run during a trip that shouldn't count).
 
 ### Key Design Decisions
 
-**Raw data is immutable; classification is a layer on top.** Expenses store the original name and amount. 
+**Raw data is immutable; classification is a layer on top.** Expenses store the original name and amount.
 Category, beneficiary, event, and tags can be changed at any time without touching the expense's core data.
 
-**Category group is derived, not stored on expenses.** An expense's group is resolved via `category_id → category.group_id`. 
+**Category group is derived, not stored on expenses.** An expense's group is resolved via `category_id → category.group_id`.
 Changing a category's group assignment instantly affects all historical data.
 
-**Beneficiary has a default.** If `beneficiary_id` is NULL, it means "семья" (whole family / general). 
+**Beneficiary has a default.** If `beneficiary_id` is NULL, it means "семья" (whole family / general).
 This is the common case — only expenses specifically for one person need explicit assignment.
 
-**Events are archivable.** Once a trip/event is over, `is_active = false` hides it from the entry UI dropdown but preserves all data. 
+**Events are archivable.** Once a trip/event is over, `is_active = false` hides it from the entry UI dropdown but preserves all data.
 Past events are accessible in analytics and can be reactivated if needed.
 
-**Tags are a tiny fixed set.** Unlike events (which grow by ~5-10/year) or categories (which grow with QR parsing), 
-tags are 2-5 conceptual flags that practically never change. 
+**Tags are a tiny fixed set.** Unlike events (which grow by ~5-10/year) or categories (which grow with QR parsing),
+tags are 2-5 conceptual flags that practically never change.
 They mark structural circumstances (relocation, professional use), not temporal events or beneficiaries.
 
-**One table for all expenses.** A café bill for 500 RSD and a line item from a supermarket receipt are both rows in `expenses`. 
+**One table for all expenses.** A café bill for 500 RSD and a line item from a supermarket receipt are both rows in `expenses`.
 The difference: the café entry has no `receipt_id`, no `quantity`, and was manually categorized at entry time.
 
-**Receipts table is an archive, not a parent.** `receipts` stores raw HTML and URL for reproducibility. 
+**Receipts table is an archive, not a parent.** `receipts` stores raw HTML and URL for reproducibility.
 It is never JOINed in analytical queries. All fields needed for analytics (datetime, store_id, etc.) are denormalized onto each expense row.
 
-**Stores are normalized.** `store_id` on expenses, with a lookup table in config.duckdb. 
+**Stores are normalized.** `store_id` on expenses, with a lookup table in config.duckdb.
 The receipt parser maps variant spellings ("MAXI", "Maxi DOO", "MAXI SOMBOR") to a single store_id.
 
 ---
@@ -316,8 +316,8 @@ For expenses without QR codes (cafés, services, cash payments, foreign purchase
 
 ### Mobile Input Interface (dinary-app)
 
-The specific mobile client is a build-time decision. 
-The architecture is agnostic — the input layer is a thin client that sends structured data to the backend via a simple REST API. 
+The specific mobile client is a build-time decision.
+The architecture is agnostic — the input layer is a thin client that sends structured data to the backend via a simple REST API.
 Key functional requirements regardless of the chosen tool:
 
 - Camera access for QR scanning.
@@ -328,8 +328,8 @@ Key functional requirements regardless of the chosen tool:
 
 #### Frontend Tool Evaluation (Phase 3 prerequisite)
 
-Before building the mobile input layer, evaluate the candidate tools listed below **and research whether other tools exist** that may fit better. 
-The list is a starting point, not exhaustive — the no-code/low-code landscape changes rapidly and there may be newer or niche tools 
+Before building the mobile input layer, evaluate the candidate tools listed below **and research whether other tools exist** that may fit better.
+The list is a starting point, not exhaustive — the no-code/low-code landscape changes rapidly and there may be newer or niche tools
 that satisfy the requirements better than any of these.
 
 Build a minimal MVP with the most promising 1-2 candidates to compare real-world UX before committing.
@@ -372,11 +372,11 @@ Nice-to-have:
 
 ### Three-tier Classification
 
-**Tier 1: Rule-based (instant, free).** `category_rules` table contains patterns (substrings or regexes) matched against item names. 
-Example: pattern `MLEKO` matches category "Dairy", pattern `SREDSTVO ZA` matches "Household chemicals". 
+**Tier 1: Rule-based (instant, free).** `category_rules` table contains patterns (substrings or regexes) matched against item names.
+Example: pattern `MLEKO` matches category "Dairy", pattern `SREDSTVO ZA` matches "Household chemicals".
 Rules are applied immediately when items are ingested. This handles the majority of repeat purchases after an initial learning period.
 
-**Tier 2: AI batch classification (deferred, economical).** Unclassified items (`classification_status = 'pending'`) accumulate on dinary-server throughout the day. 
+**Tier 2: AI batch classification (deferred, economical).** Unclassified items (`classification_status = 'pending'`) accumulate on dinary-server throughout the day.
 When the user runs dinary-analyst (manually or via scheduler), it fetches pending items from the server API and classifies them using `claude -p`:
 
 ```bash
@@ -389,7 +389,7 @@ dinary-analyst classify
 # 3. POST https://server/api/tasks/classifications with results
 ```
 
-This runs on the user's laptop under the existing Claude subscription via `claude -p` (Claude Code CLI, non-interactive mode). No API costs. 
+This runs on the user's laptop under the existing Claude subscription via `claude -p` (Claude Code CLI, non-interactive mode). No API costs.
 Typical batch: 20-50 items, easily fits in a single prompt. dinary-server applies the results to DuckDB.
 
 **Tier 3: Manual confirmation.** AI suggestions are stored as `ai_category_suggestion` and `classification_status = 'ai_suggested'`. The user reviews and confirms (or corrects) via the dashboard or a CLI script. Confirmed classifications can optionally generate new rules in `category_rules` (with `created_by = 'ai'`), so similar items are auto-classified in the future.
@@ -436,8 +436,8 @@ Over time, the rule table grows and the AI batch shrinks. After a few months, mo
 - Top-N items by total spend (item-level drill-down from parsed receipts).
 - Seasonality detection (are there recurring monthly spikes?).
 
-**Implementation:** An interactive single-page app (React/vanilla JS + Chart.js/Recharts). 
-Data is pre-aggregated by a Python script into a JSON file that the SPA loads. For ad-hoc queries, the user can also run SQL directly against DuckDB. 
+**Implementation:** An interactive single-page app (React/vanilla JS + Chart.js/Recharts).
+Data is pre-aggregated by a Python script into a JSON file that the SPA loads. For ad-hoc queries, the user can also run SQL directly against DuckDB.
 The dashboard is a view layer, not a data entry point.
 
 ### AI Analysis
@@ -460,15 +460,15 @@ The dashboard is a view layer, not a data entry point.
 
 ## Export Layer: Google Sheets Sync
 
-The existing Google Sheets spreadsheet continues to work as a familiar view. 
+The existing Google Sheets spreadsheet continues to work as a familiar view.
 A Python script (using `gspread` or Google Sheets API directly) runs on demand or on a schedule:
 
 1. Queries DuckDB for monthly aggregates by category and group.
 2. Writes the data into the existing sheet format (months as columns, categories as rows).
 3. Updates the income and savings rows.
 
-This is a **write-only, one-directional sync**: DuckDB → Google Sheets. 
-The spreadsheet becomes a read-only view; all data entry happens through the new system. 
+This is a **write-only, one-directional sync**: DuckDB → Google Sheets.
+The spreadsheet becomes a read-only view; all data entry happens through the new system.
 The sync script is idempotent — running it twice produces the same result.
 
 ---
@@ -477,9 +477,9 @@ The sync script is idempotent — running it twice produces the same result.
 
 ### Design Principle
 
-The system is split into two parts: an always-on **backend** (VPS) that handles data ingestion and serves dashboards, and a **local agent** 
-(user's laptop) that runs expensive AI tasks using the existing Claude subscription via `claude -p`. 
-The backend owns the single source of truth (DuckDB). 
+The system is split into two parts: an always-on **backend** (VPS) that handles data ingestion and serves dashboards, and a **local agent**
+(user's laptop) that runs expensive AI tasks using the existing Claude subscription via `claude -p`.
+The backend owns the single source of truth (DuckDB).
 The local agent is stateless — it fetches tasks, processes them, and pushes results back.
 
 ```
@@ -639,10 +639,10 @@ The fastest path to replacing manual spreadsheet editing. No new database, no re
 - Build the Google Sheets sync script on dinary-server (if not already done in Phase 1).
 - Set up scheduled runs on the VPS (sync, dashboard regeneration).
 
-Each phase is independently useful. 
+Each phase is independently useful.
 
-- Phase 0 alone eliminates manual spreadsheet editing and validates the mobile input tool. 
-- Phase 1 establishes the proper data foundation. 
-- Phase 2 solves the supermarket opacity problem. 
-- Phase 3 adds QR scanning and full offline support. 
+- Phase 0 alone eliminates manual spreadsheet editing and validates the mobile input tool.
+- Phase 1 establishes the proper data foundation.
+- Phase 2 solves the supermarket opacity problem.
+- Phase 3 adds QR scanning and full offline support.
 - Phases 4-6 add intelligence and convenience.

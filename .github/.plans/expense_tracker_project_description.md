@@ -2,13 +2,13 @@
 
 ## Current Setup
 
-Personal budget is maintained in a Google Sheets spreadsheet (exported copy attached as reference). 
+Personal budget is maintained in a Google Sheets spreadsheet (exported copy attached as reference).
 The system is built around a two-level categorization: **categories** (specific expense types) and **envelopes** (broader budget buckets).
 
 ### Data Entry (main sheet, one per year)
 
-Each month is represented as a repeating block of ~33 rows — one row per category. 
-All months within a year live on a single sheet. 
+Each month is represented as a repeating block of ~33 rows — one row per category.
+All months within a year live on a single sheet.
 The category list is identical every month and is created manually by duplicating the previous month's block.
 
 Each row contains:
@@ -34,9 +34,9 @@ Each row contains:
 
 ### Travel expenses
 
-Some categories are duplicated with the envelope "путешествия" (travel) — e.g., "кафе / путешествия", 
-"еда&бытовые / путешествия", "аренда / путешествия", "транспорт / путешествия". 
-This allows separating everyday spending from travel spending in the same category. 
+Some categories are duplicated with the envelope "путешествия" (travel) — e.g., "кафе / путешествия",
+"еда&бытовые / путешествия", "аренда / путешествия", "транспорт / путешествия".
+This allows separating everyday spending from travel spending in the same category.
 Vacation purchases (often at higher prices) are tracked separately this way.
 
 ### What works well
@@ -53,27 +53,27 @@ Vacation purchases (often at higher prices) are tracked separately this way.
 
 ### 1. Manual monthly setup
 
-Every month, the full list of ~33 category rows must be manually duplicated and the date updated. 
+Every month, the full list of ~33 category rows must be manually duplicated and the date updated.
 This is tedious and error-prone (rows can be accidentally skipped or misordered).
 
 ### 2. Supermarket receipts are opaque
 
-A single supermarket receipt contains items that belong to different categories: 
-regular food, optional delicacies/treats, fruits, household chemicals, small appliances, pet supplies, etc. 
+A single supermarket receipt contains items that belong to different categories:
+regular food, optional delicacies/treats, fruits, household chemicals, small appliances, pet supplies, etc.
 Currently the entire receipt total goes into "еда&бытовые" — losing all granularity.
 
-Serbian fiscal receipts contain a QR code linking to the tax authority website (SUF PURS) where individual line items are available. 
+Serbian fiscal receipts contain a QR code linking to the tax authority website (SUF PURS) where individual line items are available.
 This data could be parsed to split receipts into sub-categories automatically.
 
 ### 3. No item-level data
 
-The system tracks receipt-level totals only. 
-There is no record of individual items purchased, which makes it impossible to answer questions like "how much did I spend on coffee beans this year" 
+The system tracks receipt-level totals only.
+There is no record of individual items purchased, which makes it impossible to answer questions like "how much did I spend on coffee beans this year"
 or "what's the trend in fruit prices."
 
 ### 4. Category/envelope changes require retroactive manual work
 
-If a category is renamed, split, or moved to a different envelope, all historical rows must be manually updated. 
+If a category is renamed, split, or moved to a different envelope, all historical rows must be manually updated.
 There is no separation between raw data and classification rules.
 
 ### 5. Limited analytical capability
@@ -86,8 +86,8 @@ Google Sheets provides basic pivot tables but no easy way to:
 
 ### 6. Context-dependent categorization is rigid
 
-Travel spending is handled by duplicating categories with a "путешествия" envelope. 
-But other contexts (e.g., business trip, hosting guests, holiday season) don't have this mechanism. 
+Travel spending is handled by duplicating categories with a "путешествия" envelope.
+But other contexts (e.g., business trip, hosting guests, holiday season) don't have this mechanism.
 Ideally, any receipt could be tagged with a context that overrides its default envelope allocation.
 
 ---
