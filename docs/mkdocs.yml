@@ -71,3 +71,9 @@ extra:
 nav:
   - index.md
   - installation.md
+  - google-sheets-setup.md
+  - pwa-install.md
+  - cloudflare-setup.md
+  - deploy-oracle.md
+  - deploy-render.md
+  - deploy-railway.md

@@ -1,33 +1,68 @@
-"""dinary."""
+"""FastAPI application for dinary-server."""
 
+import logging
+import sys
 from pathlib import Path
 
-import rich_click as click
+import uvicorn
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from dinary import __version__
+from dinary.api import categories, expenses, qr
+from dinary.config import settings
 
-click.rich_click.USE_MARKDOWN = True
-OUTPUT_FILE_DEFAULT = "output"
+STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "static"
 
 
-@click.command()
-@click.version_option(version=__version__, prog_name="dinary")
-@click.argument("input_file", type=click.Path(exists=True))
-@click.argument("output_file", type=click.Path(), required=False)
-@click.option("--force", is_flag=True, help="Overwrite the output file if it exists.")
-def dinary(input_file: str, output_file: str, force: bool) -> None:
-    """
-    `INPUT_FILE` to `OUTPUT_FILE`.
-    """
-    output_path = (
-        Path(output_file) if output_file else Path(input_file).parent / f"{OUTPUT_FILE_DEFAULT}.txt"
+def _setup_logging() -> None:
+    fmt = (
+        '{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","msg":"%(message)s"}'
+        if settings.log_json
+        else "%(asctime)s %(levelname)-8s %(name)s — %(message)s"
     )
-    if output_path.exists() and not force:
-        click.echo(f"Output file {output_path} already exists. Use --force to overwrite.")
-        raise click.Abort()
+    logging.basicConfig(
+        level=settings.log_level.upper(),
+        format=fmt,
+        stream=sys.stdout,
+    )
 
-    click.echo(f"File saved to {output_path}")
+
+def create_app() -> FastAPI:
+    _setup_logging()
+
+    app = FastAPI(
+        title="dinary-server",
+        version=__version__,
+    )
+
+    app.include_router(expenses.router)
+    app.include_router(qr.router)
+    app.include_router(categories.router)
+
+    @app.get("/api/health")
+    def health() -> dict:
+        return {"status": "ok", "version": __version__}
+
+    if STATIC_DIR.is_dir():
+        app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+
+    return app
 
 
-if __name__ == "__main__":  # pragma: no cover
-    dinary()  # pylint: disable=no-value-for-parameter
+app = create_app()
+
+
+def main() -> None:
+    """Entry point for ``dinary`` CLI command — runs uvicorn."""
+    uvicorn.run(
+        "dinary.main:app",
+        host=settings.host,
+        port=settings.port,
+        log_level=settings.log_level,
+        reload=False,
+    )
+
+
+if __name__ == "__main__":
+    main()

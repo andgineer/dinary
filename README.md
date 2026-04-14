@@ -10,21 +10,40 @@ Track expenses, scan receipts, analyze spending with AI
 
 [Dinary server](https://andgineer.github.io/dinary-server/)
 
-# Developers
+# Local development
 
-Do not forget to run `. ./activate.sh`.
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
 
-For work it need [uv](https://github.com/astral-sh/uv) installed.
+```bash
+uv sync
 
-Use [pre-commit](https://pre-commit.com/#install) hooks for code quality:
+# Place your Google service account key in the project root
+cp /path/to/your-key.json credentials.json
+
+# Set the spreadsheet ID (uv run does not read .env automatically)
+export DINARY_GOOGLE_SHEETS_SPREADSHEET_ID=your-spreadsheet-id
+
+uv run dinary
+```
+
+The server starts on `http://localhost:8000`.
+
+Don't have a service account key yet?
+See [Google Sheets Setup](https://andgineer.github.io/dinary-server/google-sheets-setup/).
+
+### Run tests
+
+```bash
+uv run pytest tests/ -v
+```
+
+### Pre-commit hooks
+
+Use [pre-commit](https://pre-commit.com/#install) for code quality:
 
     pre-commit install
 
-## Allure test report
-
-* [Allure report](https://andgineer.github.io/dinary-server/builds/tests/)
-
-# Scripts
+### Scripts
 
 Install [invoke](https://docs.pyinvoke.org/en/stable/) preferably with [uv tool](https://docs.astral.sh/uv/):
 
@@ -34,12 +53,9 @@ For a list of available scripts run:
 
     invoke --list
 
-For more information about a script run:
+## Reports
 
-    invoke <script> --help
-
-
-## Coverage report
+* [Allure test report](https://andgineer.github.io/dinary-server/builds/tests/)
 * [Codecov](https://app.codecov.io/gh/andgineer/dinary-server/tree/main/src%2Fdinary)
 * [Coveralls](https://coveralls.io/github/andgineer/dinary-server)
 

@@ -17,3 +17,5 @@ pytest-coverage.txt
 **/.setup-scripts/
 allure-results/
 dist/
+credentials.json
+.env

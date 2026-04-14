@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#16213e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Dinary</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+
+<header>
+  <h1>Dinary</h1>
+  <span class="queue-badge" aria-label="Queued entries count"></span>
+</header>
+
+<main>
+  <div class="card">
+    <button id="qr-btn" class="btn btn-secondary" type="button">Scan QR</button>
+    <span class="offline-hint" style="display:none">QR requires internet</span>
+    <div id="qr-reader" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <div class="form-group">
+      <label for="amount">Amount (RSD)</label>
+      <input id="amount" type="number" inputmode="decimal" placeholder="0.00" step="0.01" min="0">
+    </div>
+
+    <div class="form-group">
+      <label for="category">Category</label>
+      <select id="category">
+        <option value="">— loading —</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Group</label>
+      <div id="group-display" class="group-display"></div>
+    </div>
+
+    <div class="form-group">
+      <label for="comment">Comment</label>
+      <textarea id="comment" rows="2" placeholder="Optional note"></textarea>
+    </div>
+
+    <div class="form-group">
+      <label for="date">Date</label>
+      <input id="date" type="date">
+    </div>
+
+    <button id="save-btn" class="btn btn-primary" type="button">Save</button>
+  </div>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

@@ -18,7 +18,7 @@ Before implementation, resolve the frontend tool choice. Applying the 7 must-hav
 
 **Recommendation:** Start with PWA. It is the only candidate that demonstrably passes all must-haves without further research. If a quick check of Glide/Appsmith reveals they also pass, the backend API is tool-agnostic and can serve any frontend.
 
-**Action:** Create a brief evaluation document in `docs/frontend-evaluation.md` (in this repo) summarizing the decision before writing code.
+**Action:** Create a brief evaluation document in `.plans/frontend-evaluation.md` summarizing the decision before writing code.
 
 ---
 
@@ -31,7 +31,7 @@ Replace the placeholder CLI with a FastAPI service. All backend work happens in 
 ### 1.1 Project restructure
 
 - Replace the Click CLI in `src/dinary/main.py` with a FastAPI application.
-- Update `pyproject.toml`: swap `click`/`rich-click` for `fastapi`, `uvicorn`, and add `gspread`, `httpx`, `beautifulsoup4`, `google-auth`.
+- Update `pyproject.toml`: swap `click`/`rich-click` for `fastapi`, `uvicorn`, and add `gspread`, `httpx`, `sr-invoice-parser`, `google-auth`, `pydantic-settings`.
 - Keep the existing build/test/CI scaffolding (pytest, ruff, pre-commit).
 
 Resulting layout:
@@ -144,9 +144,15 @@ dinary-server/
       offline-queue.js         # IndexedDB queue for offline entries
       categories.js            # Category list + group auto-fill
     icons/                     # PWA icons (192x192, 512x512)
-  docs/
+  .plans/
     frontend-evaluation.md     # Tool evaluation summary + decision
-    setup.md                   # Deployment, Cloudflare Access, phone install
+  docs/src/en/                   # MkDocs user manuals (English)
+    pwa-install.md             # How to install PWA on phone
+    cloudflare-setup.md        # Cloudflare Tunnel + Access setup
+    deploy-oracle.md           # Oracle Cloud Free Tier deployment
+    deploy-render.md           # Render deployment
+    deploy-railway.md          # Railway deployment
+  docs/src/ru/                   # MkDocs user manuals (Russian)
 ```
 
 FastAPI mounts `static/` at `/` so `index.html` is served at the root URL. All API calls use relative URLs (e.g., `fetch("/api/expenses")`). Same origin — no CORS, no secrets, no config files. Authentication is handled by Cloudflare Access at the infrastructure layer — the PWA code is completely unaware of it.
@@ -166,14 +172,15 @@ FastAPI mounts `static/` at `/` so `index.html` is served at the root URL. All A
 - The URL is sent to the backend (`POST /api/qr/parse`), which does the actual fetching and parsing.
 - QR scanning requires HTTPS (browser camera API constraint). This is satisfied by the Cloudflare Tunnel deployment — all traffic is HTTPS by default.
 
-### 2.4 Setup manual (`docs/setup.md`)
+### 2.4 User manuals (`docs/src/en/`, `docs/src/ru/`)
 
-Step-by-step instructions:
+MkDocs-based documentation in English and Russian:
 
-- How to deploy the backend (Docker on VPS, Cloudflare Tunnel setup).
-- How to configure Cloudflare Access (create application, set email policy).
-- How to set up the Google service account and share the spreadsheet.
-- How to "install" the PWA on Android (Chrome > Add to Home Screen) and iOS (Safari > Share > Add to Home Screen).
+- **`pwa-install.md`** -- how to install the PWA on Android and iOS, usage guide, re-authentication.
+- **`cloudflare-setup.md`** -- Cloudflare Tunnel creation, DNS routing, Access policy configuration.
+- **`deploy-oracle.md`** -- Oracle Cloud Free Tier: account setup, ARM VM, Docker, firewall.
+- **`deploy-render.md`** -- Render: GitHub auto-deploy, secret files, custom domain.
+- **`deploy-railway.md`** -- Railway: GitHub auto-deploy, base64 credentials, usage-based pricing.
 
 ---
 
@@ -187,7 +194,7 @@ Step-by-step instructions:
 
 ## Repo Responsibility Summary
 
-- **dinary-server** (this repo): FastAPI backend, Google Sheets integration, QR page parser, API, PWA frontend (in `static/`), deployment config, docs (frontend evaluation, setup manual).
+- **dinary-server** (this repo): FastAPI backend, Google Sheets integration, QR page parser, API, PWA frontend (in `static/`), deployment config, dev docs in `.plans/`, user manual in `docs/`.
 - **dinary** (`../dinary/`): Not used in Phase 0. Reserved for the future Rust desktop app (daemon + GUI, Phase 4+).
 
 ---

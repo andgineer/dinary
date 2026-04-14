@@ -6,13 +6,18 @@ build-backend = "hatchling.build"
 name = "dinary"
 dynamic = [ "version",]
 description = "Server for [Dinary - your dinar diary](https://github.com/andgineer/dinary). Track expenses, scan receipts, analyze spending with AI"
-keywords = [ "one", "two", ]
+keywords = [ "expenses", "budget", "receipts", ]
 classifiers = [ "Programming Language :: Python :: 3", "License :: OSI Approved :: MIT License", "Operating System :: OS Independent",]
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "click>=8.2.0",
-    "rich-click>=1.8.8",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "gspread>=6.1.0",
+    "google-auth>=2.38.0",
+    "httpx>=0.28.0",
+    "sr-invoice-parser>=1.0.3",
+    "pydantic-settings>=2.8.0",
 ]
 [[project.authors]]
 name = "Andrey Sorokin"
@@ -53,7 +58,8 @@ dev-dependencies = [
     "pyrefly>=0.50.0",
     "pytest-cov>=6.1.1",
     "pytest>=8.3.5",
+    "anyio[trio]>=4.9.0",
 ]
 
 [project.scripts]
-dinary = "dinary.main:dinary"
+dinary = "dinary.main:main"
