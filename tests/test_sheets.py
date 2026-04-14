@@ -178,6 +178,6 @@ class TestCreateMonthBlock:
 
         ws.update.assert_called_once()
         call_args = ws.update.call_args
-        new_rows = call_args[0][1]
+        new_rows = call_args.kwargs["values"]
         assert new_rows[0][0] == "2026-05"
         assert new_rows[1][3] == "0"  # amounts zeroed
