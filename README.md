@@ -2,11 +2,19 @@
 
 [Full report](https://htmlpreview.github.io/?https://github.com/andgineer/dinary-server/blob/python-coverage-comment-action-data/htmlcov/index.html)
 
-| Name                        |    Stmts |     Miss |   Cover |   Missing |
-|---------------------------- | -------: | -------: | ------: | --------: |
-| src/dinary/\_\_about\_\_.py |        1 |        0 |    100% |           |
-| src/dinary/main.py          |       16 |        5 |     69% |     22-29 |
-| **TOTAL**                   |   **17** |    **5** | **71%** |           |
+| Name                                   |    Stmts |     Miss |   Cover |   Missing |
+|--------------------------------------- | -------: | -------: | ------: | --------: |
+| src/dinary/\_\_about\_\_.py            |        1 |        0 |    100% |           |
+| src/dinary/api/categories.py           |       15 |        0 |    100% |           |
+| src/dinary/api/expenses.py             |       23 |        0 |    100% |           |
+| src/dinary/api/qr.py                   |       17 |        0 |    100% |           |
+| src/dinary/config.py                   |       18 |        1 |     94% |        15 |
+| src/dinary/main.py                     |       30 |        2 |     93% |    58, 68 |
+| src/dinary/services/category\_store.py |       25 |        0 |    100% |           |
+| src/dinary/services/exchange\_rate.py  |       16 |        0 |    100% |           |
+| src/dinary/services/qr\_parser.py      |       16 |        1 |     94% |        31 |
+| src/dinary/services/sheets.py          |      149 |       18 |     88% |24-30, 34, 84, 111-114, 119-121, 139, 170, 174-175, 204 |
+| **TOTAL**                              |  **310** |   **22** | **93%** |           |
 
 
 ## Setup coverage badge
