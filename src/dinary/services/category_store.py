@@ -18,7 +18,7 @@ class Category:
 @dataclass
 class CategoryStore:
     _categories: list[Category] = field(default_factory=list)
-    _loaded_at: float = 0.0
+    _loaded_at: float = field(default=float("-inf"))
 
     @property
     def expired(self) -> bool:
