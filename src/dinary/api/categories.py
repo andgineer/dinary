@@ -22,6 +22,9 @@ def list_categories() -> list[CategoryItem]:
         cats = get_categories()
     except Exception:
         logger.exception("Failed to load categories")
-        raise HTTPException(status_code=502, detail="Failed to load categories from Google Sheets")
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to load categories from Google Sheets",
+        ) from None
 
     return [CategoryItem(name=c.name, group=c.group) for c in cats]

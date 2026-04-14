@@ -46,6 +46,6 @@ async def create_expense(req: ExpenseRequest) -> ExpenseResponse:
         raise HTTPException(
             status_code=502,
             detail="Google Sheets write failed, entry queued for retry",
-        )
+        ) from None
 
     return ExpenseResponse(**result)

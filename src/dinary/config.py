@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     google_sheets_credentials_path: Path = Path("credentials.json")
     google_sheets_spreadsheet_id: str = ""
 
-    host: str = "0.0.0.0"
+    host: str = "0.0.0.0"  # noqa: S104
     port: int = 8000
     log_level: str = "info"
     log_json: bool = False

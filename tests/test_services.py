@@ -11,10 +11,12 @@ from dinary.services.exchange_rate import fetch_eur_rsd_rate
 class TestCategoryStore:
     def test_load_and_lookup(self):
         store = CategoryStore()
-        store.load([
-            Category(name="Food", group="Essentials"),
-            Category(name="Cinema", group="Entertainment"),
-        ])
+        store.load(
+            [
+                Category(name="Food", group="Essentials"),
+                Category(name="Cinema", group="Entertainment"),
+            ]
+        )
         assert store.group_for("Food") == "Essentials"
         assert store.group_for("Cinema") == "Entertainment"
         assert store.group_for("Unknown") is None

@@ -27,6 +27,6 @@ def parse_qr(req: QrParseRequest) -> QrParseResponse:
         result = parse_receipt_url(str(req.url))
     except Exception:
         logger.exception("QR parse failed for %s", req.url)
-        raise HTTPException(status_code=502, detail="Could not parse receipt from URL")
+        raise HTTPException(status_code=502, detail="Could not parse receipt from URL") from None
 
     return QrParseResponse(amount=result.amount, date=result.date)

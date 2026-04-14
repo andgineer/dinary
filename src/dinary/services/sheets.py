@@ -14,6 +14,7 @@ from dinary.services.exchange_rate import fetch_eur_rsd_rate
 logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+MIN_CATEGORY_COLS = 3
 
 _gc: gspread.Client | None = None
 _category_store = CategoryStore()
@@ -55,7 +56,7 @@ def _find_month_block(ws: gspread.Worksheet, target: date) -> tuple[int, int] | 
 
     start_row = None
     for i, val in enumerate(all_values):
-        if val.strip().startswith(label):
+        if str(val).strip().startswith(label):
             start_row = i + 1  # convert 0-indexed enumerate to 1-indexed gspread row
             break
 
@@ -65,7 +66,7 @@ def _find_month_block(ws: gspread.Worksheet, target: date) -> tuple[int, int] | 
     # end_row: 1-indexed, exclusive — the row *after* the last category row
     end_row = len(all_values) + 1
     for i in range(start_row, len(all_values)):
-        cell_val = all_values[i].strip()
+        cell_val = str(all_values[i]).strip()
         if cell_val and cell_val[:4].isdigit() and "-" in cell_val:
             end_row = i + 1  # convert 0-indexed to 1-indexed
             break
@@ -95,7 +96,7 @@ def load_categories(ws: gspread.Worksheet | None = None) -> list[Category]:
             in_block = True
             continue
 
-        if in_block and len(row) >= 3:
+        if in_block and len(row) >= MIN_CATEGORY_COLS:
             cat_name = row[1].strip()
             group_name = row[2].strip()
             if cat_name:
@@ -145,7 +146,7 @@ def _create_month_block(ws: gspread.Worksheet, target: date) -> tuple[int, int]:
     new_start = len(all_values) + 1  # 1-indexed, after all existing data
     label = _month_label(target)
 
-    new_rows = []
+    new_rows: list[list[str]] = []
     for j, row in enumerate(template_rows):
         new_row = list(row)
         if j == 0:
@@ -156,10 +157,11 @@ def _create_month_block(ws: gspread.Worksheet, target: date) -> tuple[int, int]:
         new_rows.append(new_row)
 
     end_cell = gspread.utils.rowcol_to_a1(
-        new_start + len(new_rows) - 1, len(new_rows[0])
+        new_start + len(new_rows) - 1,
+        len(new_rows[0]),
     )
     start_cell = gspread.utils.rowcol_to_a1(new_start, 1)
-    ws.update(f"{start_cell}:{end_cell}", new_rows)
+    ws.update(range_name=f"{start_cell}:{end_cell}", values=new_rows)
 
     logger.info("Created month block %s at row %d", label, new_start)
     return (new_start, new_start + len(new_rows))  # 1-indexed, end is exclusive
@@ -176,7 +178,7 @@ def _is_numeric(value: str) -> bool:
     return True
 
 
-async def write_expense(
+async def write_expense(  # noqa: PLR0913
     amount_rsd: float,
     category: str,
     comment: str,
@@ -221,7 +223,7 @@ async def write_expense(
 
     if target_local_idx is None:
         raise ValueError(
-            f"Category '{category}' not found in month block {_month_label(expense_date)}"
+            f"Category '{category}' not found in month block {_month_label(expense_date)}",
         )
 
     target_row = start_row + target_local_idx
@@ -259,7 +261,7 @@ async def write_expense(
         existing_comment = _cell(comment_col)
         separator = "; " if existing_comment else ""
         updates.append(
-            (target_row, comment_col, f"{existing_comment}{separator}{comment}")
+            (target_row, comment_col, f"{existing_comment}{separator}{comment}"),
         )
 
     for row, col, val in updates:
