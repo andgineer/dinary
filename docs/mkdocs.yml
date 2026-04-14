@@ -1,11 +1,11 @@
 # yaml-language-server: $schema=https://squidfunk.github.io/mkdocs-material/schema.json
 site_name: dinary
-site_url: https://andgineer.github.io/dinary
+site_url: https://andgineer.github.io/dinary-server
 site_author: Andrey Sorokin
 
 # Repository
-repo_name: dinary
-repo_url: https://github.com/andgineer/dinary
+repo_name: dinary-server
+repo_url: https://github.com/andgineer/dinary-server
 edit_uri: edit/master/docs
 docs_dir: 'src/LANGUAGE'
 site_dir: '../site/SITE_PREFIX'
@@ -62,10 +62,10 @@ theme:
 extra:
   alternate:
     - name: English
-      link: /dinary/
+      link: /dinary-server/
       lang: en
     - name: Русский
-      link: /dinary/ru/
+      link: /dinary-server/ru/
       lang: ru
 
 nav:

@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "dinary"
 dynamic = [ "version",]
-description = "Your dinar diary — track expenses, scan receipts, analyze spending with AI"
+description = "Server for [Dinary - your dinar diary](https://github.com/andgineer/dinary). Track expenses, scan receipts, analyze spending with AI"
 keywords = [ "one", "two", ]
 classifiers = [ "Programming Language :: Python :: 3", "License :: OSI Approved :: MIT License", "Operating System :: OS Independent",]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
     "click>=8.2.0",
     "rich-click>=1.8.8",

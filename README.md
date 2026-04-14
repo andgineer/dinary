@@ -1,14 +1,14 @@
-[![Build Status](https://github.com/andgineer/dinary/workflows/CI/badge.svg)](https://github.com/andgineer/dinary/actions)
-[![Coverage](https://raw.githubusercontent.com/andgineer/dinary/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary/blob/python-coverage-comment-action-data/htmlcov/index.html)
-# dinary
+[![Build Status](https://github.com/andgineer/dinary-server/workflows/CI/badge.svg)](https://github.com/andgineer/dinary-server/actions)
+[![Coverage](https://raw.githubusercontent.com/andgineer/dinary-server/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary-server/blob/python-coverage-comment-action-data/htmlcov/index.html)
+# Dinary (server)
 
-Your dinar diary — track expenses, scan receipts, analyze spending with AI
+Server for [Dinary - your dinar diary](https://github.com/andgineer/dinary).
+
+Track expenses, scan receipts, analyze spending with AI
 
 # Documentation
 
-[Dinary](https://andgineer.github.io/dinary/)
-
-
+[Dinary server](https://andgineer.github.io/dinary-server/)
 
 # Developers
 
@@ -22,7 +22,7 @@ Use [pre-commit](https://pre-commit.com/#install) hooks for code quality:
 
 ## Allure test report
 
-* [Allure report](https://andgineer.github.io/dinary/builds/tests/)
+* [Allure report](https://andgineer.github.io/dinary-server/builds/tests/)
 
 # Scripts
 
@@ -40,7 +40,7 @@ For more information about a script run:
 
 
 ## Coverage report
-* [Codecov](https://app.codecov.io/gh/andgineer/dinary/tree/main/src%2Fdinary)
-* [Coveralls](https://coveralls.io/github/andgineer/dinary)
+* [Codecov](https://app.codecov.io/gh/andgineer/dinary-server/tree/main/src%2Fdinary)
+* [Coveralls](https://coveralls.io/github/andgineer/dinary-server)
 
 > Created with cookiecutter using [template](https://github.com/andgineer/cookiecutter-python-package)

@@ -1,7 +1,8 @@
-# dinary
+# Dinary server
 
-Your dinar diary — track expenses, scan receipts, analyze spending with AI
+Server for [Dinary - your dinar diary](https://github.com/andgineer/dinary).
 
+Track expenses, scan receipts, analyze spending with AI
 
 ### Advanced
 

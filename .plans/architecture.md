@@ -11,10 +11,10 @@ prioritizing clean data model and scriptability over UI polish.
 
 ### Repositories
 
-| Repository         | Language | Role                                                                                                                              |
-|--------------------|---|-----------------------------------------------------------------------------------------------------------------------------------|
-| **dinary-server**  | Python (FastAPI + DuckDB) | Backend — REST API, data storage, rule-based classification, dashboards, Google Sheets sync. Manuals & configs to setup frontend. |
-| **dinary** | Rust | Local desktop tool — AI classification and spending analysis via `claude -p`, communicates with dinary-server API                 |
+| Repository         | Language | Role                                                                                                                                                                       |
+|--------------------|---|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **dinary-server**  | Python (FastAPI + DuckDB) | Backend — REST API, data storage, rule-based classification, dashboards, Google Sheets sync.                                                                               |
+| **dinary** | Rust | UI. Local desktop tool — AI classification and spending analysis via `claude -p`, communicates with dinary-server API. Manuals & configs to setup mobile app (dinary-app). |
 
 ---
 
@@ -585,9 +585,11 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 
 ### Phase 0: MVP — Manual Entry → Google Sheets (no DuckDB, no QR, no AI)
 
-The fastest path to replacing manual spreadsheet editing. No new database, no receipt parsing — just a mobile frontend that writes directly to the existing Google Sheets structure.
+The fastest path to replacing manual spreadsheet editing. 
+No new database, no receipt parsing — just a mobile frontend that writes directly to the existing Google Sheets structure.
 
 **Scope:**
+
 - A mobile frontend (chosen from the evaluation table, or a quick Telegram bot / PWA prototype) with a simple form: amount (RSD) + category (dropdown from the existing ~33 categories) + category group (auto-filled from category) + optional comment.
 - A lightweight backend (Python script or serverless function) that receives the entry and writes it to the existing Google Sheets spreadsheet via the Sheets API.
 - **Auto-month creation:** if the backend detects that rows for the current month don't exist yet in the sheet, it automatically creates the full block of category rows for the new month (copying the category/group structure from the previous month). This eliminates the most tedious manual step.
@@ -595,11 +597,18 @@ The fastest path to replacing manual spreadsheet editing. No new database, no re
 - No item-level parsing, no DuckDB, no AI. The user picks the category manually, just as they do now — but from a phone instead of editing a spreadsheet.
 
 **What this validates:**
+
 - The chosen mobile frontend tool works for daily data entry (offline persistence, speed, UX).
 - The Google Sheets API integration is reliable.
 - The user actually adopts phone-based entry over direct spreadsheet editing.
 
-**Exit criteria for Phase 0:** the user has used the system daily for 2+ weeks and no longer opens the spreadsheet to enter data manually.
+**Deliverables**
+
+- Manuals and configs to setup dinary-app inside the dinary report (with Rust app and this manuals for mobile app)
+- The backend implementations, manuals and scripts to deploy on selected hosting - inside dinary-server repo
+
+**Exit criteria for Phase 0:** 
+the user has used the system daily for 2+ weeks and no longer opens the spreadsheet to enter data manually.
 
 ### Phase 1: Data Foundation & Backend Deployment (dinary-server)
 - Set up DuckDB schema (config.duckdb + budget_2026.duckdb) on VPS (Oracle Cloud Free Tier).
@@ -615,8 +624,15 @@ The fastest path to replacing manual spreadsheet editing. No new database, no re
 - Implement rule-based auto-classification.
 
 ### Phase 3: Mobile Input — Full Version (dinary-app)
-- **3a: Frontend tool evaluation.** Research the candidate tools from the evaluation table (see "Frontend Tool Evaluation" section) **and any other tools discovered during research**. Build a minimal MVP (scan QR → send URL → see parsed items) with 1-2 top candidates. Compare: QR scanning reliability, offline data persistence, speed of manual entry, API connectivity, cross-platform behavior (Android + iOS), overall UX on phone. Decide on the tool. Note: if the Phase 0 tool already satisfies all must-have criteria, this step may be a confirmation rather than a new evaluation.
+- **3a: Frontend tool evaluation.
+
+  - ** Research the candidate tools from the evaluation table (see "Frontend Tool Evaluation" section) **and any other tools discovered during research**. 
+  - Build a minimal MVP (scan QR → send URL → see parsed items) with 1-2 top candidates. 
+  - Compare: QR scanning reliability, offline data persistence, speed of manual entry, API connectivity, cross-platform behavior (Android + iOS), overall UX on phone. 
+  - Decide on the tool. Note: if the Phase 0 tool already satisfies all must-have criteria, this step may be a confirmation rather than a new evaluation.
+
 - **3b: Build the full mobile input layer** with the chosen tool.
+
   - QR scan → send URL → parse → store.
   - Manual entry for non-QR expenses.
   - Event auto-suggestion and selection.
@@ -624,6 +640,7 @@ The fastest path to replacing manual spreadsheet editing. No new database, no re
   - Offline queue with sync-on-reconnect.
 
 ### Phase 4: AI Classification (dinary)
+
 - Build dinary as a Rust CLI binary.
 - Implement the task queue API on dinary-server (`/api/tasks/*`).
 - Build the batch classification flow: fetch pending → `claude -p` → push results.
