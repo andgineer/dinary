@@ -14,7 +14,7 @@ prioritizing clean data model and scriptability over UI polish.
 | Repository         | Language | Role                                                                                                                                                                       |
 |--------------------|---|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **dinary-server**  | Python (FastAPI + DuckDB) | Backend — REST API, data storage, rule-based classification, dashboards, Google Sheets sync.                                                                               |
-| **dinary** | Rust | UI. Local desktop tool — AI classification and spending analysis via `claude -p`, communicates with dinary-server API. Manuals & configs to setup mobile app (dinary-app). |
+| **dinary** | Rust | Desktop app (macOS/Windows): daemon for background AI tasks via `claude -p`, and GUI for analysis parameters, interactive results view, and quick data entry (text/PDF receipt import). Communicates with dinary-server API. Also contains manuals & configs to setup mobile app (dinary-app). |
 
 ---
 
@@ -316,13 +316,19 @@ For expenses without QR codes (cafés, services, cash payments, foreign purchase
 
 The specific mobile client is a build-time decision.
 The architecture is agnostic — the input layer is a thin client that sends structured data to the backend via a simple REST API.
-Key functional requirements regardless of the chosen tool:
 
-- Camera access for QR scanning.
+**Phase 0 (MVP) requirements:**
+
+- Camera access for QR scanning (extract URL, send to backend for total + date extraction).
 - Fast manual entry: amount + category selector + optional comment, one tap to submit.
+- Offline data persistence with sync-on-reconnect.
+
+**Full requirements (Phase 3 target):**
+
+- All Phase 0 capabilities, plus:
+- Confirmation screen after QR scan: shows parsed line items, allows quick category corrections before saving.
 - Event selector: if the expense date falls within an active event's date range, auto-suggest it. If multiple active events overlap, show a dropdown. Allow manual assignment/removal.
 - Beneficiary selector: defaults to "семья", quick switch to a specific family member.
-- Confirmation screen after QR scan: shows parsed items, allows quick category corrections before saving.
 
 #### Frontend Tool Evaluation (Phase 3 prerequisite)
 
@@ -336,12 +342,12 @@ Build a minimal MVP with the most promising 1-2 candidates to compare real-world
 
 | Tool | Type | Evaluate for |
 |------|------|-------------|
-| **Telegram Bot** | Chat-based UI | Lowest dev effort. Native camera for QR photo/URL sharing. Inline keyboards for category selection. No app install needed. Limitation: no true "form" UX — interaction is sequential, not a single screen. **Offline: does not work offline — requires internet for every interaction.** |
+| ~~**Telegram Bot**~~ | Chat-based UI | **Disqualified:** does not work offline (fails must-have #1). Lowest dev effort otherwise. Native camera for QR photo/URL sharing. Inline keyboards for category selection. No app install needed. Limitation: no true "form" UX — interaction is sequential, not a single screen. |
 | **Glide Apps** | No-code app builder (Google Sheets/SQL backend) | Can it connect to a custom REST API or DuckDB directly? Does it support camera/QR scanning? Free tier limits? Good for rapid prototyping if it can talk to our backend. Check offline support. |
 | **Retool** | Low-code internal tool builder | Strong on forms, tables, and API integration. Mobile-responsive. Free tier (5 users) is sufficient. Can it do QR scanning natively or via a component? Overkill for input-only, but could double as an admin/review UI for classifications. Check offline support — likely none. |
 | **Appsmith** | Open-source Retool alternative | Self-hostable (important for data ownership). Same evaluation criteria as Retool. Check: mobile UX quality, QR scanning support, DuckDB/REST connectivity, offline mode. |
-| **Appgyver (SAP Build Apps)** | No-code native app builder | Produces actual mobile apps. QR scanning is a built-in component. Free tier available. Evaluate: learning curve, API connectivity, ease of iteration. Has offline data storage capabilities. More effort than Telegram but better native UX. |
-| **Tally / Typeform** | Form builders | Good for quick data capture. Tally is free and supports webhooks. Can a form-based flow work for receipt entry? Likely too rigid for the QR→review→confirm flow, but worth checking for manual entry only. No offline support. |
+| ~~**Appgyver (SAP Build Apps)**~~ | No-code native app builder | **Likely disqualified:** produces native mobile apps that require App Store / Google Play publishing (fails must-have #0). QR scanning is a built-in component. Free tier available. Has offline data storage capabilities. Only viable if it supports a web/PWA deployment mode that bypasses store publishing — verify before evaluating further. |
+| ~~**Tally / Typeform**~~ | Form builders | **Disqualified:** no offline support (fails must-have #1), no QR scanning (fails must-have #6). Good for quick data capture otherwise. Tally is free and supports webhooks. Likely too rigid for the QR→review→confirm flow. |
 | **PWA (custom)** | Self-built Progressive Web App | Maximum control. Camera API for QR scanning (via `navigator.mediaDevices`). Full offline support via Service Workers + IndexedDB. Requires actual frontend development. Best long-term option if no-code tools don't fit. Works on both Android and iOS via browser. |
 
 **Evaluation criteria:**
@@ -354,9 +360,9 @@ Must-have (tool is disqualified if it fails any of these):
 3. **API connectivity** — must be able to POST structured data to a custom REST endpoint.
 4. **Free for expected load** — sustainable at zero cost for a single user with 10-20 entries/day. No "free trial" that expires.
 5. **Longevity / sustainability** — the tool must have a credible future. For open-source: sufficient community (contributors, stars, release cadence). For commercial: a clear business model and track record suggesting the free tier won't be killed. Tools that have recently been acquired, pivoted, or deprecated their free tier are high-risk.
+6. **QR scanning** — can the tool access the camera and scan a QR code to extract the URL? Required from Phase 0 (total-only extraction) through Phase 3b (full line-item flow).
 
 Important:
-6. **QR scanning** — can the tool scan a QR code and extract the URL? (must-have for Phase 3b, not required for MVP)
 7. **Speed of entry** — how many taps/screens for a manual expense? (critical for daily use adoption)
 8. **Dev effort for MVP** — how fast can a working prototype be built?
 
@@ -477,7 +483,10 @@ The sync script is idempotent — running it twice produces the same result.
 
 The system is split into two parts: an always-on **backend** (VPS) that handles data ingestion and serves dashboards, and a **local agent**
 (user's laptop) that runs expensive AI tasks using the existing Claude subscription via `claude -p`.
-The backend owns the single source of truth (DuckDB).
+
+**Note on source of truth:** In Phase 0, Google Sheets is the single source of truth (the backend writes directly to it).
+Starting from Phase 1, DuckDB on the backend becomes the single source of truth, and Google Sheets becomes a read-only view layer synced from DuckDB.
+
 The local agent is stateless — it fetches tasks, processes them, and pushes results back.
 
 ```
@@ -498,14 +507,20 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
                          ┌──────────────▼──────────────────────┐
                          │  dinary (user's laptop)             │
                          │                                     │
-                         │  Rust binary + claude -p             │
-                         │  - fetch pending classification tasks│
-                         │  - AI batch classify (claude -p)     │
-                         │  - AI spending analysis (claude -p)  │
-                         │  - push results back to server API   │
-                         │  - any future AI-heavy tasks         │
-                         │  - quick manual enter including      │
-                         │    import from email/messages        │
+                         │  ┌─ daemon (background) ──────────┐ │
+                         │  │  Rust + claude -p               │ │
+                         │  │  - batch classification         │ │
+                         │  │  - spending analysis            │ │
+                         │  │  - push results to server API   │ │
+                         │  └────────────────────────────────┘ │
+                         │  ┌─ GUI (interactive) ────────────┐ │
+                         │  │  Rust + GUI framework           │ │
+                         │  │  - analysis params & results    │ │
+                         │  │  - quick manual entry           │ │
+                         │  │  - paste text/PDF → AI API      │ │
+                         │  │    → extract & store expense    │ │
+                         │  │  - review AI suggestions        │ │
+                         │  └────────────────────────────────┘ │
                          └─────────────────────────────────────┘
 ```
 
@@ -532,14 +547,30 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 
 ### dinary (User's Laptop)
 
-**What it does:**
-- Runs on demand (manually or via scheduler) when the user is at the computer.
+A desktop application with two components: a **daemon** for background AI processing and a **GUI** for interactive use.
+
+**Daemon (background service):**
+- Runs continuously (or on schedule) when the user is at the computer.
 - Fetches pending tasks from the dinary-server API.
 - Processes them using `claude -p` (Claude Code CLI, non-interactive mode) under the user's existing subscription — no API token costs.
 - Pushes results back to the dinary-server API.
-- Hot-key for quick manual enter, import spendings from email/messages like bank notifications of internet payments
+- Handles all heavy/batch AI work that can be deferred.
 
-**Task types:**
+**GUI (interactive desktop app):**
+- Set analysis parameters (time range, grouping, filters) and view interactive analysis results.
+- Quick manual entry: hot-key to enter an expense, import from email/messages like bank notifications of internet payments.
+- Paste text or PDF with a receipt — the app responsively extracts payment data and stores it (uses AI API directly for fast turnaround; see "AI processing modes" below).
+- Review and confirm AI classification suggestions.
+
+**AI processing modes:**
+
+The desktop app uses two distinct AI channels depending on latency requirements:
+
+1. **`claude -p` (daemon, batch)** — for tasks where latency is not critical: batch classification, spending analysis, report generation. Runs under the existing Claude subscription at zero API cost. This is the primary AI channel.
+
+2. **AI API (GUI, interactive)** — for tasks that must feel responsive to the user: when the user pastes text or a PDF with a receipt, the app calls an AI API directly to extract payment data (amount, date, store, items) in real time. The user should not wait seconds for `claude -p` to spin up. This is a lightweight, targeted use — simple extraction prompts with small payloads, minimal API cost.
+
+**Task types (daemon):**
 
 1. **Batch classification** (daily or on demand):
    ```bash
@@ -564,7 +595,8 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 
 3. **Future AI tasks** — any new AI-intensive operation follows the same pattern: dinary-server exposes a task endpoint, dinary fetches, processes with `claude -p`, pushes results back.
 
-**Built as a Rust binary** — single executable, no runtime dependencies, compact installer for macOS and Windows.
+**Built in Rust** — targeting macOS and Windows. Packaging model (single binary vs. app bundle, installer type, tray integration,
+daemon lifecycle management) depends on the GUI framework choice and will be determined during the Phase 4 GUI framework POC.
 
 ### Backup Strategy
 
@@ -583,32 +615,36 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 
 ## Build Plan (Incremental Phases)
 
-### Phase 0: MVP — Manual Entry → Google Sheets (no DuckDB, no QR, no AI)
+### Phase 0: MVP — Manual Entry + QR Total → Google Sheets (no DuckDB, no line parsing, no AI)
 
-The fastest path to replacing manual spreadsheet editing. 
-No new database, no receipt parsing — just a mobile frontend that writes directly to the existing Google Sheets structure.
+The fastest path to replacing manual spreadsheet editing, with early validation of QR scanning.
+No new database, no line-item parsing — just a mobile frontend that writes directly to the existing Google Sheets structure.
 
 **Scope:**
 
-- A mobile frontend (chosen from the evaluation table, or a quick Telegram bot / PWA prototype) with a simple form: amount (RSD) + category (dropdown from the existing ~33 categories) + category group (auto-filled from category) + optional comment.
+- A mobile frontend (chosen from the non-disqualified candidates in the evaluation table) with a simple form: amount (RSD) + category (dropdown from the existing ~33 categories) + category group (auto-filled from category) + optional comment.
+- **QR scanning:** the user scans a Serbian fiscal receipt QR code on the phone. The backend fetches the receipt page from SUF PURS, extracts only the **total amount** and **date** — no line-item parsing, no store extraction. The amount and date are pre-filled into the entry form; the user picks a category and submits. This is treated as a single expense entry (one row), same as manual entry.
 - A lightweight backend (Python script or serverless function) that receives the entry and writes it to the existing Google Sheets spreadsheet via the Sheets API.
 - **Auto-month creation:** if the backend detects that rows for the current month don't exist yet in the sheet, it automatically creates the full block of category rows for the new month (copying the category/group structure from the previous month). This eliminates the most tedious manual step.
-- Currency conversion: RSD → EUR using the same fixed rate currently used in the sheet.
-- No item-level parsing, no DuckDB, no AI. The user picks the category manually, just as they do now — but from a phone instead of editing a spreadsheet.
+- **Currency conversion:** the EUR/RSD exchange rate is stored in the sheet itself, in a cell to the right of the first row of each month block. When the backend creates a new month or writes the first expense of the month, it checks the rate cell: if empty, it fetches the current NBS middle rate from `kurs.resenje.org` (same API as `ibkr-porez-py`) and writes it. Each month thus has its own visible rate. The EUR amount is derived as `amount_rsd / rate`.
+- **Offline queue:** when the device has no internet, completed entries (manual or QR-based) are persisted locally on the device (e.g., IndexedDB for PWA, local storage for the chosen tool). When connectivity is restored, the queue is flushed to the backend automatically. The user must never lose an entry due to network unavailability. The specific storage mechanism depends on the chosen frontend tool — this is a key evaluation criterion.
+- No line-item parsing, no store extraction, no DuckDB, no AI. The user picks the category manually, just as they do now — but from a phone instead of editing a spreadsheet. QR scanning only extracts the receipt total amount and date, not individual items or store.
 
 **What this validates:**
 
 - The chosen mobile frontend tool works for daily data entry (offline persistence, speed, UX).
+- **QR scanning works reliably** with the chosen frontend tool (camera access, code extraction, end-to-end flow).
 - The Google Sheets API integration is reliable.
 - The user actually adopts phone-based entry over direct spreadsheet editing.
 
 **Deliverables**
 
-- Manuals and configs to setup dinary-app inside the dinary report (with Rust app and this manuals for mobile app)
-- The backend implementations, manuals and scripts to deploy on selected hosting - inside dinary-server repo
+- PWA frontend (in `static/`), backend, manuals, deployment scripts — all in the dinary-server repo
+- The `dinary` repo is not used in Phase 0 (reserved for the Rust desktop app, Phase 4+)
 
-**Exit criteria for Phase 0:** 
-the user has used the system daily for 2+ weeks and no longer opens the spreadsheet to enter data manually.
+**Exit criteria for Phase 0:**
+- The user has used the system daily for 2+ weeks and no longer opens the spreadsheet to enter data manually.
+- QR scanning has been used successfully on real receipts (camera → URL extraction → total + date pre-fill) and is confirmed to work reliably with the chosen frontend tool.
 
 ### Phase 1: Data Foundation & Backend Deployment (dinary-server)
 - Set up DuckDB schema (config.duckdb + budget_2026.duckdb) on VPS (Oracle Cloud Free Tier).
@@ -626,10 +662,10 @@ the user has used the system daily for 2+ weeks and no longer opens the spreadsh
 ### Phase 3: Mobile Input — Full Version (dinary-app)
 - **3a: Frontend tool evaluation.
 
-  - ** Research the candidate tools from the evaluation table (see "Frontend Tool Evaluation" section) **and any other tools discovered during research**. 
-  - Build a minimal MVP (scan QR → send URL → see parsed items) with 1-2 top candidates. 
-  - Compare: QR scanning reliability, offline data persistence, speed of manual entry, API connectivity, cross-platform behavior (Android + iOS), overall UX on phone. 
-  - Decide on the tool. Note: if the Phase 0 tool already satisfies all must-have criteria, this step may be a confirmation rather than a new evaluation.
+  - ** Research the candidate tools from the evaluation table (see "Frontend Tool Evaluation" section) **and any other tools discovered during research**.
+  - Build a minimal MVP (scan QR → send URL → see parsed items with line-item detail) with 1-2 top candidates.
+  - Compare: QR scanning reliability, offline data persistence, speed of manual entry, API connectivity, cross-platform behavior (Android + iOS), overall UX on phone.
+  - Decide on the tool. Note: QR scanning and basic UX are already validated in Phase 0. This step focuses on whether the Phase 0 tool also handles the full line-item review flow, or whether a different tool is needed for Phase 3b.
 
 - **3b: Build the full mobile input layer** with the chosen tool.
 
@@ -639,13 +675,21 @@ the user has used the system daily for 2+ weeks and no longer opens the spreadsh
   - Beneficiary selector.
   - Offline queue with sync-on-reconnect.
 
-### Phase 4: AI Classification (dinary)
+### Phase 4: AI Classification & Desktop App (dinary)
 
-- Build dinary as a Rust CLI binary.
-- Implement the task queue API on dinary-server (`/api/tasks/*`).
-- Build the batch classification flow: fetch pending → `claude -p` → push results.
-- Implement the review/confirm flow (via dashboard or CLI).
-- Wire up rule learning (confirmed classifications → new rules in `category_rules`).
+- **4a: GUI framework POC.**
+  - Evaluate Rust GUI frameworks for the desktop app (e.g., Tauri, egui/eframe, Slint, Dioxus, Iced).
+  - Build a minimal POC: a window with a form (analysis parameters), a results view, and a paste-to-extract flow (paste text → call AI API → display extracted data).
+  - Evaluate: cross-platform support (macOS + Windows), native look and feel, ease of iteration, maturity/community, integration with async Rust for API calls.
+  - Decide on the framework.
+
+- **4b: Build dinary daemon + GUI.**
+  - Daemon: background service that fetches pending tasks from dinary-server, processes with `claude -p`, pushes results back.
+  - Implement the task queue API on dinary-server (`/api/tasks/*`).
+  - Build the batch classification flow: fetch pending → `claude -p` → push results.
+  - GUI: interactive AI API calls for responsive receipt extraction (paste text/PDF → AI API → extract amount, date, items → store via server API).
+  - Implement the review/confirm flow (via GUI or CLI).
+  - Wire up rule learning (confirmed classifications → new rules in `category_rules`).
 
 ### Phase 5: Dashboards (dinary-server)
 - Operational dashboard (static HTML, current month snapshot).
@@ -659,8 +703,9 @@ the user has used the system daily for 2+ weeks and no longer opens the spreadsh
 
 Each phase is independently useful.
 
-- Phase 0 alone eliminates manual spreadsheet editing and validates the mobile input tool.
+- Phase 0 alone eliminates manual spreadsheet editing, validates QR scanning, and validates the mobile input tool.
 - Phase 1 establishes the proper data foundation.
 - Phase 2 solves the supermarket opacity problem.
-- Phase 3 adds QR scanning and full offline support.
-- Phases 4-6 add intelligence and convenience.
+- Phase 3 adds full line-item QR flow and complete mobile input.
+- Phase 4 builds the desktop app (daemon + GUI) with AI classification and responsive receipt extraction.
+- Phases 5-6 add dashboards, AI analysis, and Google Sheets sync.
