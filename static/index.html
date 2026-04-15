@@ -11,7 +11,7 @@
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png">
   <link rel="stylesheet" href="/css/style.css">
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
 </head>
 <body>
 
@@ -22,9 +22,9 @@
 
 <main>
   <div class="card">
-    <button id="qr-btn" class="btn btn-secondary" type="button">Scan QR</button>
-    <span class="offline-hint" style="display:none">QR requires internet</span>
-    <div id="qr-reader" style="display:none"></div>
+      <button id="qr-btn" class="btn btn-secondary" type="button">Scan QR</button>
+    <span class="offline-hint" style="display:none">Offline — will sync later</span>
+    <video id="qr-video" style="display:none; width:100%; border-radius:8px"></video>
   </div>
 
   <div class="card">
@@ -60,6 +60,17 @@
     <button id="save-btn" class="btn btn-primary" type="button">Save</button>
   </div>
 </main>
+
+<div id="queue-modal" class="modal" style="display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:1rem">
+  <div class="modal-content" style="background:var(--surface,#16213e);border-radius:12px;padding:1.25rem;width:100%;max-width:420px;max-height:80vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <h2 style="font-size:1.1rem;font-weight:600;margin:0">Queued expenses</h2>
+      <button id="queue-modal-close" style="background:none;border:none;color:#94a3b8;font-size:2rem;cursor:pointer;padding:0.25rem 0.5rem;line-height:1">&times;</button>
+    </div>
+    <div id="queue-list"></div>
+    <button id="queue-copy" class="btn btn-secondary" type="button">Copy to clipboard</button>
+  </div>
+</div>
 
 <div id="toast" class="toast"></div>
 

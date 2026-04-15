@@ -2,7 +2,7 @@
  * Main app logic — wires together form, QR scanner, offline queue, and categories.
  */
 
-import { postExpense, parseQr } from "./api.js";
+import { postExpense } from "./api.js";
 import {
   loadCategories,
   getLastError,
@@ -14,6 +14,25 @@ import { enqueue, getAll, remove, count } from "./offline-queue.js";
 import { startScanning, stop as stopScanner } from "./qr-scanner.js";
 
 const $ = (sel) => document.querySelector(sel);
+
+function parseReceiptUrl(url) {
+  const vl = new URL(url).searchParams.get("vl");
+  if (!vl) throw new Error("No vl parameter");
+
+  const bin = Uint8Array.from(atob(vl), (c) => c.charCodeAt(0));
+
+  const view = new DataView(bin.buffer);
+  const amountRaw = view.getBigUint64(25, true);
+  const amount = Number(amountRaw) / 10000;
+
+  const msHi = view.getUint32(33, false);
+  const msLo = view.getUint32(37, false);
+  const ms = msHi * 0x100000000 + msLo;
+  const dt = new Date(ms);
+  const date = dt.toISOString().slice(0, 10);
+
+  return { amount, date };
+}
 
 let _flushing = false;
 
@@ -127,62 +146,94 @@ function resetForm() {
 
 async function handleQrScan() {
   const btn = $("#qr-btn");
-  const reader = $("#qr-reader");
+  const video = $("#qr-video");
 
-  if (reader.style.display === "block") {
+  if (video.style.display === "block") {
     stopScanner();
-    reader.style.display = "none";
+    video.style.display = "none";
     btn.textContent = "Scan QR";
     return;
   }
 
-  if (!navigator.onLine) {
-    showToast("QR scanning requires internet connection", "error");
-    return;
-  }
-
-  reader.style.display = "block";
-  btn.textContent = "Stop Scanner";
+  video.style.display = "block";
+  btn.textContent = "Stop";
 
   try {
-    await startScanning("qr-reader", async (text) => {
-      reader.style.display = "none";
+    await startScanning(video, (text) => {
+      video.style.display = "none";
       btn.textContent = "Scan QR";
 
       if (!text.includes("suf.purs.gov.rs")) {
         const preview = text.length > 80 ? text.slice(0, 80) + "…" : text;
-        showToast(`Unknown QR: ${preview}`, "error");
+        showToast(`Not a fiscal QR: ${preview}`, "error");
         return;
       }
 
-      btn.disabled = true;
       try {
-        const result = await parseQr(text);
-        $("#amount").value = result.amount;
-        $("#date").value = result.date;
-        showToast(`Receipt: ${result.amount} RSD, ${result.date}`, "success");
+        const parsed = parseReceiptUrl(text);
+        $("#amount").value = parsed.amount;
+        $("#date").value = parsed.date;
+        showToast(`Receipt: ${parsed.amount} RSD, ${parsed.date}`, "success");
         $("#group").focus();
       } catch {
-        showToast("Could not read receipt — try manual entry", "error");
+        showToast("Could not read receipt", "error");
       }
-      btn.disabled = false;
     });
   } catch (e) {
-    showToast(e.message || "Camera access failed", "error");
-    reader.style.display = "none";
+    showToast(e.message || "Camera failed", "error");
+    video.style.display = "none";
     btn.textContent = "Scan QR";
   }
 }
 
+
+function formatQueueItem(item) {
+  const parts = [`${item.amount} RSD`, item.category];
+  if (item.group) parts.push(item.group);
+  if (item.comment) parts.push(item.comment);
+  parts.push(item.date);
+  return parts.join(" | ");
+}
+
+async function showQueueModal() {
+  const items = await getAll();
+  if (!items.length) return;
+
+  const list = $("#queue-list");
+  list.innerHTML = items
+    .map(
+      (it) =>
+        `<div class="queue-item">
+          <span class="qi-amount">${it.amount} RSD</span> — ${it.category}${it.group ? ` / ${it.group}` : ""}
+          ${it.comment ? `<br>${it.comment}` : ""}
+          <div class="qi-meta">${it.date}</div>
+        </div>`,
+    )
+    .join("");
+
+  $("#queue-modal").style.display = "flex";
+
+  $("#queue-copy").onclick = async () => {
+    const text = items.map(formatQueueItem).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("Copied to clipboard", "success");
+    } catch {
+      showToast("Copy failed", "error");
+    }
+  };
+}
+
+function closeQueueModal() {
+  $("#queue-modal").style.display = "none";
+}
+
 function updateOnlineStatus() {
-  const qrBtn = $("#qr-btn");
   const hint = $(".offline-hint");
   if (navigator.onLine) {
-    qrBtn.disabled = false;
     hint.style.display = "none";
     flushQueue();
   } else {
-    qrBtn.disabled = true;
     hint.style.display = "block";
   }
 }
@@ -212,6 +263,11 @@ async function init() {
 
   $("#save-btn").addEventListener("click", submitExpense);
   $("#qr-btn").addEventListener("click", handleQrScan);
+  $(".queue-badge").addEventListener("click", showQueueModal);
+  $("#queue-modal-close").addEventListener("click", closeQueueModal);
+  $("#queue-modal").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeQueueModal();
+  });
 
   window.addEventListener("online", updateOnlineStatus);
   window.addEventListener("offline", updateOnlineStatus);

@@ -1,4 +1,4 @@
-const CACHE_NAME = "dinary-v8";
+const CACHE_NAME = "dinary-v18";
 const ASSETS = [
   "/",
   "/css/style.css",
@@ -7,6 +7,8 @@ const ASSETS = [
   "/js/offline-queue.js",
   "/js/categories.js",
   "/js/qr-scanner.js",
+  "/js/qr-scanner-lib.js",
+  "/js/qr-scanner-worker.min.js",
   "/manifest.json",
 ];
 

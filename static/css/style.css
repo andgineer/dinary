@@ -57,7 +57,7 @@ header h1 {
   display: none;
 }
 
-.queue-badge.visible { display: inline-block; }
+.queue-badge.visible { display: inline-block; cursor: pointer; }
 
 main {
   flex: 1;
@@ -158,10 +158,9 @@ textarea {
   cursor: not-allowed;
 }
 
-#qr-reader {
+#qr-video {
   margin-bottom: 1rem;
   border-radius: 8px;
-  overflow: hidden;
 }
 
 .toast {
@@ -190,6 +189,67 @@ textarea {
   font-size: 0.75rem;
   color: var(--text-muted);
   font-style: italic;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.modal-content {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  width: 100%;
+  max-width: 420px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.modal-header h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+
+.queue-item {
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.queue-item .qi-amount {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.queue-item .qi-meta {
+  color: var(--text-muted);
+  font-size: 0.8rem;
 }
 
 @media (min-width: 600px) {
