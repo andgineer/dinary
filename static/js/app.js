@@ -25,7 +25,8 @@ function showToast(msg, type = "info") {
   const el = $("#toast");
   el.textContent = msg;
   el.className = `toast show ${type}`;
-  setTimeout(() => el.classList.remove("show"), 3000);
+  const delay = msg.length > 60 ? 8000 : 3000;
+  setTimeout(() => el.classList.remove("show"), delay);
 }
 
 async function updateQueueBadge() {
@@ -70,13 +71,14 @@ async function flushQueue() {
 }
 
 async function submitExpense() {
-  const amount = parseFloat($("#amount").value);
+  const rawAmount = $("#amount").value.replace(",", ".").trim();
+  const amount = parseFloat(rawAmount);
   const group = $("#group").value;
   const category = $("#category").value;
   const comment = $("#comment").value.trim();
   const date = $("#date").value;
 
-  if (!amount || amount <= 0) {
+  if (!rawAmount || isNaN(amount) || amount <= 0) {
     showToast("Enter a valid amount", "error");
     return;
   }
@@ -148,7 +150,8 @@ async function handleQrScan() {
       btn.textContent = "Scan QR";
 
       if (!text.includes("suf.purs.gov.rs")) {
-        showToast("Not a Serbian fiscal receipt QR code", "error");
+        const preview = text.length > 80 ? text.slice(0, 80) + "…" : text;
+        showToast(`Unknown QR: ${preview}`, "error");
         return;
       }
 

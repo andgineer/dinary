@@ -32,7 +32,13 @@ export async function startScanning(readerId, onResult) {
   _scanner = new Html5Qrcode(readerId);
   await _scanner.start(
     { facingMode: "environment" },
-    { fps: 10, qrbox: { width: 250, height: 250 } },
+    {
+      fps: 10,
+      qrbox: (vw, vh) => {
+        const side = Math.floor(Math.min(vw, vh) * 0.8);
+        return { width: side, height: side };
+      },
+    },
     (text) => {
       stop();
       onResult(text);
