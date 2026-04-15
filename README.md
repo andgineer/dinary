@@ -32,7 +32,7 @@ See [Google Sheets Setup](https://andgineer.github.io/dinary-server/google-sheet
 ### Run tests
 
 ```bash
-uv run pytest tests/ -v
+inv test
 ```
 
 ### Pre-commit hooks

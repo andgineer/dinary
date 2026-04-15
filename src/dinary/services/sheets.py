@@ -158,11 +158,13 @@ def _create_month_rows(
     all_values: list[list[str]],
     target: date,
 ) -> None:
-    """Create rows for a new month by copying the previous month's rows.
+    """Create rows for a new month by inserting after the header.
 
-    Uses CopyPaste API to preserve formulas in C (EUR auto-calc) and
-    G (month from date).  Then clears amounts (B), comments (F), rate (H),
-    and sets the new date (A).
+    1. Find the previous month's rows as a template.
+    2. Insert blank rows right after the header (row 2).
+    3. CopyPaste the template into the new rows (source indices are
+       shifted down by num_rows because of the insert).
+    4. Clear amounts (B), comments (F), rate (H) and set the new date (A).
     """
     target_month = target.month
     prev_month = target_month - 1 if target_month > 1 else 12
@@ -173,22 +175,34 @@ def _create_month_rows(
 
     src_start, src_end = src
     num_rows = src_end - src_start + 1
-    dest_start = len(all_values) + 1
-
-    ws.add_rows(num_rows)
+    dest_start = HEADER_ROWS + 1  # row 2 (right after header)
 
     sheet_id = ws.id
     num_cols = len(all_values[0]) if all_values else COL_RATE_EUR
+
+    # After insertDimension the source rows shift down by num_rows
+    shifted_src_start = src_start + num_rows
 
     ws.spreadsheet.batch_update(
         {
             "requests": [
                 {
+                    "insertDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": HEADER_ROWS,
+                            "endIndex": HEADER_ROWS + num_rows,
+                        },
+                        "inheritFromBefore": False,
+                    },
+                },
+                {
                     "copyPaste": {
                         "source": {
                             "sheetId": sheet_id,
-                            "startRowIndex": src_start - 1,
-                            "endRowIndex": src_end,
+                            "startRowIndex": shifted_src_start - 1,
+                            "endRowIndex": shifted_src_start - 1 + num_rows,
                             "startColumnIndex": 0,
                             "endColumnIndex": num_cols,
                         },
@@ -220,7 +234,7 @@ def _create_month_rows(
         )
     ws.batch_update(batch, value_input_option=ValueInputOption.user_entered)
 
-    logger.info("Created %d rows for month %d", num_rows, target_month)
+    logger.info("Created %d rows for month %d at top", num_rows, target_month)
 
 
 def _resolve_row(  # noqa: PLR0913
@@ -310,6 +324,8 @@ async def write_expense(
     target_month = expense_date.month
 
     target_row = _resolve_row(ws, all_values, target_month, category, group, expense_date)
+
+    all_values = ws.get_all_values()
     row_data = all_values[target_row - 1]
 
     rate = await _ensure_rate(ws, all_values, target_month, expense_date)

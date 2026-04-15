@@ -188,6 +188,7 @@ MkDocs-based documentation in English and Russian:
 ## Step 3: Testing and Validation
 
 - **Backend tests**: pytest tests for each endpoint (mock gspread and httpx for external calls). Test auto-month creation logic. Test QR parser against a saved sample HTML page. Run `inv pre` (ruff, pyrefly) and `uv run pytest` after every change.
+- **PWA tests**: vitest tests for offline queue and no-data-loss guarantees (expense always saved to IndexedDB before network call, removed only after confirmed 200, survives server errors/timeouts). Run `npm test`.
 - **Manual E2E test**: deploy backend, open PWA on phone, scan a real receipt QR code, verify amount + date appear, pick category, submit, check Google Sheets row is created.
 - **Offline test**: turn off Wi-Fi, submit an entry, verify it is queued locally, turn Wi-Fi back on, verify it syncs.
 

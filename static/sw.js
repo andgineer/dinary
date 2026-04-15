@@ -1,4 +1,4 @@
-const CACHE_NAME = "dinary-v18";
+const CACHE_NAME = "dinary-v22";
 const ASSETS = [
   "/",
   "/css/style.css",
@@ -33,21 +33,22 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
-  // API calls: network only (offline queue handles failures in the app)
   if (url.pathname.startsWith("/api/")) {
     return;
   }
 
-  // Static assets: cache-first, then network
+  // Cache-first for all static assets; cache updated on install via CACHE_NAME bump
   event.respondWith(
     caches.match(event.request).then(
-      (cached) => cached || fetch(event.request).then((resp) => {
-        if (resp.ok) {
-          const clone = resp.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
-        return resp;
-      }),
+      (cached) =>
+        cached ||
+        fetch(event.request).then((resp) => {
+          if (resp.ok) {
+            const clone = resp.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return resp;
+        }),
     ),
   );
 });

@@ -5,8 +5,9 @@ import sys
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from dinary import __version__
 from dinary.api import categories, expenses, qr
@@ -43,6 +44,15 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     def health() -> dict:
         return {"status": "ok", "version": __version__}
+
+    class NoCacheSW(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):  # noqa: ANN001
+            response: Response = await call_next(request)
+            if request.url.path == "/sw.js":
+                response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            return response
+
+    app.add_middleware(NoCacheSW)
 
     if STATIC_DIR.is_dir():
         app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

@@ -63,6 +63,7 @@ async function flushQueue() {
   if (_flushing) return;
   _flushing = true;
 
+  let sent = 0;
   const items = await getAll();
   for (const item of items) {
     try {
@@ -75,6 +76,7 @@ async function flushQueue() {
         date: item.date,
       });
       await remove(item.id);
+      sent++;
     } catch (e) {
       if (e.message && (e.message.includes("401") || e.message.includes("302"))) {
         showToast("Session expired — please re-open the app to log in", "error");
@@ -82,6 +84,15 @@ async function flushQueue() {
       }
       console.warn("Flush failed for item", item.id, e);
       break;
+    }
+  }
+
+  if (sent > 0) {
+    const remaining = await count();
+    if (remaining === 0) {
+      showToast(`Sent ${sent} expense${sent > 1 ? "s" : ""}`, "success");
+    } else {
+      showToast(`Sent ${sent}, ${remaining} still queued`, "info");
     }
   }
 
@@ -111,29 +122,18 @@ async function submitExpense() {
   const btn = $("#save-btn");
   btn.disabled = true;
 
+  // Always save to queue first — guarantees no data loss
+  await enqueue(entry);
+  await updateQueueBadge();
+  resetForm();
+  btn.disabled = false;
+
   if (!navigator.onLine) {
-    await enqueue(entry);
     showToast("Saved offline — will sync when connected", "info");
-    resetForm();
-    btn.disabled = false;
-    await updateQueueBadge();
     return;
   }
 
-  try {
-    const result = await postExpense(entry);
-    showToast(
-      `${result.amount_rsd} RSD → ${result.category} (total: ${result.new_total_rsd})`,
-      "success",
-    );
-    resetForm();
-  } catch {
-    await enqueue(entry);
-    showToast("Server error — entry queued for retry", "error");
-    await updateQueueBadge();
-  }
-
-  btn.disabled = false;
+  await flushQueue();
 }
 
 function resetForm() {

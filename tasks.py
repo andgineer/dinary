@@ -185,6 +185,13 @@ def uv(c: Context):
 
 
 @task
+def test(c):
+    """Run all tests (Python + JavaScript)."""
+    c.run("uv run pytest tests/ -v")
+    c.run("npm test")
+
+
+@task
 def pre(c):
     """Run pre-commit checks."""
     c.run("pre-commit run --verbose --all-files")

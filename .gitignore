@@ -19,3 +19,4 @@ allure-results/
 dist/
 credentials.json
 .env
+node_modules/

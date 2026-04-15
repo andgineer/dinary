@@ -277,27 +277,36 @@ class TestWriteExpense:
 
 class TestCreateMonthRows:
     @patch("dinary.services.sheets._get_sheet")
-    def test_uses_copy_paste_api(self, mock_get_sheet):
+    def test_inserts_at_top_with_copy_paste(self, mock_get_sheet):
         from dinary.services.sheets import _create_month_rows
 
         ws = _make_worksheet([row[:] for row in SAMPLE_SHEET])
 
         _create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 1))
 
-        ws.add_rows.assert_called_once_with(4)
         ws.spreadsheet.batch_update.assert_called_once()
+        requests = ws.spreadsheet.batch_update.call_args[0][0]["requests"]
+        assert len(requests) == 2
 
-        request = ws.spreadsheet.batch_update.call_args[0][0]["requests"][0]
-        cp = request["copyPaste"]
-        assert cp["source"]["startRowIndex"] == 1
-        assert cp["source"]["endRowIndex"] == 5
-        assert cp["destination"]["startRowIndex"] == 8
+        insert = requests[0]["insertDimension"]["range"]
+        assert insert["startIndex"] == 1  # after header
+        assert insert["endIndex"] == 5  # 4 Apr rows
+
+        cp = requests[1]["copyPaste"]
+        # Source shifted down by 4 (num_rows): Apr was rows 2-5, now 6-9
+        assert cp["source"]["startRowIndex"] == 5  # row 6, 0-indexed
+        assert cp["source"]["endRowIndex"] == 9
+        # Destination is right after header
+        assert cp["destination"]["startRowIndex"] == 1
+        assert cp["destination"]["endRowIndex"] == 5
 
         ws.batch_update.assert_called_once()
         batch_data = ws.batch_update.call_args[0][0]
         a_updates = [d for d in batch_data if d["range"].startswith("A")]
         assert len(a_updates) == 4
         assert a_updates[0]["values"] == [["2026-05-01"]]
+        # New rows start at row 2
+        assert a_updates[0]["range"] == "A2"
 
     @patch("dinary.services.sheets._get_sheet")
     def test_no_previous_month_raises(self, mock_get_sheet):
