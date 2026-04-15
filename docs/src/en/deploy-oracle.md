@@ -22,7 +22,7 @@ Oracle Cloud Always Free tier provides permanent VMs — enough to run dinary-se
 
 ## Prerequisites
 
-- A Google service account JSON key and spreadsheet ID — see [Google Sheets Setup](google-sheets-setup.md).
+- A Google service account JSON key at `~/.config/gspread/service_account.json` — see [Google Sheets Setup](google-sheets-setup.md).
 - An SSH key pair for connecting to the VM.
 
 ## 1. Create an account
@@ -79,165 +79,78 @@ Oracle VMs need a Virtual Cloud Network (VCN) with a public subnet and internet 
 !!! tip "ARM alternative"
     If ARM capacity is available, you can choose `Canonical Ubuntu 22.04 Minimal aarch64` + shape `VM.Standard.A1.Flex` (1 OCPU, 6 GB RAM). More RAM allows running Docker if desired. The rest of the setup is the same.
 
-## 4. Connect to the VM
+## 4. Configure .env
+
+After the VM is created, copy the public IP from the Oracle dashboard and configure `.env` on the laptop:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+
+```
+DINARY_GOOGLE_SHEETS_SPREADSHEET_ID=your-spreadsheet-id
+DINARY_DEPLOY_HOST=ubuntu@<PUBLIC_IP>
+# DINARY_TUNNEL=tailscale  # tailscale (default) | cloudflare | none
+```
+
+Verify SSH access:
 
 ```bash
 ssh ubuntu@<PUBLIC_IP>
 ```
 
-## 5. Open firewall ports
+## 5. Setup
 
-!!! tip
-    **Using Cloudflare Tunnel or Tailscale Funnel?** Skip this entire step — the tunnel connects outbound, so no inbound ports need to be opened.
-
-If you need direct access to port 8000, open it in both Oracle firewalls:
-
-### VCN Security List
-
-1. Go to **Networking** → **Virtual Cloud Networks** → your VCN → **Security Lists**.
-2. Add an ingress rule: Source `0.0.0.0/0`, Protocol TCP, Destination Port `8000`.
-
-### OS Firewall
+From your laptop, in the dinary-server repo:
 
 ```bash
-sudo iptables -I INPUT -p tcp --dport 8000 -j ACCEPT
-sudo netfilter-persistent save
+inv setup
 ```
 
-## 6. Upload Google service account key
+This single command performs everything on the VM via SSH:
 
-Run this **on your laptop** (not on the VM) to copy the key file to the server:
+- Installs system packages (python3, git)
+- Installs uv (Python package manager)
+- Clones the repo and installs dependencies
+- Uploads `~/.config/gspread/service_account.json` to the VM
+- Creates and starts a `dinary` systemd service
+- Sets up the tunnel (Tailscale by default, or Cloudflare — depending on `DINARY_TUNNEL`)
 
-```bash
-scp ~/.config/gspread/service_account.json ubuntu@<PUBLIC_IP>:~/credentials.json
-```
+### Tailscale (default)
 
-See [Google Sheets Setup](google-sheets-setup.md) if you don't have the key file yet.
+During setup, `tailscale up` prints a URL — open it in your browser to log in (create a free account if needed).
 
-## 7. Install Python and dinary-server
-
-Run these commands **on the VM** (SSH session):
-
-```bash
-sudo apt update && sudo apt install -y python3 python3-pip git
-
-# Install uv (fast Python package manager)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
-
-# Clone and install
-git clone https://github.com/andgineer/dinary-server.git
-cd dinary-server
-uv sync --no-dev
-
-# Move the credentials file into the project directory
-mv ~/credentials.json .
-```
-
-## 8. Run as a systemd service
-
-Create a service file so dinary-server starts automatically and restarts on failure:
-
-```bash
-sudo tee /etc/systemd/system/dinary.service << 'EOF'
-[Unit]
-Description=dinary-server
-After=network.target
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/dinary-server
-Environment=DINARY_GOOGLE_SHEETS_SPREADSHEET_ID=your-spreadsheet-id
-ExecStart=/home/ubuntu/.local/bin/uv run uvicorn dinary.main:app --host 0.0.0.0 --port 8000
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-Replace `your-spreadsheet-id` with your actual Google Sheets spreadsheet ID (the long string from the sheet URL).
-
-Enable and start:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable dinary
-sudo systemctl start dinary
-```
-
-Verify (wait 10-20 seconds for the first start — uv downloads dependencies on initial launch):
-
-```bash
-curl http://localhost:8000/api/health
-```
-
-## 9. Set up Tailscale Funnel (HTTPS access)
-
-Tailscale Funnel exposes dinary-server to the internet over HTTPS without opening firewall ports or buying a domain.
-
-### Install Tailscale on the VM
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-```
-
-This prints a URL — open it in your browser to log in to Tailscale (create a free account if you don't have one).
-
-### Enable HTTPS and Funnel
-
-In the [Tailscale admin console](https://login.tailscale.com/admin/dns):
+After login, enable Funnel in the [admin console](https://login.tailscale.com/admin/dns):
 
 1. Enable **MagicDNS** (if not already enabled).
 2. Enable **HTTPS** for your tailnet.
 
-### Start Funnel
-
-```bash
-sudo tailscale funnel 8000
-```
-
-Tailscale prints the public URL, e.g. `https://instance-20260414.tail1234.ts.net`. This URL is accessible from anywhere (your phone, other devices) over HTTPS.
-
 !!! warning "First launch: wait up to 10 minutes"
-    On first launch, Tailscale provisions a TLS certificate and propagates DNS. The URL may return `ERR_SSL_PROTOCOL_ERROR` for several minutes. Wait and retry — it will start working.
+    On first launch, Tailscale provisions a TLS certificate and propagates DNS. The URL may return `ERR_SSL_PROTOCOL_ERROR` for several minutes. Wait and retry.
 
-### Run Funnel as a service
+### Cloudflare
 
-To keep Funnel running after you close the SSH session:
+Set `DINARY_TUNNEL=cloudflare` in `.env` before running `inv setup`. During setup, `cloudflared tunnel login` will prompt you to authenticate in the browser. Requires a domain managed by Cloudflare DNS — see [Cloudflare Tunnel & Access](cloudflare-setup.md).
+
+### No tunnel
+
+Set `DINARY_TUNNEL=none` to skip tunnel setup. You'll need to open firewall ports manually:
+
+**VCN Security List**: add ingress rule — Source `0.0.0.0/0`, Protocol TCP, Port `8000`.
+
+**OS firewall**:
 
 ```bash
-sudo tee /etc/systemd/system/tailscale-funnel.service << 'EOF'
-[Unit]
-Description=Tailscale Funnel for dinary
-After=tailscaled.service
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/tailscale funnel 8000
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable tailscale-funnel
-sudo systemctl start tailscale-funnel
+ssh ubuntu@<PUBLIC_IP> 'sudo iptables -I INPUT -p tcp --dport 8000 -j ACCEPT && sudo netfilter-persistent save'
 ```
-
-Verify: open `https://<your-machine>.ts.net/api/health` in your phone's browser.
-
-!!! tip "Alternative: Cloudflare Tunnel"
-    If you have a domain on Cloudflare DNS, you can use [Cloudflare Tunnel & Access](cloudflare-setup.md) instead — it provides a custom domain and email-based authentication. Requires migrating your domain's DNS to Cloudflare (full setup, free).
 
 ## Maintenance
 
-- **Logs**: `sudo journalctl -u dinary -f`
-- **Update**: `cd ~/dinary-server && git pull && uv sync --no-dev && sudo systemctl restart dinary`
-- **Restart**: `sudo systemctl restart dinary`
-- **Status**: `sudo systemctl status dinary`
+| Command | What it does |
+|---------|-------------|
+| `inv deploy` | Pull latest code, sync deps, restart service |
+| `inv status` | Show dinary and tunnel service status |
+| `inv logs` | Tail dinary server logs |
+| `inv setup` | Full re-setup (safe to re-run) |

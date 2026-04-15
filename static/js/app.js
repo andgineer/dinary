@@ -184,6 +184,14 @@ function updateOnlineStatus() {
   }
 }
 
+function startRetryTimer() {
+  setInterval(async () => {
+    if (navigator.onLine && (await count()) > 0) {
+      flushQueue();
+    }
+  }, 30_000);
+}
+
 async function init() {
   $("#date").value = today();
 
@@ -207,6 +215,7 @@ async function init() {
   updateOnlineStatus();
 
   await updateQueueBadge();
+  startRetryTimer();
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});

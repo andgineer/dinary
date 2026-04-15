@@ -145,6 +145,34 @@ class TestWriteExpense:
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
     @patch("dinary.services.sheets._get_sheet")
+    async def test_appends_to_plain_number(self, mock_get_sheet, mock_rate):
+        """Cell with a plain number (not formula) should become =number+amount."""
+        from dinary.services.sheets import write_expense
+
+        mock_rate.return_value = Decimal("117.32")
+
+        ws = MagicMock()
+        mock_get_sheet.return_value.sheet1 = ws
+        ws.get_all_values.return_value = list(SAMPLE_SHEET)
+
+        mock_cell = MagicMock()
+        mock_cell.value = 500
+        ws.acell.return_value = mock_cell
+
+        await write_expense(
+            amount_rsd=300.0,
+            category="Food",
+            group="Essentials",
+            comment="",
+            expense_date=date(2026, 4, 14),
+        )
+
+        call_kwargs = ws.update.call_args.kwargs
+        assert call_kwargs["values"] == [["=500+300"]]
+
+    @pytest.mark.anyio
+    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
+    @patch("dinary.services.sheets._get_sheet")
     async def test_uses_existing_rate(self, mock_get_sheet, mock_rate):
         from dinary.services.sheets import write_expense
 
@@ -168,6 +196,35 @@ class TestWriteExpense:
         )
 
         mock_rate.assert_not_called()
+
+    @pytest.mark.anyio
+    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
+    @patch("dinary.services.sheets._get_sheet")
+    async def test_rate_written_to_first_row_of_month(self, mock_get_sheet, mock_rate):
+        """EUR rate should be written to the first row of the month, not the expense row."""
+        from dinary.services.sheets import write_expense
+
+        mock_rate.return_value = Decimal("117.32")
+
+        ws = MagicMock()
+        mock_get_sheet.return_value.sheet1 = ws
+        ws.get_all_values.return_value = list(SAMPLE_SHEET)
+
+        mock_cell = MagicMock()
+        mock_cell.value = ""
+        ws.acell.return_value = mock_cell
+
+        await write_expense(
+            amount_rsd=500.0,
+            category="Cinema",
+            group="Entertainment",
+            comment="",
+            expense_date=date(2026, 4, 14),
+        )
+
+        rate_calls = [c for c in ws.update_cell.call_args_list if c[0][1] == 8]
+        assert len(rate_calls) == 1
+        assert rate_calls[0][0][0] == 2, "Rate should be at row 2 (first Apr row)"
 
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)

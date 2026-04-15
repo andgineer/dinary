@@ -19,7 +19,7 @@ _GSPREAD_DEFAULT = Path.home() / ".config" / "gspread" / "service_account.json"
 
 
 class Settings(BaseSettings):
-    model_config = {"env_prefix": "DINARY_", "env_file": ".env"}
+    model_config = {"env_prefix": "DINARY_", "env_file": ".env", "extra": "ignore"}
 
     google_sheets_credentials_path: Path = _GSPREAD_DEFAULT
     google_sheets_spreadsheet_id: str = ""

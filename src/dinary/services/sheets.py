@@ -250,7 +250,6 @@ async def _ensure_rate(
     ws: gspread.Worksheet,
     all_values: list[list[str]],
     target_month: int,
-    target_row: int,
     expense_date: date,
 ) -> Decimal:
     """Return the EUR/RSD rate for the month, fetching and storing it if absent."""
@@ -259,20 +258,26 @@ async def _ensure_rate(
         return Decimal(rate_str.replace(",", "."))
 
     rate = await fetch_eur_rsd_rate(expense_date.replace(day=1))
-    ws.update_cell(target_row, COL_RATE_EUR, str(rate))
-    logger.info("Wrote EUR/RSD rate %s for month %d", rate, target_month)
+    month_range = _find_month_range(all_values, target_month)
+    rate_row = month_range[0] if month_range else HEADER_ROWS + 1
+    ws.update_cell(rate_row, COL_RATE_EUR, str(rate))
+    logger.info("Wrote EUR/RSD rate %s for month %d at row %d", rate, target_month, rate_row)
     return rate
 
 
 def _append_to_rsd_formula(ws: gspread.Worksheet, row: int, amount_rsd: float) -> None:
     """Append +amount to the formula in column B (e.g. =460+373 → =460+373+1500)."""
     rsd_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_RSD)
-    existing = ws.acell(rsd_addr, value_render_option=ValueRenderOption.formula).value
+    raw = ws.acell(rsd_addr, value_render_option=ValueRenderOption.formula).value
+    existing = str(raw) if raw is not None else ""
 
     amount_str = _fmt_amount(amount_rsd)
-    formula = (
-        f"{existing}+{amount_str}" if existing and existing.startswith("=") else f"={amount_str}"
-    )
+    if existing.startswith("="):
+        formula = f"{existing}+{amount_str}"
+    elif existing and _is_numeric(existing):
+        formula = f"={existing}+{amount_str}"
+    else:
+        formula = f"={amount_str}"
 
     ws.update(
         range_name=rsd_addr,
@@ -307,7 +312,7 @@ async def write_expense(
     target_row = _resolve_row(ws, all_values, target_month, category, group, expense_date)
     row_data = all_values[target_row - 1]
 
-    rate = await _ensure_rate(ws, all_values, target_month, target_row, expense_date)
+    rate = await _ensure_rate(ws, all_values, target_month, expense_date)
     _append_to_rsd_formula(ws, target_row, amount_rsd)
 
     if comment:

@@ -1,4 +1,4 @@
-const CACHE_NAME = "dinary-v4";
+const CACHE_NAME = "dinary-v5";
 const ASSETS = [
   "/",
   "/css/style.css",

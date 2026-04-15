@@ -51,6 +51,19 @@ For a list of available scripts run:
 
     invoke --list
 
+### Deploy to Oracle Cloud
+
+Configure `.env` (see `.env.example`), then:
+
+```bash
+inv setup    # one-time: install deps, clone, create systemd services, upload creds
+inv deploy   # pull latest code and restart
+inv status   # check service status
+inv logs     # tail server logs
+```
+
+See [Oracle Cloud deployment guide](https://andgineer.github.io/dinary-server/deploy-oracle/) for details.
+
 ## Reports
 
 * [Allure test report](https://andgineer.github.io/dinary-server/builds/tests/)
