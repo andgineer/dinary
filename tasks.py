@@ -108,8 +108,8 @@ def _setup_tailscale(c):
     _ssh(c, "command -v tailscale || curl -fsSL https://tailscale.com/install.sh | sh")
     _ssh_sudo(c, "tailscale up")
 
-    print("=== Enabling Tailscale Funnel ===")
-    _ssh_sudo(c, "tailscale funnel --bg 8000")
+    print("=== Enabling Tailscale Serve (tailnet only) ===")
+    _ssh_sudo(c, "tailscale serve reset 2>/dev/null; tailscale funnel reset 2>/dev/null; tailscale serve --bg 8000")
 
 
 def _setup_cloudflare(c):
@@ -259,7 +259,7 @@ def status(c):
     tunnel = _tunnel()
     _ssh_sudo(c, "systemctl status dinary --no-pager")
     if tunnel == "tailscale":
-        _ssh(c, "tailscale funnel status")
+        _ssh(c, "tailscale serve status")
     elif tunnel == "cloudflare":
         _ssh_sudo(c, "systemctl status cloudflared --no-pager")
 

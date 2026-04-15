@@ -168,22 +168,7 @@ async function handleQrScan() {
     await startScanning(video, (text) => {
       video.style.display = "none";
       btn.textContent = "Scan QR";
-
-      if (!text.includes("suf.purs.gov.rs")) {
-        const preview = text.length > 80 ? text.slice(0, 80) + "…" : text;
-        showToast(`Not a fiscal QR: ${preview}`, "error");
-        return;
-      }
-
-      try {
-        const parsed = parseReceiptUrl(text);
-        $("#amount").value = parsed.amount;
-        $("#date").value = parsed.date;
-        showToast(`Receipt: ${parsed.amount} RSD, ${parsed.date}`, "success");
-        $("#group").focus();
-      } catch {
-        showToast("Could not read receipt", "error");
-      }
+      handleQrResult(text);
     });
   } catch (e) {
     showToast(e.message || "Camera failed", "error");
@@ -192,6 +177,22 @@ async function handleQrScan() {
   }
 }
 
+function handleQrResult(text) {
+  if (!text.includes("suf.purs.gov.rs")) {
+    const preview = text.length > 80 ? text.slice(0, 80) + "…" : text;
+    showToast(`Not a fiscal QR: ${preview}`, "error");
+    return;
+  }
+  try {
+    const parsed = parseReceiptUrl(text);
+    $("#amount").value = parsed.amount;
+    $("#date").value = parsed.date;
+    showToast(`Receipt: ${parsed.amount} RSD, ${parsed.date}`, "success");
+    $("#group").focus();
+  } catch {
+    showToast("Could not read receipt", "error");
+  }
+}
 
 function formatQueueItem(item) {
   const parts = [`${item.amount} RSD`, item.category];
