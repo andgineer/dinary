@@ -16,6 +16,7 @@ class ExpenseRequest(BaseModel):
     amount: float = Field(gt=0)
     currency: str = Field(default="RSD", pattern="^(RSD|EUR)$")
     category: str
+    group: str = ""
     comment: str = ""
     date: date
 
@@ -30,14 +31,17 @@ class ExpenseResponse(BaseModel):
 
 @router.post("/api/expenses", response_model=ExpenseResponse)
 async def create_expense(req: ExpenseRequest) -> ExpenseResponse:
-    group = sheets.group_for_category(req.category)
-    if group is None:
-        raise HTTPException(status_code=400, detail=f"Unknown category: {req.category}")
+    if not sheets.validate_category(req.category, req.group):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown category: {req.category} / {req.group}",
+        )
 
     try:
         result = await sheets.write_expense(
             amount_rsd=req.amount,
             category=req.category,
+            group=req.group,
             comment=req.comment,
             expense_date=req.date,
         )

@@ -16,7 +16,6 @@ Dinary-server — бэкенд на FastAPI, который:
 1. [Настройте Google Sheets](google-sheets-setup.md) — создайте сервисный аккаунт и таблицу.
 2. Разверните сервер:
       - [Oracle Cloud Free Tier](deploy-oracle.md) — $0/месяц навсегда
-      - [Render](deploy-render.md) — $0-7/месяц
-      - [Railway](deploy-railway.md) — $5/месяц
-3. Настройте [Cloudflare Tunnel и Access](cloudflare-setup.md) для HTTPS и аутентификации.
+      - [Свой компьютер](deploy-selfhost.md) — $0 (Tailscale Funnel или Cloudflare Tunnel)
+3. Настройте HTTPS-доступ — см. инструкции по деплою выше.
 4. [Установите PWA](pwa-install.md) на телефон.

@@ -3,7 +3,13 @@
  */
 
 import { postExpense, parseQr } from "./api.js";
-import { loadCategories, groupFor, populateDropdown } from "./categories.js";
+import {
+  loadCategories,
+  getLastError,
+  populateGroupDropdown,
+  populateCategoryDropdown,
+  selectDefaults,
+} from "./categories.js";
 import { enqueue, getAll, remove, count } from "./offline-queue.js";
 import { startScanning, stop as stopScanner } from "./qr-scanner.js";
 
@@ -44,6 +50,7 @@ async function flushQueue() {
         amount: item.amount,
         currency: item.currency || "RSD",
         category: item.category,
+        group: item.group || "",
         comment: item.comment || "",
         date: item.date,
       });
@@ -64,6 +71,7 @@ async function flushQueue() {
 
 async function submitExpense() {
   const amount = parseFloat($("#amount").value);
+  const group = $("#group").value;
   const category = $("#category").value;
   const comment = $("#comment").value.trim();
   const date = $("#date").value;
@@ -77,7 +85,7 @@ async function submitExpense() {
     return;
   }
 
-  const entry = { amount, currency: "RSD", category, comment, date };
+  const entry = { amount, currency: "RSD", category, group, comment, date };
 
   const btn = $("#save-btn");
   btn.disabled = true;
@@ -109,10 +117,9 @@ async function submitExpense() {
 
 function resetForm() {
   $("#amount").value = "";
-  $("#category").value = "";
-  $("#group-display").textContent = "";
   $("#comment").value = "";
   $("#date").value = today();
+  selectDefaults($("#group"), $("#category"));
   $("#amount").focus();
 }
 
@@ -151,14 +158,14 @@ async function handleQrScan() {
         $("#amount").value = result.amount;
         $("#date").value = result.date;
         showToast(`Receipt: ${result.amount} RSD, ${result.date}`, "success");
-        $("#category").focus();
+        $("#group").focus();
       } catch {
         showToast("Could not read receipt — try manual entry", "error");
       }
       btn.disabled = false;
     });
-  } catch {
-    showToast("Camera access failed", "error");
+  } catch (e) {
+    showToast(e.message || "Camera access failed", "error");
     reader.style.display = "none";
     btn.textContent = "Scan QR";
   }
@@ -180,15 +187,16 @@ function updateOnlineStatus() {
 async function init() {
   $("#date").value = today();
 
-  try {
-    await loadCategories();
-    populateDropdown($("#category"));
-  } catch {
-    showToast("Could not load categories", "error");
+  await loadCategories();
+  const catErr = getLastError();
+  if (catErr) {
+    showToast(`Categories: ${catErr.message}`, "error");
   }
+  populateGroupDropdown($("#group"));
+  selectDefaults($("#group"), $("#category"));
 
-  $("#category").addEventListener("change", (e) => {
-    $("#group-display").textContent = groupFor(e.target.value);
+  $("#group").addEventListener("change", (e) => {
+    populateCategoryDropdown($("#category"), e.target.value);
   });
 
   $("#save-btn").addEventListener("click", submitExpense);

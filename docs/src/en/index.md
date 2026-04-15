@@ -16,9 +16,8 @@ Dinary-server is a FastAPI backend that:
 1. [Set up Google Sheets](google-sheets-setup.md) — create a service account and spreadsheet.
 2. Deploy the server:
       - [Oracle Cloud Free Tier](deploy-oracle.md) — $0/month forever
-      - [Render](deploy-render.md) — $0-7/month
-      - [Railway](deploy-railway.md) — $5/month
-3. Set up [Cloudflare Tunnel & Access](cloudflare-setup.md) for HTTPS and authentication.
+      - [Your own computer](deploy-selfhost.md) — $0 (Tailscale Funnel or Cloudflare Tunnel)
+3. Set up HTTPS access — see deployment guides above.
 4. [Install the PWA](pwa-install.md) on your phone.
 
 !!! info "About"

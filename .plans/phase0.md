@@ -2,8 +2,8 @@
 
 ## Current State
 
-- **dinary-server** (`/Users/andrei_sorokin2/projects/dinary-server`): Python 3.13 scaffold with a placeholder Click CLI, Hatchling build, no HTTP server or business logic. 6 commits.
-- **dinary** (`/Users/andrei_sorokin2/projects/dinary`): Empty repo with only `README.md` and `.idea/`. 1 commit.
+- **dinary-server** (`/Users/andrei_sorokin2/projects/dinary-server`): FastAPI backend with Google Sheets integration, QR parser, PWA frontend, pytest suite (31 tests passing). Phase 0 backend is implemented.
+- **dinary** (`/Users/andrei_sorokin2/projects/dinary`): Empty repo with only `README.md` and `.idea/`. Not used in Phase 0.
 
 ---
 
@@ -11,14 +11,29 @@
 
 Before implementation, resolve the frontend tool choice. Applying the 7 must-have criteria from [architecture.md](architecture.md) to the non-disqualified candidates:
 
-- **Glide Apps** -- unclear offline support, unclear QR scanning, unclear custom REST API connectivity. Needs investigation but likely fails #1 or #6.
-- **Retool** -- "likely none" offline support (noted in own description). Probably fails #1.
-- **Appsmith** -- unclear offline, unclear QR scanning. Self-hostable is nice but unverified on must-haves.
+- **Glide Apps** -- has offline mode and Google Sheets backend, but can't write to our custom sheet format (month blocks, running totals). Would need a separate "input" sheet + processing. Limited free tier.
+- **Retool** -- no offline support. Fails #1.
+- **Appsmith** -- no real offline support. Fails #1.
 - **PWA (custom)** -- passes all 7: no app store (#0), offline via Service Workers + IndexedDB (#1), works on Android + iOS browsers (#2), full API control (#3), free (#4), no vendor dependency (#5), Camera API for QR (#6).
 
-**Recommendation:** Start with PWA. It is the only candidate that demonstrably passes all must-haves without further research. If a quick check of Glide/Appsmith reveals they also pass, the backend API is tool-agnostic and can serve any frontend.
+**Decision:** PWA. It is the only candidate that passes all must-haves. See `.plans/frontend-evaluation.md` for details.
 
-**Action:** Create a brief evaluation document in `.plans/frontend-evaluation.md` summarizing the decision before writing code.
+### Data reliability
+
+IndexedDB is reliable for **installed PWAs** (added to home screen):
+
+- iOS Safari's 7-day storage eviction applies only to non-installed sites, not to home-screen PWAs.
+- Android Chrome treats installed PWAs as first-class apps with persistent storage.
+- `navigator.storage.persist()` provides additional protection against eviction.
+- Data persists in IndexedDB until **confirmed synced** to the server.
+
+### Always-on server requirement
+
+The PWA on iOS cannot execute code in the background (no Background App Refresh, no Background Tasks). Sync only runs while the app is in the foreground. Therefore:
+
+- The server **must** respond within 1-2 seconds (while the user is still in the app after saving).
+- Sleeping/serverless hosting with 15-30 second cold starts is **not acceptable** — sync would fail before the server wakes up.
+- **Always-on hosting required**: Oracle Cloud Free Tier (AMD Micro or ARM) or self-hosted (Mac/PC + Tailscale Funnel / Cloudflare Tunnel).
 
 ---
 
@@ -26,7 +41,7 @@ Before implementation, resolve the frontend tool choice. Applying the 7 must-hav
 
 Replace the placeholder CLI with a FastAPI service. All backend work happens in **this repo** (`dinary-server`).
 
-**Why FastAPI rather than a serverless function:** The architecture doc describes the Phase 0 backend as "a lightweight backend (Python script or serverless function)". A serverless function (e.g., Google Cloud Function) would avoid infrastructure management but would need to be rewritten for Phase 1, which requires a persistent FastAPI server with DuckDB. Starting with FastAPI avoids throwaway work — it is lightweight enough for Phase 0 and carries forward directly into Phase 1.
+**Why FastAPI rather than a serverless function:** FastAPI carries forward into Phase 1 (DuckDB), Phase 4 (AI agent API). A serverless backend (Apps Script, Cloudflare Workers) would be a dead end — it cannot evolve into DuckDB storage or serve the desktop AI agent.
 
 ### 1.1 Project restructure
 
@@ -66,14 +81,12 @@ src/dinary/
 
 ### 1.3 QR receipt parser (`services/qr_parser.py`)
 
-Minimal parser for Phase 0 -- extracts only total and date from the SUF PURS page:
+Uses `sr-invoice-parser` to extract total and date from the SUF PURS page:
 
 - Input: URL from the QR code (e.g., `https://suf.purs.gov.rs/v/?vl=...`).
-- Fetch the HTML page with `httpx`.
-- Parse with `beautifulsoup4`: extract the total amount and receipt date from the page structure.
-- Return `{ "amount": 1234.56, "date": "2026-04-14" }`.
-- No line-item parsing, no store extraction.
-- **Check `sr-invoice-parser` first:** before writing a custom parser, evaluate the existing [Innovigo/sr-invoice-parser](https://github.com/Innovigo/sr-invoice-parser) library (referenced in the architecture doc). If it already exposes total + date fields, use it directly — this avoids duplicating parsing logic and provides a smooth upgrade path to Phase 2 (which needs line-item parsing from the same library). Fall back to a custom `beautifulsoup4` parser only if `sr-invoice-parser` is unsuitable (e.g., unmaintained, missing total/date extraction, or heavy dependencies).
+- Uses `sr-invoice-parser` which fetches and parses the page.
+- Returns `{ "amount": 1234.56, "date": "2026-04-14" }`.
+- No line-item parsing, no store extraction in Phase 0.
 
 ### 1.4 API endpoints
 
@@ -82,46 +95,38 @@ Minimal parser for Phase 0 -- extracts only total and date from the SUF PURS pag
 - **`GET /api/categories`** -- returns the list of categories with their groups, read from the sheet (cached).
 - **`GET /api/health`** -- basic health check.
 - No CORS middleware needed — the PWA is served by the same FastAPI instance (same origin), so all API calls are same-origin requests.
-- **Authentication via Cloudflare Access** (see section 1.7). No auth logic in the backend code itself — Cloudflare blocks unauthenticated requests before they reach FastAPI. The backend has no API key, no auth middleware, no token validation. This is the simplest approach and keeps the PWA secret-free.
+- **Authentication via Cloudflare Access or Tailscale** (see section 1.7). No auth logic in the backend code itself.
 
 ### 1.5 Logging
 
-Structured logging to stdout via Python `logging` (JSON format for production). All API errors (Sheets write failures, SUF PURS fetch errors, malformed QR URLs) are logged with context. In Docker, logs are captured by `docker logs`. HTTP error responses include a meaningful `detail` message that the PWA can display to the user (e.g., "Google Sheets write failed, entry queued for retry").
+Structured logging to stdout via Python `logging` (JSON format for production). All API errors (Sheets write failures, SUF PURS fetch errors, malformed QR URLs) are logged with context. HTTP error responses include a meaningful `detail` message that the PWA can display to the user.
 
 ### 1.6 Configuration
 
-- `config.py` using Pydantic Settings (env vars or `.env` file):
-  - `GOOGLE_SHEETS_CREDENTIALS_PATH` -- path to service account JSON
-  - `GOOGLE_SHEETS_SPREADSHEET_ID` -- the sheet ID
+- `config.py` using Pydantic Settings (env vars with `DINARY_` prefix):
+  - `DINARY_GOOGLE_SHEETS_CREDENTIALS_PATH` -- path to service account JSON
+  - `DINARY_GOOGLE_SHEETS_SPREADSHEET_ID` -- the sheet ID
 
 ### 1.7 Authentication & Deployment
 
-**Authentication:** Cloudflare Access (free tier, up to 50 users). Both the backend API and the PWA static files are served behind Cloudflare Tunnel. Cloudflare Access is configured with a policy allowing the user's email. The flow:
+**Authentication options:**
 
-1. User opens the PWA URL on their phone.
-2. Cloudflare checks for a valid `CF_Authorization` session cookie.
-3. If no cookie — Cloudflare shows a login page (email OTP or Google OAuth). User authenticates once.
-4. Cloudflare sets a session cookie (configurable duration, e.g., 30 days) and forwards the request.
-5. All subsequent PWA requests (page loads and API calls) pass through with the cookie. No login needed until the session expires.
+- **Cloudflare Access** (free tier, up to 50 users) — if using Cloudflare Tunnel for HTTPS.
+- **Tailscale Funnel** — URL is not publicly discoverable; optionally add a simple bearer token check.
+- Both approaches keep the backend auth-free — authentication is handled at the infrastructure layer.
 
-The backend has zero auth code — no API key validation, no middleware, no token logic. Cloudflare strips unauthenticated traffic before it reaches FastAPI. The PWA has zero secrets — no config.json with API keys, no stored tokens. Authentication is handled entirely at the infrastructure layer.
+**Deployment options (all free, always-on):**
 
-**Offline queue edge case:** if the Cloudflare Access session expires while the device is offline, queued entries will get a 302/401 on the first sync attempt. The PWA detects this and prompts the user to re-authenticate (open the app in the browser to trigger the Cloudflare login flow), after which the queue flushes normally.
+- **Oracle Cloud Free Tier** — AMD Micro VM (1 OCPU, 1 GB RAM, always available) or ARM A1 (if capacity exists). Run with `uvicorn` as a systemd service (no Docker — saves RAM on 1 GB instances). Docker is available for local development.
+- **Self-hosted (Mac/PC)** — run locally, expose via Tailscale Funnel or Cloudflare Tunnel. Aligns with Phase 4 architecture (desktop AI agent on the same machine).
 
-**Fallback if Cloudflare is undesirable:** replace with API key auth (key entered once in the PWA, stored in localStorage) or `oauth2-proxy` (self-hosted). No backend code changes needed — just swap what sits in front of uvicorn. Lock-in is shallow: Cloudflare is a deployment choice, not an application dependency.
-
-**Deployment:**
-
-- Dockerfile + docker-compose for easy deployment on Oracle Cloud Free Tier or any VPS.
-- Backend runs with `uvicorn` behind Cloudflare Tunnel.
-- PWA static files are served by the backend itself (FastAPI `StaticFiles` mount at `/`, source in `static/`). Single Tunnel covers both API and PWA.
-- Deployment manual in `docs/setup.md`.
+**PWA serving:** FastAPI `StaticFiles` mount at `/`, source in `static/`. Single tunnel covers both API and PWA.
 
 ---
 
 ## Step 2: Frontend -- PWA in dinary-server repo
 
-The PWA lives in this repo (`dinary-server`) since the backend serves it directly via FastAPI `StaticFiles`. No cross-repo deployment step, no build-time copying — the PWA source is right next to the backend code and ships in the same Docker image.
+The PWA lives in this repo (`dinary-server`) since the backend serves it directly via FastAPI `StaticFiles`. No cross-repo deployment step, no build-time copying — the PWA source is right next to the backend code.
 
 The `dinary` repo (`../dinary/`) remains for the future Rust desktop app and is not used in Phase 0.
 
@@ -146,47 +151,43 @@ dinary-server/
     icons/                     # PWA icons (192x192, 512x512)
   .plans/
     frontend-evaluation.md     # Tool evaluation summary + decision
-  docs/src/en/                   # MkDocs user manuals (English)
-    pwa-install.md             # How to install PWA on phone
-    cloudflare-setup.md        # Cloudflare Tunnel + Access setup
-    deploy-oracle.md           # Oracle Cloud Free Tier deployment
-    deploy-render.md           # Render deployment
-    deploy-railway.md          # Railway deployment
-  docs/src/ru/                   # MkDocs user manuals (Russian)
+  docs/src/en/                 # MkDocs user manuals (English)
+    pwa-install.md
+    cloudflare-setup.md
+    deploy-oracle.md
+    deploy-selfhost.md
+  docs/src/ru/                 # MkDocs user manuals (Russian)
 ```
-
-FastAPI mounts `static/` at `/` so `index.html` is served at the root URL. All API calls use relative URLs (e.g., `fetch("/api/expenses")`). Same origin — no CORS, no secrets, no config files. Authentication is handled by Cloudflare Access at the infrastructure layer — the PWA code is completely unaware of it.
 
 ### 2.2 PWA features
 
 - **Manual entry form**: amount (RSD, numeric keyboard) + category dropdown (grouped by group, ~33 items) + group (auto-filled, read-only) + optional comment + date (defaults to today). Single "Save" button.
-- **QR scan button**: opens camera via `html5-qrcode` library, scans the QR code, extracts URL, calls `POST /api/qr/parse`, pre-fills amount + date on the form. User picks category and submits.
-- **Offline queue and error resilience**: when offline, completed entries are stored in IndexedDB. A Service Worker (or the app itself on `online` event) flushes the queue to the backend when connectivity returns. If the backend returns an error on submission (e.g., Sheets API failure), the PWA treats it like an offline case and re-queues the entry for automatic retry. Visual indicator shows queued entries count. **Limitation: QR scanning requires connectivity** — the backend must fetch the receipt page from the SUF PURS government server, so QR scan is unavailable offline. Offline mode covers manual entry only. This is inherent to the design (receipt data lives on a government server) and is documented in the UI (QR button disabled with "requires internet" hint when offline).
-- **PWA install**: `manifest.json` enables "Add to Home Screen" on both Android and iOS Safari, providing an app-like experience without App Store publishing.
+- **QR scan with parallel processing**: when the user scans a QR code, the PWA simultaneously (a) sends the URL to the server for parsing and (b) shows the category selection form. While the user picks a category (2-5 seconds), the server response may arrive — if so, the amount and date are shown in the form as confirmation. If the response doesn't arrive (offline or slow), the user can still save with just the URL and category; the server extracts the amount during sync.
+- **Offline queue and error resilience**: when offline, completed entries are stored in IndexedDB. The PWA flushes the queue to the backend when connectivity returns (on `online` event or on app open). If the backend returns an error on submission, the PWA re-queues the entry for automatic retry. Visual indicator shows queued entries count and sync status per entry (`pending` → `syncing` → `synced`).
+- **PWA install**: `manifest.json` + `navigator.storage.persist()` enable reliable "Add to Home Screen" on both Android and iOS Safari.
 - **Mobile-first design**: large touch targets, minimal scrolling, optimized for one-handed phone use.
 
 ### 2.3 QR scanning
 
 - Use `html5-qrcode` (MIT license, widely used, works on Android Chrome and iOS Safari).
-- The library accesses the rear camera, decodes the QR code, and returns the URL string.
-- The URL is sent to the backend (`POST /api/qr/parse`), which does the actual fetching and parsing.
-- QR scanning requires HTTPS (browser camera API constraint). This is satisfied by the Cloudflare Tunnel deployment — all traffic is HTTPS by default.
+- The library accesses the rear camera, decodes the QR code, and returns the URL string. This step is **fully offline** (client-side image processing).
+- The URL is sent to the backend for parsing. If offline, the URL is saved with the entry and parsed during sync.
+- QR scanning requires HTTPS (browser camera API constraint). This is satisfied by Cloudflare Tunnel or Tailscale Funnel.
 
 ### 2.4 User manuals (`docs/src/en/`, `docs/src/ru/`)
 
 MkDocs-based documentation in English and Russian:
 
-- **`pwa-install.md`** -- how to install the PWA on Android and iOS, usage guide, re-authentication.
+- **`pwa-install.md`** -- how to install the PWA on Android and iOS, usage guide.
 - **`cloudflare-setup.md`** -- Cloudflare Tunnel creation, DNS routing, Access policy configuration.
-- **`deploy-oracle.md`** -- Oracle Cloud Free Tier: account setup, ARM VM, Docker, firewall.
-- **`deploy-render.md`** -- Render: GitHub auto-deploy, secret files, custom domain.
-- **`deploy-railway.md`** -- Railway: GitHub auto-deploy, base64 credentials, usage-based pricing.
+- **`deploy-oracle.md`** -- Oracle Cloud Free Tier: account setup, AMD Micro / ARM VM, systemd service, firewall.
+- **`deploy-selfhost.md`** -- Mac/PC deployment with Tailscale Funnel or Cloudflare Tunnel.
 
 ---
 
 ## Step 3: Testing and Validation
 
-- **Backend tests**: pytest tests for each endpoint (mock gspread and httpx for external calls). Test auto-month creation logic. Test QR parser against a saved sample HTML page.
+- **Backend tests**: pytest tests for each endpoint (mock gspread and httpx for external calls). Test auto-month creation logic. Test QR parser against a saved sample HTML page. Run `inv pre` (ruff, pyrefly) and `uv run pytest` after every change.
 - **Manual E2E test**: deploy backend, open PWA on phone, scan a real receipt QR code, verify amount + date appear, pick category, submit, check Google Sheets row is created.
 - **Offline test**: turn off Wi-Fi, submit an entry, verify it is queued locally, turn Wi-Fi back on, verify it syncs.
 
@@ -194,14 +195,14 @@ MkDocs-based documentation in English and Russian:
 
 ## Repo Responsibility Summary
 
-- **dinary-server** (this repo): FastAPI backend, Google Sheets integration, QR page parser, API, PWA frontend (in `static/`), deployment config, dev docs in `.plans/`, user manual in `docs/`.
+- **dinary-server** (this repo): FastAPI backend, Google Sheets integration, QR page parser, API, PWA frontend (in `static/`), Docker for local dev, deployment config, dev docs in `.plans/`, user manual in `docs/`.
 - **dinary** (`../dinary/`): Not used in Phase 0. Reserved for the future Rust desktop app (daemon + GUI, Phase 4+).
 
 ---
 
 ## Key Risks
 
-- **SUF PURS page structure may change** -- the QR parser is brittle by nature. Mitigated by keeping it minimal (total + date only) and caching raw HTML for debugging. Using `sr-invoice-parser` (if viable) further mitigates this by sharing maintenance with the open-source community.
+- **SUF PURS page structure may change** -- the QR parser is brittle by nature. Mitigated by keeping it minimal (total + date only) and caching raw HTML for debugging. Using `sr-invoice-parser` shares maintenance with the open-source community.
 - **QR scanning on iOS Safari** -- `html5-qrcode` works on iOS Safari but historically has had quirks. Must be tested on a real iPhone early.
 - **Google Sheets rate limits** -- unlikely at 10-20 entries/day, but the offline queue + batch flush pattern helps.
 
@@ -210,5 +211,5 @@ MkDocs-based documentation in English and Russian:
 These are not gaps -- they are intentional Phase 0 limitations documented here for clarity:
 
 - **One QR scan = one category = one entry.** Receipt splitting across categories is a Phase 3 feature.
-- **QR scanning requires connectivity.** The SUF PURS page lives on a government server; there is no way to parse it offline. Offline mode covers manual entry only.
-- **Category cache has 1-hour TTL.** New categories added directly in the sheet appear in the PWA within an hour or on server restart. Manual cache refresh endpoint is not planned for Phase 0.
+- **QR URL extraction is offline; amount extraction requires server.** The QR code is decoded on the device (offline). The URL is saved with the entry. Amount and date are extracted by the server during sync if unavailable at scan time.
+- **Category cache has 1-hour TTL.** New categories added directly in the sheet appear in the PWA within an hour or on server restart.

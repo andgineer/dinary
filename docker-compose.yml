@@ -3,10 +3,10 @@ services:
     build: .
     ports:
       - "8000:8000"
+    env_file: .env
     environment:
       - DINARY_GOOGLE_SHEETS_CREDENTIALS_PATH=/app/credentials.json
-      - DINARY_GOOGLE_SHEETS_SPREADSHEET_ID=${GOOGLE_SHEETS_SPREADSHEET_ID}
       - DINARY_LOG_JSON=true
     volumes:
-      - ./credentials.json:/app/credentials.json:ro
+      - ~/.config/gspread/service_account.json:/app/credentials.json:ro
     restart: unless-stopped

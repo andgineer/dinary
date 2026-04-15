@@ -27,7 +27,12 @@ and a spreadsheet shared with that account.
 
 1. In **Credentials**, click the newly created service account.
 2. Go to **Keys** → **Add Key** → **Create new key** → **JSON** → **Create**.
-3. Save the downloaded file as `credentials.json` in the project root (for local dev) or upload it to your hosting.
+3. Save the downloaded file as `~/.config/gspread/service_account.json`:
+
+```bash
+mkdir -p ~/.config/gspread
+mv ~/Downloads/your-project-*.json ~/.config/gspread/service_account.json
+```
 
 !!! warning
     Keep this file secret. Never commit it to Git — it is already in `.gitignore`.
@@ -48,7 +53,5 @@ Set these environment variables (in `.env` or your hosting's env config):
 | `DINARY_GOOGLE_SHEETS_SPREADSHEET_ID` | the spreadsheet ID from step 5 |
 | `DINARY_GOOGLE_SHEETS_CREDENTIALS_PATH` | path to `credentials.json` (default: `credentials.json` in the working directory) |
 
-For Railway (no secret file support), you can base64-encode the JSON key and set `DINARY_GOOGLE_CREDENTIALS_BASE64` instead — see the [Railway deployment guide](deploy-railway.md#4-add-the-service-account-key).
-
 !!! note
-    When using `docker compose` with `.env`, set `GOOGLE_SHEETS_SPREADSHEET_ID` (without the `DINARY_` prefix) — `docker-compose.yml` adds the prefix automatically. On Render/Railway, set the full `DINARY_GOOGLE_SHEETS_SPREADSHEET_ID` directly in the hosting dashboard.
+    When using `docker compose` with `.env`, set `GOOGLE_SHEETS_SPREADSHEET_ID` (without the `DINARY_` prefix) — `docker-compose.yml` adds the prefix automatically. When running directly (Oracle VM, local dev), set `DINARY_GOOGLE_SHEETS_SPREADSHEET_ID`.

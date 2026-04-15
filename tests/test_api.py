@@ -36,7 +36,7 @@ def test_categories_failure(mock_get, client):
 
 @patch("dinary.api.expenses.sheets")
 def test_create_expense(mock_sheets, client):
-    mock_sheets.group_for_category.return_value = "Essentials"
+    mock_sheets.validate_category.return_value = True
     mock_sheets.write_expense = AsyncMock(
         return_value={
             "month": "2026-04",
@@ -53,6 +53,7 @@ def test_create_expense(mock_sheets, client):
             "amount": 1500,
             "currency": "RSD",
             "category": "Food",
+            "group": "Essentials",
             "comment": "lunch",
             "date": "2026-04-14",
         },
@@ -65,13 +66,14 @@ def test_create_expense(mock_sheets, client):
 
 @patch("dinary.api.expenses.sheets")
 def test_create_expense_unknown_category(mock_sheets, client):
-    mock_sheets.group_for_category.return_value = None
+    mock_sheets.validate_category.return_value = False
 
     resp = client.post(
         "/api/expenses",
         json={
             "amount": 100,
             "category": "Nonexistent",
+            "group": "",
             "date": "2026-04-14",
         },
     )
@@ -81,12 +83,12 @@ def test_create_expense_unknown_category(mock_sheets, client):
 
 @patch("dinary.api.expenses.sheets")
 def test_create_expense_sheets_failure(mock_sheets, client):
-    mock_sheets.group_for_category.return_value = "Essentials"
+    mock_sheets.validate_category.return_value = True
     mock_sheets.write_expense = AsyncMock(side_effect=Exception("sheets down"))
 
     resp = client.post(
         "/api/expenses",
-        json={"amount": 100, "category": "Food", "date": "2026-04-14"},
+        json={"amount": 100, "category": "Food", "group": "Essentials", "date": "2026-04-14"},
     )
     assert resp.status_code == 502
     assert "queued for retry" in resp.json()["detail"]

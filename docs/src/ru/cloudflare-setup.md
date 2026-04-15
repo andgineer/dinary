@@ -1,42 +1,43 @@
 # Настройка Cloudflare Tunnel и Access
 
-Cloudflare обеспечивает HTTPS и аутентификацию для dinary-server бесплатно (до 50 пользователей).
+Cloudflare Tunnel создаёт зашифрованное соединение от машины с dinary-server до сети Cloudflare. Это даёт HTTPS и кастомный домен без открытия портов в файрволе. Cloudflare Access добавляет авторизацию по email (бесплатно до 50 пользователей).
+
+Все команды в шагах 1-5 выполняются **на машине, где работает dinary-server** (Oracle Cloud VM, ваш Mac/PC и т.д.).
 
 ## Требования
 
-- Домен, управляемый через Cloudflare (бесплатный план подходит).
-- dinary-server запущен на `http://localhost:8000`.
+- Домен, управляемый через Cloudflare (бесплатный план подходит). Если домена нет, можно купить прямо в Cloudflare (~$10/год за `.com`).
+- dinary-server запущен на `http://localhost:8000` на целевой машине.
 
-!!! note
-    `cloudflared` устанавливается на шаге 1 ниже. Пользователям Render и Railway нужен только [шаг 6 (Cloudflare Access)](#6-настройка-cloudflare-access) — эти платформы предоставляют HTTPS, поэтому туннель не нужен.
+## 1. Установка cloudflared на сервере
 
-## 1. Установка cloudflared
+Подключитесь по SSH к серверу (или откройте терминал на Mac/PC) и установите `cloudflared`:
 
-=== "Ubuntu/Debian"
+=== "Ubuntu/Debian (Oracle Cloud VM)"
     ```bash
     curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
     echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
     sudo apt update && sudo apt install cloudflared
     ```
 
-=== "macOS"
+=== "macOS (свой компьютер)"
     ```bash
     brew install cloudflared
-    ```
-
-=== "Docker"
-    ```bash
-    docker pull cloudflare/cloudflared:latest
     ```
 
 ## 2. Создание туннеля
 
 ```bash
 cloudflared tunnel login
+```
+
+Откроется браузер для авторизации в Cloudflare. Если работаете на headless-сервере (Oracle VM), скопируйте URL из консоли и откройте его на ноутбуке.
+
+```bash
 cloudflared tunnel create dinary
 ```
 
-Будет создан туннель, а credentials сохранятся в `~/.cloudflared/<TUNNEL_ID>.json`.
+Credentials сохранятся в `~/.cloudflared/<TUNNEL_ID>.json`.
 
 ## 3. Конфигурация туннеля
 
@@ -44,7 +45,7 @@ cloudflared tunnel create dinary
 
 ```yaml
 tunnel: <TUNNEL_ID>
-credentials-file: /home/<YOUR_USER>/.cloudflared/<TUNNEL_ID>.json
+credentials-file: /home/ubuntu/.cloudflared/<TUNNEL_ID>.json
 
 ingress:
   - hostname: dinary.yourdomain.com
@@ -52,7 +53,7 @@ ingress:
   - service: http_status:404
 ```
 
-Замените `<YOUR_USER>` на ваше имя пользователя Linux (или используйте `/root/`, если работаете от root).
+Замените `/home/ubuntu/` на вашу домашнюю директорию (например, `/Users/yourname/` на macOS).
 
 ## 4. Настройка DNS
 
@@ -68,13 +69,20 @@ cloudflared tunnel route dns dinary dinary.yourdomain.com
 cloudflared tunnel run dinary
 ```
 
-Для запуска как системный сервис:
+Для запуска как системный сервис (чтобы работал после перезагрузки):
 
-```bash
-sudo cloudflared service install
-sudo systemctl enable cloudflared
-sudo systemctl start cloudflared
-```
+=== "Linux (Oracle VM)"
+    ```bash
+    sudo cloudflared service install
+    sudo systemctl enable cloudflared
+    sudo systemctl start cloudflared
+    ```
+
+=== "macOS"
+    ```bash
+    sudo cloudflared service install
+    sudo launchctl start com.cloudflare.cloudflared
+    ```
 
 Проверка: откройте `https://dinary.yourdomain.com/api/health` в браузере.
 

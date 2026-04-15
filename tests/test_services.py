@@ -22,6 +22,19 @@ class TestCategoryStore:
         assert store.group_for("Unknown") is None
         assert len(store.categories) == 2
 
+    def test_has_category(self):
+        store = CategoryStore()
+        store.load(
+            [
+                Category(name="Food", group="Essentials"),
+                Category(name="Food", group="Travel"),
+            ]
+        )
+        assert store.has_category("Food", "Essentials")
+        assert store.has_category("Food", "Travel")
+        assert not store.has_category("Food", "Other")
+        assert not store.has_category("Unknown", "")
+
     def test_expired_on_creation(self):
         store = CategoryStore()
         assert store.expired

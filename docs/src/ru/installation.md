@@ -1,8 +1,8 @@
 # Установка
 
-## Docker (рекомендуется)
+## Быстрый старт (Docker, локальная разработка)
 
-Простейший способ запустить dinary-server — через Docker:
+Простейший способ запустить dinary-server локально — через Docker:
 
 ```bash
 git clone https://github.com/andgineer/dinary-server.git
@@ -19,12 +19,11 @@ docker compose up -d
 !!! tip
     Нет ключа сервисного аккаунта? См. [Настройка Google Sheets](google-sheets-setup.md).
 
-Подробные инструкции для конкретных хостингов:
+## Развёртывание на сервере
 
-- [Oracle Cloud Free Tier](deploy-oracle.md)
-- [Render](deploy-render.md)
-- [Railway](deploy-railway.md)
+- [Oracle Cloud Free Tier](deploy-oracle.md) — $0/месяц, всегда включённая VM
+- [Свой компьютер](deploy-selfhost.md) — $0, Tailscale Funnel или Cloudflare Tunnel
 
-## Локальная разработка
+## Локальная разработка (без Docker)
 
 См. [README](https://github.com/andgineer/dinary-server#local-development) для настройки локальной разработки с `uv`.

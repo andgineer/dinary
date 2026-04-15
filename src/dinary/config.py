@@ -15,10 +15,13 @@ def _materialize_b64_credentials(target: Path) -> None:
         target.write_bytes(base64.b64decode(b64))
 
 
-class Settings(BaseSettings):
-    model_config = {"env_prefix": "DINARY_"}
+_GSPREAD_DEFAULT = Path.home() / ".config" / "gspread" / "service_account.json"
 
-    google_sheets_credentials_path: Path = Path("credentials.json")
+
+class Settings(BaseSettings):
+    model_config = {"env_prefix": "DINARY_", "env_file": ".env"}
+
+    google_sheets_credentials_path: Path = _GSPREAD_DEFAULT
     google_sheets_spreadsheet_id: str = ""
 
     host: str = "0.0.0.0"  # noqa: S104

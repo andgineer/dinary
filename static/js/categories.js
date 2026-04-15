@@ -1,48 +1,66 @@
 /**
- * Category list management — fetches from backend, populates dropdown,
- * auto-fills group when a category is selected.
+ * Category list management — two cascading dropdowns: group → category.
  */
 
 import { fetchCategories } from "./api.js";
 
 let _categories = [];
+let _lastError = null;
 
 export async function loadCategories() {
+  _lastError = null;
   try {
     _categories = await fetchCategories();
-  } catch {
-    console.warn("Failed to fetch categories, using cached list");
+  } catch (e) {
+    _lastError = e;
+    console.error("Failed to fetch categories:", e);
   }
   return _categories;
+}
+
+export function getLastError() {
+  return _lastError;
 }
 
 export function getCategories() {
   return _categories;
 }
 
-export function groupFor(categoryName) {
-  const cat = _categories.find((c) => c.name === categoryName);
-  return cat ? cat.group : "";
+export function populateGroupDropdown(selectEl) {
+  selectEl.innerHTML = "";
+  const seen = new Set();
+  for (const cat of _categories) {
+    const label = cat.group || "—";
+    if (!seen.has(label)) {
+      seen.add(label);
+      const opt = document.createElement("option");
+      opt.value = cat.group;
+      opt.textContent = label;
+      selectEl.appendChild(opt);
+    }
+  }
 }
 
-export function populateDropdown(selectEl) {
-  selectEl.innerHTML = '<option value="">— select —</option>';
-
-  const groups = {};
+export function populateCategoryDropdown(selectEl, group) {
+  selectEl.innerHTML = "";
   for (const cat of _categories) {
-    if (!groups[cat.group]) groups[cat.group] = [];
-    groups[cat.group].push(cat.name);
-  }
-
-  for (const [group, cats] of Object.entries(groups)) {
-    const optgroup = document.createElement("optgroup");
-    optgroup.label = group;
-    for (const name of cats) {
+    if (cat.group === group) {
       const opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = name;
-      optgroup.appendChild(opt);
+      opt.value = cat.name;
+      opt.textContent = cat.name;
+      selectEl.appendChild(opt);
     }
-    selectEl.appendChild(optgroup);
+  }
+}
+
+export function selectDefaults(groupEl, categoryEl) {
+  const emptyGroupExists = _categories.some((c) => c.group === "");
+  if (emptyGroupExists) {
+    groupEl.value = "";
+    populateCategoryDropdown(categoryEl, "");
+    const foodOption = Array.from(categoryEl.options).find(
+      (o) => o.value === "еда&бытовые",
+    );
+    if (foodOption) categoryEl.value = "еда&бытовые";
   }
 }

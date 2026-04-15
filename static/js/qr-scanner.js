@@ -10,6 +10,23 @@ export async function startScanning(readerId, onResult) {
     throw new Error("html5-qrcode library not loaded");
   }
 
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error("Camera requires HTTPS — open via https:// or localhost");
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    stream.getTracks().forEach((t) => t.stop());
+  } catch (e) {
+    if (e.name === "NotAllowedError") {
+      throw new Error("Camera blocked — allow in browser Settings → Site Settings");
+    }
+    if (e.name === "NotFoundError") {
+      throw new Error("No camera found on this device");
+    }
+    throw new Error(`Camera: ${e.message}`);
+  }
+
   stop();
 
   _scanner = new Html5Qrcode(readerId);

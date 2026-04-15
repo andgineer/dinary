@@ -324,9 +324,10 @@ The architecture is agnostic — the input layer is a thin client that sends str
 
 **Phase 0 (MVP) requirements:**
 
-- Camera access for QR scanning (extract URL, send to backend for total + date extraction).
-- Fast manual entry: amount + category selector + optional comment, one tap to submit.
-- Offline data persistence with sync-on-reconnect.
+- Camera access for QR scanning (extract URL, send to backend for total + date extraction). QR code decoding is fully offline (client-side). The URL is sent to the server for amount/date extraction; if offline, the URL is saved and processed during sync.
+- Fast manual entry: amount + category selector + optional comment, one tap to submit. Entry saves instantly to IndexedDB (< 100ms); background sync to server happens while the user is still in the app.
+- Offline data persistence via IndexedDB (reliable for installed PWAs — iOS Safari eviction only affects non-installed sites). `navigator.storage.persist()` for additional protection.
+- QR scan with parallel processing: while user selects category, server parses the URL in parallel. If the response arrives before the user finishes — amount is shown as confirmation. If not — entry is saved with just the URL and category.
 
 **Full requirements (Phase 3 target):**
 
@@ -546,9 +547,14 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 **What it does NOT do:**
 - Any AI/LLM calls. All AI work is delegated to dinary.
 
-**Hosting:** Oracle Cloud Free Tier (free ARM VM, 4 cores, 24 GB RAM — permanent free tier). Alternative: any cheap VPS, or even a Raspberry Pi at home with Cloudflare Tunnel for external access.
+**Hosting (free, always-on options):**
 
-**Accessibility:** Dashboard and API served via Cloudflare Tunnel (free, no public IP needed) or directly from the VPS.
+- **Oracle Cloud Free Tier** — AMD Micro VM (1 OCPU, 1 GB RAM, always available) is recommended for reliability. ARM A1 Flex (up to 4 OCPU, 24 GB RAM) is more powerful but often unavailable due to shared capacity pool. Run directly with uvicorn as a systemd service (no Docker — saves RAM on 1 GB instances). Docker available for local development.
+- **Self-hosted (Mac/PC)** — run locally, expose via Tailscale Funnel (free, `*.ts.net` URL, beta) or Cloudflare Tunnel (free, custom domain, Cloudflare Access for auth). Aligns with Phase 4 architecture (dinary desktop app on the same machine).
+
+**Important:** sleeping/serverless hosting (Render free tier, AWS Lambda, etc.) is **not suitable** — the PWA on iOS cannot run background sync, so the server must respond within 1-2 seconds while the user still has the app open.
+
+**Accessibility:** API served via Cloudflare Tunnel or Tailscale Funnel (HTTPS, no direct public IP needed).
 
 ### dinary (User's Laptop)
 
@@ -612,8 +618,8 @@ daemon lifecycle management) depends on the GUI framework choice and will be det
 
 ### Security
 
-- dinary-server API protected by API key or mutual TLS (single user, no need for full auth system).
-- Cloudflare Tunnel provides HTTPS without exposing the VPS directly.
+- dinary-server API protected by Cloudflare Access (if using Cloudflare Tunnel) or URL obscurity + optional bearer token (if using Tailscale Funnel). Single user, no need for full auth system.
+- Cloudflare Tunnel or Tailscale Funnel provides HTTPS without exposing the server directly.
 - DuckDB files are not accessible from the internet — only through the dinary-server API.
 
 ---
@@ -628,11 +634,12 @@ No new database, no line-item parsing — just a mobile frontend that writes dir
 **Scope:**
 
 - A mobile frontend (chosen from the non-disqualified candidates in the evaluation table) with a simple form: amount (RSD) + category (dropdown from the existing ~33 categories) + category group (auto-filled from category) + optional comment.
-- **QR scanning:** the user scans a Serbian fiscal receipt QR code on the phone. The backend fetches the receipt page from SUF PURS, extracts only the **total amount** and **date** — no line-item parsing, no store extraction. The amount and date are pre-filled into the entry form; the user picks a category and submits. This is treated as a single expense entry (one row), same as manual entry.
-- A lightweight backend (Python script or serverless function) that receives the entry and writes it to the existing Google Sheets spreadsheet via the Sheets API.
+- **QR scanning with parallel processing:** the user scans a Serbian fiscal receipt QR code on the phone. The QR code is decoded on the device (fully offline — client-side image processing). Simultaneously: (a) the URL is sent to the server for amount/date extraction, and (b) the category selection form is shown. While the user picks a category (2-5 seconds), the server response may arrive with the amount — shown as confirmation. If the server doesn't respond (offline or slow), the entry is saved with just the URL and category; the server extracts the amount during sync. No line-item parsing, no store extraction.
+- A FastAPI backend that receives the entry and writes it to the existing Google Sheets spreadsheet via the Sheets API. FastAPI (not serverless) because it carries forward into Phase 1 (DuckDB) and Phase 4 (AI agent API) without rewriting.
 - **Auto-month creation:** if the backend detects that rows for the current month don't exist yet in the sheet, it automatically creates the full block of category rows for the new month (copying the category/group structure from the previous month). This eliminates the most tedious manual step.
 - **Currency conversion:** the EUR/RSD exchange rate is stored in the sheet itself, in a cell to the right of the first row of each month block. When the backend creates a new month or writes the first expense of the month, it checks the rate cell: if empty, it fetches the current NBS middle rate from `kurs.resenje.org` (same API as `ibkr-porez-py`) and writes it. Each month thus has its own visible rate. The EUR amount is derived as `amount_rsd / rate`.
-- **Offline queue:** when the device has no internet, completed entries (manual or QR-based) are persisted locally on the device (e.g., IndexedDB for PWA, local storage for the chosen tool). When connectivity is restored, the queue is flushed to the backend automatically. The user must never lose an entry due to network unavailability. The specific storage mechanism depends on the chosen frontend tool — this is a key evaluation criterion.
+- **Offline queue:** entries are stored in IndexedDB on the device. When connectivity is restored, the queue is flushed to the backend automatically on next app open. IndexedDB is reliable for installed PWAs (added to home screen) — iOS Safari's 7-day eviction applies only to non-installed sites. `navigator.storage.persist()` provides additional protection. The user must never lose an entry due to network unavailability.
+- **Always-on server required:** PWA on iOS cannot run background sync — sync only happens while the app is open. The server must respond within 1-2 seconds. Sleeping/serverless hosting (Render free tier, Lambda) is not suitable. Use Oracle Cloud Free Tier (AMD Micro, always on) or self-hosted Mac/PC with Tailscale Funnel / Cloudflare Tunnel.
 - No line-item parsing, no store extraction, no DuckDB, no AI. The user picks the category manually, just as they do now — but from a phone instead of editing a spreadsheet. QR scanning only extracts the receipt total amount and date, not individual items or store.
 
 **What this validates:**

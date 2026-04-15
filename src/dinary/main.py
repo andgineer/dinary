@@ -54,13 +54,13 @@ app = create_app()
 
 
 def main() -> None:
-    """Entry point for ``dinary`` CLI command — runs uvicorn."""
+    """Entry point for ``dinary`` CLI command — runs uvicorn with auto-reload for local dev."""
     uvicorn.run(
         "dinary.main:app",
-        host=settings.host,
+        host="127.0.0.1",
         port=settings.port,
         log_level=settings.log_level,
-        reload=False,
+        reload=True,
     )
 
 

@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import gspread
 from google.oauth2.service_account import Credentials
+from gspread.utils import ValueInputOption, ValueRenderOption
 
 from dinary.config import settings
 from dinary.services.category_store import Category, CategoryStore
@@ -14,7 +15,19 @@ from dinary.services.exchange_rate import fetch_eur_rsd_rate
 logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-MIN_CATEGORY_COLS = 3
+
+# 1-indexed column numbers matching the actual Google Sheet layout:
+#   A=Date  B=RSD(formula)  C=EUR(formula)  D=Category  E=Group
+#   F=Comment  G=Month(formula)  H=Rate
+COL_DATE = 1
+COL_AMOUNT_RSD = 2
+COL_CATEGORY = 4
+COL_GROUP = 5
+COL_COMMENT = 6
+COL_MONTH = 7
+COL_RATE_EUR = 8
+
+HEADER_ROWS = 1
 
 _gc: gspread.Client | None = None
 _category_store = CategoryStore()
@@ -35,72 +48,47 @@ def _get_sheet() -> gspread.Spreadsheet:
     return _get_client().open_by_key(settings.google_sheets_spreadsheet_id)
 
 
-def _month_label(d: date) -> str:
-    """Format used to identify month blocks, e.g. '2026-04'."""
-    return d.strftime("%Y-%m")
+def _cell(row: list[str], col_1indexed: int) -> str:
+    """Safely get a stripped cell value using a 1-indexed column number."""
+    idx = col_1indexed - 1
+    return row[idx].strip() if len(row) > idx else ""
 
 
-def _find_month_block(ws: gspread.Worksheet, target: date) -> tuple[int, int] | None:
-    """Find the row range (start, end) for a month block.
+def _is_numeric(value: str) -> bool:
+    if not value:
+        return False
+    cleaned = value.replace(",", ".").replace(" ", "")
+    try:
+        float(cleaned)
+    except ValueError:
+        return False
+    return True
 
-    Scans column A for the month label. Returns (first_row, end_row) where
-    both are 1-indexed gspread row numbers. first_row is the header row,
-    end_row is exclusive (one past the last category row).
 
-    The month block starts with a header row containing the month label in
-    column A (e.g. '2026-04') and ends just before the next month header or
-    the end of data.
-    """
-    label = _month_label(target)
-    all_values = ws.col_values(1)
-
-    start_row = None
-    for i, val in enumerate(all_values):
-        if str(val).strip().startswith(label):
-            start_row = i + 1  # convert 0-indexed enumerate to 1-indexed gspread row
-            break
-
-    if start_row is None:
-        return None
-
-    # end_row: 1-indexed, exclusive — the row *after* the last category row
-    end_row = len(all_values) + 1
-    for i in range(start_row, len(all_values)):
-        cell_val = str(all_values[i]).strip()
-        if cell_val and cell_val[:4].isdigit() and "-" in cell_val:
-            end_row = i + 1  # convert 0-indexed to 1-indexed
-            break
-
-    return (start_row, end_row)
+def _fmt_amount(amount: float) -> str:
+    """Format as integer when possible, e.g. 1500.0 → '1500'."""
+    return str(int(amount)) if amount == int(amount) else f"{amount:.2f}"
 
 
 def load_categories(ws: gspread.Worksheet | None = None) -> list[Category]:
-    """Read categories from the sheet and update the in-memory cache.
+    """Read unique (category, group) pairs from the sheet.
 
-    Categories are extracted from the first month block found in the sheet.
-    Each row within a month block has the category name in column B and the
-    group name in column C.
+    Scans every data row (skipping the header) and deduplicates by
+    (category, group), preserving first-seen order.
     """
     if ws is None:
         ws = _get_sheet().sheet1
 
     all_values = ws.get_all_values()
+    seen: set[tuple[str, str]] = set()
     categories: list[Category] = []
 
-    in_block = False
-    for row in all_values:
-        col_a = row[0].strip() if row else ""
-        if col_a and col_a[:4].isdigit() and "-" in col_a:
-            if in_block:
-                break
-            in_block = True
-            continue
-
-        if in_block and len(row) >= MIN_CATEGORY_COLS:
-            cat_name = row[1].strip()
-            group_name = row[2].strip()
-            if cat_name:
-                categories.append(Category(name=cat_name, group=group_name))
+    for row in all_values[HEADER_ROWS:]:
+        cat_name = _cell(row, COL_CATEGORY)
+        group_name = _cell(row, COL_GROUP)
+        if cat_name and (cat_name, group_name) not in seen:
+            seen.add((cat_name, group_name))
+            categories.append(Category(name=cat_name, group=group_name))
 
     _category_store.load(categories)
     logger.info("Loaded %d categories from sheet", len(categories))
@@ -115,170 +103,234 @@ def get_categories() -> list[Category]:
     return _category_store.categories
 
 
-def group_for_category(category_name: str) -> str | None:
-    """Look up the group for a category name (uses cache)."""
+def validate_category(category_name: str, group: str) -> bool:
+    """Check whether (category, group) exists in the sheet."""
     if _category_store.expired or not _category_store.categories:
         get_categories()
-    return _category_store.group_for(category_name)
+    return _category_store.has_category(category_name, group)
 
 
-def _create_month_block(ws: gspread.Worksheet, target: date) -> tuple[int, int]:
-    """Create a new month block by copying the previous month's structure.
+def _find_category_row(
+    all_values: list[list[str]],
+    target_month: int,
+    category: str,
+    group: str,
+) -> int | None:
+    """Find the 1-indexed row for a (month, category, group) triple."""
+    for i, row in enumerate(all_values[HEADER_ROWS:], start=HEADER_ROWS + 1):
+        month_val = _cell(row, COL_MONTH)
+        cat_val = _cell(row, COL_CATEGORY)
+        grp_val = _cell(row, COL_GROUP)
+        if month_val == str(target_month) and cat_val == category and grp_val == group:
+            return i
+    return None
 
-    Appends the block at the end of existing data, sets column A to the new
-    month label, and zeros out all numeric columns.
+
+def _get_month_rate(all_values: list[list[str]], target_month: int) -> str | None:
+    """Return the first non-empty EUR rate found for *target_month*."""
+    for row in all_values[HEADER_ROWS:]:
+        if _cell(row, COL_MONTH) == str(target_month):
+            rate_val = _cell(row, COL_RATE_EUR)
+            if rate_val and _is_numeric(rate_val):
+                return rate_val
+    return None
+
+
+def _find_month_range(
+    all_values: list[list[str]],
+    month: int,
+) -> tuple[int, int] | None:
+    """Return (first_row, last_row) 1-indexed for a contiguous month block."""
+    first: int | None = None
+    last: int | None = None
+    for i, row in enumerate(all_values[HEADER_ROWS:], start=HEADER_ROWS + 1):
+        if _cell(row, COL_MONTH) == str(month):
+            if first is None:
+                first = i
+            last = i
+    if first is None or last is None:
+        return None
+    return (first, last)
+
+
+def _create_month_rows(
+    ws: gspread.Worksheet,
+    all_values: list[list[str]],
+    target: date,
+) -> None:
+    """Create rows for a new month by copying the previous month's rows.
+
+    Uses CopyPaste API to preserve formulas in C (EUR auto-calc) and
+    G (month from date).  Then clears amounts (B), comments (F), rate (H),
+    and sets the new date (A).
     """
-    all_values = ws.get_all_values()
-    block_starts: list[int] = []
+    target_month = target.month
+    prev_month = target_month - 1 if target_month > 1 else 12
 
-    for i, row in enumerate(all_values):
-        col_a = row[0].strip() if row else ""
-        if col_a and col_a[:4].isdigit() and "-" in col_a:
-            block_starts.append(i)
+    src = _find_month_range(all_values, prev_month)
+    if src is None:
+        raise ValueError(f"No rows found for month {prev_month} to copy from")
 
-    if not block_starts:
-        raise ValueError("No existing month block found to copy from")
+    src_start, src_end = src
+    num_rows = src_end - src_start + 1
+    dest_start = len(all_values) + 1
 
-    last_block_start = block_starts[-1]
-    last_block_end = len(all_values)
+    ws.add_rows(num_rows)
 
-    template_rows = all_values[last_block_start:last_block_end]
-    new_start = len(all_values) + 1  # 1-indexed, after all existing data
-    label = _month_label(target)
+    sheet_id = ws.id
+    num_cols = len(all_values[0]) if all_values else COL_RATE_EUR
 
-    new_rows: list[list[str]] = []
-    for j, row in enumerate(template_rows):
-        new_row = list(row)
-        if j == 0:
-            new_row[0] = label
-        for col_idx in range(3, len(new_row)):
-            if new_row[col_idx] and _is_numeric(new_row[col_idx]):
-                new_row[col_idx] = "0"
-        new_rows.append(new_row)
-
-    end_cell = gspread.utils.rowcol_to_a1(
-        new_start + len(new_rows) - 1,
-        len(new_rows[0]),
+    ws.spreadsheet.batch_update(
+        {
+            "requests": [
+                {
+                    "copyPaste": {
+                        "source": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": src_start - 1,
+                            "endRowIndex": src_end,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": num_cols,
+                        },
+                        "destination": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": dest_start - 1,
+                            "endRowIndex": dest_start - 1 + num_rows,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": num_cols,
+                        },
+                        "pasteType": "PASTE_NORMAL",
+                    },
+                },
+            ],
+        },
     )
-    start_cell = gspread.utils.rowcol_to_a1(new_start, 1)
-    ws.update(range_name=f"{start_cell}:{end_cell}", values=new_rows)
 
-    logger.info("Created month block %s at row %d", label, new_start)
-    return (new_start, new_start + len(new_rows))  # 1-indexed, end is exclusive
+    date_str = target.replace(day=1).strftime("%Y-%m-%d")
+    batch: list[dict] = []
+    for i in range(num_rows):
+        row = dest_start + i
+        batch.extend(
+            [
+                {"range": f"A{row}", "values": [[date_str]]},
+                {"range": f"B{row}", "values": [[""]]},
+                {"range": f"F{row}", "values": [[""]]},
+                {"range": f"H{row}", "values": [[""]]},
+            ],
+        )
+    ws.batch_update(batch, value_input_option=ValueInputOption.user_entered)
+
+    logger.info("Created %d rows for month %d", num_rows, target_month)
 
 
-def _is_numeric(value: str) -> bool:
-    if not value:
-        return False
-    cleaned = value.replace(",", ".").replace(" ", "")
-    try:
-        float(cleaned)
-    except ValueError:
-        return False
-    return True
+def _resolve_row(  # noqa: PLR0913
+    ws: gspread.Worksheet,
+    all_values: list[list[str]],
+    target_month: int,
+    category: str,
+    group: str,
+    expense_date: date,
+) -> int:
+    """Return the 1-indexed row for (month, category, group), creating the month if needed."""
+    target_row = _find_category_row(all_values, target_month, category, group)
+    if target_row is not None:
+        return target_row
+
+    _create_month_rows(ws, all_values, expense_date)
+    refreshed = ws.get_all_values()
+    target_row = _find_category_row(refreshed, target_month, category, group)
+    if target_row is None:
+        raise ValueError(
+            f"Category '{category}' (group '{group}') not found for month {target_month}",
+        )
+    return target_row
 
 
-async def write_expense(  # noqa: PLR0913
+async def _ensure_rate(
+    ws: gspread.Worksheet,
+    all_values: list[list[str]],
+    target_month: int,
+    target_row: int,
+    expense_date: date,
+) -> Decimal:
+    """Return the EUR/RSD rate for the month, fetching and storing it if absent."""
+    rate_str = _get_month_rate(all_values, target_month)
+    if rate_str:
+        return Decimal(rate_str.replace(",", "."))
+
+    rate = await fetch_eur_rsd_rate(expense_date.replace(day=1))
+    ws.update_cell(target_row, COL_RATE_EUR, str(rate))
+    logger.info("Wrote EUR/RSD rate %s for month %d", rate, target_month)
+    return rate
+
+
+def _append_to_rsd_formula(ws: gspread.Worksheet, row: int, amount_rsd: float) -> None:
+    """Append +amount to the formula in column B (e.g. =460+373 → =460+373+1500)."""
+    rsd_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_RSD)
+    existing = ws.acell(rsd_addr, value_render_option=ValueRenderOption.formula).value
+
+    amount_str = _fmt_amount(amount_rsd)
+    formula = (
+        f"{existing}+{amount_str}" if existing and existing.startswith("=") else f"={amount_str}"
+    )
+
+    ws.update(
+        range_name=rsd_addr,
+        values=[[formula]],
+        value_input_option=ValueInputOption.user_entered,
+    )
+
+
+def _append_comment(ws: gspread.Worksheet, row: int, row_data: list[str], comment: str) -> None:
+    """Append a comment to column F, semicolon-separated."""
+    existing = _cell(row_data, COL_COMMENT)
+    separator = "; " if existing else ""
+    ws.update_cell(row, COL_COMMENT, f"{existing}{separator}{comment}")
+
+
+async def write_expense(
     amount_rsd: float,
     category: str,
+    group: str,
     comment: str,
     expense_date: date,
-    rate_col: int = 7,
-    amount_col: int = 4,
-    eur_col: int = 5,
-    comment_col: int = 6,
 ) -> dict:
-    """Write an expense to the Google Sheet.
+    """Append an expense to the Google Sheet.
 
-    Finds the correct month block, locates the category row, and adds the
-    amount to the running total. If the month block doesn't exist, creates it.
-
-    Column layout (1-indexed, configurable):
-      A(1)=month label, B(2)=category, C(3)=group,
-      D(4)=amount RSD, E(5)=amount EUR, F(6)=comment, G(7)=exchange rate
-
-    Returns a dict with the written data for confirmation.
+    Appends +amount to the formula in column B (RSD).
+    Columns C (EUR) and G (month) are formula-driven and left untouched.
     """
     ws = _get_sheet().sheet1
+    all_values = ws.get_all_values()
+    target_month = expense_date.month
 
-    block = _find_month_block(ws, expense_date)
-    if block is None:
-        block = _create_month_block(ws, expense_date)
+    target_row = _resolve_row(ws, all_values, target_month, category, group, expense_date)
+    row_data = all_values[target_row - 1]
 
-    start_row, end_row = block
-
-    max_col = max(rate_col, amount_col, eur_col, comment_col)
-    range_str = (
-        f"{gspread.utils.rowcol_to_a1(start_row, 1)}:"
-        f"{gspread.utils.rowcol_to_a1(end_row - 1, max_col)}"
-    )
-    block_data = ws.get(range_str)
-
-    target_local_idx = None
-    for i, row in enumerate(block_data):
-        cell_b = row[1].strip() if len(row) > 1 else ""
-        if cell_b == category:
-            target_local_idx = i
-            break
-
-    if target_local_idx is None:
-        raise ValueError(
-            f"Category '{category}' not found in month block {_month_label(expense_date)}",
-        )
-
-    target_row = start_row + target_local_idx
-
-    header_row = block_data[0]
-    rate_val = header_row[rate_col - 1].strip() if len(header_row) >= rate_col else ""
-    if rate_val and _is_numeric(rate_val):
-        rate = Decimal(rate_val.replace(",", "."))
-    else:
-        rate = await fetch_eur_rsd_rate(expense_date.replace(day=1))
-        ws.update_cell(start_row, rate_col, str(rate))
-        logger.info("Wrote EUR/RSD rate %s for %s", rate, _month_label(expense_date))
-
-    cat_row = block_data[target_local_idx]
-
-    def _cell(col_idx: int) -> str:
-        return cat_row[col_idx - 1].strip() if len(cat_row) >= col_idx else ""
-
-    existing_rsd = _cell(amount_col)
-    current_rsd = float(existing_rsd.replace(",", ".")) if _is_numeric(existing_rsd) else 0.0
-    new_rsd = current_rsd + amount_rsd
-
-    eur_amount = float(Decimal(str(amount_rsd)) / rate)
-
-    existing_eur = _cell(eur_col)
-    current_eur = float(existing_eur.replace(",", ".")) if _is_numeric(existing_eur) else 0.0
-    new_eur = current_eur + eur_amount
-
-    updates: list[tuple[int, int, str]] = [
-        (target_row, amount_col, f"{new_rsd:.2f}"),
-        (target_row, eur_col, f"{new_eur:.2f}"),
-    ]
+    rate = await _ensure_rate(ws, all_values, target_month, target_row, expense_date)
+    _append_to_rsd_formula(ws, target_row, amount_rsd)
 
     if comment:
-        existing_comment = _cell(comment_col)
-        separator = "; " if existing_comment else ""
-        updates.append(
-            (target_row, comment_col, f"{existing_comment}{separator}{comment}"),
-        )
+        _append_comment(ws, target_row, row_data, comment)
 
-    for row, col, val in updates:
-        ws.update_cell(row, col, val)
+    existing_rsd = _cell(row_data, COL_AMOUNT_RSD)
+    prev_total = float(existing_rsd.replace(",", ".")) if _is_numeric(existing_rsd) else 0.0
+    eur_amount = float(Decimal(str(amount_rsd)) / rate)
+    month_label = expense_date.strftime("%Y-%m")
 
     logger.info(
-        "Wrote expense: %s RSD (%.2f EUR) to %s in %s",
+        "Wrote expense: %s RSD (%.2f EUR) to %s/%s in %s",
         amount_rsd,
         eur_amount,
         category,
-        _month_label(expense_date),
+        group,
+        month_label,
     )
 
     return {
-        "month": _month_label(expense_date),
+        "month": month_label,
         "category": category,
         "amount_rsd": amount_rsd,
         "amount_eur": round(eur_amount, 2),
-        "new_total_rsd": round(new_rsd, 2),
+        "new_total_rsd": round(prev_total + amount_rsd, 2),
     }

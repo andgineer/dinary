@@ -17,17 +17,15 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
 ```bash
 uv sync
 
-# Place your Google service account key in the project root
-cp /path/to/your-key.json credentials.json
-
-# Set the spreadsheet ID (uv run does not read .env automatically)
-export DINARY_GOOGLE_SHEETS_SPREADSHEET_ID=your-spreadsheet-id
+# Create .env with your spreadsheet ID (one-time, .env is gitignored)
+echo 'DINARY_GOOGLE_SHEETS_SPREADSHEET_ID=<your-spreadsheet-id>' > .env
 
 uv run dinary
 ```
 
-The server starts on `http://localhost:8000`.
+The server starts on `http://localhost:8000` with auto-reload.
 
+Credentials are read from `~/.config/gspread/service_account.json` (standard gspread location).
 Don't have a service account key yet?
 See [Google Sheets Setup](https://andgineer.github.io/dinary-server/google-sheets-setup/).
 

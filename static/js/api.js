@@ -3,11 +3,11 @@
  * All calls go to the same origin (FastAPI serves both API and PWA).
  */
 
-export async function postExpense(data) {
+export async function postExpense({ amount, currency, category, group, comment, date }) {
   const resp = await fetch("/api/expenses", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify({ amount, currency, category, group, comment, date }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));

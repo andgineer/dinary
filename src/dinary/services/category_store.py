@@ -37,3 +37,6 @@ class CategoryStore:
             if cat.name == category_name:
                 return cat.group
         return None
+
+    def has_category(self, name: str, group: str) -> bool:
+        return any(c.name == name and c.group == group for c in self._categories)

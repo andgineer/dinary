@@ -75,5 +75,4 @@ nav:
   - pwa-install.md
   - cloudflare-setup.md
   - deploy-oracle.md
-  - deploy-render.md
-  - deploy-railway.md
+  - deploy-selfhost.md
