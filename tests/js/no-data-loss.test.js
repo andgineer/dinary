@@ -105,6 +105,14 @@ describe("no data loss: enqueue-before-send contract", () => {
     expect(await count()).toBe(1);
   });
 
+  it("expense stays in queue on server 503", async () => {
+    const post = vi.fn(async () => {
+      throw new Error("HTTP 503");
+    });
+    await submitExpenseWith(EXPENSE, post);
+    expect(await count()).toBe(1);
+  });
+
   it("expense stays in queue on network timeout", async () => {
     const post = vi.fn(async () => {
       throw new DOMException("The operation was aborted", "AbortError");
@@ -128,6 +136,22 @@ describe("no data loss: enqueue-before-send contract", () => {
 
     await submitExpenseWith(EXPENSE, post, false);
     expect(post).not.toHaveBeenCalled();
+    expect(await count()).toBe(1);
+  });
+
+  it("expense stays in queue on DNS resolution failure", async () => {
+    const post = vi.fn(async () => {
+      throw new TypeError("NetworkError when attempting to fetch resource.");
+    });
+    await submitExpenseWith(EXPENSE, post);
+    expect(await count()).toBe(1);
+  });
+
+  it("expense stays in queue on ERR_CONNECTION_RESET", async () => {
+    const post = vi.fn(async () => {
+      throw new TypeError("net::ERR_CONNECTION_RESET");
+    });
+    await submitExpenseWith(EXPENSE, post);
     expect(await count()).toBe(1);
   });
 });
@@ -167,6 +191,41 @@ describe("no data loss: flush partial failure", () => {
     expect(await count()).toBe(0);
     expect(post).toHaveBeenCalledTimes(3);
   });
+
+  it("failure at item 3 of 5 — items 3-5 remain in queue", async () => {
+    for (let i = 1; i <= 5; i++) {
+      await enqueue({ ...EXPENSE, amount: i * 100 });
+    }
+
+    let callCount = 0;
+    const post = vi.fn(async () => {
+      callCount++;
+      if (callCount >= 3) throw new Error("HTTP 500");
+      return {};
+    });
+
+    await flushQueueWith(post);
+
+    expect(await count()).toBe(3);
+    const remaining = await getAll();
+    expect(remaining.map((r) => r.amount)).toEqual([300, 400, 500]);
+  });
+
+  it("items sent in order (FIFO)", async () => {
+    await enqueue({ ...EXPENSE, amount: 111 });
+    await enqueue({ ...EXPENSE, amount: 222 });
+    await enqueue({ ...EXPENSE, amount: 333 });
+
+    const sentAmounts = [];
+    const post = vi.fn(async (e) => {
+      sentAmounts.push(e.amount);
+      return {};
+    });
+
+    await flushQueueWith(post);
+
+    expect(sentAmounts).toEqual([111, 222, 333]);
+  });
 });
 
 describe("no data loss: postExpense timeout", () => {
@@ -179,5 +238,103 @@ describe("no data loss: postExpense timeout", () => {
 
     await flushQueueWith(post);
     expect(await count()).toBe(1);
+  });
+});
+
+describe("no data loss: data integrity after enqueue", () => {
+  it("all fields are preserved exactly in IndexedDB", async () => {
+    const entry = {
+      amount: 1234.56,
+      currency: "RSD",
+      category: "еда&бытовые",
+      group: "собака",
+      comment: "корм Royal Canin; миска",
+      date: "2026-12-31",
+    };
+
+    await enqueue(entry);
+    const [item] = await getAll();
+
+    expect(item.amount).toBe(1234.56);
+    expect(item.currency).toBe("RSD");
+    expect(item.category).toBe("еда&бытовые");
+    expect(item.group).toBe("собака");
+    expect(item.comment).toBe("корм Royal Canin; миска");
+    expect(item.date).toBe("2026-12-31");
+  });
+
+  it("unicode characters in all fields preserved", async () => {
+    const entry = {
+      amount: 100,
+      currency: "RSD",
+      category: "カフェ",
+      group: "путешествия",
+      comment: "日本語テスト & ñoño",
+      date: "2026-01-01",
+    };
+
+    await enqueue(entry);
+    const [item] = await getAll();
+
+    expect(item.category).toBe("カフェ");
+    expect(item.comment).toBe("日本語テスト & ñoño");
+  });
+
+  it("very large amount is preserved", async () => {
+    await enqueue({ ...EXPENSE, amount: 9999999.99 });
+    const [item] = await getAll();
+    expect(item.amount).toBe(9999999.99);
+  });
+
+  it("zero amount is preserved", async () => {
+    await enqueue({ ...EXPENSE, amount: 0 });
+    const [item] = await getAll();
+    expect(item.amount).toBe(0);
+  });
+
+  it("empty strings are preserved", async () => {
+    await enqueue({ ...EXPENSE, group: "", comment: "" });
+    const [item] = await getAll();
+    expect(item.group).toBe("");
+    expect(item.comment).toBe("");
+  });
+});
+
+describe("no data loss: concurrent operations", () => {
+  it("parallel enqueues don't lose items", async () => {
+    const promises = [];
+    for (let i = 0; i < 10; i++) {
+      promises.push(enqueue({ ...EXPENSE, amount: i }));
+    }
+    await Promise.all(promises);
+
+    expect(await count()).toBe(10);
+  });
+
+  it("rapid enqueue-flush cycles don't lose data", async () => {
+    const successPost = vi.fn(async () => ({}));
+
+    for (let i = 0; i < 5; i++) {
+      await enqueue({ ...EXPENSE, amount: (i + 1) * 100 });
+      await flushQueueWith(successPost);
+    }
+
+    expect(await count()).toBe(0);
+    expect(successPost).toHaveBeenCalledTimes(5);
+  });
+
+  it("enqueue during failed flush preserves new item", async () => {
+    await enqueue({ ...EXPENSE, amount: 100 });
+
+    const post = vi.fn(async () => {
+      throw new Error("HTTP 500");
+    });
+
+    await flushQueueWith(post);
+    await enqueue({ ...EXPENSE, amount: 200 });
+
+    expect(await count()).toBe(2);
+    const items = await getAll();
+    expect(items.map((i) => i.amount)).toEqual([100, 200]);
   });
 });

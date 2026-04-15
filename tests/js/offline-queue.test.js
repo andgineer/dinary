@@ -54,3 +54,104 @@ describe("offline-queue", () => {
     expect(await count()).toBe(0);
   });
 });
+
+describe("offline-queue: edge cases", () => {
+  it("each item gets a unique auto-increment id", async () => {
+    await enqueue({ amount: 1, category: "A", date: "2026-01-01" });
+    await enqueue({ amount: 2, category: "B", date: "2026-01-01" });
+    await enqueue({ amount: 3, category: "C", date: "2026-01-01" });
+
+    const items = await getAll();
+    const ids = items.map((i) => i.id);
+    const uniqueIds = new Set(ids);
+    expect(uniqueIds.size).toBe(3);
+  });
+
+  it("queued_at timestamp is recent", async () => {
+    const before = Date.now();
+    await enqueue({ amount: 100, category: "X", date: "2026-01-01" });
+    const after = Date.now();
+
+    const [item] = await getAll();
+    expect(item.queued_at).toBeGreaterThanOrEqual(before);
+    expect(item.queued_at).toBeLessThanOrEqual(after);
+  });
+
+  it("remove with non-existent id does not throw", async () => {
+    await enqueue({ amount: 100, category: "X", date: "2026-01-01" });
+    await remove(99999);
+    expect(await count()).toBe(1);
+  });
+
+  it("getAll returns items in insertion order", async () => {
+    for (let i = 1; i <= 5; i++) {
+      await enqueue({ amount: i * 100, category: `Cat${i}`, date: "2026-01-01" });
+    }
+
+    const items = await getAll();
+    const amounts = items.map((i) => i.amount);
+    expect(amounts).toEqual([100, 200, 300, 400, 500]);
+  });
+
+  it("remove first item preserves remaining order", async () => {
+    await enqueue({ amount: 100, category: "A", date: "2026-01-01" });
+    await enqueue({ amount: 200, category: "B", date: "2026-01-01" });
+    await enqueue({ amount: 300, category: "C", date: "2026-01-01" });
+
+    const items = await getAll();
+    await remove(items[0].id);
+
+    const remaining = await getAll();
+    expect(remaining.map((r) => r.amount)).toEqual([200, 300]);
+  });
+
+  it("remove middle item preserves others", async () => {
+    await enqueue({ amount: 100, category: "A", date: "2026-01-01" });
+    await enqueue({ amount: 200, category: "B", date: "2026-01-01" });
+    await enqueue({ amount: 300, category: "C", date: "2026-01-01" });
+
+    const items = await getAll();
+    await remove(items[1].id);
+
+    const remaining = await getAll();
+    expect(remaining.map((r) => r.amount)).toEqual([100, 300]);
+  });
+
+  it("handles many items (stress test)", async () => {
+    for (let i = 0; i < 50; i++) {
+      await enqueue({ amount: i, category: `Cat${i}`, date: "2026-01-01" });
+    }
+    expect(await count()).toBe(50);
+
+    const items = await getAll();
+    for (let i = 0; i < 25; i++) {
+      await remove(items[i].id);
+    }
+    expect(await count()).toBe(25);
+  });
+
+  it("special characters in category and comment", async () => {
+    await enqueue({
+      amount: 100,
+      category: "еда&бытовые",
+      group: "",
+      comment: '<script>alert("xss")</script>',
+      date: "2026-01-01",
+    });
+
+    const [item] = await getAll();
+    expect(item.category).toBe("еда&бытовые");
+    expect(item.comment).toBe('<script>alert("xss")</script>');
+  });
+
+  it("decimal amounts preserved exactly", async () => {
+    await enqueue({ amount: 0.1, category: "X", date: "2026-01-01" });
+    await enqueue({ amount: 99.99, category: "Y", date: "2026-01-01" });
+    await enqueue({ amount: 1234.56, category: "Z", date: "2026-01-01" });
+
+    const items = await getAll();
+    expect(items[0].amount).toBe(0.1);
+    expect(items[1].amount).toBe(99.99);
+    expect(items[2].amount).toBe(1234.56);
+  });
+});
