@@ -43,21 +43,6 @@ RestartSec=5
 WantedBy=multi-user.target
 """
 
-TAILSCALE_FUNNEL_SERVICE = """\
-[Unit]
-Description=Tailscale Funnel for dinary
-After=tailscaled.service
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/tailscale funnel 8000
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-"""
-
 CLOUDFLARED_SERVICE = """\
 [Unit]
 Description=Cloudflare Tunnel for dinary
@@ -123,8 +108,8 @@ def _setup_tailscale(c):
     _ssh(c, "command -v tailscale || curl -fsSL https://tailscale.com/install.sh | sh")
     _ssh_sudo(c, "tailscale up")
 
-    print("=== Creating tailscale-funnel service ===")
-    _create_service(c, "tailscale-funnel", TAILSCALE_FUNNEL_SERVICE)
+    print("=== Enabling Tailscale Funnel ===")
+    _ssh_sudo(c, "tailscale funnel --bg 8000")
 
 
 def _setup_cloudflare(c):
@@ -274,7 +259,7 @@ def status(c):
     tunnel = _tunnel()
     _ssh_sudo(c, "systemctl status dinary --no-pager")
     if tunnel == "tailscale":
-        _ssh_sudo(c, "systemctl status tailscale-funnel --no-pager")
+        _ssh(c, "tailscale funnel status")
     elif tunnel == "cloudflare":
         _ssh_sudo(c, "systemctl status cloudflared --no-pager")
 

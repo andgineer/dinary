@@ -122,10 +122,16 @@ async function submitExpense() {
   const btn = $("#save-btn");
   btn.disabled = true;
 
-  // Always save to queue first — guarantees no data loss
-  await enqueue(entry);
-  await updateQueueBadge();
-  resetForm();
+  try {
+    await enqueue(entry);
+    await updateQueueBadge();
+    resetForm();
+  } catch (e) {
+    showToast(`Save failed: ${e.message}`, "error");
+    btn.disabled = false;
+    return;
+  }
+
   btn.disabled = false;
 
   if (!navigator.onLine) {
