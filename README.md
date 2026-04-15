@@ -13,8 +13,8 @@
 | src/dinary/services/category\_store.py |       27 |        0 |    100% |           |
 | src/dinary/services/exchange\_rate.py  |       16 |        0 |    100% |           |
 | src/dinary/services/qr\_parser.py      |       16 |        1 |     94% |        31 |
-| src/dinary/services/sheets.py          |      164 |       16 |     90% |38-44, 48, 63-64, 80, 100-103, 108-110, 260 |
-| **TOTAL**                              |  **336** |   **21** | **94%** |           |
+| src/dinary/services/sheets.py          |      164 |       14 |     91% |38-44, 48, 80, 100-103, 108-110, 260 |
+| **TOTAL**                              |  **336** |   **19** | **94%** |           |
 
 
 ## Setup coverage badge
