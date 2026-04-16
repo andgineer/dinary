@@ -4,6 +4,9 @@ Reads the sheet with raw formulas, parses individual amounts from the
 RSD formula column (e.g. =460+373+1500), and creates one expense row
 per individual amount in budget_YYYY.duckdb.
 
+For formulas containing cell references (e.g. =550*H134 for EUR amounts),
+falls back to the evaluated display value as a single aggregate amount.
+
 Idempotent: uses deterministic expense IDs so re-running is safe.
 Does NOT create sheet_sync_jobs — the data is already in the sheet.
 """
@@ -24,33 +27,70 @@ from dinary.services.sheets import (
     COL_MONTH,
     HEADER_ROWS,
     _cell,
-    _is_numeric,
     get_sheet,
 )
 
 logger = logging.getLogger(__name__)
 
+_PURE_ADDITIVE_RE = re.compile(r"^[\d.+\s]+$")
+_MONTHS_IN_YEAR = 12
 
-def _parse_formula_amounts(formula: str) -> list[float]:
-    """Extract individual amounts from a sheet formula like '=460+373+1500'."""
-    if not formula:
+
+def _formula_cell_str(row: list, col_1indexed: int) -> str:
+    """Get a formula cell value as string (gspread may return int/float)."""
+    idx = col_1indexed - 1
+    if len(row) <= idx:
+        return ""
+    val = row[idx]
+    if isinstance(val, int | float):
+        return str(val)
+    return str(val).strip()
+
+
+def _parse_display_amount(display: str) -> float | None:
+    """Parse a displayed amount like '30,805' or '1 500.50'."""
+    if not display:
+        return None
+    cleaned = display.replace(" ", "").replace(",", "")
+    try:
+        val = float(cleaned)
+        return val if val != 0 else None
+    except ValueError:
+        return None
+
+
+def _parse_formula_amounts(formula_raw: str, display_raw: str) -> list[float]:
+    """Extract individual amounts from a formula, falling back to display value.
+
+    Pure additive formulas (=460+373+1500) are split into individual amounts.
+    Formulas with cell references or multiplication (=550*H134) fall back
+    to the display value as a single amount.
+    """
+    if not formula_raw and not display_raw:
         return []
-    cleaned = formula.lstrip("=").strip()
-    if not cleaned:
-        return []
-    parts = re.split(r"\+", cleaned)
-    amounts: list[float] = []
-    for part in parts:
-        cleaned = part.strip().replace(",", ".").replace(" ", "")
-        if not cleaned:
-            continue
-        try:
-            val = float(cleaned)
-            if val != 0:
-                amounts.append(val)
-        except ValueError:
-            logger.warning("Cannot parse amount part: %r from formula %r", part, formula)
-    return amounts
+
+    if formula_raw.startswith("="):
+        body = formula_raw[1:].strip()
+        if _PURE_ADDITIVE_RE.match(body):
+            parts = body.split("+")
+            amounts: list[float] = []
+            for part in parts:
+                cleaned = part.strip().replace(",", ".")
+                if not cleaned:
+                    continue
+                try:
+                    val = float(cleaned)
+                    if val != 0:
+                        amounts.append(val)
+                except ValueError:
+                    pass
+            if amounts:
+                return amounts
+
+    val = _parse_display_amount(display_raw)
+    if val is not None:
+        return [val]
+    return []
 
 
 def _stable_id(year: int, month: int, category: str, group: str, idx: int) -> str:
@@ -86,15 +126,7 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
             if not month_str or not month_str.isdigit():
                 continue
             month = int(month_str)
-
-            date_cell = _cell(row_display, 1)
-            if not date_cell:
-                continue
-            try:
-                row_date = datetime.strptime(date_cell[:10], "%Y-%m-%d").date()
-            except ValueError:
-                continue
-            if row_date.year != year:
+            if not 1 <= month <= _MONTHS_IN_YEAR:
                 continue
 
             category = _cell(row_display, COL_CATEGORY)
@@ -102,14 +134,9 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
             if not category:
                 continue
 
-            formula_raw = _cell(row_formula, COL_AMOUNT_RSD)
-            amounts = _parse_formula_amounts(formula_raw)
-            if not amounts:
-                rsd_val = _cell(row_display, COL_AMOUNT_RSD)
-                if rsd_val and _is_numeric(rsd_val):
-                    val = float(rsd_val.replace(",", ".").replace(" ", ""))
-                    if val != 0:
-                        amounts = [val]
+            formula_raw = _formula_cell_str(row_formula, COL_AMOUNT_RSD)
+            display_raw = _cell(row_display, COL_AMOUNT_RSD)
+            amounts = _parse_formula_amounts(formula_raw, display_raw)
             if not amounts:
                 continue
 
@@ -135,14 +162,7 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
 
             for i, amount in enumerate(amounts):
                 expense_id = _stable_id(year, month, category, group, i)
-                expense_dt = datetime(
-                    year,
-                    month,
-                    1,
-                    12,
-                    0,
-                    0,
-                ) + timedelta(seconds=i)
+                expense_dt = datetime(year, month, 1, 12, 0, 0) + timedelta(seconds=i)
                 comment = comments[i] if i < len(comments) else ""
 
                 try:
