@@ -33,6 +33,21 @@ prioritizing clean data model and scriptability over UI polish.
 - Python-native: `import duckdb` — no server, no driver, no ORM needed.
 - At the expected scale (~30K item rows/year), every query completes in milliseconds.
 
+### Server Memory Constraint
+
+The production design must fit on an always-on VPS with **1 OCPU / 1 GB RAM**.
+This is a hard architectural constraint, not just a deployment preference.
+
+Implications:
+
+- Prefer embedded/local components over additional server daemons. DuckDB is acceptable precisely because it runs in-process and avoids a separate database service.
+- The backend must remain a **small FastAPI + DuckDB process**, not a multi-service stack.
+- Do not require Docker in production on the 1 GB instance.
+- Do not run AI/LLM workloads, heavy batch classification, or other memory-hungry jobs on the server. Those stay on the laptop-side `dinary` agent.
+- Keep background work serialized and bounded: no fan-out workers, no parallel sync pipelines, no large in-memory queues.
+- Google Sheets sync should operate on **dirty months / targeted aggregates**, not full-sheet or full-history recomputation on every request.
+- Caches must stay small and optional. Correctness must not depend on large resident in-memory datasets.
+
 ### Partitioning Strategy
 
 One DuckDB file per year:
@@ -550,6 +565,16 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 
 **Accessibility:** API served via Cloudflare Tunnel or Tailscale Serve. For the current MVP, Tailscale Serve is the preferred default because it avoids public internet exposure.
 
+#### 1 GB Server Rules
+
+Because the reference production target is the Oracle AMD Micro instance, the server-side implementation must follow these rules:
+
+- Run a single app process by default. Do not scale by adding multiple uvicorn workers on the 1 GB host.
+- Avoid colocating extra infrastructure on the VPS: no separate Postgres, Redis, Celery, message broker, or background analytics service in Phase 1.
+- Treat Google Sheets sync as lightweight projection work, not as a second analytics engine.
+- Prefer on-demand or dirty-month scoped recomputation over broad periodic rebuilds.
+- Any future feature that materially increases steady-state RAM use must be designed to run off-box (for example on the laptop-side agent) or be explicitly deferred until a larger host is available.
+
 ### dinary (User's Laptop)
 
 A desktop application with two components: a **daemon** for background AI processing and a **GUI** for interactive use.
@@ -664,19 +689,36 @@ No new database, no line-item parsing — just a mobile frontend that writes dir
 - The user has used the system daily for 2+ weeks and no longer opens the spreadsheet to enter data manually.
 - QR scanning has been used successfully on real receipts (camera → URL extraction → total + date pre-fill) and is confirmed to work reliably with the chosen frontend tool.
 
-### Phase 1: Data Foundation & Backend Deployment (dinary-server)
-- Set up DuckDB schema (config.duckdb + budget_2026.duckdb) on VPS (Oracle Cloud Free Tier).
-- Research - do we need DB mete data versioning like alembic?
-- Deploy dinary-server (FastAPI) with basic REST API for expense ingestion.
-- Migrate existing Google Sheets data into DuckDB.
-- Write basic SQL queries for monthly aggregates.
-- Backend now writes to both DuckDB (primary, returns success to API call) and Google Sheets (view layer, async, from queue in DuckDB).
+### Phase 1: Data Foundation & Idempotent Ingestion (dinary-server)
+
+Detailed plan: [phase1.md](phase1.md)
+
+- Set up DuckDB with the **full 5-dimensional classification schema** (category, beneficiary, event, tags, store) from day one -- not a simplified subset.
+- Build a **sheet-to-5D mapping table** (`sheet_category_mapping`) that decomposes the current Google Sheet's flat `(Расходы, Конверт)` pairs into proper 5D assignments. The sheet's envelope column mixes category groups (здоровье), beneficiaries (собака, ребенок), tags (релокация), and event contexts (путешествия) -- the mapping table untangles these.
+- **PWA is unchanged** -- it still sends `(category, group)` as in Phase 0. The server resolves these to 5D via the mapping table on ingestion.
+- Deploy dinary-server (FastAPI) with DuckDB-backed expense ingestion and idempotent deduplication via `expenses.id PRIMARY KEY`.
+- Google Sheets becomes a derived read-only view: an idempotent sync layer projects 5D DuckDB data back into the sheet's flat `(category, group)` format using the mapping table in reverse.
+- Client generates `expense_id` (UUID) at enqueue time; server returns `200 created`, `200 duplicate`, or `409 Conflict`.
+
+**Historical data migration is NOT part of Phase 1.** After Phase 1 cutover, DuckDB holds only new expenses; historical data remains in Google Sheets until Phase 1.5.
+
+### Phase 1.5: Historical Data Migration
+
+The existing Google Sheets contain ~10 years of data. Nearly every year used a slightly different category system (different category names, different envelope groupings) and even different column layouts. This makes bulk import impractical -- each year requires individual analysis and its own mapping.
+
+- Analyze each yearly Google Sheets tab individually: identify that year's category/envelope structure, column layout, and how it differs from other years.
+- Build per-year mapping from that year's flat `(category, envelope)` pairs to the 5D classification model, handling cases where the same category name meant different things in different years.
+- For "путешествия" envelopes: create a per-year synthetic event "отпуск-YYYY" (`date_from = YYYY-01-01`, `date_to = YYYY-12-31`) and map all travel rows to it (same approach as Phase 1 uses for the current year). Once the PWA switches to native 5D input (Phase 2+), set `date_to` of the last synthetic travel event to the release date of the 5D PWA. From that date forward, the user creates specific named trips instead of a per-year umbrella, and the auto-attach rule for `sheet_group = "путешествия"` is retired.
+- Build per-year import scripts that create synthetic expense rows in `budget_YYYY.duckdb` with `source = 'legacy_import'`.
+- Reconcile imported totals against original sheet totals.
+- After successful import, run DuckDB -> Google Sheets sync to verify the rebuilt sheet matches legacy data.
 
 ### Phase 2: Receipt Parser
 - Integrate or adapt sr-invoice-parser for fetching and parsing Serbian fiscal receipts from SUF PURS URLs.
 - Build the ingestion pipeline: URL → fetch HTML → parse line items → insert into `expenses` table in DuckDB.
-- Implement fuzzy ML / AI auto-classification.
-- To Google Sheets we write in old stype (whole receipt to old categories / envelops).
+- Implement fuzzy ML / AI auto-classification that produces 5D classification directly (category, beneficiary, event, tags, store).
+- Change the PWA so it no longer works in Google Sheets terms for new receipt/manual flows. From Phase 2 onward, the PWA should use the native 5D classification model directly instead of asking the user for `(Расходы, Конверт)` from the spreadsheet.
+- Google Sheets sync uses the `sheet_category_mapping` table in reverse: from the 5D classification produced by AI/rules, determine the target `(Расходы, Конверт)` row in the sheet.
 
 ### Phase 3: Mobile Input — Full Version (dinary-app)
 **Done as part of MVP**
@@ -709,6 +751,7 @@ No new database, no line-item parsing — just a mobile frontend that writes dir
   - Implement the task queue API on dinary-server (`/api/tasks/*`).
   - Build the batch classification flow: fetch pending → `claude -p` → push results.
   - GUI: interactive AI API calls for responsive receipt extraction (paste text/PDF → AI API → extract amount, date, items → store via server API).
+  - After AI classification of receipt line items is available, change the PWA receipt flow so scanning a receipt submits it immediately without waiting for a manual `Save` press. The scan should create the receipt/import job right away; later user interaction is only for review/correction, not for the initial submission.
   - Implement the review/confirm flow (via GUI or CLI).
   - Wire up rule learning (confirmed classifications → new rules in `category_rules`).
 
@@ -725,8 +768,13 @@ No new database, no line-item parsing — just a mobile frontend that writes dir
 Each phase is independently useful.
 
 - Phase 0 alone eliminates manual spreadsheet editing, validates QR scanning, and validates the mobile input tool.
-- Phase 1 establishes the proper data foundation.
+- Phase 1 establishes the proper data foundation with idempotent ingestion and deduplication.
+- Phase 1.5 migrates historical Google Sheets data into DuckDB (complex, per-year analysis required).
 - Phase 2 solves the supermarket opacity problem.
 - Phase 3 adds full line-item QR flow and complete mobile input.
 - Phase 4 builds the desktop app (daemon + GUI) with AI classification and responsive receipt extraction.
 - Phases 5-6 add dashboards, AI analysis, and Google Sheets sync.
+
+## Open questions
+
+- **Cross-year events**: events (e.g. a trip) can span a year boundary (start in December, end in January). Since `expenses` are partitioned into yearly `budget_YYYY.duckdb` files but `events` live in the shared `config.duckdb`, this works at the data level -- expenses in both years reference the same `event_id`. However, reporting and sync need to handle the case where a single event's expenses are split across two yearly DB files. Decide whether to query both years when summarizing an event, or accept per-year totals as sufficient.
