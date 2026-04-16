@@ -93,9 +93,16 @@ def _parse_formula_amounts(formula_raw: str, display_raw: str) -> list[float]:
     return []
 
 
-def _stable_id(year: int, month: int, category: str, group: str, idx: int) -> str:
+def _stable_id(  # noqa: PLR0913
+    year: int,
+    month: int,
+    row_idx: int,
+    category: str,
+    group: str,
+    idx: int,
+) -> str:
     """Deterministic expense ID for idempotent import."""
-    raw = f"legacy-{year}-{month:02d}-{category}-{group}-{idx}"
+    raw = f"legacy-{year}-{month:02d}-r{row_idx}-{category}-{group}-{idx}"
     short_hash = hashlib.sha256(raw.encode()).hexdigest()[:8]
     return f"legacy-{year}{month:02d}-{short_hash}"
 
@@ -115,6 +122,9 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
     con = duckdb_repo.get_budget_connection(year)
 
     try:
+        con.execute("DELETE FROM expense_tags WHERE expense_id LIKE 'legacy-%'")
+        con.execute("DELETE FROM expenses WHERE source = 'legacy_import'")
+
         ws = get_sheet().sheet1
         all_values = ws.get_all_values()
         all_formulas = ws.get_all_values(value_render_option=ValueRenderOption.formula)
@@ -167,7 +177,7 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
             months_seen.add(month)
 
             for i, amount in enumerate(amounts):
-                expense_id = _stable_id(year, month, category, group, i)
+                expense_id = _stable_id(year, month, row_idx, category, group, i)
                 expense_dt = datetime(year, month, 1, 12, 0, 0) + timedelta(seconds=i)
                 comment = comments[i] if i < len(comments) else ""
 
