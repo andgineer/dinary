@@ -150,7 +150,8 @@ def seed_from_sheet(year: int | None = None) -> dict:  # noqa: C901, PLR0912, PL
                 resolved_tag_ids = [ensure_tag(TAG_GROUPS[sheet_group])]
 
             existing_mapping = con.execute(
-                "SELECT 1 FROM sheet_category_mapping WHERE sheet_category = ? AND sheet_group = ?",
+                "SELECT 1 FROM sheet_category_mapping "
+                "WHERE year = 0 AND sheet_category = ? AND sheet_group = ?",
                 [sheet_cat, sheet_group],
             ).fetchone()
 
@@ -158,9 +159,9 @@ def seed_from_sheet(year: int | None = None) -> dict:  # noqa: C901, PLR0912, PL
                 con.execute(
                     """
                     INSERT INTO sheet_category_mapping
-                    (sheet_category, sheet_group, category_id,
+                    (year, sheet_category, sheet_group, category_id,
                      beneficiary_id, event_id, store_id, tag_ids)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (0, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         sheet_cat,

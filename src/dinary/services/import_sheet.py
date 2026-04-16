@@ -115,17 +115,27 @@ def _ensure_travel_event(year: int) -> int:
 def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
     """Import all months for *year* from Google Sheets into DuckDB.
 
+    Resolves the spreadsheet and worksheet from sheet_import_sources
+    if a row exists for *year*; otherwise falls back to the default
+    spreadsheet configured via DINARY_GOOGLE_SHEETS_SPREADSHEET_ID.
+
     Returns a summary dict with counts.
     """
     duckdb_repo.init_config_db()
     travel_event_id = _ensure_travel_event(year)
+
+    source = duckdb_repo.get_import_source(year)
+    spreadsheet_id = source.spreadsheet_id if source else ""
+    worksheet_name = source.worksheet_name if source else ""
+
     con = duckdb_repo.get_budget_connection(year)
 
     try:
         con.execute("DELETE FROM expense_tags WHERE expense_id LIKE 'legacy-%'")
         con.execute("DELETE FROM expenses WHERE source = 'legacy_import'")
 
-        ws = get_sheet().sheet1
+        ss = get_sheet(spreadsheet_id)
+        ws = ss.worksheet(worksheet_name) if worksheet_name else ss.sheet1
         all_values = ws.get_all_values()
         all_formulas = ws.get_all_values(value_render_option=ValueRenderOption.formula)
 
@@ -159,7 +169,7 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
             comment_raw = _cell(row_display, COL_COMMENT)
             comments = [c.strip() for c in comment_raw.split(";")] if comment_raw else []
 
-            mapping = duckdb_repo.resolve_mapping(con, category, group)
+            mapping = duckdb_repo.resolve_mapping_for_year(con, category, group, year)
             if mapping is None:
                 logger.warning("No mapping for %s/%s — skipping row", category, group)
                 errors += 1

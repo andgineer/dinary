@@ -23,13 +23,13 @@ def _tmp_duckdb(tmp_path, monkeypatch):
         con.execute("INSERT INTO categories VALUES (2, 'Transport', 2)")
         con.execute("INSERT INTO categories VALUES (3, 'кафе', 3)")
         con.execute(
-            "INSERT INTO sheet_category_mapping VALUES ('Food', 'Essentials', 1, NULL, NULL, NULL, NULL)"
+            "INSERT INTO sheet_category_mapping VALUES (0, 'Food', 'Essentials', 1, NULL, NULL, NULL, NULL)"
         )
         con.execute(
-            "INSERT INTO sheet_category_mapping VALUES ('Transport', 'Essentials', 2, NULL, NULL, NULL, NULL)"
+            "INSERT INTO sheet_category_mapping VALUES (0, 'Transport', 'Essentials', 2, NULL, NULL, NULL, NULL)"
         )
         con.execute(
-            "INSERT INTO sheet_category_mapping VALUES ('кафе', 'путешествия', 3, NULL, NULL, NULL, NULL)"
+            "INSERT INTO sheet_category_mapping VALUES (0, 'кафе', 'путешествия', 3, NULL, NULL, NULL, NULL)"
         )
     finally:
         con.close()

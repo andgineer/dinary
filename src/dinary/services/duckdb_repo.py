@@ -72,6 +72,15 @@ class ReverseMappingRow:
 
 
 @dataclasses.dataclass(slots=True)
+class ImportSourceRow:
+    year: int
+    spreadsheet_id: str
+    worksheet_name: str
+    layout_key: str
+    notes: str | None
+
+
+@dataclasses.dataclass(slots=True)
 class EventIdRow:
     event_id: int
 
@@ -169,6 +178,39 @@ def resolve_mapping(
     Returns MappingRow or None if not found.
     """
     return fetchone_as(MappingRow, con, load_sql("resolve_mapping.sql"), [category, group])
+
+
+def resolve_mapping_for_year(
+    con: duckdb.DuckDBPyConnection,
+    category: str,
+    group: str,
+    year: int,
+) -> MappingRow | None:
+    """Look up (category, group) with year-scoped override support.
+
+    Prefers an exact year match; falls back to year=0 (default).
+    """
+    return fetchone_as(
+        MappingRow,
+        con,
+        load_sql("resolve_mapping_for_year.sql"),
+        [category, group, year],
+    )
+
+
+def get_import_source(year: int) -> ImportSourceRow | None:
+    """Look up the import source metadata for a given year."""
+    con = get_config_connection(read_only=True)
+    try:
+        return fetchone_as(
+            ImportSourceRow,
+            con,
+            "SELECT year, spreadsheet_id, worksheet_name, layout_key, notes "
+            "FROM sheet_import_sources WHERE year = ?",
+            [year],
+        )
+    finally:
+        con.close()
 
 
 def resolve_travel_event(expense_date: date) -> int:

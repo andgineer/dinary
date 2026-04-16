@@ -34,6 +34,7 @@ class TestConfigMigrations:
                 "tags",
                 "stores",
                 "sheet_category_mapping",
+                "sheet_import_sources",
             }
             assert expected.issubset(tables)
         finally:
@@ -65,7 +66,7 @@ class TestConfigMigrations:
             tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
             assert "_yoyo_migration" in tables
             rows = con.execute("SELECT * FROM _yoyo_migration").fetchall()
-            assert len(rows) == 1
+            assert len(rows) == 2
         finally:
             con.close()
 

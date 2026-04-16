@@ -31,10 +31,10 @@ def populated_db(tmp_path):
         con.execute("INSERT INTO family_members VALUES (1, 'собака')")
         con.execute(
             "INSERT INTO sheet_category_mapping "
-            "VALUES ('еда&бытовые', 'собака', 1, 1, NULL, NULL, NULL)"
+            "VALUES (0, 'еда&бытовые', 'собака', 1, 1, NULL, NULL, NULL)"
         )
         con.execute(
-            "INSERT INTO sheet_category_mapping VALUES ('мобильник', '', 2, NULL, NULL, NULL, NULL)"
+            "INSERT INTO sheet_category_mapping VALUES (0, 'мобильник', '', 2, NULL, NULL, NULL, NULL)"
         )
     finally:
         con.close()

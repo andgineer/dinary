@@ -38,25 +38,25 @@ def populated_config(config_db, tmp_path):
         con.execute(
             """
             INSERT INTO sheet_category_mapping
-            VALUES ('еда&бытовые', 'собака', 1, 1, NULL, NULL, NULL)
+            VALUES (0, 'еда&бытовые', 'собака', 1, 1, NULL, NULL, NULL)
             """
         )
         con.execute(
             """
             INSERT INTO sheet_category_mapping
-            VALUES ('кафе', 'путешествия', 2, NULL, NULL, NULL, NULL)
+            VALUES (0, 'кафе', 'путешествия', 2, NULL, NULL, NULL, NULL)
             """
         )
         con.execute(
             """
             INSERT INTO sheet_category_mapping
-            VALUES ('топливо', 'путешествия', 3, NULL, NULL, NULL, NULL)
+            VALUES (0, 'топливо', 'путешествия', 3, NULL, NULL, NULL, NULL)
             """
         )
         con.execute(
             """
             INSERT INTO sheet_category_mapping
-            VALUES ('мобильник', '', 4, NULL, NULL, NULL, NULL)
+            VALUES (0, 'мобильник', '', 4, NULL, NULL, NULL, NULL)
             """
         )
     finally:
@@ -79,6 +79,7 @@ class TestBootstrap:
                 "tags",
                 "stores",
                 "sheet_category_mapping",
+                "sheet_import_sources",
             }
             assert expected.issubset(set(tables))
         finally:

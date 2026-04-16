@@ -44,8 +44,9 @@ def _get_client() -> gspread.Client:
     return _gc
 
 
-def get_sheet() -> gspread.Spreadsheet:
-    return _get_client().open_by_key(settings.google_sheets_spreadsheet_id)
+def get_sheet(spreadsheet_id: str = "") -> gspread.Spreadsheet:
+    key = spreadsheet_id or settings.google_sheets_spreadsheet_id
+    return _get_client().open_by_key(key)
 
 
 def _cell(row: list[str], col_1indexed: int) -> str:
