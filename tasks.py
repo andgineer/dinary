@@ -263,6 +263,14 @@ def deploy(c, ref=""):
     print("=== Ensuring data/ directory ===")
     _ssh(c, "mkdir -p ~/dinary-server/data")
 
+    print("=== Applying config migrations ===")
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && "
+        "uv run python -c 'from dinary.services import duckdb_repo; duckdb_repo.init_config_db(); "
+        "print(\"Migrated config.duckdb\")'"
+    )
+
     print("=== Rendering __VERSION__ into _static/ build copy ===")
     _ssh(
         c,
@@ -308,6 +316,29 @@ def seed_config(c):
     _ssh(c, "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
          "from dinary.services.seed_config import seed_from_sheet; "
          "import json; print(json.dumps(seed_from_sheet()))'")
+
+
+@task(name="migrate-config")
+def migrate_config(c):
+    """Apply pending migrations to config.duckdb on the server."""
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && "
+        "uv run python -c 'from dinary.services import duckdb_repo; "
+        "duckdb_repo.init_config_db(); print(\"Migrated config.duckdb\")'"
+    )
+
+
+@task(name="migrate-budget")
+def migrate_budget(c, year):
+    """Apply pending migrations to a yearly budget DB on the server."""
+    year = int(year)
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && "
+        f"uv run python -c 'from dinary.services import duckdb_repo; "
+        f"print(duckdb_repo.init_budget_db({year}))'"
+    )
 
 
 @task

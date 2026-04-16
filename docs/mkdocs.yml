@@ -71,6 +71,7 @@ extra:
 nav:
   - index.md
   - installation.md
+  - operations.md
   - google-sheets-setup.md
   - pwa-install.md
   - cloudflare-setup.md

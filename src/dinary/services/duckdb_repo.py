@@ -11,6 +11,7 @@ from pathlib import Path
 
 import duckdb
 
+from dinary.services import db_migrations
 from dinary.services.sql_loader import fetchall_as, fetchone_as, load_sql
 
 logger = logging.getLogger(__name__)
@@ -18,91 +19,6 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path("data")
 
 CONFIG_DB = DATA_DIR / "config.duckdb"
-
-CONFIG_SCHEMA = """
-CREATE TABLE IF NOT EXISTS category_groups (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE,
-    monthly_budget_eur DECIMAL(10,2)
-);
-
-CREATE TABLE IF NOT EXISTS categories (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL,
-    group_id    INTEGER NOT NULL REFERENCES category_groups(id),
-    UNIQUE(name, group_id)
-);
-
-CREATE TABLE IF NOT EXISTS family_members (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS events (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL,
-    date_from   DATE NOT NULL,
-    date_to     DATE NOT NULL,
-    is_active   BOOLEAN DEFAULT true,
-    comment     TEXT
-);
-
-CREATE TABLE IF NOT EXISTS event_members (
-    event_id    INTEGER NOT NULL REFERENCES events(id),
-    member_id   INTEGER NOT NULL REFERENCES family_members(id),
-    PRIMARY KEY (event_id, member_id)
-);
-
-CREATE TABLE IF NOT EXISTS tags (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS stores (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE,
-    store_type  TEXT
-);
-
-CREATE TABLE IF NOT EXISTS sheet_category_mapping (
-    sheet_category  TEXT NOT NULL,
-    sheet_group     TEXT NOT NULL DEFAULT '',
-    category_id     INTEGER NOT NULL REFERENCES categories(id),
-    beneficiary_id  INTEGER REFERENCES family_members(id),
-    event_id        INTEGER REFERENCES events(id),
-    store_id        INTEGER REFERENCES stores(id),
-    tag_ids         INTEGER[],
-    PRIMARY KEY (sheet_category, sheet_group)
-);
-"""
-
-BUDGET_SCHEMA = """
-CREATE TABLE IF NOT EXISTS expenses (
-    id              TEXT PRIMARY KEY,
-    datetime        TIMESTAMP NOT NULL,
-    name            TEXT NOT NULL DEFAULT '',
-    amount          DECIMAL(10,2) NOT NULL,
-    currency        TEXT DEFAULT 'RSD',
-    category_id     INTEGER NOT NULL,
-    beneficiary_id  INTEGER,
-    event_id        INTEGER,
-    store_id        INTEGER,
-    comment         TEXT,
-    source          TEXT NOT NULL DEFAULT 'manual'
-);
-
-CREATE TABLE IF NOT EXISTS expense_tags (
-    expense_id  TEXT NOT NULL REFERENCES expenses(id),
-    tag_id      INTEGER NOT NULL,
-    PRIMARY KEY (expense_id, tag_id)
-);
-
-CREATE TABLE IF NOT EXISTS sheet_sync_jobs (
-    year    INTEGER,
-    month   INTEGER,
-    PRIMARY KEY (year, month)
-);
-"""
 
 SYNTHETIC_EVENT_PREFIX = "отпуск-"
 TRAVEL_GROUP = "путешествия"
@@ -199,26 +115,20 @@ def ensure_data_dir() -> None:
 
 
 def init_config_db() -> None:
-    """Create config.duckdb and all reference tables if they don't exist."""
+    """Create or migrate config.duckdb to the latest schema."""
     ensure_data_dir()
-    con = duckdb.connect(str(CONFIG_DB))
-    try:
-        con.execute("BEGIN")
-        con.execute(CONFIG_SCHEMA)
-        con.execute("COMMIT")
-    finally:
-        con.close()
+    db_migrations.migrate_config_db(CONFIG_DB)
 
 
-def _init_budget_db(path: Path) -> None:
-    """Create a yearly budget DB with schema if it doesn't exist."""
-    con = duckdb.connect(str(path))
-    try:
-        con.execute("BEGIN")
-        con.execute(BUDGET_SCHEMA)
-        con.execute("COMMIT")
-    finally:
-        con.close()
+def init_budget_db(year: int) -> Path:
+    """Create or migrate a yearly budget DB and return its path."""
+    ensure_data_dir()
+    path = _budget_path(year)
+    created = not path.exists()
+    db_migrations.migrate_budget_db(path)
+    if created:
+        logger.info("Created %s", path)
+    return path
 
 
 def get_budget_connection(year: int) -> duckdb.DuckDBPyConnection:
@@ -227,14 +137,9 @@ def get_budget_connection(year: int) -> duckdb.DuckDBPyConnection:
     The caller is responsible for closing the connection.
     The connection has config.duckdb ATTACHed as 'config' (READ_ONLY).
     """
-    path = _budget_path(year)
-    if not path.exists():
-        _init_budget_db(path)
-        logger.info("Created %s", path)
-
+    path = init_budget_db(year)
     con = duckdb.connect(str(path))
     try:
-        con.execute(BUDGET_SCHEMA)
         con.execute(
             f"ATTACH '{CONFIG_DB}' AS config (READ_ONLY)"
         )
