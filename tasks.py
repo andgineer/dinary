@@ -367,10 +367,22 @@ def sync(c):
 
 
 @task(name="import-sheet")
-def import_sheet(c, year=""):
-    """Import a year's data from Google Sheets into DuckDB (on server)."""
+def import_sheet(c, year="", yes=False):
+    """Import a year's data from Google Sheets into DuckDB (on server).
+
+    DESTRUCTIVE: deletes all legacy_import rows for the year before
+    re-importing. Use --yes to skip the confirmation prompt.
+    """
     if not year:
         year = str(_dt.now().year)
+    if not yes:
+        print(f"WARNING: This will DELETE all legacy_import expenses for {year}")
+        print("and re-import them from the Google Sheet.")
+        print("Manual expenses will NOT be affected.")
+        answer = input("Type 'yes' to continue: ")
+        if answer.strip().lower() != "yes":
+            print("Aborted.")
+            return
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"

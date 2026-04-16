@@ -47,6 +47,13 @@ header h1 {
   font-weight: 600;
 }
 
+#header-version {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 0.35rem;
+}
+
 .queue-badge {
   background: var(--warning);
   color: #000;

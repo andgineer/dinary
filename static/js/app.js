@@ -314,6 +314,11 @@ async function init() {
   await updateQueueBadge();
   startRetryTimer();
 
+  const hv = $("#header-version");
+  if (APP_VERSION !== "__VERSION__") {
+    hv.textContent = APP_VERSION;
+  }
+
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
   }
