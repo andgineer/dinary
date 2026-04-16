@@ -100,12 +100,18 @@ def _stable_id(year: int, month: int, category: str, group: str, idx: int) -> st
     return f"legacy-{year}{month:02d}-{short_hash}"
 
 
+def _ensure_travel_event(year: int) -> int:
+    """Pre-create the synthetic travel event before budget connection locks config.duckdb."""
+    return duckdb_repo.resolve_travel_event(date(year, 1, 1))
+
+
 def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
     """Import all months for *year* from Google Sheets into DuckDB.
 
     Returns a summary dict with counts.
     """
     duckdb_repo.init_config_db()
+    travel_event_id = _ensure_travel_event(year)
     con = duckdb_repo.get_budget_connection(year)
 
     try:
@@ -156,7 +162,7 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
             tag_ids = mapping.tag_ids
 
             if group == duckdb_repo.TRAVEL_GROUP and event_id is None:
-                event_id = duckdb_repo.resolve_travel_event(date(year, month, 1))
+                event_id = travel_event_id
 
             months_seen.add(month)
 
