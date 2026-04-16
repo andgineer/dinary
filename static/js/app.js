@@ -36,6 +36,7 @@ function parseReceiptUrl(url) {
 }
 
 let _flushing = false;
+let _lastFlushError = null;
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -64,6 +65,7 @@ async function flushQueue() {
   if (_flushing) return;
   _flushing = true;
 
+  _lastFlushError = null;
   let sent = 0;
   const items = await getAll();
   for (const item of items) {
@@ -97,16 +99,9 @@ async function flushQueue() {
         break;
       }
       console.warn("Flush failed for item", item.id, e);
+      _lastFlushError = e.message || "Send failed";
+      showToast(_lastFlushError, "error");
       break;
-    }
-  }
-
-  if (sent > 0) {
-    const remaining = await count();
-    if (remaining === 0) {
-      showToast(`Sent ${sent} expense${sent > 1 ? "s" : ""}`, "success");
-    } else {
-      showToast(`Sent ${sent}, ${remaining} still queued`, "info");
     }
   }
 
@@ -237,6 +232,16 @@ async function showQueueModal() {
   } else {
     list.innerHTML = '<div style="color:#94a3b8;text-align:center">No queued expenses</div>';
     $("#queue-copy").style.display = "none";
+  }
+
+  const errEl = $("#queue-error");
+  if (_lastFlushError && items.length) {
+    errEl.textContent = _lastFlushError;
+    errEl.style.display = "";
+  } else {
+    errEl.textContent = "";
+    errEl.style.display = "none";
+    _lastFlushError = null;
   }
 
   const vi = $("#version-info");
