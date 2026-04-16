@@ -60,12 +60,12 @@
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
-            <a id="prevFileLink" class="nav" href="z_649185c7b8dec303_sheets_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a id="prevFileLink" class="nav" href="z_649185c7b8dec303_sql_loader_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="index.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-16 10:11 +0000
+            created at 2026-04-16 13:25 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -225,26 +225,26 @@
     <p class="run"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t">    <span class="key">for</span> <span class="nam">exp</span> <span class="key">in</span> <span class="nam">expenses</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">        <span class="nam">result</span> <span class="op">=</span> <span class="nam">duckdb_repo</span><span class="op">.</span><span class="nam">reverse_lookup_mapping</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t">            <span class="nam">con</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t146" href="#t146">146</a></span><span class="t">            <span class="nam">exp</span><span class="op">[</span><span class="str">"category_id"</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t147" href="#t147">147</a></span><span class="t">            <span class="nam">exp</span><span class="op">[</span><span class="str">"beneficiary_id"</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t148" href="#t148">148</a></span><span class="t">            <span class="nam">exp</span><span class="op">[</span><span class="str">"event_id"</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t149" href="#t149">149</a></span><span class="t">            <span class="nam">exp</span><span class="op">[</span><span class="str">"store_id"</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t150" href="#t150">150</a></span><span class="t">            <span class="nam">exp</span><span class="op">[</span><span class="str">"tag_ids"</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t146" href="#t146">146</a></span><span class="t">            <span class="nam">exp</span><span class="op">.</span><span class="nam">category_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t147" href="#t147">147</a></span><span class="t">            <span class="nam">exp</span><span class="op">.</span><span class="nam">beneficiary_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t148" href="#t148">148</a></span><span class="t">            <span class="nam">exp</span><span class="op">.</span><span class="nam">event_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t149" href="#t149">149</a></span><span class="t">            <span class="nam">exp</span><span class="op">.</span><span class="nam">store_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t150" href="#t150">150</a></span><span class="t">            <span class="nam">exp</span><span class="op">.</span><span class="nam">tag_ids</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t151" href="#t151">151</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t152" href="#t152">152</a></span><span class="t">        <span class="key">if</span> <span class="nam">result</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t153" href="#t153">153</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis mis2 show_mis"><span class="n"><a id="t154" href="#t154">154</a></span><span class="t">                <span class="str">"No reverse mapping for expense %s (cat=%d, ben=%s, ev=%s)"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t155" href="#t155">155</a></span><span class="t">                <span class="nam">exp</span><span class="op">[</span><span class="str">"id"</span><span class="op">]</span><span class="op">,</span> <span class="nam">exp</span><span class="op">[</span><span class="str">"category_id"</span><span class="op">]</span><span class="op">,</span> <span class="nam">exp</span><span class="op">[</span><span class="str">"beneficiary_id"</span><span class="op">]</span><span class="op">,</span> <span class="nam">exp</span><span class="op">[</span><span class="str">"event_id"</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t155" href="#t155">155</a></span><span class="t">                <span class="nam">exp</span><span class="op">.</span><span class="nam">id</span><span class="op">,</span> <span class="nam">exp</span><span class="op">.</span><span class="nam">category_id</span><span class="op">,</span> <span class="nam">exp</span><span class="op">.</span><span class="nam">beneficiary_id</span><span class="op">,</span> <span class="nam">exp</span><span class="op">.</span><span class="nam">event_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis mis2 show_mis"><span class="n"><a id="t156" href="#t156">156</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t157" href="#t157">157</a></span><span class="t">            <span class="key">continue</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t158" href="#t158">158</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t">        <span class="nam">sheet_cat</span><span class="op">,</span> <span class="nam">sheet_group</span> <span class="op">=</span> <span class="nam">result</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t">        <span class="nam">key</span> <span class="op">=</span> <span class="op">(</span><span class="nam">sheet_cat</span><span class="op">,</span> <span class="nam">sheet_group</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t">        <span class="nam">amt</span> <span class="op">=</span> <span class="nam">Decimal</span><span class="op">(</span><span class="nam">str</span><span class="op">(</span><span class="nam">exp</span><span class="op">[</span><span class="str">"amount"</span><span class="op">]</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t">        <span class="nam">amt</span> <span class="op">=</span> <span class="nam">exp</span><span class="op">.</span><span class="nam">amount</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t">        <span class="nam">aggregates</span><span class="op">[</span><span class="nam">key</span><span class="op">]</span><span class="op">[</span><span class="str">"total_rsd"</span><span class="op">]</span> <span class="op">+=</span> <span class="nam">amt</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t">        <span class="nam">aggregates</span><span class="op">[</span><span class="nam">key</span><span class="op">]</span><span class="op">[</span><span class="str">"amounts"</span><span class="op">]</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="nam">amt</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t">        <span class="key">if</span> <span class="nam">exp</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"comment"</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t">            <span class="nam">aggregates</span><span class="op">[</span><span class="nam">key</span><span class="op">]</span><span class="op">[</span><span class="str">"comments"</span><span class="op">]</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="nam">exp</span><span class="op">[</span><span class="str">"comment"</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t">        <span class="key">if</span> <span class="nam">exp</span><span class="op">.</span><span class="nam">comment</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t">            <span class="nam">aggregates</span><span class="op">[</span><span class="nam">key</span><span class="op">]</span><span class="op">[</span><span class="str">"comments"</span><span class="op">]</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="nam">exp</span><span class="op">.</span><span class="nam">comment</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t">    <span class="key">return</span> <span class="nam">aggregates</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t168" href="#t168">168</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -419,12 +419,12 @@
 <footer>
     <div class="content">
         <p>
-            <a class="nav" href="z_649185c7b8dec303_sheets_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a class="nav" href="z_649185c7b8dec303_sql_loader_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-16 10:11 +0000
+            created at 2026-04-16 13:25 +0000
         </p>
     </div>
 </footer>
