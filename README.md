@@ -6,21 +6,21 @@
 |--------------------------------------- | -------: | -------: | ------: | --------: |
 | src/dinary/\_\_about\_\_.py            |        1 |        0 |    100% |           |
 | src/dinary/api/categories.py           |       20 |        0 |    100% |           |
-| src/dinary/api/expenses.py             |       47 |        0 |    100% |           |
+| src/dinary/api/expenses.py             |       46 |        0 |    100% |           |
 | src/dinary/api/qr.py                   |       17 |        0 |    100% |           |
 | src/dinary/config.py                   |       19 |        1 |     95% |        15 |
 | src/dinary/main.py                     |       57 |        6 |     89% |27-29, 80, 96, 106 |
 | src/dinary/services/category\_store.py |       27 |        0 |    100% |           |
 | src/dinary/services/db\_migrations.py  |       55 |        2 |     96% |    51, 54 |
-| src/dinary/services/duckdb\_repo.py    |      140 |        8 |     94% |155-157, 193, 203-213 |
+| src/dinary/services/duckdb\_repo.py    |      136 |        8 |     94% |145-147, 183, 193-203 |
 | src/dinary/services/exchange\_rate.py  |       16 |        0 |    100% |           |
-| src/dinary/services/import\_sheet.py   |      122 |      122 |      0% |    14-239 |
+| src/dinary/services/import\_sheet.py   |      121 |      121 |      0% |    14-237 |
 | src/dinary/services/qr\_parser.py      |       16 |        1 |     94% |        31 |
-| src/dinary/services/seed\_config.py    |      103 |        5 |     95% |40, 44, 203-205 |
+| src/dinary/services/seed\_config.py    |      108 |       20 |     81% |56, 60, 196-198, 208-239 |
 | src/dinary/services/sheets.py          |      165 |       15 |     91% |38-44, 48-49, 81, 101-104, 109-111, 261 |
 | src/dinary/services/sql\_loader.py     |       34 |        0 |    100% |           |
-| src/dinary/services/sync.py            |      174 |       40 |     77% |46-60, 91-92, 126-127, 135-136, 175-182, 210-216, 225, 245-246, 276-278, 286-291, 316-317, 323-328, 339, 346-347, 359-360 |
-| **TOTAL**                              | **1013** |  **200** | **80%** |           |
+| src/dinary/services/sync.py            |      174 |       40 |     77% |46-60, 91-92, 126-127, 135-136, 174-181, 209-215, 224, 244-245, 275-277, 285-290, 315-316, 322-327, 338, 345-346, 358-359 |
+| **TOTAL**                              | **1012** |  **214** | **79%** |           |
 
 
 ## Setup coverage badge
