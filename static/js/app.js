@@ -139,21 +139,23 @@ async function submitExpense() {
   try {
     await enqueue(entry);
     await updateQueueBadge();
-    resetForm();
   } catch (e) {
     showToast(`Save failed: ${e.message}`, "error");
     btn.disabled = false;
     return;
   }
 
-  btn.disabled = false;
+  btn.textContent = "\u2713";
+  btn.classList.add("btn-success");
 
-  if (!navigator.onLine) {
-    showToast("Saved offline — will sync when connected", "info");
-    return;
-  }
-
-  await flushQueue();
+  setTimeout(() => {
+    btn.textContent = "Save";
+    btn.classList.remove("btn-success");
+    btn.disabled = false;
+    resetForm();
+    showToast(`${amount} RSD`, navigator.onLine ? "success" : "info");
+    if (navigator.onLine) flushQueue();
+  }, 800);
 }
 
 function resetForm() {

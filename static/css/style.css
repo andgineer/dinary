@@ -162,6 +162,12 @@ textarea {
 
 .btn-secondary:hover { background: #1a4a80; }
 
+.btn-success {
+  background: var(--success) !important;
+  color: #000 !important;
+  transition: background 0.2s;
+}
+
 .btn-secondary:disabled {
   opacity: 0.4;
   cursor: not-allowed;
