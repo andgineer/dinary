@@ -6,20 +6,20 @@
 |--------------------------------------- | -------: | -------: | ------: | --------: |
 | src/dinary/\_\_about\_\_.py            |        1 |        0 |    100% |           |
 | src/dinary/api/categories.py           |       20 |        0 |    100% |           |
-| src/dinary/api/expenses.py             |       46 |        0 |    100% |           |
+| src/dinary/api/expenses.py             |       47 |        0 |    100% |           |
 | src/dinary/api/qr.py                   |       17 |        0 |    100% |           |
 | src/dinary/config.py                   |       19 |        1 |     95% |        15 |
 | src/dinary/main.py                     |       57 |        6 |     89% |27-29, 80, 96, 106 |
 | src/dinary/services/category\_store.py |       27 |        0 |    100% |           |
-| src/dinary/services/db\_migrations.py  |       57 |        4 |     93% |45-46, 53, 56 |
-| src/dinary/services/duckdb\_repo.py    |      129 |        3 |     98% |   146-148 |
+| src/dinary/services/db\_migrations.py  |       55 |        2 |     96% |    51, 54 |
+| src/dinary/services/duckdb\_repo.py    |      131 |        3 |     98% |   146-148 |
 | src/dinary/services/exchange\_rate.py  |       16 |        0 |    100% |           |
 | src/dinary/services/qr\_parser.py      |       16 |        1 |     94% |        31 |
-| src/dinary/services/seed\_config.py    |      102 |        5 |     95% |35, 39, 187-189 |
+| src/dinary/services/seed\_config.py    |      103 |        5 |     95% |40, 44, 202-204 |
 | src/dinary/services/sheets.py          |      164 |       14 |     91% |38-44, 48, 80, 100-103, 108-110, 260 |
 | src/dinary/services/sql\_loader.py     |       34 |        0 |    100% |           |
-| src/dinary/services/sync.py            |      176 |       41 |     77% |46-52, 75-76, 104-105, 113-114, 153-157, 185-188, 194, 200, 219-220, 249-251, 259-264, 289-290, 296-301, 312, 319-320, 332-333 |
-| **TOTAL**                              |  **881** |   **75** | **91%** |           |
+| src/dinary/services/sync.py            |      174 |       40 |     77% |46-60, 91-92, 126-127, 135-136, 175-182, 210-216, 225, 245-246, 276-278, 286-291, 316-317, 323-328, 339, 346-347, 359-360 |
+| **TOTAL**                              |  **881** |   **72** | **92%** |           |
 
 
 ## Setup coverage badge
