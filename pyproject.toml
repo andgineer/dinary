@@ -19,6 +19,8 @@ dependencies = [
     "sr-invoice-parser>=1.0.3",
     "pydantic-settings>=2.8.0",
     "duckdb>=1.5.2",
+    "ibis-framework[duckdb]",
+    "yoyo-migrations>=9.0.0",
 ]
 [[project.authors]]
 name = "Andrey Sorokin"

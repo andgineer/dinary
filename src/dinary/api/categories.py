@@ -6,8 +6,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from dinary.services import duckdb_repo
-from dinary.services.duckdb_repo import SheetCategoryRow
-from dinary.services.sql_loader import fetchall_as, load_sql
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -23,9 +21,9 @@ def list_categories() -> list[CategoryItem]:
     try:
         con = duckdb_repo.get_config_connection(read_only=True)
         try:
-            rows = fetchall_as(SheetCategoryRow, con, load_sql("list_sheet_categories.sql"))
+            rows = duckdb_repo.list_sheet_categories(con)
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
         return [CategoryItem(name=r.sheet_category, group=r.sheet_group) for r in rows]
     except Exception:

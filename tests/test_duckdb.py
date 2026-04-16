@@ -60,7 +60,7 @@ def populated_config(config_db, tmp_path):
             """
         )
     finally:
-        con.close()
+        duckdb_repo.close_connection(con)
 
 
 @allure.epic("DuckDB")
@@ -77,7 +77,7 @@ class TestBootstrap:
             }
             assert expected.issubset(set(tables))
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_budget_db_created_on_demand(self, config_db):
         con = duckdb_repo.get_budget_connection(2026)
@@ -87,7 +87,7 @@ class TestBootstrap:
             assert "expense_tags" in tables
             assert "sheet_sync_jobs" in tables
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_budget_db_has_config_attached(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -95,7 +95,7 @@ class TestBootstrap:
             r = con.execute("SELECT COUNT(*) FROM config.categories").fetchone()
             assert r[0] == 4
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_init_config_idempotent(self, config_db):
         duckdb_repo.init_config_db()
@@ -104,7 +104,7 @@ class TestBootstrap:
             tables = [r[0] for r in con.execute("SHOW TABLES").fetchall()]
             assert "categories" in tables
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
 
 @allure.epic("DuckDB")
@@ -118,7 +118,7 @@ class TestMapping:
             assert result.category_id == 1
             assert result.beneficiary_id == 1
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_resolve_unknown_mapping_returns_none(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -126,7 +126,7 @@ class TestMapping:
             result = duckdb_repo.resolve_mapping(con, "unknown", "")
             assert result is None
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_resolve_mapping_no_group(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -135,7 +135,7 @@ class TestMapping:
             assert result is not None
             assert result.category_id == 4
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
 
 @allure.epic("DuckDB")
@@ -156,7 +156,7 @@ class TestTravelEvents:
             assert ev[1] == date(2026, 1, 1)
             assert ev[2] == date(2026, 12, 31)
         finally:
-            cfg.close()
+            duckdb_repo.close_connection(cfg)
 
     def test_resolve_reuses_existing_event(self, populated_config):
         id1 = duckdb_repo.resolve_travel_event(date(2026, 4, 14))
@@ -185,7 +185,7 @@ class TestIdempotentInsert:
             row = con.execute("SELECT amount FROM expenses WHERE id = 'test-uuid-1'").fetchone()
             assert float(row[0]) == 1500.0
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_duplicate_returns_duplicate(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -202,7 +202,7 @@ class TestIdempotentInsert:
             )
             assert result == "duplicate"
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_conflict_on_different_payload(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -219,7 +219,7 @@ class TestIdempotentInsert:
             )
             assert result == "conflict"
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_insert_creates_sync_job(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -232,7 +232,7 @@ class TestIdempotentInsert:
             jobs = duckdb_repo.get_dirty_sync_jobs(con)
             assert (2026, 4) in jobs
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_insert_with_tags(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -250,7 +250,7 @@ class TestIdempotentInsert:
             assert len(tags) == 1
             assert tags[0][0] == 1
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_duplicate_with_matching_tags(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -267,7 +267,7 @@ class TestIdempotentInsert:
             )
             assert result == "duplicate"
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_conflict_on_different_tags(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -284,7 +284,7 @@ class TestIdempotentInsert:
             )
             assert result == "conflict"
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_amount_not_doubled_on_duplicate(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -302,7 +302,7 @@ class TestIdempotentInsert:
             total = con.execute("SELECT SUM(amount) FROM expenses").fetchone()
             assert float(total[0]) == 1500.0
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
 
 @allure.epic("DuckDB")
@@ -314,7 +314,7 @@ class TestReverseMapping:
             result = duckdb_repo.reverse_lookup_mapping(con, 1, 1, None, None, [])
             assert result == ("еда&бытовые", "собака")
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_reverse_lookup_travel(self, populated_config):
         event_id = duckdb_repo.resolve_travel_event(date(2026, 4, 14))
@@ -324,7 +324,7 @@ class TestReverseMapping:
             assert result is not None
             assert result[1] == "путешествия"
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_reverse_lookup_no_group(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -332,7 +332,7 @@ class TestReverseMapping:
             result = duckdb_repo.reverse_lookup_mapping(con, 4, None, None, None, [])
             assert result == ("мобильник", "")
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_reverse_lookup_unknown(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -340,7 +340,7 @@ class TestReverseMapping:
             result = duckdb_repo.reverse_lookup_mapping(con, 999, None, None, None, [])
             assert result is None
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
 
 @allure.epic("Data Safety")
@@ -356,7 +356,7 @@ class TestReferentialIntegrity:
                     100.0, "RSD", 999, None, None, None, [], "",
                 )
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_insert_with_invalid_beneficiary_raises(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -368,7 +368,7 @@ class TestReferentialIntegrity:
                     100.0, "RSD", 1, 999, None, None, [], "",
                 )
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_insert_with_invalid_tag_raises(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -380,7 +380,7 @@ class TestReferentialIntegrity:
                     100.0, "RSD", 1, None, None, None, [999], "",
                 )
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_insert_with_invalid_event_raises(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -392,7 +392,7 @@ class TestReferentialIntegrity:
                     100.0, "RSD", 1, None, 999, None, [], "",
                 )
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_insert_with_invalid_store_raises(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
@@ -404,7 +404,7 @@ class TestReferentialIntegrity:
                     100.0, "RSD", 1, None, None, 999, [], "",
                 )
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
 
 @allure.epic("DuckDB")
@@ -430,5 +430,5 @@ class TestYearBoundary:
             assert r_2025[0] == 1
             assert r_2026[0] == 1
         finally:
-            con_2025.close()
-            con_2026.close()
+            duckdb_repo.close_connection(con_2025)
+            duckdb_repo.close_connection(con_2026)

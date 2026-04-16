@@ -32,7 +32,7 @@ def _tmp_duckdb(tmp_path, monkeypatch):
             "INSERT INTO sheet_category_mapping VALUES ('кафе', 'путешествия', 3, NULL, NULL, NULL, NULL)"
         )
     finally:
-        con.close()
+        duckdb_repo.close_connection(con)
 
 
 @allure.epic("API")
@@ -197,7 +197,7 @@ def test_retry_after_successful_write_does_not_double_count(mock_sync, client):
         total = con.execute("SELECT SUM(amount) FROM expenses").fetchone()
         assert float(total[0]) == 1500.0
     finally:
-        con.close()
+        duckdb_repo.close_connection(con)
 
 
 @allure.epic("Data Safety")
@@ -295,7 +295,7 @@ def test_create_travel_expense_resolves_event(mock_sync, client):
         ).fetchone()
         assert event[0] == "отпуск-2026"
     finally:
-        con.close()
+        duckdb_repo.close_connection(con)
 
 
 @allure.epic("Data Safety")

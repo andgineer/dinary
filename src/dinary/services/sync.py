@@ -276,7 +276,7 @@ def _sync_month_core(
         duckdb_repo.clear_sync_job(con, year, month)
         logger.info("Full sync complete for %d-%02d", year, month)
     finally:
-        con.close()
+        duckdb_repo.close_connection(con)
 
 
 def sync_month(year: int, month: int) -> None:
@@ -323,7 +323,7 @@ def sync_all_dirty() -> int:
         try:
             jobs = duckdb_repo.get_dirty_sync_jobs(con)
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
         for y, m in jobs:
             try:

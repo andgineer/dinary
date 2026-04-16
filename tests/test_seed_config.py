@@ -53,7 +53,7 @@ class TestSeedConfig:
             for ben_name in BENEFICIARY_GROUPS.values():
                 assert ben_name in names
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_creates_tags(self, monkeypatch, tmp_path):
         self._seed(monkeypatch, tmp_path)
@@ -63,7 +63,7 @@ class TestSeedConfig:
             for tag_name in TAG_GROUPS.values():
                 assert tag_name in names
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_beneficiary_mapping_has_beneficiary_id(self, monkeypatch, tmp_path):
         self._seed(monkeypatch, tmp_path)
@@ -76,7 +76,7 @@ class TestSeedConfig:
             assert row is not None
             assert row[0] is not None
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_tag_mapping_has_tag_ids(self, monkeypatch, tmp_path):
         self._seed(monkeypatch, tmp_path)
@@ -90,7 +90,7 @@ class TestSeedConfig:
             assert row[0] is not None
             assert len(row[0]) == 1
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_travel_mapping_has_null_event_id(self, monkeypatch, tmp_path):
         self._seed(monkeypatch, tmp_path)
@@ -103,7 +103,7 @@ class TestSeedConfig:
             assert row is not None
             assert row[0] is None
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_creates_synthetic_travel_event(self, monkeypatch, tmp_path):
         self._seed(monkeypatch, tmp_path)
@@ -114,7 +114,7 @@ class TestSeedConfig:
             ).fetchone()
             assert row is not None
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_no_group_category_maps_to_empty_group(self, monkeypatch, tmp_path):
         self._seed(monkeypatch, tmp_path)
@@ -126,7 +126,7 @@ class TestSeedConfig:
             ).fetchone()
             assert row is not None
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_приложения_is_regular_group_not_tag(self, monkeypatch, tmp_path):
         """'приложения' should map as a regular category group, not produce a tag."""
@@ -140,7 +140,7 @@ class TestSeedConfig:
             assert row is not None
             assert row[0] is None
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_idempotent(self, monkeypatch, tmp_path):
         """Running seed twice produces the same result."""
@@ -157,4 +157,4 @@ class TestSeedConfig:
             count = con.execute("SELECT COUNT(*) FROM sheet_category_mapping").fetchone()[0]
             assert count == len(SAMPLE_CATEGORIES)
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)

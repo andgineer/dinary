@@ -38,7 +38,7 @@ def populated_db(tmp_path):
             "VALUES ('мобильник', '', 2, NULL, NULL, NULL, NULL)"
         )
     finally:
-        con.close()
+        duckdb_repo.close_connection(con)
 
     bcon = duckdb_repo.get_budget_connection(2026)
     try:
@@ -55,7 +55,7 @@ def populated_db(tmp_path):
             400.0, "RSD", 2, None, None, None, [], "",
         )
     finally:
-        bcon.close()
+        duckdb_repo.close_connection(bcon)
 
 
 @allure.epic("Sync")
@@ -69,7 +69,7 @@ class TestBuildAggregates:
             assert ("еда&бытовые", "собака") in agg
             assert ("мобильник", "") in agg
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_totals_correct(self, populated_db):
         con = duckdb_repo.get_budget_connection(2026)
@@ -81,7 +81,7 @@ class TestBuildAggregates:
             phone_total = agg[("мобильник", "")]["total_rsd"]
             assert phone_total == Decimal("400")
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_individual_amounts_tracked(self, populated_db):
         con = duckdb_repo.get_budget_connection(2026)
@@ -92,7 +92,7 @@ class TestBuildAggregates:
             assert Decimal("1500") in food_amounts
             assert Decimal("3000") in food_amounts
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_empty_month_returns_none(self, populated_db):
         con = duckdb_repo.get_budget_connection(2026)
@@ -100,7 +100,7 @@ class TestBuildAggregates:
             agg = _build_aggregates(con, 2026, 1)
             assert agg is None
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_comments_collected(self, populated_db):
         con = duckdb_repo.get_budget_connection(2026)
@@ -110,7 +110,7 @@ class TestBuildAggregates:
             assert "lunch" in comments
             assert "dinner" in comments
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
 
 @allure.epic("Sync")
@@ -190,7 +190,7 @@ class TestSyncIdempotency:
                 assert agg1[key]["total_rsd"] == agg2[key]["total_rsd"]
                 assert agg1[key]["amounts"] == agg2[key]["amounts"]
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_sync_clears_job(self, populated_db):
         """After a full sync_month_core, the dirty job is cleared."""
@@ -199,7 +199,7 @@ class TestSyncIdempotency:
             jobs_before = duckdb_repo.get_dirty_sync_jobs(con)
             assert (2026, 4) in jobs_before
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
         with (
             patch("dinary.services.sync.get_sheet") as mock_sheet,
@@ -220,7 +220,7 @@ class TestSyncIdempotency:
             jobs_after = duckdb_repo.get_dirty_sync_jobs(con)
             assert (2026, 4) not in jobs_after
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
     def test_sync_writes_rate_when_cell_empty(self, populated_db):
         """When the month's rate cell is empty and a rate is provided, sync writes it."""
@@ -253,7 +253,7 @@ class TestSyncIdempotency:
                 500.0, "RSD", 1, 1, None, None, [], "",
             )
         finally:
-            bcon_2025.close()
+            duckdb_repo.close_connection(bcon_2025)
 
         with (
             patch("dinary.services.sync.get_sheet") as mock_sheet,
@@ -382,7 +382,7 @@ class TestSyncSingleRow:
         try:
             assert (2026, 4) in duckdb_repo.get_dirty_sync_jobs(con)
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
         with (
             patch("dinary.services.sync.get_sheet") as mock_sheet,
@@ -401,7 +401,7 @@ class TestSyncSingleRow:
         try:
             assert (2026, 4) in duckdb_repo.get_dirty_sync_jobs(con)
         finally:
-            con.close()
+            duckdb_repo.close_connection(con)
 
 
 @allure.epic("Sync")

@@ -55,7 +55,7 @@ async def create_expense(req: ExpenseRequest):
         if req.group == TRAVEL_GROUP:
             # resolve_travel_event writes to config.duckdb which is ATTACHed
             # read-only on `con` — close first to avoid file handle conflict
-            con.close()
+            duckdb_repo.close_connection(con)
             event_id = duckdb_repo.resolve_travel_event(req.date)
             con = duckdb_repo.get_budget_connection(year)
 
@@ -78,7 +78,7 @@ async def create_expense(req: ExpenseRequest):
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from None
     finally:
-        con.close()
+        duckdb_repo.close_connection(con)
 
     if result == "conflict":
         raise HTTPException(

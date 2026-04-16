@@ -8,9 +8,8 @@ import logging
 from datetime import date
 
 from dinary.services import duckdb_repo
-from dinary.services.duckdb_repo import SYNTHETIC_EVENT_PREFIX, TRAVEL_GROUP, CategoryRefRow, IdNameRow
+from dinary.services.duckdb_repo import SYNTHETIC_EVENT_PREFIX, TRAVEL_GROUP
 from dinary.services.sheets import get_categories
-from dinary.services.sql_loader import fetchall_as, load_sql
 
 logger = logging.getLogger(__name__)
 
@@ -49,17 +48,17 @@ def seed_from_sheet(year: int | None = None) -> dict:
         beneficiary_ids: dict[str, int] = {}
         tag_ids: dict[str, int] = {}
 
-        for r in fetchall_as(IdNameRow, con, load_sql("seed_load_groups.sql")):
+        for r in duckdb_repo.load_id_name_rows(con, "category_groups"):
             group_ids[r.name] = r.id
 
         if group_ids:
             logger.info("Config DB already has data, merging new entries")
 
-        for r in fetchall_as(CategoryRefRow, con, load_sql("seed_load_categories.sql")):
+        for r in duckdb_repo.load_category_refs(con):
             cat_ids[(r.name, r.group_id)] = r.id
-        for r in fetchall_as(IdNameRow, con, load_sql("seed_load_members.sql")):
+        for r in duckdb_repo.load_id_name_rows(con, "family_members"):
             beneficiary_ids[r.name] = r.id
-        for r in fetchall_as(IdNameRow, con, load_sql("seed_load_tags.sql")):
+        for r in duckdb_repo.load_id_name_rows(con, "tags"):
             tag_ids[r.name] = r.id
 
         next_group_id = max(group_ids.values(), default=0) + 1
@@ -72,10 +71,7 @@ def seed_from_sheet(year: int | None = None) -> dict:
             if name not in group_ids:
                 gid = next_group_id
                 next_group_id += 1
-                con.execute(
-                    "INSERT INTO category_groups (id, name) VALUES (?, ?)",
-                    [gid, name],
-                )
+                duckdb_repo.insert_row(con, "category_groups", {"id": gid, "name": name})
                 group_ids[name] = gid
             return group_ids[name]
 
@@ -86,10 +82,7 @@ def seed_from_sheet(year: int | None = None) -> dict:
             if key not in cat_ids:
                 cid = next_cat_id
                 next_cat_id += 1
-                con.execute(
-                    "INSERT INTO categories (id, name, group_id) VALUES (?, ?, ?)",
-                    [cid, cat_name, gid],
-                )
+                duckdb_repo.insert_row(con, "categories", {"id": cid, "name": cat_name, "group_id": gid})
                 cat_ids[key] = cid
             return cat_ids[key]
 
@@ -98,10 +91,7 @@ def seed_from_sheet(year: int | None = None) -> dict:
             if name not in beneficiary_ids:
                 bid = next_ben_id
                 next_ben_id += 1
-                con.execute(
-                    "INSERT INTO family_members (id, name) VALUES (?, ?)",
-                    [bid, name],
-                )
+                duckdb_repo.insert_row(con, "family_members", {"id": bid, "name": name})
                 beneficiary_ids[name] = bid
             return beneficiary_ids[name]
 
@@ -110,10 +100,7 @@ def seed_from_sheet(year: int | None = None) -> dict:
             if name not in tag_ids:
                 tid = next_tag_id
                 next_tag_id += 1
-                con.execute(
-                    "INSERT INTO tags (id, name) VALUES (?, ?)",
-                    [tid, name],
-                )
+                duckdb_repo.insert_row(con, "tags", {"id": tid, "name": name})
                 tag_ids[name] = tid
             return tag_ids[name]
 
@@ -133,44 +120,34 @@ def seed_from_sheet(year: int | None = None) -> dict:
 
             category_id = ensure_category(sheet_cat, group_name)
             beneficiary_id = ensure_beneficiary(BENEFICIARY_GROUPS[sheet_group]) if sheet_group in BENEFICIARY_GROUPS else None
-            event_id = None  # travel events resolved dynamically
+            event_id = None
             store_id = None
             resolved_tag_ids: list[int] = []
 
             if sheet_group in TAG_GROUPS:
                 resolved_tag_ids = [ensure_tag(TAG_GROUPS[sheet_group])]
 
-            existing_mapping = con.execute(
-                "SELECT 1 FROM sheet_category_mapping WHERE sheet_category = ? AND sheet_group = ?",
-                [sheet_cat, sheet_group],
-            ).fetchone()
-
-            if not existing_mapping:
-                con.execute(
-                    """
-                    INSERT INTO sheet_category_mapping
-                    (sheet_category, sheet_group, category_id, beneficiary_id, event_id, store_id, tag_ids)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        sheet_cat, sheet_group, category_id,
-                        beneficiary_id, event_id, store_id,
-                        sorted(resolved_tag_ids) if resolved_tag_ids else None,
-                    ],
-                )
+            if not duckdb_repo.row_exists(con, "sheet_category_mapping", sheet_category=sheet_cat, sheet_group=sheet_group):
+                duckdb_repo.insert_row(con, "sheet_category_mapping", {
+                    "sheet_category": sheet_cat,
+                    "sheet_group": sheet_group,
+                    "category_id": category_id,
+                    "beneficiary_id": beneficiary_id,
+                    "event_id": event_id,
+                    "store_id": store_id,
+                    "tag_ids": sorted(resolved_tag_ids) if resolved_tag_ids else None,
+                })
                 mapping_count += 1
 
         event_name = f"{SYNTHETIC_EVENT_PREFIX}{year}"
-        existing_event = con.execute(
-            "SELECT 1 FROM events WHERE name = ?",
-            [event_name],
-        ).fetchone()
-        if not existing_event:
-            max_event_id = con.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0]
-            con.execute(
-                "INSERT INTO events (id, name, date_from, date_to) VALUES (?, ?, ?, ?)",
-                [max_event_id + 1, event_name, date(year, 1, 1), date(year, 12, 31)],
-            )
+        if not duckdb_repo.row_exists(con, "events", name=event_name):
+            new_event_id = duckdb_repo.max_id(con, "events") + 1
+            duckdb_repo.insert_row(con, "events", {
+                "id": new_event_id,
+                "name": event_name,
+                "date_from": date(year, 1, 1),
+                "date_to": date(year, 12, 31),
+            })
             logger.info("Created synthetic travel event: %s", event_name)
 
         summary = {
@@ -188,4 +165,4 @@ def seed_from_sheet(year: int | None = None) -> dict:
         con.execute("ROLLBACK")
         raise
     finally:
-        con.close()
+        duckdb_repo.close_connection(con)
