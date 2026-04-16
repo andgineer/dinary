@@ -9,7 +9,6 @@ from dinary.services.category_store import Category
 from dinary.services.seed_config import (
     BENEFICIARY_GROUPS,
     TAG_GROUPS,
-    TRAVEL_GROUP,
     seed_from_sheet,
 )
 
@@ -109,9 +108,7 @@ class TestSeedConfig:
         self._seed(monkeypatch, tmp_path)
         con = duckdb_repo.get_config_connection(read_only=True)
         try:
-            row = con.execute(
-                "SELECT name FROM events WHERE name = 'отпуск-2026'"
-            ).fetchone()
+            row = con.execute("SELECT name FROM events WHERE name = 'отпуск-2026'").fetchone()
             assert row is not None
         finally:
             con.close()

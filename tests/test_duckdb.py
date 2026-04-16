@@ -71,8 +71,13 @@ class TestBootstrap:
         try:
             tables = [r[0] for r in con.execute("SHOW TABLES").fetchall()]
             expected = {
-                "category_groups", "categories", "family_members",
-                "events", "event_members", "tags", "stores",
+                "category_groups",
+                "categories",
+                "family_members",
+                "events",
+                "event_members",
+                "tags",
+                "stores",
                 "sheet_category_mapping",
             }
             assert expected.issubset(set(tables))
@@ -176,9 +181,17 @@ class TestIdempotentInsert:
         con = duckdb_repo.get_budget_connection(2026)
         try:
             result = duckdb_repo.insert_expense(
-                con, "test-uuid-1",
+                con,
+                "test-uuid-1",
                 datetime(2026, 4, 14, 12, 0),
-                1500.0, "RSD", 1, 1, None, None, [], "lunch",
+                1500.0,
+                "RSD",
+                1,
+                1,
+                None,
+                None,
+                [],
+                "lunch",
             )
             assert result == "created"
 
@@ -191,14 +204,30 @@ class TestIdempotentInsert:
         con = duckdb_repo.get_budget_connection(2026)
         try:
             duckdb_repo.insert_expense(
-                con, "test-uuid-2",
+                con,
+                "test-uuid-2",
                 datetime(2026, 4, 14, 12, 0),
-                1500.0, "RSD", 1, None, None, None, [], "lunch",
+                1500.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [],
+                "lunch",
             )
             result = duckdb_repo.insert_expense(
-                con, "test-uuid-2",
+                con,
+                "test-uuid-2",
                 datetime(2026, 4, 14, 12, 0),
-                1500.0, "RSD", 1, None, None, None, [], "lunch",
+                1500.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [],
+                "lunch",
             )
             assert result == "duplicate"
         finally:
@@ -208,14 +237,30 @@ class TestIdempotentInsert:
         con = duckdb_repo.get_budget_connection(2026)
         try:
             duckdb_repo.insert_expense(
-                con, "test-uuid-3",
+                con,
+                "test-uuid-3",
                 datetime(2026, 4, 14, 12, 0),
-                1500.0, "RSD", 1, None, None, None, [], "lunch",
+                1500.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [],
+                "lunch",
             )
             result = duckdb_repo.insert_expense(
-                con, "test-uuid-3",
+                con,
+                "test-uuid-3",
                 datetime(2026, 4, 14, 12, 0),
-                2000.0, "RSD", 1, None, None, None, [], "dinner",
+                2000.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [],
+                "dinner",
             )
             assert result == "conflict"
         finally:
@@ -225,9 +270,17 @@ class TestIdempotentInsert:
         con = duckdb_repo.get_budget_connection(2026)
         try:
             duckdb_repo.insert_expense(
-                con, "test-uuid-4",
+                con,
+                "test-uuid-4",
                 datetime(2026, 4, 14, 12, 0),
-                1500.0, "RSD", 1, None, None, None, [], "",
+                1500.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [],
+                "",
             )
             jobs = duckdb_repo.get_dirty_sync_jobs(con)
             assert (2026, 4) in jobs
@@ -238,9 +291,17 @@ class TestIdempotentInsert:
         con = duckdb_repo.get_budget_connection(2026)
         try:
             result = duckdb_repo.insert_expense(
-                con, "test-uuid-5",
+                con,
+                "test-uuid-5",
                 datetime(2026, 4, 14, 12, 0),
-                1500.0, "RSD", 1, None, None, None, [1], "lunch",
+                1500.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [1],
+                "lunch",
             )
             assert result == "created"
 
@@ -256,14 +317,30 @@ class TestIdempotentInsert:
         con = duckdb_repo.get_budget_connection(2026)
         try:
             duckdb_repo.insert_expense(
-                con, "test-uuid-6",
+                con,
+                "test-uuid-6",
                 datetime(2026, 4, 14, 12, 0),
-                1500.0, "RSD", 1, None, None, None, [1], "lunch",
+                1500.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [1],
+                "lunch",
             )
             result = duckdb_repo.insert_expense(
-                con, "test-uuid-6",
+                con,
+                "test-uuid-6",
                 datetime(2026, 4, 14, 12, 0),
-                1500.0, "RSD", 1, None, None, None, [1], "lunch",
+                1500.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [1],
+                "lunch",
             )
             assert result == "duplicate"
         finally:
@@ -273,14 +350,30 @@ class TestIdempotentInsert:
         con = duckdb_repo.get_budget_connection(2026)
         try:
             duckdb_repo.insert_expense(
-                con, "test-uuid-7",
+                con,
+                "test-uuid-7",
                 datetime(2026, 4, 14, 12, 0),
-                1500.0, "RSD", 1, None, None, None, [], "lunch",
+                1500.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [],
+                "lunch",
             )
             result = duckdb_repo.insert_expense(
-                con, "test-uuid-7",
+                con,
+                "test-uuid-7",
                 datetime(2026, 4, 14, 12, 0),
-                1500.0, "RSD", 1, None, None, None, [1], "lunch",
+                1500.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [1],
+                "lunch",
             )
             assert result == "conflict"
         finally:
@@ -290,14 +383,30 @@ class TestIdempotentInsert:
         con = duckdb_repo.get_budget_connection(2026)
         try:
             duckdb_repo.insert_expense(
-                con, "test-uuid-8",
+                con,
+                "test-uuid-8",
                 datetime(2026, 4, 14, 12, 0),
-                1500.0, "RSD", 1, None, None, None, [], "",
+                1500.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [],
+                "",
             )
             duckdb_repo.insert_expense(
-                con, "test-uuid-8",
+                con,
+                "test-uuid-8",
                 datetime(2026, 4, 14, 12, 0),
-                1500.0, "RSD", 1, None, None, None, [], "",
+                1500.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [],
+                "",
             )
             total = con.execute("SELECT SUM(amount) FROM expenses").fetchone()
             assert float(total[0]) == 1500.0
@@ -351,9 +460,17 @@ class TestReferentialIntegrity:
         try:
             with pytest.raises(ValueError, match="category_id 999"):
                 duckdb_repo.insert_expense(
-                    con, "ri-1",
+                    con,
+                    "ri-1",
                     datetime(2026, 4, 14, 12, 0),
-                    100.0, "RSD", 999, None, None, None, [], "",
+                    100.0,
+                    "RSD",
+                    999,
+                    None,
+                    None,
+                    None,
+                    [],
+                    "",
                 )
         finally:
             con.close()
@@ -363,9 +480,17 @@ class TestReferentialIntegrity:
         try:
             with pytest.raises(ValueError, match="beneficiary_id 999"):
                 duckdb_repo.insert_expense(
-                    con, "ri-2",
+                    con,
+                    "ri-2",
                     datetime(2026, 4, 14, 12, 0),
-                    100.0, "RSD", 1, 999, None, None, [], "",
+                    100.0,
+                    "RSD",
+                    1,
+                    999,
+                    None,
+                    None,
+                    [],
+                    "",
                 )
         finally:
             con.close()
@@ -375,9 +500,17 @@ class TestReferentialIntegrity:
         try:
             with pytest.raises(ValueError, match="tag_id 999"):
                 duckdb_repo.insert_expense(
-                    con, "ri-3",
+                    con,
+                    "ri-3",
                     datetime(2026, 4, 14, 12, 0),
-                    100.0, "RSD", 1, None, None, None, [999], "",
+                    100.0,
+                    "RSD",
+                    1,
+                    None,
+                    None,
+                    None,
+                    [999],
+                    "",
                 )
         finally:
             con.close()
@@ -387,9 +520,17 @@ class TestReferentialIntegrity:
         try:
             with pytest.raises(ValueError, match="event_id 999"):
                 duckdb_repo.insert_expense(
-                    con, "ri-4",
+                    con,
+                    "ri-4",
                     datetime(2026, 4, 14, 12, 0),
-                    100.0, "RSD", 1, None, 999, None, [], "",
+                    100.0,
+                    "RSD",
+                    1,
+                    None,
+                    999,
+                    None,
+                    [],
+                    "",
                 )
         finally:
             con.close()
@@ -399,9 +540,17 @@ class TestReferentialIntegrity:
         try:
             with pytest.raises(ValueError, match="store_id 999"):
                 duckdb_repo.insert_expense(
-                    con, "ri-5",
+                    con,
+                    "ri-5",
                     datetime(2026, 4, 14, 12, 0),
-                    100.0, "RSD", 1, None, None, 999, [], "",
+                    100.0,
+                    "RSD",
+                    1,
+                    None,
+                    None,
+                    999,
+                    [],
+                    "",
                 )
         finally:
             con.close()
@@ -415,14 +564,30 @@ class TestYearBoundary:
         con_2026 = duckdb_repo.get_budget_connection(2026)
         try:
             duckdb_repo.insert_expense(
-                con_2025, "exp-2025",
+                con_2025,
+                "exp-2025",
                 datetime(2025, 12, 31, 23, 59),
-                1000.0, "RSD", 1, None, None, None, [], "",
+                1000.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [],
+                "",
             )
             duckdb_repo.insert_expense(
-                con_2026, "exp-2026",
+                con_2026,
+                "exp-2026",
                 datetime(2026, 1, 1, 0, 1),
-                2000.0, "RSD", 1, None, None, None, [], "",
+                2000.0,
+                "RSD",
+                1,
+                None,
+                None,
+                None,
+                [],
+                "",
             )
 
             r_2025 = con_2025.execute("SELECT COUNT(*) FROM expenses").fetchone()

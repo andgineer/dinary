@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import typing as t
 from collections import abc
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 from yoyo import read_migrations, utils
@@ -24,8 +25,7 @@ class DuckDBBackend(DatabaseBackend):
 
     driver_module = "duckdb"
     list_tables_sql = (
-        "SELECT table_name FROM information_schema.tables "
-        "WHERE table_schema = current_schema()"
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()"
     )
 
     def connect(self, dburi: DatabaseURI):
@@ -40,36 +40,36 @@ class DuckDBBackend(DatabaseBackend):
         self._in_transaction = False
 
     def rollback(self):
-        try:
+        with contextlib.suppress(self.DatabaseError):
             self.connection.execute("ROLLBACK")
-        except self.DatabaseError:
-            pass
         self._in_transaction = False
 
-    def savepoint(self, id):
+    def savepoint(self, id):  # pyright: ignore[reportReturnType]  # pyrefly: ignore[bad-override]
         pass
 
-    def savepoint_release(self, id):
+    def savepoint_release(self, id):  # pyright: ignore[reportReturnType]  # pyrefly: ignore[bad-override]
         pass
 
-    def savepoint_rollback(self, id):
+    def savepoint_rollback(self, id):  # pyright: ignore[reportReturnType]  # pyrefly: ignore[bad-override]
         pass
 
-    def execute(self, sql, params: t.Union[abc.Mapping[str, t.Any], None] = None):
+    def execute(self, sql, params: abc.Mapping[str, t.Any] | None = None):
         sql, queryparams = utils.change_param_style(
-            self.driver.paramstyle, sql, params
+            self.driver.paramstyle,
+            sql,
+            params,
         )
         self.connection.execute(sql, queryparams or [])
         return self.connection
 
 
-@lru_cache(maxsize=None)
+@cache
 def _migration_dir(kind: str) -> Path:
     root = Path(__file__).resolve().parent.parent / "migrations"
     return root / kind
 
 
-@lru_cache(maxsize=None)
+@cache
 def _read(kind: str):
     return read_migrations(str(_migration_dir(kind)))
 
@@ -95,9 +95,8 @@ def migrate_path(path: Path, kind: str) -> None:
     """Apply all pending migrations for the given DuckDB file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     migrations = _read(kind)
-    with _backend_for(path) as backend:
-        with backend.lock():
-            backend.apply_migrations(backend.to_apply(migrations))
+    with _backend_for(path) as backend, backend.lock():
+        backend.apply_migrations(backend.to_apply(migrations))
 
 
 def migrate_config_db(path: Path) -> None:

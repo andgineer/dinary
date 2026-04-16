@@ -88,7 +88,8 @@ async def create_expense(req: ExpenseRequest):
 
     if result == "created":
         schedule_sync(
-            year, req.date.month,
+            year,
+            req.date.month,
             sheet_category=req.category,
             sheet_group=req.group,
             amount=req.amount,
@@ -97,6 +98,7 @@ async def create_expense(req: ExpenseRequest):
         )
 
     month_label = req.date.strftime("%Y-%m")
+    assert result in ("created", "duplicate")
     return ExpenseResponse(
         status=result,
         expense_id=req.expense_id,

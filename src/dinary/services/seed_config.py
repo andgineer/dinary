@@ -8,7 +8,12 @@ import logging
 from datetime import date
 
 from dinary.services import duckdb_repo
-from dinary.services.duckdb_repo import SYNTHETIC_EVENT_PREFIX, TRAVEL_GROUP, CategoryRefRow, IdNameRow
+from dinary.services.duckdb_repo import (
+    SYNTHETIC_EVENT_PREFIX,
+    TRAVEL_GROUP,
+    CategoryRefRow,
+    IdNameRow,
+)
 from dinary.services.sheets import get_categories
 from dinary.services.sql_loader import fetchall_as, load_sql
 
@@ -26,7 +31,7 @@ TAG_GROUPS = {
 }
 
 
-def seed_from_sheet(year: int | None = None) -> dict:
+def seed_from_sheet(year: int | None = None) -> dict:  # noqa: C901, PLR0912, PLR0915
     """Read categories from Google Sheets and populate config.duckdb.
 
     Returns a summary of what was created.
@@ -132,7 +137,11 @@ def seed_from_sheet(year: int | None = None) -> dict:
                 group_name = ""
 
             category_id = ensure_category(sheet_cat, group_name)
-            beneficiary_id = ensure_beneficiary(BENEFICIARY_GROUPS[sheet_group]) if sheet_group in BENEFICIARY_GROUPS else None
+            beneficiary_id = (
+                ensure_beneficiary(BENEFICIARY_GROUPS[sheet_group])
+                if sheet_group in BENEFICIARY_GROUPS
+                else None
+            )
             event_id = None  # travel events resolved dynamically
             store_id = None
             resolved_tag_ids: list[int] = []
@@ -149,12 +158,17 @@ def seed_from_sheet(year: int | None = None) -> dict:
                 con.execute(
                     """
                     INSERT INTO sheet_category_mapping
-                    (sheet_category, sheet_group, category_id, beneficiary_id, event_id, store_id, tag_ids)
+                    (sheet_category, sheet_group, category_id,
+                     beneficiary_id, event_id, store_id, tag_ids)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
-                        sheet_cat, sheet_group, category_id,
-                        beneficiary_id, event_id, store_id,
+                        sheet_cat,
+                        sheet_group,
+                        category_id,
+                        beneficiary_id,
+                        event_id,
+                        store_id,
                         sorted(resolved_tag_ids) if resolved_tag_ids else None,
                     ],
                 )
@@ -166,7 +180,8 @@ def seed_from_sheet(year: int | None = None) -> dict:
             [event_name],
         ).fetchone()
         if not existing_event:
-            max_event_id = con.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0]
+            max_row = con.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()
+            max_event_id = max_row[0] if max_row else 0
             con.execute(
                 "INSERT INTO events (id, name, date_from, date_to) VALUES (?, ?, ?, ?)",
                 [max_event_id + 1, event_name, date(year, 1, 1), date(year, 12, 31)],

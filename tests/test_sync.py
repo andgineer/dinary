@@ -34,8 +34,7 @@ def populated_db(tmp_path):
             "VALUES ('еда&бытовые', 'собака', 1, 1, NULL, NULL, NULL)"
         )
         con.execute(
-            "INSERT INTO sheet_category_mapping "
-            "VALUES ('мобильник', '', 2, NULL, NULL, NULL, NULL)"
+            "INSERT INTO sheet_category_mapping VALUES ('мобильник', '', 2, NULL, NULL, NULL, NULL)"
         )
     finally:
         con.close()
@@ -43,16 +42,43 @@ def populated_db(tmp_path):
     bcon = duckdb_repo.get_budget_connection(2026)
     try:
         duckdb_repo.insert_expense(
-            bcon, "s1", datetime(2026, 4, 14, 10, 0),
-            1500.0, "RSD", 1, 1, None, None, [], "lunch",
+            bcon,
+            "s1",
+            datetime(2026, 4, 14, 10, 0),
+            1500.0,
+            "RSD",
+            1,
+            1,
+            None,
+            None,
+            [],
+            "lunch",
         )
         duckdb_repo.insert_expense(
-            bcon, "s2", datetime(2026, 4, 15, 12, 0),
-            3000.0, "RSD", 1, 1, None, None, [], "dinner",
+            bcon,
+            "s2",
+            datetime(2026, 4, 15, 12, 0),
+            3000.0,
+            "RSD",
+            1,
+            1,
+            None,
+            None,
+            [],
+            "dinner",
         )
         duckdb_repo.insert_expense(
-            bcon, "s3", datetime(2026, 4, 16, 9, 0),
-            400.0, "RSD", 2, None, None, None, [], "",
+            bcon,
+            "s3",
+            datetime(2026, 4, 16, 9, 0),
+            400.0,
+            "RSD",
+            2,
+            None,
+            None,
+            None,
+            [],
+            "",
         )
     finally:
         bcon.close()
@@ -209,10 +235,11 @@ class TestSyncIdempotency:
         ):
             ws_mock = MagicMock()
             ws_mock.get_all_values.return_value = [["header"]]
-            ws_mock.batch_get.return_value = [[[""]] ]
+            ws_mock.batch_get.return_value = [[[""]]]
             mock_sheet.return_value.sheet1 = ws_mock
 
             from dinary.services.sync import _sync_month_core
+
             _sync_month_core(2026, 4, rate=Decimal("117"))
 
         con = duckdb_repo.get_budget_connection(2026)
@@ -235,7 +262,7 @@ class TestSyncIdempotency:
         ):
             ws_mock = MagicMock()
             ws_mock.get_all_values.return_value = [["header"]]
-            ws_mock.batch_get.return_value = [[[""]] ]
+            ws_mock.batch_get.return_value = [[[""]]]
             mock_sheet.return_value.sheet1 = ws_mock
 
             _sync_month_core(2026, 4, rate=Decimal("117.5"))
@@ -249,8 +276,17 @@ class TestSyncIdempotency:
         bcon_2025 = duckdb_repo.get_budget_connection(2025)
         try:
             duckdb_repo.insert_expense(
-                bcon_2025, "x25", datetime(2025, 12, 15, 10, 0),
-                500.0, "RSD", 1, 1, None, None, [], "",
+                bcon_2025,
+                "x25",
+                datetime(2025, 12, 15, 10, 0),
+                500.0,
+                "RSD",
+                1,
+                1,
+                None,
+                None,
+                [],
+                "",
             )
         finally:
             bcon_2025.close()
@@ -263,7 +299,7 @@ class TestSyncIdempotency:
         ):
             ws_mock = MagicMock()
             ws_mock.get_all_values.return_value = [["header"]]
-            ws_mock.batch_get.return_value = [[[""]] ]
+            ws_mock.batch_get.return_value = [[[""]]]
             mock_sheet.return_value.sheet1 = ws_mock
 
             synced = sync_all_dirty()
@@ -282,7 +318,7 @@ class TestSyncIdempotency:
         ):
             ws_mock = MagicMock()
             ws_mock.get_all_values.return_value = [["header"]]
-            ws_mock.batch_get.return_value = [[[""]] ]
+            ws_mock.batch_get.return_value = [[[""]]]
             mock_sheet.return_value.sheet1 = ws_mock
 
             _sync_month_core(2026, 4, rate=Decimal("120"))
@@ -372,7 +408,9 @@ class TestSyncSingleRow:
             ws_mock.get_all_values.return_value = [["header"]]
             mock_sheet.return_value.sheet1 = ws_mock
 
-            _sync_single_row(2026, 4, "еда&бытовые", "собака", 100.0, "", date(2026, 4, 1), rate=Decimal("117.5"))
+            _sync_single_row(
+                2026, 4, "еда&бытовые", "собака", 100.0, "", date(2026, 4, 1), rate=Decimal("117.5")
+            )
 
             ws_mock.update_cell.assert_any_call(2, COL_RATE_EUR, "117.5")
 
@@ -415,11 +453,17 @@ class TestScheduleSyncWiring:
 
         with (
             patch("dinary.services.sync._sync_single_row") as mock_single,
-            patch("dinary.services.sync.fetch_eur_rsd_rate", side_effect=Exception("skip")),
+            patch("dinary.services.sync.fetch_eur_rsd_rate", side_effect=OSError("skip")),
             patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)),
         ):
             await _async_sync_row(
-                2026, 4, "еда&бытовые", "собака", 500.0, "test", date(2026, 4, 17),
+                2026,
+                4,
+                "еда&бытовые",
+                "собака",
+                500.0,
+                "test",
+                date(2026, 4, 17),
             )
 
             mock_single.assert_called_once()

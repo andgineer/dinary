@@ -27,13 +27,12 @@ def load_sql(name: str) -> str:
 
 def _validate_columns(cls: type[T], columns: list[str]) -> None:
     """Assert that SQL columns match dataclass fields exactly. Called once per query."""
-    fields = {f.name for f in dataclasses.fields(cls)}
+    fields = {f.name for f in dataclasses.fields(cls)}  # pyrefly: ignore[bad-argument-type]
     if set(columns) != fields:
         missing = fields - set(columns)
         extra = set(columns) - fields
         raise RuntimeError(
-            f"SQL/dataclass mismatch for {cls.__name__}: "
-            f"missing={missing}, extra={extra}"
+            f"SQL/dataclass mismatch for {cls.__name__}: missing={missing}, extra={extra}",
         )
 
 
@@ -53,7 +52,7 @@ def fetchone_as(
     _validate_columns(cls, columns)
     if row is None:
         return None
-    return cls(**dict(zip(columns, row)))
+    return cls(**dict(zip(columns, row, strict=False)))
 
 
 def fetchall_as(
@@ -68,4 +67,4 @@ def fetchall_as(
     _validate_columns(cls, columns)
     if not rows:
         return []
-    return [cls(**dict(zip(columns, r))) for r in rows]
+    return [cls(**dict(zip(columns, r, strict=False))) for r in rows]

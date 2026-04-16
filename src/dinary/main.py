@@ -47,7 +47,7 @@ def _setup_logging() -> None:
 
 
 @asynccontextmanager
-async def _lifespan(app: FastAPI):
+async def _lifespan(_app: FastAPI):
     duckdb_repo.init_config_db()
     yield
 

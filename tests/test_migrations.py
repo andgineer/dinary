@@ -26,8 +26,13 @@ class TestConfigMigrations:
         try:
             tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
             expected = {
-                "category_groups", "categories", "family_members",
-                "events", "event_members", "tags", "stores",
+                "category_groups",
+                "categories",
+                "family_members",
+                "events",
+                "event_members",
+                "tags",
+                "stores",
                 "sheet_category_mapping",
             }
             assert expected.issubset(tables)

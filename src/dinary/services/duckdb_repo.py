@@ -141,7 +141,7 @@ def get_budget_connection(year: int) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(str(path))
     try:
         con.execute(
-            f"ATTACH '{CONFIG_DB}' AS config (READ_ONLY)"
+            f"ATTACH '{CONFIG_DB}' AS config (READ_ONLY)",
         )
     except Exception:
         con.close()
@@ -185,16 +185,18 @@ def resolve_travel_event(expense_date: date) -> int:
     config_con = get_config_connection(read_only=False)
     try:
         row = fetchone_as(
-            EventIdRow, config_con,
+            EventIdRow,
+            config_con,
             load_sql("find_travel_event.sql"),
             [event_name, expense_date, expense_date],
         )
         if row:
             return row.event_id
 
-        max_id = config_con.execute(
-            "SELECT COALESCE(MAX(id), 0) FROM events"
-        ).fetchone()[0]
+        row = config_con.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM events",
+        ).fetchone()
+        max_id = row[0] if row else 0
         new_id = max_id + 1
         config_con.execute(
             "INSERT INTO events (id, name, date_from, date_to) VALUES (?, ?, ?, ?)",
@@ -206,7 +208,7 @@ def resolve_travel_event(expense_date: date) -> int:
         config_con.close()
 
 
-def insert_expense(
+def insert_expense(  # noqa: C901, PLR0913
     con: duckdb.DuckDBPyConnection,
     expense_id: str,
     expense_datetime: datetime,
@@ -228,32 +230,53 @@ def insert_expense(
     con.execute("BEGIN")
     try:
         if not con.execute(
-            "SELECT 1 FROM config.categories WHERE id = ?", [category_id]
+            "SELECT 1 FROM config.categories WHERE id = ?",
+            [category_id],
         ).fetchone():
             raise ValueError(f"category_id {category_id} not found in config.categories")
-        if beneficiary_id is not None and not con.execute(
-            "SELECT 1 FROM config.family_members WHERE id = ?", [beneficiary_id]
-        ).fetchone():
+        if (
+            beneficiary_id is not None
+            and not con.execute(
+                "SELECT 1 FROM config.family_members WHERE id = ?",
+                [beneficiary_id],
+            ).fetchone()
+        ):
             raise ValueError(f"beneficiary_id {beneficiary_id} not found in config.family_members")
-        if event_id is not None and not con.execute(
-            "SELECT 1 FROM config.events WHERE id = ?", [event_id]
-        ).fetchone():
+        if (
+            event_id is not None
+            and not con.execute(
+                "SELECT 1 FROM config.events WHERE id = ?",
+                [event_id],
+            ).fetchone()
+        ):
             raise ValueError(f"event_id {event_id} not found in config.events")
-        if store_id is not None and not con.execute(
-            "SELECT 1 FROM config.stores WHERE id = ?", [store_id]
-        ).fetchone():
+        if (
+            store_id is not None
+            and not con.execute(
+                "SELECT 1 FROM config.stores WHERE id = ?",
+                [store_id],
+            ).fetchone()
+        ):
             raise ValueError(f"store_id {store_id} not found in config.stores")
         for tid in tag_ids:
             if not con.execute(
-                "SELECT 1 FROM config.tags WHERE id = ?", [tid]
+                "SELECT 1 FROM config.tags WHERE id = ?",
+                [tid],
             ).fetchone():
                 raise ValueError(f"tag_id {tid} not found in config.tags")
 
         inserted = con.execute(
             load_sql("insert_expense.sql"),
             [
-                expense_id, expense_datetime, amount, currency,
-                category_id, beneficiary_id, event_id, store_id, comment,
+                expense_id,
+                expense_datetime,
+                amount,
+                currency,
+                category_id,
+                beneficiary_id,
+                event_id,
+                store_id,
+                comment,
             ],
         ).fetchone()
 
@@ -273,10 +296,12 @@ def insert_expense(
             return "created"
 
         existing = fetchone_as(
-            ExistingExpenseRow, con,
+            ExistingExpenseRow,
+            con,
             load_sql("get_existing_expense.sql"),
             [expense_id],
         )
+        assert existing is not None, f"expense {expense_id} vanished after ON CONFLICT"
 
         existing_tags_row = con.execute(
             "SELECT list(tag_id ORDER BY tag_id) FROM expense_tags WHERE expense_id = ?",
@@ -285,13 +310,24 @@ def insert_expense(
         existing_tags = existing_tags_row[0] if existing_tags_row and existing_tags_row[0] else []
 
         stored = (
-            existing.amount, existing.currency, existing.category_id,
-            existing.beneficiary_id, existing.event_id, existing.store_id,
-            existing.comment, existing.datetime,
+            existing.amount,
+            existing.currency,
+            existing.category_id,
+            existing.beneficiary_id,
+            existing.event_id,
+            existing.store_id,
+            existing.comment,
+            existing.datetime,
         )
         incoming = (
-            Decimal(str(amount)), currency, category_id, beneficiary_id,
-            event_id, store_id, comment, expense_datetime,
+            Decimal(str(amount)),
+            currency,
+            category_id,
+            beneficiary_id,
+            event_id,
+            store_id,
+            comment,
+            expense_datetime,
         )
 
         con.execute("ROLLBACK")
@@ -308,7 +344,7 @@ def insert_expense(
 def get_dirty_sync_jobs(con: duckdb.DuckDBPyConnection) -> list[tuple[int, int]]:
     """Return all (year, month) pairs pending sync."""
     return con.execute(
-        "SELECT year, month FROM sheet_sync_jobs ORDER BY year, month"
+        "SELECT year, month FROM sheet_sync_jobs ORDER BY year, month",
     ).fetchall()
 
 
@@ -326,7 +362,7 @@ def get_month_expenses(
     return fetchall_as(ExpenseRow, con, load_sql("get_month_expenses.sql"), [year, month])
 
 
-def reverse_lookup_mapping(
+def reverse_lookup_mapping(  # noqa: PLR0913
     con: duckdb.DuckDBPyConnection,
     category_id: int,
     beneficiary_id: int | None,
@@ -348,7 +384,8 @@ def reverse_lookup_mapping(
         ).fetchone()
         if is_travel:
             row = fetchone_as(
-                SheetCategoryRow, con,
+                SheetCategoryRow,
+                con,
                 load_sql("reverse_lookup_travel.sql"),
                 [TRAVEL_GROUP, category_id],
             )
@@ -356,7 +393,8 @@ def reverse_lookup_mapping(
 
     sorted_tags = sorted(tag_ids) if tag_ids else []
     rows = fetchall_as(
-        ReverseMappingRow, con,
+        ReverseMappingRow,
+        con,
         load_sql("reverse_lookup_5d.sql"),
         [category_id, beneficiary_id, event_id, store_id],
     )

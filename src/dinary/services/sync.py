@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def schedule_sync(
+def schedule_sync(  # noqa: PLR0913
     year: int,
     month: int,
     sheet_category: str,
@@ -46,13 +46,21 @@ def schedule_sync(
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(
-            _async_sync_row(year, month, sheet_category, sheet_group, amount, comment, expense_date)
+            _async_sync_row(
+                year,
+                month,
+                sheet_category,
+                sheet_group,
+                amount,
+                comment,
+                expense_date,
+            ),
         )
     except RuntimeError:
         logger.debug("No event loop, skipping fire-and-forget sync")
 
 
-async def _async_sync_row(
+async def _async_sync_row(  # noqa: PLR0913
     year: int,
     month: int,
     sheet_category: str,
@@ -66,17 +74,31 @@ async def _async_sync_row(
         rate = None
         try:
             rate = await fetch_eur_rsd_rate(expense_date.replace(day=1))
-        except Exception:
+        except (OSError, ValueError):
             logger.debug("Could not fetch exchange rate for %d-%02d", year, month)
 
         await asyncio.to_thread(
-            _sync_single_row, year, month, sheet_category, sheet_group, amount, comment, expense_date, rate,
+            _sync_single_row,
+            year,
+            month,
+            sheet_category,
+            sheet_group,
+            amount,
+            comment,
+            expense_date,
+            rate,
         )
-    except Exception:
-        logger.exception("Background row sync failed for %s/%s %d-%02d", sheet_category, sheet_group, year, month)
+    except (OSError, ValueError, gspread.exceptions.GSpreadException):
+        logger.exception(
+            "Background row sync failed for %s/%s %d-%02d",
+            sheet_category,
+            sheet_group,
+            year,
+            month,
+        )
 
 
-def _sync_single_row(
+def _sync_single_row(  # noqa: PLR0913
     year: int,
     month: int,
     sheet_category: str,
@@ -138,7 +160,7 @@ def _build_aggregates(
         return None
 
     aggregates: dict[tuple[str, str], dict] = defaultdict(
-        lambda: {"total_rsd": Decimal(0), "amounts": [], "comments": []}
+        lambda: {"total_rsd": Decimal(0), "amounts": [], "comments": []},
     )
     for exp in expenses:
         result = duckdb_repo.reverse_lookup_mapping(
@@ -152,7 +174,10 @@ def _build_aggregates(
         if result is None:
             logger.warning(
                 "No reverse mapping for expense %s (cat=%d, ben=%s, ev=%s)",
-                exp.id, exp.category_id, exp.beneficiary_id, exp.event_id,
+                exp.id,
+                exp.category_id,
+                exp.beneficiary_id,
+                exp.event_id,
             )
             continue
 
@@ -166,7 +191,7 @@ def _build_aggregates(
     return aggregates
 
 
-def _write_aggregates_to_sheet(
+def _write_aggregates_to_sheet(  # noqa: C901
     ws,
     all_values: list[list[str]],
     month: int,
@@ -183,15 +208,15 @@ def _write_aggregates_to_sheet(
         row = find_category_row(all_values, month, sheet_cat, sheet_group)
         if row is None:
             logger.warning(
-                "Sheet row not found for %s/%s in month %d", sheet_cat, sheet_group, month
+                "Sheet row not found for %s/%s in month %d",
+                sheet_cat,
+                sheet_group,
+                month,
             )
             continue
 
         amounts = [fmt_amount(float(exp_amt)) for exp_amt in data.get("amounts", [])]
-        if amounts:
-            formula = "=" + "+".join(amounts)
-        else:
-            formula = f"={fmt_amount(float(data['total_rsd']))}"
+        formula = "=" + "+".join(amounts) if amounts else f"={fmt_amount(float(data['total_rsd']))}"
         rsd_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_RSD)
         resolved.append((rsd_addr, data, formula))
         rsd_addrs.append(rsd_addr)
@@ -200,11 +225,12 @@ def _write_aggregates_to_sheet(
         return 0
 
     existing_formulas = ws.batch_get(
-        rsd_addrs, value_render_option=ValueRenderOption.formula,
+        rsd_addrs,
+        value_render_option=ValueRenderOption.formula,
     )
 
     batch: list[dict] = []
-    for (rsd_addr, data, formula), existing_vr in zip(resolved, existing_formulas):
+    for (rsd_addr, data, formula), existing_vr in zip(resolved, existing_formulas, strict=False):
         existing_str = ""
         if existing_vr and existing_vr[0]:
             existing_str = str(existing_vr[0][0])
@@ -216,7 +242,7 @@ def _write_aggregates_to_sheet(
             try:
                 parts = [p.strip() for p in existing_val.split("+")]
                 existing_total = sum(Decimal(p) for p in parts if p)
-            except Exception:
+            except (ValueError, ArithmeticError):
                 existing_total = Decimal(0)
 
             if existing_total == data["total_rsd"]:
@@ -227,7 +253,8 @@ def _write_aggregates_to_sheet(
         if data["comments"]:
             comment_text = "; ".join(data["comments"])
             comment_addr = gspread.utils.rowcol_to_a1(
-                gspread.utils.a1_to_rowcol(rsd_addr)[0], COL_COMMENT,
+                gspread.utils.a1_to_rowcol(rsd_addr)[0],
+                COL_COMMENT,
             )
             batch.append({"range": comment_addr, "values": [[comment_text]]})
 
@@ -286,7 +313,7 @@ def sync_month(year: int, month: int) -> None:
         loop = asyncio.new_event_loop()
         rate = loop.run_until_complete(fetch_eur_rsd_rate(date(year, month, 1)))
         loop.close()
-    except Exception:
+    except (OSError, ValueError):
         logger.debug("Could not fetch exchange rate for %d-%02d", year, month)
     _sync_month_core(year, month, rate)
 
@@ -296,7 +323,7 @@ async def async_sync_month(year: int, month: int) -> None:
     rate = None
     try:
         rate = await fetch_eur_rsd_rate(date(year, month, 1))
-    except Exception:
+    except (OSError, ValueError):
         logger.debug("Could not fetch exchange rate for %d-%02d", year, month)
     await asyncio.to_thread(_sync_month_core, year, month, rate)
 

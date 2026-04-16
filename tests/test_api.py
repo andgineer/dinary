@@ -68,6 +68,7 @@ def test_categories(client):
 @allure.feature("Categories")
 def test_categories_db_failure(client, monkeypatch):
     """If config.duckdb is unreadable, /api/categories returns 502."""
+
     def bad_connection(**kwargs):
         raise RuntimeError("DB corrupted")
 
@@ -131,7 +132,13 @@ def test_create_expense_validation(client):
 
     resp = client.post(
         "/api/expenses",
-        json={"expense_id": "x", "amount": 100, "category": "Food", "currency": "USD", "date": "2026-04-14"},
+        json={
+            "expense_id": "x",
+            "amount": 100,
+            "category": "Food",
+            "currency": "USD",
+            "date": "2026-04-14",
+        },
     )
     assert resp.status_code == 422
 
@@ -284,15 +291,11 @@ def test_create_travel_expense_resolves_event(mock_sync, client):
 
     con = duckdb_repo.get_budget_connection(2026)
     try:
-        row = con.execute(
-            "SELECT event_id FROM expenses WHERE id = 'travel-uuid-1'"
-        ).fetchone()
+        row = con.execute("SELECT event_id FROM expenses WHERE id = 'travel-uuid-1'").fetchone()
         assert row is not None
         assert row[0] is not None
 
-        event = con.execute(
-            "SELECT name FROM config.events WHERE id = ?", [row[0]]
-        ).fetchone()
+        event = con.execute("SELECT name FROM config.events WHERE id = ?", [row[0]]).fetchone()
         assert event[0] == "отпуск-2026"
     finally:
         con.close()
