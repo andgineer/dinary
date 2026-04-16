@@ -2,25 +2,26 @@
 
 [Full report](https://htmlpreview.github.io/?https://github.com/andgineer/dinary-server/blob/python-coverage-comment-action-data/htmlcov/index.html)
 
-| Name                                   |    Stmts |     Miss |   Cover |   Missing |
-|--------------------------------------- | -------: | -------: | ------: | --------: |
-| src/dinary/\_\_about\_\_.py            |        1 |        0 |    100% |           |
-| src/dinary/api/categories.py           |       20 |        0 |    100% |           |
-| src/dinary/api/expenses.py             |       46 |        0 |    100% |           |
-| src/dinary/api/qr.py                   |       17 |        0 |    100% |           |
-| src/dinary/config.py                   |       19 |        1 |     95% |        15 |
-| src/dinary/main.py                     |       57 |        6 |     89% |27-29, 80, 96, 106 |
-| src/dinary/services/category\_store.py |       27 |        0 |    100% |           |
-| src/dinary/services/db\_migrations.py  |       55 |        2 |     96% |    51, 54 |
-| src/dinary/services/duckdb\_repo.py    |      136 |        8 |     94% |145-147, 183, 193-203 |
-| src/dinary/services/exchange\_rate.py  |       16 |        0 |    100% |           |
-| src/dinary/services/import\_sheet.py   |      121 |      121 |      0% |    14-237 |
-| src/dinary/services/qr\_parser.py      |       16 |        1 |     94% |        31 |
-| src/dinary/services/seed\_config.py    |      108 |       20 |     81% |56, 60, 196-198, 208-239 |
-| src/dinary/services/sheets.py          |      165 |       15 |     91% |38-44, 48-49, 81, 101-104, 109-111, 261 |
-| src/dinary/services/sql\_loader.py     |       34 |        0 |    100% |           |
-| src/dinary/services/sync.py            |      174 |       40 |     77% |46-60, 91-92, 126-127, 135-136, 174-181, 209-215, 224, 244-245, 275-277, 285-290, 315-316, 322-327, 338, 345-346, 358-359 |
-| **TOTAL**                              | **1012** |  **214** | **79%** |           |
+| Name                                       |    Stmts |     Miss |   Cover |   Missing |
+|------------------------------------------- | -------: | -------: | ------: | --------: |
+| src/dinary/\_\_about\_\_.py                |        1 |        0 |    100% |           |
+| src/dinary/api/categories.py               |       20 |        0 |    100% |           |
+| src/dinary/api/expenses.py                 |       46 |        0 |    100% |           |
+| src/dinary/api/qr.py                       |       17 |        0 |    100% |           |
+| src/dinary/config.py                       |       19 |        1 |     95% |        15 |
+| src/dinary/main.py                         |       57 |        6 |     89% |27-29, 80, 96, 106 |
+| src/dinary/services/category\_store.py     |       27 |        0 |    100% |           |
+| src/dinary/services/db\_migrations.py      |       55 |        2 |     96% |    51, 54 |
+| src/dinary/services/duckdb\_repo.py        |      136 |        3 |     98% |   145-147 |
+| src/dinary/services/exchange\_rate.py      |       16 |        0 |    100% |           |
+| src/dinary/services/import\_sheet.py       |      121 |       21 |     83% |43, 46, 53, 58-59, 70, 80, 85-86, 92, 112, 153, 156, 161, 174-176, 213, 220-227 |
+| src/dinary/services/qr\_parser.py          |       16 |        1 |     94% |        31 |
+| src/dinary/services/seed\_config.py        |      108 |        5 |     95% |56, 60, 196-198 |
+| src/dinary/services/sheets.py              |      165 |       15 |     91% |38-44, 48-49, 81, 101-104, 109-111, 261 |
+| src/dinary/services/sql\_loader.py         |       34 |        0 |    100% |           |
+| src/dinary/services/sync.py                |      174 |       40 |     77% |46-60, 91-92, 126-127, 135-136, 174-181, 209-215, 224, 244-245, 275-277, 285-290, 315-316, 322-327, 338, 345-346, 358-359 |
+| src/dinary/services/verify\_equivalence.py |      103 |      103 |      0% |     7-202 |
+| **TOTAL**                                  | **1115** |  **197** | **82%** |           |
 
 
 ## Setup coverage badge
