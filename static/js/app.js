@@ -316,8 +316,18 @@ async function init() {
 
   const hv = $("#header-version");
   if (APP_VERSION !== "__VERSION__") {
-    hv.textContent = APP_VERSION;
+    hv.textContent = `v${APP_VERSION}`;
   }
+  hv.addEventListener("click", async () => {
+    if (!("serviceWorker" in navigator)) return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return;
+    await reg.update();
+    if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => caches.delete(k)));
+    location.reload();
+  });
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});

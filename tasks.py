@@ -291,8 +291,8 @@ def deploy(c, ref=""):
     print("=== Rendering __VERSION__ into _static/ build copy ===")
     _ssh(
         c,
-        'cd ~/dinary-server && '
-        'VER=$(git rev-parse --short HEAD) && '
+        "cd ~/dinary-server && source ~/.local/bin/env && "
+        "VER=$(uv run python -c 'from dinary.__about__ import __version__; print(__version__)') && "
         'rm -rf _static && cp -r static _static && '
         'sed -i "s/__VERSION__/$VER/g" _static/js/app.js _static/sw.js && '
         'echo "$VER" > data/.deployed_version'
