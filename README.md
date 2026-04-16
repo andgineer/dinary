@@ -5,16 +5,19 @@
 | Name                                   |    Stmts |     Miss |   Cover |   Missing |
 |--------------------------------------- | -------: | -------: | ------: | --------: |
 | src/dinary/\_\_about\_\_.py            |        1 |        0 |    100% |           |
-| src/dinary/api/categories.py           |       15 |        0 |    100% |           |
-| src/dinary/api/expenses.py             |       23 |        0 |    100% |           |
+| src/dinary/api/categories.py           |       18 |        0 |    100% |           |
+| src/dinary/api/expenses.py             |       46 |        0 |    100% |           |
 | src/dinary/api/qr.py                   |       17 |        0 |    100% |           |
 | src/dinary/config.py                   |       19 |        1 |     95% |        15 |
-| src/dinary/main.py                     |       38 |        3 |     92% |52, 68, 78 |
+| src/dinary/main.py                     |       57 |        6 |     89% |27-29, 80, 96, 106 |
 | src/dinary/services/category\_store.py |       27 |        0 |    100% |           |
+| src/dinary/services/duckdb\_repo.py    |      119 |        3 |     97% |   154-156 |
 | src/dinary/services/exchange\_rate.py  |       16 |        0 |    100% |           |
 | src/dinary/services/qr\_parser.py      |       16 |        1 |     94% |        31 |
+| src/dinary/services/seed\_config.py    |      102 |        5 |     95% |35, 39, 187-189 |
 | src/dinary/services/sheets.py          |      164 |       14 |     91% |38-44, 48, 80, 100-103, 108-110, 260 |
-| **TOTAL**                              |  **336** |   **19** | **94%** |           |
+| src/dinary/services/sync.py            |      176 |       41 |     77% |46-52, 75-76, 104-105, 113-114, 153-157, 185-188, 194, 200, 219-220, 249-251, 259-264, 289-290, 296-301, 312, 319-320, 332-333 |
+| **TOTAL**                              |  **778** |   **71** | **91%** |           |
 
 
 ## Setup coverage badge
