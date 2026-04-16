@@ -115,8 +115,8 @@ class TestMapping:
         try:
             result = duckdb_repo.resolve_mapping(con, "еда&бытовые", "собака")
             assert result is not None
-            assert result["category_id"] == 1
-            assert result["beneficiary_id"] == 1
+            assert result.category_id == 1
+            assert result.beneficiary_id == 1
         finally:
             con.close()
 
@@ -133,7 +133,7 @@ class TestMapping:
         try:
             result = duckdb_repo.resolve_mapping(con, "мобильник", "")
             assert result is not None
-            assert result["category_id"] == 4
+            assert result.category_id == 4
         finally:
             con.close()
 

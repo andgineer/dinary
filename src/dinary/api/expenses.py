@@ -8,12 +8,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from dinary.services import duckdb_repo
+from dinary.services.duckdb_repo import TRAVEL_GROUP
 from dinary.services.sync import schedule_sync
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-TRAVEL_GROUP = "путешествия"
 
 
 class ExpenseRequest(BaseModel):
@@ -47,11 +46,11 @@ async def create_expense(req: ExpenseRequest):
                 detail=f"Unknown category mapping: {req.category} / {req.group}",
             )
 
-        category_id = mapping["category_id"]
-        beneficiary_id = mapping["beneficiary_id"]
-        event_id = mapping["event_id"]
-        store_id = mapping["store_id"]
-        tag_ids = mapping["tag_ids"]
+        category_id = mapping.category_id
+        beneficiary_id = mapping.beneficiary_id
+        event_id = mapping.event_id
+        store_id = mapping.store_id
+        tag_ids = mapping.tag_ids
 
         if req.group == TRAVEL_GROUP:
             # resolve_travel_event writes to config.duckdb which is ATTACHed

@@ -3,11 +3,15 @@
 Uses ATTACH for cross-DB referential integrity validation.
 """
 
+import dataclasses
 import logging
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import duckdb
+
+from dinary.services.sql_loader import fetchall_as, fetchone_as, load_sql
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +105,89 @@ CREATE TABLE IF NOT EXISTS sheet_sync_jobs (
 """
 
 SYNTHETIC_EVENT_PREFIX = "отпуск-"
+TRAVEL_GROUP = "путешествия"
+
+
+# ---------------------------------------------------------------------------
+# Row types for typed query results
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(slots=True)
+class MappingRow:
+    category_id: int
+    beneficiary_id: int | None
+    event_id: int | None
+    store_id: int | None
+    tag_ids: list[int]
+
+    def __post_init__(self) -> None:
+        self.tag_ids = sorted(self.tag_ids) if self.tag_ids else []
+
+
+@dataclasses.dataclass(slots=True)
+class ExpenseRow:
+    id: str
+    datetime: datetime
+    amount: Decimal
+    currency: str
+    category_id: int
+    beneficiary_id: int | None
+    event_id: int | None
+    store_id: int | None
+    comment: str | None
+    tag_ids: list[int]
+
+    def __post_init__(self) -> None:
+        self.tag_ids = self.tag_ids if self.tag_ids else []
+
+
+@dataclasses.dataclass(slots=True)
+class SheetCategoryRow:
+    sheet_category: str
+    sheet_group: str
+
+
+@dataclasses.dataclass(slots=True)
+class ReverseMappingRow:
+    sheet_category: str
+    sheet_group: str
+    tag_ids: list[int] | None
+
+
+@dataclasses.dataclass(slots=True)
+class EventIdRow:
+    event_id: int
+
+
+@dataclasses.dataclass(slots=True)
+class ExistingExpenseRow:
+    amount: Decimal
+    currency: str
+    category_id: int
+    beneficiary_id: int | None
+    event_id: int | None
+    store_id: int | None
+    comment: str | None
+    datetime: datetime
+
+
+@dataclasses.dataclass(slots=True)
+class IdNameRow:
+    id: int
+    name: str
+
+
+@dataclasses.dataclass(slots=True)
+class CategoryRefRow:
+    id: int
+    name: str
+    group_id: int
+
+
+# ---------------------------------------------------------------------------
+# Connection management
+# ---------------------------------------------------------------------------
 
 
 def _budget_path(year: int) -> Path:
@@ -162,34 +249,21 @@ def get_config_connection(read_only: bool = True) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(CONFIG_DB), read_only=read_only)
 
 
+# ---------------------------------------------------------------------------
+# Queries
+# ---------------------------------------------------------------------------
+
+
 def resolve_mapping(
     con: duckdb.DuckDBPyConnection,
     category: str,
     group: str,
-) -> dict | None:
+) -> MappingRow | None:
     """Look up (category, group) in sheet_category_mapping via ATTACHed config.
 
-    Returns dict with category_id, beneficiary_id, event_id, store_id, tag_ids
-    or None if not found.
+    Returns MappingRow or None if not found.
     """
-    row = con.execute(
-        """
-        SELECT category_id, beneficiary_id, event_id, store_id, tag_ids
-        FROM config.sheet_category_mapping
-        WHERE sheet_category = ? AND sheet_group = ?
-        """,
-        [category, group],
-    ).fetchone()
-    if row is None:
-        return None
-    tag_ids = sorted(row[4]) if row[4] else []
-    return {
-        "category_id": row[0],
-        "beneficiary_id": row[1],
-        "event_id": row[2],
-        "store_id": row[3],
-        "tag_ids": tag_ids,
-    }
+    return fetchone_as(MappingRow, con, load_sql("resolve_mapping.sql"), [category, group])
 
 
 def resolve_travel_event(expense_date: date) -> int:
@@ -205,14 +279,17 @@ def resolve_travel_event(expense_date: date) -> int:
 
     config_con = get_config_connection(read_only=False)
     try:
-        row = config_con.execute(
-            "SELECT id FROM events WHERE name = ? AND date_from <= ? AND date_to >= ?",
+        row = fetchone_as(
+            EventIdRow, config_con,
+            load_sql("find_travel_event.sql"),
             [event_name, expense_date, expense_date],
-        ).fetchone()
+        )
         if row:
-            return row[0]
+            return row.event_id
 
-        max_id = config_con.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0]
+        max_id = config_con.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM events"
+        ).fetchone()[0]
         new_id = max_id + 1
         config_con.execute(
             "INSERT INTO events (id, name, date_from, date_to) VALUES (?, ?, ?, ?)",
@@ -268,13 +345,7 @@ def insert_expense(
                 raise ValueError(f"tag_id {tid} not found in config.tags")
 
         inserted = con.execute(
-            """
-            INSERT INTO expenses (id, datetime, amount, currency, category_id,
-                                  beneficiary_id, event_id, store_id, comment)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT DO NOTHING
-            RETURNING id
-            """,
+            load_sql("insert_expense.sql"),
             [
                 expense_id, expense_datetime, amount, currency,
                 category_id, beneficiary_id, event_id, store_id, comment,
@@ -290,23 +361,17 @@ def insert_expense(
             year = expense_datetime.year
             month = expense_datetime.month
             con.execute(
-                """
-                INSERT INTO sheet_sync_jobs (year, month) VALUES (?, ?)
-                ON CONFLICT DO NOTHING
-                """,
+                "INSERT INTO sheet_sync_jobs (year, month) VALUES (?, ?) ON CONFLICT DO NOTHING",
                 [year, month],
             )
             con.execute("COMMIT")
             return "created"
 
-        existing = con.execute(
-            """
-            SELECT amount, currency, category_id, beneficiary_id,
-                   event_id, store_id, comment, datetime
-            FROM expenses WHERE id = ?
-            """,
+        existing = fetchone_as(
+            ExistingExpenseRow, con,
+            load_sql("get_existing_expense.sql"),
             [expense_id],
-        ).fetchone()
+        )
 
         existing_tags_row = con.execute(
             "SELECT list(tag_id ORDER BY tag_id) FROM expense_tags WHERE expense_id = ?",
@@ -315,11 +380,12 @@ def insert_expense(
         existing_tags = existing_tags_row[0] if existing_tags_row and existing_tags_row[0] else []
 
         stored = (
-            float(existing[0]), existing[1], existing[2], existing[3],
-            existing[4], existing[5], existing[6], existing[7],
+            existing.amount, existing.currency, existing.category_id,
+            existing.beneficiary_id, existing.event_id, existing.store_id,
+            existing.comment, existing.datetime,
         )
         incoming = (
-            float(amount), currency, category_id, beneficiary_id,
+            Decimal(str(amount)), currency, category_id, beneficiary_id,
             event_id, store_id, comment, expense_datetime,
         )
 
@@ -336,7 +402,9 @@ def insert_expense(
 
 def get_dirty_sync_jobs(con: duckdb.DuckDBPyConnection) -> list[tuple[int, int]]:
     """Return all (year, month) pairs pending sync."""
-    return con.execute("SELECT year, month FROM sheet_sync_jobs ORDER BY year, month").fetchall()
+    return con.execute(
+        "SELECT year, month FROM sheet_sync_jobs ORDER BY year, month"
+    ).fetchall()
 
 
 def clear_sync_job(con: duckdb.DuckDBPyConnection, year: int, month: int) -> None:
@@ -348,28 +416,9 @@ def get_month_expenses(
     con: duckdb.DuckDBPyConnection,
     year: int,
     month: int,
-) -> list[dict]:
+) -> list[ExpenseRow]:
     """Read all expenses for a given month with their tags."""
-    rows = con.execute(
-        """
-        SELECT e.id, e.datetime, e.amount, e.currency, e.category_id,
-               e.beneficiary_id, e.event_id, e.store_id, e.comment,
-               (SELECT list(tag_id ORDER BY tag_id) FROM expense_tags
-                WHERE expense_id = e.id) as tag_ids
-        FROM expenses e
-        WHERE YEAR(e.datetime) = ? AND MONTH(e.datetime) = ?
-        """,
-        [year, month],
-    ).fetchall()
-    return [
-        {
-            "id": r[0], "datetime": r[1], "amount": float(r[2]),
-            "currency": r[3], "category_id": r[4], "beneficiary_id": r[5],
-            "event_id": r[6], "store_id": r[7], "comment": r[8],
-            "tag_ids": r[9] if r[9] else [],
-        }
-        for r in rows
-    ]
+    return fetchall_as(ExpenseRow, con, load_sql("get_month_expenses.sql"), [year, month])
 
 
 def reverse_lookup_mapping(
@@ -383,42 +432,33 @@ def reverse_lookup_mapping(
     """Reverse-map a 5D expense back to (sheet_category, sheet_group).
 
     Two paths:
-    1. Travel expenses (event_id is a synthetic отпуск-YYYY): match by
-       category_id + sheet_group='путешествия'.
+    1. Travel expenses (event_id references a synthetic event): match by
+       category_id + TRAVEL_GROUP.
     2. All others: full 5D null-safe match.
     """
     if event_id is not None:
         is_travel = con.execute(
-            "SELECT 1 FROM config.events WHERE id = ? AND name LIKE 'отпуск-%'",
-            [event_id],
+            "SELECT 1 FROM config.events WHERE id = ? AND name LIKE ?",
+            [event_id, f"{SYNTHETIC_EVENT_PREFIX}%"],
         ).fetchone()
         if is_travel:
-            row = con.execute(
-                """
-                SELECT sheet_category, sheet_group
-                FROM config.sheet_category_mapping
-                WHERE sheet_group = 'путешествия' AND category_id = ?
-                """,
-                [category_id],
-            ).fetchone()
-            return (row[0], row[1]) if row else None
+            row = fetchone_as(
+                SheetCategoryRow, con,
+                load_sql("reverse_lookup_travel.sql"),
+                [TRAVEL_GROUP, category_id],
+            )
+            return (row.sheet_category, row.sheet_group) if row else None
 
     sorted_tags = sorted(tag_ids) if tag_ids else []
-    rows = con.execute(
-        """
-        SELECT sheet_category, sheet_group, tag_ids
-        FROM config.sheet_category_mapping
-        WHERE category_id = ?
-          AND beneficiary_id IS NOT DISTINCT FROM ?
-          AND event_id IS NOT DISTINCT FROM ?
-          AND store_id IS NOT DISTINCT FROM ?
-        """,
+    rows = fetchall_as(
+        ReverseMappingRow, con,
+        load_sql("reverse_lookup_5d.sql"),
         [category_id, beneficiary_id, event_id, store_id],
-    ).fetchall()
+    )
 
     for r in rows:
-        mapping_tags = sorted(r[2]) if r[2] else []
+        mapping_tags = sorted(r.tag_ids) if r.tag_ids else []
         if mapping_tags == sorted_tags:
-            return (r[0], r[1])
+            return (r.sheet_category, r.sheet_group)
 
     return None

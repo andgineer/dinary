@@ -8,11 +8,11 @@ import logging
 from datetime import date
 
 from dinary.services import duckdb_repo
+from dinary.services.duckdb_repo import SYNTHETIC_EVENT_PREFIX, TRAVEL_GROUP, CategoryRefRow, IdNameRow
 from dinary.services.sheets import get_categories
+from dinary.services.sql_loader import fetchall_as, load_sql
 
 logger = logging.getLogger(__name__)
-
-TRAVEL_GROUP = "путешествия"
 
 BENEFICIARY_GROUPS = {
     "собака": "собака",
@@ -43,24 +43,24 @@ def seed_from_sheet(year: int | None = None) -> dict:
 
     try:
         con.execute("BEGIN")
-        existing_groups = {r[0] for r in con.execute("SELECT name FROM category_groups").fetchall()}
-
-        if existing_groups:
-            logger.info("Config DB already has data, merging new entries")
 
         group_ids: dict[str, int] = {}
-        cat_ids: dict[tuple[str, str], int] = {}
+        cat_ids: dict[tuple[str, int], int] = {}
         beneficiary_ids: dict[str, int] = {}
         tag_ids: dict[str, int] = {}
 
-        for r in con.execute("SELECT id, name FROM category_groups").fetchall():
-            group_ids[r[1]] = r[0]
-        for r in con.execute("SELECT id, name, group_id FROM categories").fetchall():
-            cat_ids[(r[1], r[2])] = r[0]
-        for r in con.execute("SELECT id, name FROM family_members").fetchall():
-            beneficiary_ids[r[1]] = r[0]
-        for r in con.execute("SELECT id, name FROM tags").fetchall():
-            tag_ids[r[1]] = r[0]
+        for r in fetchall_as(IdNameRow, con, load_sql("seed_load_groups.sql")):
+            group_ids[r.name] = r.id
+
+        if group_ids:
+            logger.info("Config DB already has data, merging new entries")
+
+        for r in fetchall_as(CategoryRefRow, con, load_sql("seed_load_categories.sql")):
+            cat_ids[(r.name, r.group_id)] = r.id
+        for r in fetchall_as(IdNameRow, con, load_sql("seed_load_members.sql")):
+            beneficiary_ids[r.name] = r.id
+        for r in fetchall_as(IdNameRow, con, load_sql("seed_load_tags.sql")):
+            tag_ids[r.name] = r.id
 
         next_group_id = max(group_ids.values(), default=0) + 1
         next_cat_id = max(cat_ids.values(), default=0) + 1
@@ -160,7 +160,7 @@ def seed_from_sheet(year: int | None = None) -> dict:
                 )
                 mapping_count += 1
 
-        event_name = f"отпуск-{year}"
+        event_name = f"{SYNTHETIC_EVENT_PREFIX}{year}"
         existing_event = con.execute(
             "SELECT 1 FROM events WHERE name = ?",
             [event_name],

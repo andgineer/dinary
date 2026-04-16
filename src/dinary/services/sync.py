@@ -143,26 +143,26 @@ def _build_aggregates(
     for exp in expenses:
         result = duckdb_repo.reverse_lookup_mapping(
             con,
-            exp["category_id"],
-            exp["beneficiary_id"],
-            exp["event_id"],
-            exp["store_id"],
-            exp["tag_ids"],
+            exp.category_id,
+            exp.beneficiary_id,
+            exp.event_id,
+            exp.store_id,
+            exp.tag_ids,
         )
         if result is None:
             logger.warning(
                 "No reverse mapping for expense %s (cat=%d, ben=%s, ev=%s)",
-                exp["id"], exp["category_id"], exp["beneficiary_id"], exp["event_id"],
+                exp.id, exp.category_id, exp.beneficiary_id, exp.event_id,
             )
             continue
 
         sheet_cat, sheet_group = result
         key = (sheet_cat, sheet_group)
-        amt = Decimal(str(exp["amount"]))
+        amt = exp.amount
         aggregates[key]["total_rsd"] += amt
         aggregates[key]["amounts"].append(amt)
-        if exp.get("comment"):
-            aggregates[key]["comments"].append(exp["comment"])
+        if exp.comment:
+            aggregates[key]["comments"].append(exp.comment)
     return aggregates
 
 
