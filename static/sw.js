@@ -1,5 +1,5 @@
 const APP_VERSION = "__VERSION__";
-const CACHE_NAME = APP_VERSION === "__VERSION__" ? "dinary-dev" : `dinary-${APP_VERSION}`;
+const CACHE_NAME = `dinary-${APP_VERSION}`;
 const ASSETS = [
   "/",
   "/css/style.css",

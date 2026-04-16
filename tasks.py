@@ -1,8 +1,11 @@
 import base64
 import os
+import shutil
 import sys
 from datetime import datetime as _dt
+from pathlib import Path
 
+from dinary.__about__ import __version__
 from dotenv import dotenv_values
 from invoke import Collection, Context, task
 
@@ -288,14 +291,11 @@ def deploy(c, ref=""):
         "print(\"Migrated config.duckdb\")'"
     )
 
-    print("=== Rendering __VERSION__ into _static/ build copy ===")
+    print("=== Building _static/ with version ===")
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && "
-        "VER=$(uv run python -c 'from dinary.__about__ import __version__; print(__version__)') && "
-        'rm -rf _static && cp -r static _static && '
-        'sed -i "s/__VERSION__/$VER/g" _static/js/app.js _static/sw.js && '
-        'echo "$VER" > data/.deployed_version'
+        "uv run inv build-static"
     )
 
     _ssh_sudo(c, "systemctl restart dinary")
@@ -389,6 +389,26 @@ def import_sheet(c, year="", yes=False):
         "from dinary.services.import_sheet import import_year; "
         f"import json; print(json.dumps(import_year({year})))'",
     )
+
+
+@task(name="build-static")
+def build_static(c):
+    """Replace __VERSION__ in static/ files, write to _static/."""
+    src = Path("static")
+    dst = Path("_static")
+    data = Path("data")
+
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+
+    for filepath in [dst / "js" / "app.js", dst / "sw.js"]:
+        text = filepath.read_text()
+        filepath.write_text(text.replace("__VERSION__", __version__))
+
+    data.mkdir(exist_ok=True)
+    (data / ".deployed_version").write_text(__version__)
+    print(f"Built _static/ with version {__version__}")
 
 
 @task

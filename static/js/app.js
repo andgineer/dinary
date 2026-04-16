@@ -243,7 +243,7 @@ async function showQueueModal() {
     try {
       const resp = await fetch("/api/version");
       const { version: serverVer } = await resp.json();
-      if (serverVer && serverVer !== APP_VERSION && APP_VERSION !== "__VERSION__") {
+      if (serverVer && serverVer !== APP_VERSION) {
         vi.innerHTML = `v${APP_VERSION} · <span style="color:#f59e0b">update available (${serverVer})</span>`;
       }
     } catch { /* ignore */ }
@@ -314,10 +314,7 @@ async function init() {
   await updateQueueBadge();
   startRetryTimer();
 
-  const hv = $("#header-version");
-  if (APP_VERSION !== "__VERSION__") {
-    hv.textContent = `v${APP_VERSION}`;
-  }
+  $("#header-version").textContent = `v${APP_VERSION}`;
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
