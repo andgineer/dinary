@@ -37,7 +37,7 @@ def _make_worksheet(all_values):
 @allure.epic("Google Sheets")
 @allure.feature("Read Categories")
 class TestLoadCategories:
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     def test_loads_unique_pairs(self, mock_get_sheet):
         from dinary.services.sheets import load_categories
 
@@ -50,7 +50,7 @@ class TestLoadCategories:
         assert Category(name="Transport", group="Essentials") in cats
         assert Category(name="Cinema", group="Entertainment") in cats
 
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     def test_empty_sheet(self, mock_get_sheet):
         from dinary.services.sheets import load_categories
 
@@ -63,27 +63,27 @@ class TestLoadCategories:
 @allure.feature("Read Categories")
 class TestFindCategoryRow:
     def test_finds_row(self):
-        from dinary.services.sheets import _find_category_row
+        from dinary.services.sheets import find_category_row
 
-        row = _find_category_row(SAMPLE_SHEET, 4, "Food", "Essentials")
+        row = find_category_row(SAMPLE_SHEET, 4, "Food", "Essentials")
         assert row == 2
 
     def test_finds_duplicate_category_in_different_group(self):
-        from dinary.services.sheets import _find_category_row
+        from dinary.services.sheets import find_category_row
 
-        row = _find_category_row(SAMPLE_SHEET, 4, "Food", "Travel")
+        row = find_category_row(SAMPLE_SHEET, 4, "Food", "Travel")
         assert row == 5
 
     def test_returns_none_for_missing(self):
-        from dinary.services.sheets import _find_category_row
+        from dinary.services.sheets import find_category_row
 
-        row = _find_category_row(SAMPLE_SHEET, 4, "Unknown", "")
+        row = find_category_row(SAMPLE_SHEET, 4, "Unknown", "")
         assert row is None
 
     def test_returns_none_for_wrong_month(self):
-        from dinary.services.sheets import _find_category_row
+        from dinary.services.sheets import find_category_row
 
-        row = _find_category_row(SAMPLE_SHEET, 5, "Food", "Essentials")
+        row = find_category_row(SAMPLE_SHEET, 5, "Food", "Essentials")
         assert row is None
 
 
@@ -92,7 +92,7 @@ class TestFindCategoryRow:
 class TestWriteExpense:
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     async def test_appends_to_formula(self, mock_get_sheet, mock_rate):
         from dinary.services.sheets import write_expense
 
@@ -124,7 +124,7 @@ class TestWriteExpense:
 
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     async def test_creates_formula_from_empty(self, mock_get_sheet, mock_rate):
         from dinary.services.sheets import write_expense
 
@@ -151,7 +151,7 @@ class TestWriteExpense:
 
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     async def test_appends_to_plain_number(self, mock_get_sheet, mock_rate):
         """Cell with a plain number (not formula) should become =number+amount."""
         from dinary.services.sheets import write_expense
@@ -179,7 +179,7 @@ class TestWriteExpense:
 
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     async def test_uses_existing_rate(self, mock_get_sheet, mock_rate):
         from dinary.services.sheets import write_expense
 
@@ -206,7 +206,7 @@ class TestWriteExpense:
 
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     async def test_rate_written_to_first_row_of_month(self, mock_get_sheet, mock_rate):
         """EUR rate should be written to the first row of the month, not the expense row."""
         from dinary.services.sheets import write_expense
@@ -235,7 +235,7 @@ class TestWriteExpense:
 
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     async def test_does_not_write_eur_or_month(self, mock_get_sheet, mock_rate):
         """Columns C (EUR) and G (month) are formula-driven — never written."""
         from dinary.services.sheets import write_expense
@@ -264,7 +264,7 @@ class TestWriteExpense:
 
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     async def test_unknown_category_raises(self, mock_get_sheet, mock_rate):
         from dinary.services.sheets import write_expense
 
@@ -285,20 +285,20 @@ class TestWriteExpense:
 @allure.epic("Data Safety")
 @allure.feature("Formula Preservation")
 class TestAppendToRsdFormula:
-    """_append_to_rsd_formula must NEVER overwrite existing data.
+    """append_to_rsd_formula must NEVER overwrite existing data.
 
     It must always append +amount to whatever is already in the cell.
     """
 
     def _run(self, existing_value, amount, expected_formula):
-        from dinary.services.sheets import _append_to_rsd_formula
+        from dinary.services.sheets import append_to_rsd_formula
 
         ws = MagicMock()
         mock_cell = MagicMock()
         mock_cell.value = existing_value
         ws.acell.return_value = mock_cell
 
-        _append_to_rsd_formula(ws, 2, amount)
+        append_to_rsd_formula(ws, 2, amount)
 
         ws.update.assert_called_once()
         actual = ws.update.call_args.kwargs["values"][0][0]
@@ -349,7 +349,7 @@ class TestAppendToRsdFormula:
 
     def test_formula_result_is_always_formula(self):
         """Result must always start with '=' to be a Google Sheets formula."""
-        from dinary.services.sheets import _append_to_rsd_formula
+        from dinary.services.sheets import append_to_rsd_formula
 
         for existing in ["", None, 0, 500, "500", "=100", "=100+200"]:
             ws = MagicMock()
@@ -357,7 +357,7 @@ class TestAppendToRsdFormula:
             mock_cell.value = existing
             ws.acell.return_value = mock_cell
 
-            _append_to_rsd_formula(ws, 2, 100)
+            append_to_rsd_formula(ws, 2, 100)
 
             result = ws.update.call_args.kwargs["values"][0][0]
             assert result.startswith("="), (
@@ -366,14 +366,14 @@ class TestAppendToRsdFormula:
 
     def test_never_overwrites_to_plain_number(self):
         """The written value must NEVER be a plain number — always a formula."""
-        from dinary.services.sheets import _append_to_rsd_formula
+        from dinary.services.sheets import append_to_rsd_formula
 
         ws = MagicMock()
         mock_cell = MagicMock()
         mock_cell.value = "=460+373+755"
         ws.acell.return_value = mock_cell
 
-        _append_to_rsd_formula(ws, 2, 100)
+        append_to_rsd_formula(ws, 2, 100)
 
         result = ws.update.call_args.kwargs["values"][0][0]
         assert "+" in result, "Formula must contain + (append, not overwrite)"
@@ -383,14 +383,14 @@ class TestAppendToRsdFormula:
         """Must read with FORMULA render option to get the formula, not the computed value."""
         from gspread.utils import ValueRenderOption
 
-        from dinary.services.sheets import _append_to_rsd_formula
+        from dinary.services.sheets import append_to_rsd_formula
 
         ws = MagicMock()
         mock_cell = MagicMock()
         mock_cell.value = "=100"
         ws.acell.return_value = mock_cell
 
-        _append_to_rsd_formula(ws, 2, 50)
+        append_to_rsd_formula(ws, 2, 50)
 
         ws.acell.assert_called_once()
         call_kwargs = ws.acell.call_args
@@ -403,35 +403,35 @@ class TestAppendToRsdFormula:
 @allure.epic("Data Safety")
 @allure.feature("Comment Preservation")
 class TestAppendComment:
-    """_append_comment must never overwrite existing comments."""
+    """append_comment must never overwrite existing comments."""
 
     def test_append_to_existing(self):
-        from dinary.services.sheets import _append_comment
+        from dinary.services.sheets import append_comment
 
         ws = MagicMock()
         row_data = ["", "", "", "Food", "Essentials", "lunch", "4", ""]
 
-        _append_comment(ws, 2, row_data, "dinner")
+        append_comment(ws, 2, row_data, "dinner")
 
         ws.update_cell.assert_called_once_with(2, 6, "lunch; dinner")
 
     def test_first_comment(self):
-        from dinary.services.sheets import _append_comment
+        from dinary.services.sheets import append_comment
 
         ws = MagicMock()
         row_data = ["", "", "", "Food", "Essentials", "", "4", ""]
 
-        _append_comment(ws, 2, row_data, "lunch")
+        append_comment(ws, 2, row_data, "lunch")
 
         ws.update_cell.assert_called_once_with(2, 6, "lunch")
 
     def test_preserves_multiple_existing_comments(self):
-        from dinary.services.sheets import _append_comment
+        from dinary.services.sheets import append_comment
 
         ws = MagicMock()
         row_data = ["", "", "", "Food", "Essentials", "a; b; c", "4", ""]
 
-        _append_comment(ws, 2, row_data, "d")
+        append_comment(ws, 2, row_data, "d")
 
         ws.update_cell.assert_called_once_with(2, 6, "a; b; c; d")
 
@@ -443,7 +443,7 @@ class TestWriteExpenseNeverCorrupts:
 
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     async def test_never_writes_to_eur_column(self, mock_get_sheet, mock_rate):
         from dinary.services.sheets import write_expense
 
@@ -468,7 +468,7 @@ class TestWriteExpenseNeverCorrupts:
 
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     async def test_never_writes_to_month_column(self, mock_get_sheet, mock_rate):
         from dinary.services.sheets import write_expense
 
@@ -489,7 +489,7 @@ class TestWriteExpenseNeverCorrupts:
 
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     async def test_never_writes_to_date_column(self, mock_get_sheet, mock_rate):
         from dinary.services.sheets import write_expense
 
@@ -510,7 +510,7 @@ class TestWriteExpenseNeverCorrupts:
 
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     async def test_never_writes_to_category_or_group(self, mock_get_sheet, mock_rate):
         from dinary.services.sheets import write_expense
 
@@ -532,7 +532,7 @@ class TestWriteExpenseNeverCorrupts:
 
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     async def test_only_writes_to_rsd_comment_rate_columns(self, mock_get_sheet, mock_rate):
         """write_expense may only modify columns B (RSD), F (Comment), H (Rate)."""
         from dinary.services.sheets import write_expense
@@ -615,13 +615,13 @@ class TestEnsureRate:
 @allure.epic("Google Sheets")
 @allure.feature("Month Creation")
 class TestCreateMonthRows:
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     def test_inserts_at_top_with_copy_paste(self, mock_get_sheet):
-        from dinary.services.sheets import _create_month_rows
+        from dinary.services.sheets import create_month_rows
 
         ws = _make_worksheet([row[:] for row in SAMPLE_SHEET])
 
-        _create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 1))
+        create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 1))
 
         ws.spreadsheet.batch_update.assert_called_once()
         requests = ws.spreadsheet.batch_update.call_args[0][0]["requests"]
@@ -647,23 +647,23 @@ class TestCreateMonthRows:
         # New rows start at row 2
         assert a_updates[0]["range"] == "A2"
 
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     def test_no_previous_month_raises(self, mock_get_sheet):
-        from dinary.services.sheets import _create_month_rows
+        from dinary.services.sheets import create_month_rows
 
         ws = _make_worksheet([HEADER])
 
         with pytest.raises(ValueError, match="No rows found"):
-            _create_month_rows(ws, [HEADER], date(2026, 5, 1))
+            create_month_rows(ws, [HEADER], date(2026, 5, 1))
 
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     def test_clears_amounts_comments_rate_only(self, mock_get_sheet):
         """New month rows must clear B (amounts), F (comments), H (rate) but not D, E, G."""
-        from dinary.services.sheets import _create_month_rows
+        from dinary.services.sheets import create_month_rows
 
         ws = _make_worksheet([row[:] for row in SAMPLE_SHEET])
 
-        _create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 1))
+        create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 1))
 
         batch_data = ws.batch_update.call_args[0][0]
         cleared_cols = set()
@@ -680,26 +680,26 @@ class TestCreateMonthRows:
         assert "E" not in cleared_cols, "Must not touch Group column"
         assert "G" not in cleared_cols, "Must not touch Month column"
 
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     def test_copies_all_rows_from_previous_month(self, mock_get_sheet):
-        from dinary.services.sheets import _create_month_rows
+        from dinary.services.sheets import create_month_rows
 
         ws = _make_worksheet([row[:] for row in SAMPLE_SHEET])
 
-        _create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 1))
+        create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 1))
 
         requests = ws.spreadsheet.batch_update.call_args[0][0]["requests"]
         insert = requests[0]["insertDimension"]["range"]
         num_inserted = insert["endIndex"] - insert["startIndex"]
         assert num_inserted == 4, "April has 4 rows, all should be copied"
 
-    @patch("dinary.services.sheets._get_sheet")
+    @patch("dinary.services.sheets.get_sheet")
     def test_new_rows_get_correct_date(self, mock_get_sheet):
-        from dinary.services.sheets import _create_month_rows
+        from dinary.services.sheets import create_month_rows
 
         ws = _make_worksheet([row[:] for row in SAMPLE_SHEET])
 
-        _create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 15))
+        create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 15))
 
         batch_data = ws.batch_update.call_args[0][0]
         date_updates = [d for d in batch_data if d["range"].startswith("A")]
@@ -711,37 +711,37 @@ class TestCreateMonthRows:
 @allure.feature("Month Creation")
 class TestFindMonthRange:
     def test_finds_contiguous_range(self):
-        from dinary.services.sheets import _find_month_range
+        from dinary.services.sheets import find_month_range
 
-        result = _find_month_range(SAMPLE_SHEET, 4)
+        result = find_month_range(SAMPLE_SHEET, 4)
         assert result == (2, 5)
 
     def test_finds_march(self):
-        from dinary.services.sheets import _find_month_range
+        from dinary.services.sheets import find_month_range
 
-        result = _find_month_range(SAMPLE_SHEET, 3)
+        result = find_month_range(SAMPLE_SHEET, 3)
         assert result == (6, 8)
 
     def test_returns_none_for_missing_month(self):
-        from dinary.services.sheets import _find_month_range
+        from dinary.services.sheets import find_month_range
 
-        assert _find_month_range(SAMPLE_SHEET, 12) is None
+        assert find_month_range(SAMPLE_SHEET, 12) is None
 
 
 @allure.epic("Google Sheets")
 @allure.feature("Helpers")
 class TestHelpers:
     def test_fmt_amount_integer(self):
-        from dinary.services.sheets import _fmt_amount
+        from dinary.services.sheets import fmt_amount
 
-        assert _fmt_amount(1500.0) == "1500"
-        assert _fmt_amount(1500) == "1500"
+        assert fmt_amount(1500.0) == "1500"
+        assert fmt_amount(1500) == "1500"
 
     def test_fmt_amount_decimal(self):
-        from dinary.services.sheets import _fmt_amount
+        from dinary.services.sheets import fmt_amount
 
-        assert _fmt_amount(99.5) == "99.50"
-        assert _fmt_amount(99.99) == "99.99"
+        assert fmt_amount(99.5) == "99.50"
+        assert fmt_amount(99.99) == "99.99"
 
     def test_is_numeric(self):
         from dinary.services.sheets import _is_numeric

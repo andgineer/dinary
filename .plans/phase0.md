@@ -2,7 +2,8 @@
 
 ## Current State
 
-- **Phase 0 is complete and in daily use.** The MVP is a FastAPI service that serves a mobile-first PWA, writes directly to Google Sheets, supports offline-safe expense entry, and is deployed to an always-on VM.
+- **Phase 0 is superseded by Phase 1.** The DuckDB-backed architecture is now the active system. Phase 0 code (direct Google Sheets writes) remains in the codebase for rollback purposes but is no longer the active write path.
+- **Phase 0 was previously complete and in daily use.** The MVP was a FastAPI service that served a mobile-first PWA, wrote directly to Google Sheets, supported offline-safe expense entry, and was deployed to an always-on VM.
 - **dinary-server** (`/Users/andrei_sorokin2/projects/dinary-server`): production repo for the full Phase 0 stack: FastAPI backend, Google Sheets integration, QR parsing, PWA frontend in `static/`, Oracle/Tailscale deployment tasks, and unified Python + JavaScript test reporting via Allure.
 - **dinary** (`/Users/andrei_sorokin2/projects/dinary`): still reserved for the future Rust desktop app. Not used in Phase 0.
 

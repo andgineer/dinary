@@ -689,16 +689,17 @@ No new database, no line-item parsing — just a mobile frontend that writes dir
 - The user has used the system daily for 2+ weeks and no longer opens the spreadsheet to enter data manually.
 - QR scanning has been used successfully on real receipts (camera → URL extraction → total + date pre-fill) and is confirmed to work reliably with the chosen frontend tool.
 
-### Phase 1: Data Foundation & Idempotent Ingestion (dinary-server)
+### Phase 1: Data Foundation & Idempotent Ingestion (dinary-server) ✓ IMPLEMENTED
 
 Detailed plan: [phase1.md](phase1.md)
 
-- Set up DuckDB with the **full 5-dimensional classification schema** (category, beneficiary, event, tags, store) from day one -- not a simplified subset.
-- Build a **sheet-to-5D mapping table** (`sheet_category_mapping`) that decomposes the current Google Sheet's flat `(Расходы, Конверт)` pairs into proper 5D assignments. The sheet's envelope column mixes category groups (здоровье), beneficiaries (собака, ребенок), tags (релокация), and event contexts (путешествия) -- the mapping table untangles these.
-- **PWA is unchanged** -- it still sends `(category, group)` as in Phase 0. The server resolves these to 5D via the mapping table on ingestion.
-- Deploy dinary-server (FastAPI) with DuckDB-backed expense ingestion and idempotent deduplication via `expenses.id PRIMARY KEY`.
-- Google Sheets becomes a derived read-only view: an idempotent sync layer projects 5D DuckDB data back into the sheet's flat `(category, group)` format using the mapping table in reverse.
-- Client generates `expense_id` (UUID) at enqueue time; server returns `200 created`, `200 duplicate`, or `409 Conflict`.
+- DuckDB with the **full 5-dimensional classification schema** (category, beneficiary, event, tags, store) from day one.
+- **sheet-to-5D mapping table** (`sheet_category_mapping`) decomposes the current Google Sheet's flat `(Расходы, Конверт)` pairs into proper 5D assignments.
+- **PWA unchanged** -- sends `(category, group)` as in Phase 0; server resolves to 5D via mapping table.
+- DuckDB-backed expense ingestion with idempotent deduplication via `expenses.id PRIMARY KEY`.
+- Google Sheets is a derived read-only view: sync layer projects 5D DuckDB data back into sheet format.
+- Client generates `expense_id = crypto.randomUUID()` at enqueue time; server returns `200 created`, `200 duplicate`, or `409 Conflict`.
+- Allure test suite covers: `Data Safety / Deduplication` (Python + JS), `DuckDB / Bootstrap`, `DuckDB / Mapping`, `DuckDB / Travel Events`, `DuckDB / Reverse Mapping`, `DuckDB / Year Boundary`.
 
 **Historical data migration is NOT part of Phase 1.** After Phase 1 cutover, DuckDB holds only new expenses; historical data remains in Google Sheets until Phase 1.5.
 

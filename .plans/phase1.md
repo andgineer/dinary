@@ -1,4 +1,4 @@
-# Phase 1: DuckDB Foundation And Idempotent Ingestion
+# Phase 1: DuckDB Foundation And Idempotent Ingestion ✓ IMPLEMENTED
 
 ## Goal
 
@@ -354,14 +354,14 @@ This makes idempotency observable and avoids ambiguity about whether the client 
 Recommended service behavior:
 
 1. begin DB transaction
-2. `INSERT INTO expenses ... ON CONFLICT DO NOTHING`
-3. check `changes()` (DuckDB's affected-row count):
-  - if `changes() == 1` (insert succeeded):
+2. `INSERT INTO expenses ... ON CONFLICT DO NOTHING RETURNING id`
+3. check if `RETURNING` produced a row:
+  - if a row was returned (insert succeeded):
     - insert rows into `expense_tags` for each resolved `tag_id` (same transaction)
     - upsert `(year, month)` into `sheet_sync_jobs`
     - commit
     - return `ExpenseResponse(status="created", ...)`
-  - if `changes() == 0` (PK already exists):
+  - if no row returned (PK already exists):
     - `SELECT` the existing row by `id`
     - derive `sorted_tag_ids` from `expense_tags` for this expense (`SELECT list(tag_id ORDER BY tag_id)`)
     - compare all resolved fields (including `sorted_tag_ids`) against stored values
@@ -372,7 +372,7 @@ Recommended service behavior:
     - if the payload differs:
       - return **409 Conflict**
 
-Using `ON CONFLICT DO NOTHING` + `changes()` is preferred over catching `ConstraintException` because it keeps the transaction usable after a conflict (no need to rollback and retry in a new transaction).
+Using `ON CONFLICT DO NOTHING` + `RETURNING id` is preferred over catching `ConstraintException` because it keeps the transaction usable after a conflict (no need to rollback and retry in a new transaction). DuckDB does not have a `changes()` function, so `RETURNING` is the idiomatic approach.
 
 **Comparison is on 5D-resolved values, not raw input.** The server resolves `(category, group)` to 5D via the mapping table first, then compares the resolved `category_id`, `beneficiary_id`, `event_id`, `tag_ids`, `store_id`, `amount`, `datetime`, and `comment` against the stored row. For stored expenses, `tag_ids` is derived from `expense_tags` as a canonical sorted array before comparison. This means:
 
@@ -439,16 +439,26 @@ If the shim generates a new ID for a legacy queued item, that ID should also be 
 
 Replace direct request-time writes to Google Sheets with a projection layer that maps 5D data back to the sheet's flat format.
 
-Recommended design:
+Implemented design — two sync paths:
 
-- on each successful insert, mark `(year, month)` dirty in `sheet_sync_jobs`
-- create a sync function that:
-  - reads dirty months from DuckDB
-  - for each expense, derives `sorted_tag_ids` from `expense_tags`, then reverse-looks up `sheet_category_mapping` using `(category_id, beneficiary_id, event_id, sorted_tag_ids, store_id)` to determine the target `(sheet_category, sheet_group)` row
-  - aggregates expense totals by `(month, sheet_category, sheet_group)`
-  - rewrites the corresponding month block in the spreadsheet
-  - updates only the derived cells owned by sync, while preserving formula-driven columns and the current visible layout
-  - clears the dirty job after successful sync
+**Path 1: Targeted single-row sync (primary, per-expense)**
+
+On each successful insert, `schedule_sync` fires a background `asyncio.Task` that:
+  - receives the specific expense details (year, month, sheet_category, sheet_group, amount, comment, expense_date)
+  - reads the sheet once (`get_all_values`), ensures the month block exists, writes the exchange rate if missing
+  - finds the target row by `(month, sheet_category, sheet_group)` and appends the amount to the existing RSD formula and the comment to the comment cell
+  - marks `(year, month)` dirty in `sheet_sync_jobs` but does **not** clear it — the dirty job persists as a durability marker
+
+**Path 2: Full-month rebuild (fallback, via `inv sync`)**
+
+`inv sync` (or `sync_all_dirty`) performs a complete month rebuild:
+  - reads all dirty `(year, month)` pairs from `sheet_sync_jobs`
+  - for each month, aggregates all expenses from DuckDB, reverse-maps 5D dimensions to sheet rows
+  - fetches existing formulas via a single `batch_get` call, skips rows where the sum already matches
+  - writes updated formulas and comments via `batch_update`
+  - clears the dirty job only after successful full-month sync
+
+This means dirty jobs accumulate until explicitly cleared by `inv sync`. This is intentional: if a targeted sync partially fails, the dirty marker ensures the full rebuild will eventually reconcile all data.
 
 This sync should be **idempotent**:
 

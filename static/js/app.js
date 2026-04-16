@@ -1,6 +1,7 @@
 /**
  * Main app logic — wires together form, QR scanner, offline queue, and categories.
  */
+const APP_VERSION = "__VERSION__";
 
 import { postExpense } from "./api.js";
 import {
@@ -10,7 +11,7 @@ import {
   populateCategoryDropdown,
   selectDefaults,
 } from "./categories.js";
-import { enqueue, getAll, remove, count } from "./offline-queue.js";
+import { enqueue, getAll, remove, update, count } from "./offline-queue.js";
 import { startScanning, stop as stopScanner } from "./qr-scanner.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -66,8 +67,15 @@ async function flushQueue() {
   let sent = 0;
   const items = await getAll();
   for (const item of items) {
+    const expenseId = item.expense_id || crypto.randomUUID();
+
+    if (!item.expense_id) {
+      await update({ ...item, expense_id: expenseId });
+    }
+
     try {
       await postExpense({
+        expense_id: expenseId,
         amount: item.amount,
         currency: item.currency || "RSD",
         category: item.category,
@@ -78,6 +86,12 @@ async function flushQueue() {
       await remove(item.id);
       sent++;
     } catch (e) {
+      if (e.message && e.message.includes("409")) {
+        console.error("Conflict for expense", expenseId, e);
+        await remove(item.id);
+        showToast("Expense already recorded with different data", "error");
+        continue;
+      }
       if (e.message && (e.message.includes("401") || e.message.includes("302"))) {
         showToast("Session expired — please re-open the app to log in", "error");
         break;
@@ -204,19 +218,36 @@ function formatQueueItem(item) {
 
 async function showQueueModal() {
   const items = await getAll();
-  if (!items.length) return;
 
   const list = $("#queue-list");
-  list.innerHTML = items
-    .map(
-      (it) =>
-        `<div class="queue-item">
-          <span class="qi-amount">${it.amount} RSD</span> — ${it.category}${it.group ? ` / ${it.group}` : ""}
-          ${it.comment ? `<br>${it.comment}` : ""}
-          <div class="qi-meta">${it.date}</div>
-        </div>`,
-    )
-    .join("");
+  if (items.length) {
+    list.innerHTML = items
+      .map(
+        (it) =>
+          `<div class="queue-item">
+            <span class="qi-amount">${it.amount} RSD</span> — ${it.category}${it.group ? ` / ${it.group}` : ""}
+            ${it.comment ? `<br>${it.comment}` : ""}
+            <div class="qi-meta">${it.date}</div>
+          </div>`,
+      )
+      .join("");
+    $("#queue-copy").style.display = "";
+  } else {
+    list.innerHTML = '<div style="color:#94a3b8;text-align:center">No queued expenses</div>';
+    $("#queue-copy").style.display = "none";
+  }
+
+  const vi = $("#version-info");
+  vi.textContent = `v${APP_VERSION}`;
+  if (navigator.onLine) {
+    try {
+      const resp = await fetch("/api/version");
+      const { version: serverVer } = await resp.json();
+      if (serverVer && serverVer !== APP_VERSION && APP_VERSION !== "__VERSION__") {
+        vi.innerHTML = `v${APP_VERSION} · <span style="color:#f59e0b">update available (${serverVer})</span>`;
+      }
+    } catch { /* ignore */ }
+  }
 
   $("#queue-modal").style.display = "flex";
 

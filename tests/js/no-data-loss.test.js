@@ -35,6 +35,7 @@ async function flushQueueWith(postFn) {
   for (const item of items) {
     try {
       await postFn({
+        expense_id: item.expense_id,
         amount: item.amount,
         currency: item.currency || "RSD",
         category: item.category,
@@ -318,6 +319,90 @@ describe("no data loss: data integrity after enqueue", () => {
     const [item] = await getAll();
     expect(item.group).toBe("");
     expect(item.comment).toBe("");
+  });
+});
+
+describe("deduplication: 409 conflict handling", () => {
+  beforeEach(async () => {
+    await allure.epic("Data Safety");
+    await allure.feature("Deduplication");
+  });
+
+  it("409 removes item from queue instead of retrying forever", async () => {
+    await enqueue(EXPENSE);
+
+    const post = vi.fn(async () => {
+      throw new Error("HTTP 409");
+    });
+
+    const items = await getAll();
+    for (const item of items) {
+      try {
+        await post({
+          expense_id: item.expense_id,
+          amount: item.amount,
+        });
+        await remove(item.id);
+      } catch (e) {
+        if (e.message && e.message.includes("409")) {
+          await remove(item.id);
+          continue;
+        }
+        break;
+      }
+    }
+
+    expect(await count()).toBe(0);
+  });
+});
+
+describe("deduplication: stable identity contract", () => {
+  beforeEach(async () => {
+    await allure.epic("Data Safety");
+    await allure.feature("Deduplication");
+  });
+
+  it("enqueue generates a stable identity field (expense_id)", async () => {
+    await enqueue(EXPENSE);
+    const [item] = await getAll();
+
+    expect(item.expense_id).toBeDefined();
+    expect(typeof item.expense_id).toBe("string");
+    expect(item.expense_id.length).toBeGreaterThan(0);
+  });
+
+  it("flush sends expense_id to the server", async () => {
+    await enqueue(EXPENSE);
+
+    const post = vi.fn(async () => ({}));
+    await flushQueueWith(post);
+
+    expect(post).toHaveBeenCalledOnce();
+    const sentPayload = post.mock.calls[0][0];
+    expect(sentPayload.expense_id).toBeDefined();
+    expect(typeof sentPayload.expense_id).toBe("string");
+    expect(sentPayload.expense_id.length).toBeGreaterThan(0);
+  });
+
+  it("legacy item without expense_id gets one on enqueue", async () => {
+    const legacy = { ...EXPENSE };
+    delete legacy.expense_id;
+
+    await enqueue(legacy);
+    const [item] = await getAll();
+
+    expect(item.expense_id).toBeDefined();
+    expect(typeof item.expense_id).toBe("string");
+    expect(item.expense_id.length).toBeGreaterThan(0);
+  });
+
+  it("explicit expense_id is preserved on enqueue", async () => {
+    const explicit = { ...EXPENSE, expense_id: "custom-uuid-123" };
+
+    await enqueue(explicit);
+    const [item] = await getAll();
+
+    expect(item.expense_id).toBe("custom-uuid-123");
   });
 });
 

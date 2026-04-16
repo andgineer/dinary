@@ -44,7 +44,7 @@ def _get_client() -> gspread.Client:
     return _gc
 
 
-def _get_sheet() -> gspread.Spreadsheet:
+def get_sheet() -> gspread.Spreadsheet:
     return _get_client().open_by_key(settings.google_sheets_spreadsheet_id)
 
 
@@ -65,7 +65,7 @@ def _is_numeric(value: str) -> bool:
     return True
 
 
-def _fmt_amount(amount: float) -> str:
+def fmt_amount(amount: float) -> str:
     """Format as integer when possible, e.g. 1500.0 → '1500'."""
     return str(int(amount)) if amount == int(amount) else f"{amount:.2f}"
 
@@ -77,7 +77,7 @@ def load_categories(ws: gspread.Worksheet | None = None) -> list[Category]:
     (category, group), preserving first-seen order.
     """
     if ws is None:
-        ws = _get_sheet().sheet1
+        ws = get_sheet().sheet1
 
     all_values = ws.get_all_values()
     seen: set[tuple[str, str]] = set()
@@ -98,7 +98,7 @@ def load_categories(ws: gspread.Worksheet | None = None) -> list[Category]:
 def get_categories() -> list[Category]:
     """Return cached categories, refreshing if cache has expired."""
     if _category_store.expired or not _category_store.categories:
-        ws = _get_sheet().sheet1
+        ws = get_sheet().sheet1
         load_categories(ws)
     return _category_store.categories
 
@@ -110,7 +110,7 @@ def validate_category(category_name: str, group: str) -> bool:
     return _category_store.has_category(category_name, group)
 
 
-def _find_category_row(
+def find_category_row(
     all_values: list[list[str]],
     target_month: int,
     category: str,
@@ -126,7 +126,7 @@ def _find_category_row(
     return None
 
 
-def _get_month_rate(all_values: list[list[str]], target_month: int) -> str | None:
+def get_month_rate(all_values: list[list[str]], target_month: int) -> str | None:
     """Return the first non-empty EUR rate found for *target_month*."""
     for row in all_values[HEADER_ROWS:]:
         if _cell(row, COL_MONTH) == str(target_month):
@@ -136,7 +136,7 @@ def _get_month_rate(all_values: list[list[str]], target_month: int) -> str | Non
     return None
 
 
-def _find_month_range(
+def find_month_range(
     all_values: list[list[str]],
     month: int,
 ) -> tuple[int, int] | None:
@@ -153,7 +153,7 @@ def _find_month_range(
     return (first, last)
 
 
-def _create_month_rows(
+def create_month_rows(
     ws: gspread.Worksheet,
     all_values: list[list[str]],
     target: date,
@@ -169,7 +169,7 @@ def _create_month_rows(
     target_month = target.month
     prev_month = target_month - 1 if target_month > 1 else 12
 
-    src = _find_month_range(all_values, prev_month)
+    src = find_month_range(all_values, prev_month)
     if src is None:
         raise ValueError(f"No rows found for month {prev_month} to copy from")
 
@@ -246,13 +246,13 @@ def _resolve_row(  # noqa: PLR0913
     expense_date: date,
 ) -> int:
     """Return the 1-indexed row for (month, category, group), creating the month if needed."""
-    target_row = _find_category_row(all_values, target_month, category, group)
+    target_row = find_category_row(all_values, target_month, category, group)
     if target_row is not None:
         return target_row
 
-    _create_month_rows(ws, all_values, expense_date)
+    create_month_rows(ws, all_values, expense_date)
     refreshed = ws.get_all_values()
-    target_row = _find_category_row(refreshed, target_month, category, group)
+    target_row = find_category_row(refreshed, target_month, category, group)
     if target_row is None:
         raise ValueError(
             f"Category '{category}' (group '{group}') not found for month {target_month}",
@@ -267,25 +267,25 @@ async def _ensure_rate(
     expense_date: date,
 ) -> Decimal:
     """Return the EUR/RSD rate for the month, fetching and storing it if absent."""
-    rate_str = _get_month_rate(all_values, target_month)
+    rate_str = get_month_rate(all_values, target_month)
     if rate_str:
         return Decimal(rate_str.replace(",", "."))
 
     rate = await fetch_eur_rsd_rate(expense_date.replace(day=1))
-    month_range = _find_month_range(all_values, target_month)
+    month_range = find_month_range(all_values, target_month)
     rate_row = month_range[0] if month_range else HEADER_ROWS + 1
     ws.update_cell(rate_row, COL_RATE_EUR, str(rate))
     logger.info("Wrote EUR/RSD rate %s for month %d at row %d", rate, target_month, rate_row)
     return rate
 
 
-def _append_to_rsd_formula(ws: gspread.Worksheet, row: int, amount_rsd: float) -> None:
+def append_to_rsd_formula(ws: gspread.Worksheet, row: int, amount_rsd: float) -> None:
     """Append +amount to the formula in column B (e.g. =460+373 → =460+373+1500)."""
     rsd_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_RSD)
     raw = ws.acell(rsd_addr, value_render_option=ValueRenderOption.formula).value
     existing = str(raw) if raw is not None else ""
 
-    amount_str = _fmt_amount(amount_rsd)
+    amount_str = fmt_amount(amount_rsd)
     if existing.startswith("="):
         formula = f"{existing}+{amount_str}"
     elif existing and _is_numeric(existing):
@@ -300,7 +300,7 @@ def _append_to_rsd_formula(ws: gspread.Worksheet, row: int, amount_rsd: float) -
     )
 
 
-def _append_comment(ws: gspread.Worksheet, row: int, row_data: list[str], comment: str) -> None:
+def append_comment(ws: gspread.Worksheet, row: int, row_data: list[str], comment: str) -> None:
     """Append a comment to column F, semicolon-separated."""
     existing = _cell(row_data, COL_COMMENT)
     separator = "; " if existing else ""
@@ -319,7 +319,7 @@ async def write_expense(
     Appends +amount to the formula in column B (RSD).
     Columns C (EUR) and G (month) are formula-driven and left untouched.
     """
-    ws = _get_sheet().sheet1
+    ws = get_sheet().sheet1
     all_values = ws.get_all_values()
     target_month = expense_date.month
 
@@ -329,10 +329,10 @@ async def write_expense(
     row_data = all_values[target_row - 1]
 
     rate = await _ensure_rate(ws, all_values, target_month, expense_date)
-    _append_to_rsd_formula(ws, target_row, amount_rsd)
+    append_to_rsd_formula(ws, target_row, amount_rsd)
 
     if comment:
-        _append_comment(ws, target_row, row_data, comment)
+        append_comment(ws, target_row, row_data, comment)
 
     existing_rsd = _cell(row_data, COL_AMOUNT_RSD)
     prev_total = float(existing_rsd.replace(",", ".")) if _is_numeric(existing_rsd) else 0.0

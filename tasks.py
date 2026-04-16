@@ -217,6 +217,9 @@ def setup(c):
     _ssh(c, f"test -d ~/dinary-server || git clone {REPO_URL} ~/dinary-server")
     _ssh(c, "cd ~/dinary-server && git pull && source ~/.local/bin/env && uv sync --no-dev")
 
+    print("=== Ensuring data/ directory ===")
+    _ssh(c, "mkdir -p ~/dinary-server/data")
+
     print("=== Uploading credentials ===")
     _ssh(c, "mkdir -p ~/.config/gspread")
     c.run(f"scp ~/.config/gspread/service_account.json {host}:~/.config/gspread/service_account.json")
@@ -238,10 +241,38 @@ def setup(c):
 
 
 @task
-def deploy(c):
-    """Deploy latest code: git pull, sync deps, restart service."""
+def deploy(c, ref=""):
+    """Deploy latest code: git pull, sync deps, render version, restart service. Use --ref to deploy a specific version."""
+    print("=== Pre-deploy backup ===")
+    import os
+    from datetime import datetime as _dt
+    ts = _dt.now().strftime("%Y%m%d-%H%M%S")
+    backup_dir = f"backups/pre-deploy-{ts}"
+    os.makedirs(backup_dir, exist_ok=True)
+    host = _host()
+    c.run(f"scp -r {host}:~/dinary-server/data/ {backup_dir}/", warn=True)
+
     print("=== Deploying dinary-server ===")
-    _ssh(c, "cd ~/dinary-server && git pull && source ~/.local/bin/env && uv sync --no-dev")
+    if ref:
+        _ssh(c, f"cd ~/dinary-server && git fetch --tags && git checkout {ref} && source ~/.local/bin/env && uv sync --no-dev")
+        print(f"=== WARNING: Remote is in detached HEAD at '{ref}'. "
+              "Future `inv deploy` without --ref will `git pull` on whatever branch is checked out. ===")
+    else:
+        _ssh(c, "cd ~/dinary-server && git pull && source ~/.local/bin/env && uv sync --no-dev")
+
+    print("=== Ensuring data/ directory ===")
+    _ssh(c, "mkdir -p ~/dinary-server/data")
+
+    print("=== Rendering __VERSION__ into _static/ build copy ===")
+    _ssh(
+        c,
+        'cd ~/dinary-server && '
+        'VER=$(git rev-parse --short HEAD) && '
+        'rm -rf _static && cp -r static _static && '
+        'sed -i "s/__VERSION__/$VER/g" _static/js/app.js _static/sw.js && '
+        'echo "$VER" > data/.deployed_version'
+    )
+
     _ssh_sudo(c, "systemctl restart dinary")
     print("=== Restarted. Checking health... ===")
     _ssh(c, "sleep 5 && curl -s http://localhost:8000/api/health")
@@ -269,6 +300,32 @@ def status(c):
 def ssh(c):
     """Open SSH session to the server."""
     c.run(f"ssh {_host()}", pty=True)
+
+
+@task(name="seed-config")
+def seed_config(c):
+    """Seed config.duckdb from Google Sheets categories (run on server)."""
+    _ssh(c, "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+         "from dinary.services.seed_config import seed_from_sheet; "
+         "import json; print(json.dumps(seed_from_sheet()))'")
+
+
+@task
+def sync(c):
+    """Run sheet sync for all dirty months (on server)."""
+    _ssh(c, "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+         "from dinary.services.sync import sync_all_dirty; "
+         "print(f\"Synced {sync_all_dirty()} months\")'")
+
+
+@task
+def backup(c, dest="./backups"):
+    """Download DuckDB data files from the server."""
+    import os
+    os.makedirs(dest, exist_ok=True)
+    host = _host()
+    c.run(f"scp -r {host}:~/dinary-server/data/ {dest}/")
+    print(f"Backed up to {dest}/")
 
 
 namespace = Collection.from_module(sys.modules[__name__])

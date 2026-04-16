@@ -30,9 +30,14 @@ function openDb() {
 
 export async function enqueue(expense) {
   const db = await openDb();
+  const expenseId = expense.expense_id || crypto.randomUUID();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
-    tx.objectStore(STORE_NAME).add({ ...expense, queued_at: Date.now() });
+    tx.objectStore(STORE_NAME).add({
+      ...expense,
+      expense_id: expenseId,
+      queued_at: Date.now(),
+    });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -53,6 +58,16 @@ export async function remove(id) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
     tx.objectStore(STORE_NAME).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function update(item) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).put(item);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
