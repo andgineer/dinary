@@ -6,7 +6,9 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "vitest": "latest",
-    "fake-indexeddb": "latest"
+    "allure-js-commons": "^3.7.1",
+    "allure-vitest": "^3.7.1",
+    "fake-indexeddb": "latest",
+    "vitest": "latest"
   }
 }

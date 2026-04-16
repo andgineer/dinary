@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import allure
 import pytest
 
 from dinary.services.category_store import Category
@@ -33,6 +34,8 @@ def _make_worksheet(all_values):
     return ws
 
 
+@allure.epic("Google Sheets")
+@allure.feature("Read Categories")
 class TestLoadCategories:
     @patch("dinary.services.sheets._get_sheet")
     def test_loads_unique_pairs(self, mock_get_sheet):
@@ -56,6 +59,8 @@ class TestLoadCategories:
         assert cats == []
 
 
+@allure.epic("Google Sheets")
+@allure.feature("Read Categories")
 class TestFindCategoryRow:
     def test_finds_row(self):
         from dinary.services.sheets import _find_category_row
@@ -82,6 +87,8 @@ class TestFindCategoryRow:
         assert row is None
 
 
+@allure.epic("Google Sheets")
+@allure.feature("Write Expense")
 class TestWriteExpense:
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
@@ -275,6 +282,8 @@ class TestWriteExpense:
             )
 
 
+@allure.epic("Data Safety")
+@allure.feature("Formula Preservation")
 class TestAppendToRsdFormula:
     """_append_to_rsd_formula must NEVER overwrite existing data.
 
@@ -391,6 +400,8 @@ class TestAppendToRsdFormula:
         )
 
 
+@allure.epic("Data Safety")
+@allure.feature("Comment Preservation")
 class TestAppendComment:
     """_append_comment must never overwrite existing comments."""
 
@@ -425,6 +436,8 @@ class TestAppendComment:
         ws.update_cell.assert_called_once_with(2, 6, "a; b; c; d")
 
 
+@allure.epic("Data Safety")
+@allure.feature("Column Protection")
 class TestWriteExpenseNeverCorrupts:
     """write_expense must NEVER overwrite columns C (EUR) or G (Month)."""
 
@@ -548,6 +561,8 @@ class TestWriteExpenseNeverCorrupts:
                 assert col_letter in ("B",), f"update() wrote to unexpected column {col_letter}"
 
 
+@allure.epic("Google Sheets")
+@allure.feature("Exchange Rate")
 class TestEnsureRate:
     @pytest.mark.anyio
     @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
@@ -597,6 +612,8 @@ class TestEnsureRate:
         assert row == 2, f"Rate written to row {row} instead of first month row (2)"
 
 
+@allure.epic("Google Sheets")
+@allure.feature("Month Creation")
 class TestCreateMonthRows:
     @patch("dinary.services.sheets._get_sheet")
     def test_inserts_at_top_with_copy_paste(self, mock_get_sheet):
@@ -690,6 +707,8 @@ class TestCreateMonthRows:
             assert d["values"] == [["2026-05-01"]], "Date should be first of month"
 
 
+@allure.epic("Google Sheets")
+@allure.feature("Month Creation")
 class TestFindMonthRange:
     def test_finds_contiguous_range(self):
         from dinary.services.sheets import _find_month_range
@@ -709,6 +728,8 @@ class TestFindMonthRange:
         assert _find_month_range(SAMPLE_SHEET, 12) is None
 
 
+@allure.epic("Google Sheets")
+@allure.feature("Helpers")
 class TestHelpers:
     def test_fmt_amount_integer(self):
         from dinary.services.sheets import _fmt_amount

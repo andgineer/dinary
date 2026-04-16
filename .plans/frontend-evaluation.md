@@ -34,8 +34,8 @@
 
 ### Tech stack
 
-- **html5-qrcode** (MIT) for QR scanning via rear camera
-- **IndexedDB** for offline entry queue
-- **Service Worker** for caching and background sync
+- **zbar-wasm** for live QR scanning in the browser. Earlier MVP experiments with `html5-qrcode` and other JS scanners were not reliable enough on dense Serbian fiscal QR codes, especially on iOS.
+- **IndexedDB** for the offline entry queue
+- **Service Worker** for caching and installability
 - Vanilla HTML/CSS/JS — no build step, no framework
-- Served by FastAPI `StaticFiles` (same origin, same Cloudflare Tunnel)
+- Served by FastAPI `StaticFiles` (same origin; typically exposed through Tailscale Serve, optionally Cloudflare Tunnel)

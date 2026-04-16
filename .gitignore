@@ -16,6 +16,7 @@ pytest-coverage.txt
 **/ru/reference.md
 **/.setup-scripts/
 allure-results/
+allure-report/
 dist/
 credentials.json
 .env

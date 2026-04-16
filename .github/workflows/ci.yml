@@ -92,7 +92,7 @@ jobs:
     - name: Install JS dependencies
       run: npm ci
 
-    - name: Run JS tests
+    - name: Run JS tests with Allure
       run: npm test
 
     - name: Test with pytest and Allure report

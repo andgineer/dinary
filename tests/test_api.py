@@ -1,9 +1,13 @@
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
+import allure
+
 from dinary.services.category_store import Category
 
 
+@allure.epic("API")
+@allure.feature("Health")
 def test_health(client):
     resp = client.get("/api/health")
     assert resp.status_code == 200
@@ -12,6 +16,8 @@ def test_health(client):
     assert "version" in data
 
 
+@allure.epic("API")
+@allure.feature("Categories")
 @patch("dinary.api.categories.get_categories")
 def test_categories(mock_get, client):
     mock_get.return_value = [
@@ -27,6 +33,8 @@ def test_categories(mock_get, client):
     assert data[0]["group"] == "Essentials"
 
 
+@allure.epic("API")
+@allure.feature("Categories")
 @patch("dinary.api.categories.get_categories")
 def test_categories_failure(mock_get, client):
     mock_get.side_effect = Exception("sheets down")
@@ -34,6 +42,8 @@ def test_categories_failure(mock_get, client):
     assert resp.status_code == 502
 
 
+@allure.epic("API")
+@allure.feature("Expenses")
 @patch("dinary.api.expenses.sheets")
 def test_create_expense(mock_sheets, client):
     mock_sheets.validate_category.return_value = True
@@ -64,6 +74,8 @@ def test_create_expense(mock_sheets, client):
     assert data["amount_rsd"] == 1500.0
 
 
+@allure.epic("API")
+@allure.feature("Expenses")
 @patch("dinary.api.expenses.sheets")
 def test_create_expense_unknown_category(mock_sheets, client):
     mock_sheets.validate_category.return_value = False
@@ -81,6 +93,8 @@ def test_create_expense_unknown_category(mock_sheets, client):
     assert "Unknown category" in resp.json()["detail"]
 
 
+@allure.epic("API")
+@allure.feature("Expenses")
 @patch("dinary.api.expenses.sheets")
 def test_create_expense_sheets_failure(mock_sheets, client):
     mock_sheets.validate_category.return_value = True
@@ -94,6 +108,8 @@ def test_create_expense_sheets_failure(mock_sheets, client):
     assert "queued for retry" in resp.json()["detail"]
 
 
+@allure.epic("API")
+@allure.feature("Expenses")
 def test_create_expense_validation(client):
     resp = client.post(
         "/api/expenses",
@@ -108,6 +124,8 @@ def test_create_expense_validation(client):
     assert resp.status_code == 422
 
 
+@allure.epic("API")
+@allure.feature("QR Parse")
 @patch("dinary.api.qr.parse_receipt_url")
 def test_qr_parse(mock_parse, client):
     from dinary.services.qr_parser import ReceiptData
@@ -124,6 +142,8 @@ def test_qr_parse(mock_parse, client):
     assert data["date"] == "2026-04-10"
 
 
+@allure.epic("API")
+@allure.feature("QR Parse")
 @patch("dinary.api.qr.parse_receipt_url")
 def test_qr_parse_failure(mock_parse, client):
     mock_parse.side_effect = Exception("could not fetch")

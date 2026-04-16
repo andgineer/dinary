@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import * as allure from "allure-js-commons";
 import { enqueue, getAll, remove, count } from "../../static/js/offline-queue.js";
 
 beforeEach(async () => {
@@ -9,6 +10,11 @@ beforeEach(async () => {
 });
 
 describe("offline-queue", () => {
+  beforeEach(async () => {
+    await allure.epic("Data Safety");
+    await allure.feature("Offline Queue");
+  });
+
   it("enqueue persists expense in IndexedDB", async () => {
     await enqueue({ amount: 500, category: "Food", date: "2026-04-15" });
     const items = await getAll();
@@ -56,6 +62,11 @@ describe("offline-queue", () => {
 });
 
 describe("offline-queue: edge cases", () => {
+  beforeEach(async () => {
+    await allure.epic("Data Safety");
+    await allure.feature("Offline Queue");
+  });
+
   it("each item gets a unique auto-increment id", async () => {
     await enqueue({ amount: 1, category: "A", date: "2026-01-01" });
     await enqueue({ amount: 2, category: "B", date: "2026-01-01" });

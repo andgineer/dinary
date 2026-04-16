@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import * as allure from "allure-js-commons";
 import { enqueue, getAll, remove, count } from "../../static/js/offline-queue.js";
 
 beforeEach(async () => {
@@ -58,6 +59,11 @@ async function submitExpenseWith(entry, postFn, online = true) {
 // -- tests --
 
 describe("no data loss: enqueue-before-send contract", () => {
+  beforeEach(async () => {
+    await allure.epic("Data Safety");
+    await allure.feature("No Data Loss");
+  });
+
   it("expense is in IndexedDB before network call starts", async () => {
     let queueAtCallTime = null;
     const post = vi.fn(async () => {
@@ -157,6 +163,11 @@ describe("no data loss: enqueue-before-send contract", () => {
 });
 
 describe("no data loss: flush partial failure", () => {
+  beforeEach(async () => {
+    await allure.epic("Data Safety");
+    await allure.feature("No Data Loss");
+  });
+
   it("first item sent, second fails — second stays in queue", async () => {
     await enqueue({ ...EXPENSE, amount: 100 });
     await enqueue({ ...EXPENSE, amount: 200 });
@@ -229,6 +240,11 @@ describe("no data loss: flush partial failure", () => {
 });
 
 describe("no data loss: postExpense timeout", () => {
+  beforeEach(async () => {
+    await allure.epic("Data Safety");
+    await allure.feature("No Data Loss");
+  });
+
   it("AbortController fires after 30s — expense not lost", async () => {
     await enqueue(EXPENSE);
 
@@ -242,6 +258,11 @@ describe("no data loss: postExpense timeout", () => {
 });
 
 describe("no data loss: data integrity after enqueue", () => {
+  beforeEach(async () => {
+    await allure.epic("Data Safety");
+    await allure.feature("No Data Loss");
+  });
+
   it("all fields are preserved exactly in IndexedDB", async () => {
     const entry = {
       amount: 1234.56,
@@ -301,6 +322,11 @@ describe("no data loss: data integrity after enqueue", () => {
 });
 
 describe("no data loss: concurrent operations", () => {
+  beforeEach(async () => {
+    await allure.epic("Data Safety");
+    await allure.feature("No Data Loss");
+  });
+
   it("parallel enqueues don't lose items", async () => {
     const promises = [];
     for (let i = 0; i < 10; i++) {

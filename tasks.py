@@ -171,9 +171,10 @@ def uv(c: Context):
 
 @task
 def test(c):
-    """Run all tests (Python + JavaScript)."""
-    c.run("uv run pytest tests/ -v")
-    c.run("npm test")
+    """Run all tests (Python + JavaScript) with Allure results."""
+    c.run("rm -rf allure-results")
+    c.run("uv run pytest tests/ -v --alluredir=allure-results", warn=True)
+    c.run("npm test", warn=True)
 
 
 @task

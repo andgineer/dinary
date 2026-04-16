@@ -2,8 +2,17 @@
 
 ## Current State
 
-- **dinary-server** (`/Users/andrei_sorokin2/projects/dinary-server`): FastAPI backend with Google Sheets integration, QR parser, PWA frontend, pytest suite (31 tests passing). Phase 0 backend is implemented.
-- **dinary** (`/Users/andrei_sorokin2/projects/dinary`): Empty repo with only `README.md` and `.idea/`. Not used in Phase 0.
+- **Phase 0 is complete and in daily use.** The MVP is a FastAPI service that serves a mobile-first PWA, writes directly to Google Sheets, supports offline-safe expense entry, and is deployed to an always-on VM.
+- **dinary-server** (`/Users/andrei_sorokin2/projects/dinary-server`): production repo for the full Phase 0 stack: FastAPI backend, Google Sheets integration, QR parsing, PWA frontend in `static/`, Oracle/Tailscale deployment tasks, and unified Python + JavaScript test reporting via Allure.
+- **dinary** (`/Users/andrei_sorokin2/projects/dinary`): still reserved for the future Rust desktop app. Not used in Phase 0.
+
+### Implemented MVP summary
+
+- **Backend**: FastAPI API writes to the existing Google Sheets workbook without changing the spreadsheet mental model.
+- **Frontend**: installed PWA with two cascading dropdowns (`group -> category`), manual amount entry, live QR scan, and a queue modal for unsent expenses.
+- **Offline safety**: expense is first saved to IndexedDB and only removed after confirmed server success. Network/server failures must never drop user input.
+- **Deployment**: `inv setup` for one-time provisioning, `inv deploy` for code updates, `inv status`, `inv logs`, `inv ssh`, and `inv test`.
+- **Access model**: Tailscale is the default deployment mode, using tailnet-only `tailscale serve`; `cloudflare` and `none` remain supported options.
 
 ---
 
@@ -33,7 +42,7 @@ The PWA on iOS cannot execute code in the background (no Background App Refresh,
 
 - The server **must** respond within 1-2 seconds (while the user is still in the app after saving).
 - Sleeping/serverless hosting with 15-30 second cold starts is **not acceptable** — sync would fail before the server wakes up.
-- **Always-on hosting required**: Oracle Cloud Free Tier (AMD Micro or ARM) or self-hosted (Mac/PC + Tailscale Funnel / Cloudflare Tunnel).
+- **Always-on hosting required**: Oracle Cloud Free Tier (AMD Micro or ARM) or self-hosted (Mac/PC + Tailscale Serve / Cloudflare Tunnel).
 
 ---
 
@@ -74,10 +83,10 @@ src/dinary/
 
 - Auth via **service account** (JSON key file). The spreadsheet is shared with the service account email.
 - Use `gspread` to read/write.
-- **Read categories**: on startup, read the category/group structure from the sheet (the ~33 category rows that repeat each month). Cache in memory with a 1-hour TTL. The `GET /api/categories` endpoint serves from cache; if the user adds a category in the sheet, it appears in the PWA within an hour (or on server restart).
-- **Write expense**: given (amount_rsd, category, group, comment, date), find the correct month block in the sheet, locate the category row, add the amount to the existing RSD value (running total). If a comment column exists, append the comment. **One QR scan = one category = one entry.** If the user wants to split a receipt across categories (e.g., 3000 RSD food + 500 RSD household), they ignore the QR total and submit two separate manual entries. Receipt splitting is a Phase 3 concern.
-- **Auto-month creation**: if no rows exist for the target month, copy the full category block from the previous month, update the date column to the new month's first day, zero out amounts.
-- **Exchange rate and currency conversion**: the EUR/RSD exchange rate is stored in the Google Sheet itself, in a designated cell to the right of the first row of each month block. When writing an expense, the backend checks the rate cell for that month: if empty, it fetches the current NBS middle rate from `https://kurs.resenje.org/api/v1/currencies/eur/rates/{date}` (same API used in `../ibkr-porez-py/`, field `exchange_middle`) and writes it into the cell. If already filled, it uses the stored rate. This way each month has its own rate visible in the sheet, and the rate is fetched only once per month. The EUR amount is then calculated as `amount_rsd * (1 / rate)` (since the NBS rate is "1 EUR = N RSD").
+- **Read categories**: on startup, read the category/group structure from the sheet (the repeating month block). Cache in memory with a 1-hour TTL. The `GET /api/categories` endpoint serves from cache; if the user adds a category in the sheet, it appears in the PWA within an hour (or on server restart).
+- **Write expense**: given `(amount_rsd, category, group, comment, date)`, find the correct month block, locate the category row, and append the new amount to the existing RSD formula instead of overwriting it. Existing EUR/month formulas are preserved. If a comment column exists, append the comment rather than replacing it. **One QR scan = one category = one entry.**
+- **Auto-month creation**: if no rows exist for the target month, copy the full category block from the previous month, preserve the sheet formulas, zero out the RSD totals, and insert the new month immediately after the header (top of the year), not at the bottom.
+- **Exchange rate and currency conversion**: the EUR/RSD exchange rate is stored in the sheet itself, in the rate column on the first row of each month block. When writing an expense, the backend ensures the rate exists for the month and writes it only to that first row if missing. The EUR column in the expense rows remains spreadsheet-driven.
 
 ### 1.3 QR receipt parser (`services/qr_parser.py`)
 
@@ -90,8 +99,8 @@ Uses `sr-invoice-parser` to extract total and date from the SUF PURS page:
 
 ### 1.4 API endpoints
 
-- **`POST /api/expenses`** -- receives `{ amount, currency, category, comment, date }`, writes to Google Sheets, returns success/failure. If the Sheets write fails (network error, quota, auth expiry), returns an error status; the PWA treats this like an offline case and re-queues the entry locally for retry.
-- **`POST /api/qr/parse`** -- receives `{ url }`, fetches SUF PURS, returns `{ amount, date }`. Does not write anything -- the client uses the returned data to pre-fill the form, then submits via `/api/expenses`.
+- **`POST /api/expenses`** -- receives `{ amount, currency, category, group, comment, date }`, writes to Google Sheets, returns success/failure. If the Sheets write fails (network error, quota, auth expiry), returns an error status; the PWA treats this like an offline case and re-queues the entry locally for retry.
+- **`POST /api/qr/parse`** -- receives `{ url }`, fetches SUF PURS, returns `{ amount, date }`. In the current MVP this is mainly a fallback/debug path because the client can extract the common amount/date fields directly from the receipt URL.
 - **`GET /api/categories`** -- returns the list of categories with their groups, read from the sheet (cached).
 - **`GET /api/health`** -- basic health check.
 - No CORS middleware needed — the PWA is served by the same FastAPI instance (same origin), so all API calls are same-origin requests.
@@ -111,16 +120,19 @@ Structured logging to stdout via Python `logging` (JSON format for production). 
 
 **Authentication options:**
 
+- **Tailscale Serve** (default) — tailnet-only access, no public exposure, best fit when the phone already uses Tailscale.
 - **Cloudflare Access** (free tier, up to 50 users) — if using Cloudflare Tunnel for HTTPS.
-- **Tailscale Funnel** — URL is not publicly discoverable; optionally add a simple bearer token check.
-- Both approaches keep the backend auth-free — authentication is handled at the infrastructure layer.
+- **None** — only for explicitly unmanaged deployments where the user secures networking separately.
+- All approaches keep backend auth out of the application code; access control stays at the infrastructure layer.
 
 **Deployment options (all free, always-on):**
 
-- **Oracle Cloud Free Tier** — AMD Micro VM (1 OCPU, 1 GB RAM, always available) or ARM A1 (if capacity exists). Run with `uvicorn` as a systemd service (no Docker — saves RAM on 1 GB instances). Docker is available for local development.
-- **Self-hosted (Mac/PC)** — run locally, expose via Tailscale Funnel or Cloudflare Tunnel. Aligns with Phase 4 architecture (desktop AI agent on the same machine).
+- **Oracle Cloud Free Tier** — AMD Micro VM (1 OCPU, 1 GB RAM, always available) or ARM A1 (if capacity exists). Run with `uvicorn` as a systemd service (no Docker in production — saves RAM on 1 GB instances). Docker remains available for local development.
+- **Self-hosted (Mac/PC)** — run locally, expose via Tailscale Serve or Cloudflare Tunnel. Aligns with Phase 4 architecture (desktop AI agent on the same machine).
 
 **PWA serving:** FastAPI `StaticFiles` mount at `/`, source in `static/`. Single tunnel covers both API and PWA.
+
+**Operational commands:** `inv setup`, `inv deploy`, `inv status`, `inv logs`, `inv ssh`, `inv test`.
 
 ---
 
@@ -144,10 +156,10 @@ dinary-server/
       style.css                # Mobile-first responsive styles
     js/
       app.js                   # Main app logic
-      qr-scanner.js            # QR scanning via html5-qrcode library
+      qr-scanner.js            # Live QR scanning via zbar-wasm
       api.js                   # API client (fetch wrapper, relative URLs)
       offline-queue.js         # IndexedDB queue for offline entries
-      categories.js            # Category list + group auto-fill
+      categories.js            # Group/category dropdown wiring and defaults
     icons/                     # PWA icons (192x192, 512x512)
   .plans/
     frontend-evaluation.md     # Tool evaluation summary + decision
@@ -161,18 +173,18 @@ dinary-server/
 
 ### 2.2 PWA features
 
-- **Manual entry form**: amount (RSD, numeric keyboard) + category dropdown (grouped by group, ~33 items) + group (auto-filled, read-only) + optional comment + date (defaults to today). Single "Save" button.
-- **QR scan with parallel processing**: when the user scans a QR code, the PWA simultaneously (a) sends the URL to the server for parsing and (b) shows the category selection form. While the user picks a category (2-5 seconds), the server response may arrive — if so, the amount and date are shown in the form as confirmation. If the response doesn't arrive (offline or slow), the user can still save with just the URL and category; the server extracts the amount during sync.
-- **Offline queue and error resilience**: when offline, completed entries are stored in IndexedDB. The PWA flushes the queue to the backend when connectivity returns (on `online` event or on app open). If the backend returns an error on submission, the PWA re-queues the entry for automatic retry. Visual indicator shows queued entries count and sync status per entry (`pending` → `syncing` → `synced`).
+- **Manual entry form**: amount (RSD, decimal-friendly mobile input) + group dropdown + category dropdown + optional comment + date (defaults to today). Group/category are two separate controls matching the spreadsheet model. Defaults are optimized for the most common case.
+- **QR scan with parallel processing**: when the user scans a QR code, the PWA simultaneously (a) extracts data from the receipt URL path and (b) shows the form so the user can keep moving. Backend parsing remains available as an API capability, but the MVP path does not depend on a roundtrip just to pre-fill amount/date.
+- **Offline queue and error resilience**: each entry is saved to IndexedDB before network send. The queue is flushed on app open, on `online`, and immediately after a successful user action when pending items exist. Failed submissions stay queued until confirmed by the server. The queue badge opens a modal with the unsent expenses and copy-to-clipboard support.
 - **PWA install**: `manifest.json` + `navigator.storage.persist()` enable reliable "Add to Home Screen" on both Android and iOS Safari.
 - **Mobile-first design**: large touch targets, minimal scrolling, optimized for one-handed phone use.
 
 ### 2.3 QR scanning
 
-- Use `html5-qrcode` (MIT license, widely used, works on Android Chrome and iOS Safari).
-- The library accesses the rear camera, decodes the QR code, and returns the URL string. This step is **fully offline** (client-side image processing).
-- The URL is sent to the backend for parsing. If offline, the URL is saved with the entry and parsed during sync.
-- QR scanning requires HTTPS (browser camera API constraint). This is satisfied by Cloudflare Tunnel or Tailscale Funnel.
+- Use `zbar-wasm` for live scanning in the browser. It has proven more reliable than earlier JS-only scanner attempts for dense Serbian fiscal QR codes.
+- The scanner accesses the rear camera, decodes the QR code locally, and returns the URL string. This step is **fully offline** (client-side image processing).
+- iOS-specific zoom/focus constraints are applied as a workaround for Safari camera limitations.
+- QR scanning requires HTTPS or a trusted tailnet origin. In practice this is satisfied by Cloudflare Tunnel or Tailscale Serve.
 
 ### 2.4 User manuals (`docs/src/en/`, `docs/src/ru/`)
 
@@ -181,16 +193,39 @@ MkDocs-based documentation in English and Russian:
 - **`pwa-install.md`** -- how to install the PWA on Android and iOS, usage guide.
 - **`cloudflare-setup.md`** -- Cloudflare Tunnel creation, DNS routing, Access policy configuration.
 - **`deploy-oracle.md`** -- Oracle Cloud Free Tier: account setup, AMD Micro / ARM VM, systemd service, firewall.
-- **`deploy-selfhost.md`** -- Mac/PC deployment with Tailscale Funnel or Cloudflare Tunnel.
+- **`deploy-selfhost.md`** -- Mac/PC deployment with Tailscale Serve or Cloudflare Tunnel.
 
 ---
 
 ## Step 3: Testing and Validation
 
-- **Backend tests**: pytest tests for each endpoint (mock gspread and httpx for external calls). Test auto-month creation logic. Test QR parser against a saved sample HTML page. Run `inv pre` (ruff, pyrefly) and `uv run pytest` after every change.
-- **PWA tests**: vitest tests for offline queue and no-data-loss guarantees (expense always saved to IndexedDB before network call, removed only after confirmed 200, survives server errors/timeouts). Run `npm test`.
-- **Manual E2E test**: deploy backend, open PWA on phone, scan a real receipt QR code, verify amount + date appear, pick category, submit, check Google Sheets row is created.
-- **Offline test**: turn off Wi-Fi, submit an entry, verify it is queued locally, turn Wi-Fi back on, verify it syncs.
+- **Primary local command**: run `inv test`. It executes both pytest and Vitest and writes all results into a shared `allure-results/` directory.
+- **Backend tests**: pytest covers API endpoints, Google Sheets write safety, exchange rates, month creation, helpers, and service modules.
+- **PWA tests**: Vitest covers offline queue behavior and explicit no-data-loss guarantees (enqueue-before-send, retention on server/network failure, removal only after confirmed success).
+- **Manual E2E test**: deploy backend, open the PWA on phone, scan a real receipt QR code, verify amount + date appear, pick group/category, submit, and confirm the correct Google Sheets row changes.
+- **Offline test**: turn off Wi-Fi/mobile data, submit an entry, verify it is queued locally, restore connectivity, and verify it syncs.
+
+### Allure reporting contract
+
+This taxonomy is part of the MVP contract and should stay stable as new tests are added. Do not add unlabeled tests.
+
+- **Every new test must declare an Allure epic and feature.**
+- **Prefer reusing an existing epic/feature.** Introduce a new one only for a genuinely new subsystem, and update this document in the same change.
+- **Python tests** use `@allure.epic(...)` and `@allure.feature(...)`.
+- **JavaScript tests** use `allure.epic(...)` and `allure.feature(...)` in the relevant `describe` scope.
+
+Current approved structure:
+
+- **Data Safety**
+- Features: `Formula Preservation`, `Comment Preservation`, `Column Protection`, `Offline Queue`, `No Data Loss`
+- **Google Sheets**
+- Features: `Read Categories`, `Write Expense`, `Exchange Rate`, `Month Creation`, `Helpers`
+- **API**
+- Features: `Health`, `Categories`, `Expenses`, `QR Parse`
+- **Services**
+- Features: `Category Store`, `Exchange Rate`, `QR Parser`
+- **Build**
+- Features: `Version`
 
 ---
 
@@ -204,7 +239,7 @@ MkDocs-based documentation in English and Russian:
 ## Key Risks
 
 - **SUF PURS page structure may change** -- the QR parser is brittle by nature. Mitigated by keeping it minimal (total + date only) and caching raw HTML for debugging. Using `sr-invoice-parser` shares maintenance with the open-source community.
-- **QR scanning on iOS Safari** -- `html5-qrcode` works on iOS Safari but historically has had quirks. Must be tested on a real iPhone early.
+- **QR scanning on iOS Safari** -- even with `zbar-wasm`, Safari camera behavior remains device-sensitive. Must be tested on a real iPhone whenever scanner code changes.
 - **Google Sheets rate limits** -- unlikely at 10-20 entries/day, but the offline queue + batch flush pattern helps.
 
 ## Deliberate Scope Boundaries
@@ -212,5 +247,5 @@ MkDocs-based documentation in English and Russian:
 These are not gaps -- they are intentional Phase 0 limitations documented here for clarity:
 
 - **One QR scan = one category = one entry.** Receipt splitting across categories is a Phase 3 feature.
-- **QR URL extraction is offline; amount extraction requires server.** The QR code is decoded on the device (offline). The URL is saved with the entry. Amount and date are extracted by the server during sync if unavailable at scan time.
+- **QR decoding is client-side; backend parsing is fallback.** The QR code is decoded on the device. Common amount/date extraction happens locally in the MVP path, while the backend parser remains available for compatibility and recovery cases.
 - **Category cache has 1-hour TTL.** New categories added directly in the sheet appear in the PWA within an hour or on server restart.

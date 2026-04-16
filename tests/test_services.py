@@ -2,12 +2,15 @@ from datetime import date
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import allure
 import pytest
 
 from dinary.services.category_store import Category, CategoryStore
 from dinary.services.exchange_rate import fetch_eur_rsd_rate
 
 
+@allure.epic("Services")
+@allure.feature("Category Store")
 class TestCategoryStore:
     def test_load_and_lookup(self):
         store = CategoryStore()
@@ -45,6 +48,8 @@ class TestCategoryStore:
         assert not store.expired
 
 
+@allure.epic("Services")
+@allure.feature("Exchange Rate")
 class TestExchangeRate:
     @pytest.mark.anyio
     @patch("dinary.services.exchange_rate.httpx.AsyncClient")
@@ -83,6 +88,8 @@ class TestExchangeRate:
             await fetch_eur_rsd_rate(date(2026, 4, 1))
 
 
+@allure.epic("Services")
+@allure.feature("QR Parser")
 class TestQrParser:
     @patch("dinary.services.qr_parser.InvoiceParser")
     def test_parse_receipt(self, mock_parser_cls):
