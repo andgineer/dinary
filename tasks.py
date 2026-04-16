@@ -1,5 +1,7 @@
 import base64
+import os
 import sys
+from datetime import datetime as _dt
 
 from dotenv import dotenv_values
 from invoke import Collection, Context, task
@@ -101,6 +103,17 @@ def _create_service(c, name, content):
     _ssh_sudo(c, "systemctl daemon-reload")
     _ssh_sudo(c, f"systemctl enable {name}")
     _ssh_sudo(c, f"systemctl restart {name}")
+
+
+def _sync_remote_env(c):
+    """Write server-side .env with settings that CLI tasks need (idempotent)."""
+    env = _env()
+    spreadsheet_id = env.get("DINARY_GOOGLE_SHEETS_SPREADSHEET_ID", "")
+    if not spreadsheet_id:
+        print("Set DINARY_GOOGLE_SHEETS_SPREADSHEET_ID in .env")
+        sys.exit(1)
+    remote_env = f"DINARY_GOOGLE_SHEETS_SPREADSHEET_ID={spreadsheet_id}\n"
+    _write_remote_file(c, "/home/ubuntu/dinary-server/.env", remote_env)
 
 
 def _setup_tailscale(c):
@@ -220,6 +233,9 @@ def setup(c):
     print("=== Ensuring data/ directory ===")
     _ssh(c, "mkdir -p ~/dinary-server/data")
 
+    print("=== Syncing .env to server ===")
+    _sync_remote_env(c)
+
     print("=== Uploading credentials ===")
     _ssh(c, "mkdir -p ~/.config/gspread")
     c.run(f"scp ~/.config/gspread/service_account.json {host}:~/.config/gspread/service_account.json")
@@ -244,8 +260,6 @@ def setup(c):
 def deploy(c, ref=""):
     """Deploy latest code: git pull, sync deps, render version, restart service. Use --ref to deploy a specific version."""
     print("=== Pre-deploy backup ===")
-    import os
-    from datetime import datetime as _dt
     ts = _dt.now().strftime("%Y%m%d-%H%M%S")
     backup_dir = f"backups/pre-deploy-{ts}"
     os.makedirs(backup_dir, exist_ok=True)
@@ -262,6 +276,9 @@ def deploy(c, ref=""):
 
     print("=== Ensuring data/ directory ===")
     _ssh(c, "mkdir -p ~/dinary-server/data")
+
+    print("=== Syncing .env to server ===")
+    _sync_remote_env(c)
 
     print("=== Applying config migrations ===")
     _ssh(
@@ -349,10 +366,22 @@ def sync(c):
          "print(f\"Synced {sync_all_dirty()} months\")'")
 
 
+@task(name="import-sheet")
+def import_sheet(c, year=""):
+    """Import a year's data from Google Sheets into DuckDB (on server)."""
+    if not year:
+        year = str(_dt.now().year)
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.services.import_sheet import import_year; "
+        f"import json; print(json.dumps(import_year({year})))'",
+    )
+
+
 @task
 def backup(c, dest="./backups"):
     """Download DuckDB data files from the server."""
-    import os
     os.makedirs(dest, exist_ok=True)
     host = _host()
     c.run(f"scp -r {host}:~/dinary-server/data/ {dest}/")
