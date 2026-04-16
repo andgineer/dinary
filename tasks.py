@@ -438,6 +438,21 @@ def rebuild_4d_budget(c, year=""):
     )
 
 
+@task(name="verify-sheet-equivalence")
+def verify_sheet_equivalence(c, year=""):
+    """Verify that rebuilt DB reproduces the same Google Sheet data (on server)."""
+    if not year:
+        year = str(_dt.now().year)
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.services.verify_equivalence import verify_sheet_equivalence; "
+        f"import json; result = verify_sheet_equivalence({year}); "
+        "print(json.dumps(result, indent=2, ensure_ascii=False)); "
+        "import sys; sys.exit(0 if result[\"ok\"] else 1)'",
+    )
+
+
 @task(name="build-static")
 def build_static(c):
     """Replace __VERSION__ in static/ files, write to _static/."""

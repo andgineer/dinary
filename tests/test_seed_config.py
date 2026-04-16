@@ -8,7 +8,9 @@ from dinary.services import duckdb_repo
 from dinary.services.category_store import Category
 from dinary.services.seed_config import (
     BENEFICIARY_ENVELOPES,
+    ENTRY_GROUPS,
     TAG_ENVELOPES,
+    rebuild_taxonomy,
     seed_from_sheet,
 )
 
@@ -173,5 +175,85 @@ class TestSeedConfig:
                 0
             ]
             assert cat_name == "еда"
+        finally:
+            con.close()
+
+    def test_categories_are_atomic(self, monkeypatch, tmp_path):
+        """Categories should have no group_id column."""
+        self._seed(monkeypatch, tmp_path)
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            cols = [
+                r[0]
+                for r in con.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'categories'"
+                ).fetchall()
+            ]
+            assert "group_id" not in cols
+            assert "id" in cols
+            assert "name" in cols
+        finally:
+            con.close()
+
+    def test_no_stores_table(self, monkeypatch, tmp_path):
+        self._seed(monkeypatch, tmp_path)
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            assert "stores" not in tables
+        finally:
+            con.close()
+
+    def test_no_category_groups_table(self, monkeypatch, tmp_path):
+        self._seed(monkeypatch, tmp_path)
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            assert "category_groups" not in tables
+        finally:
+            con.close()
+
+    def test_taxonomy_rebuild(self, monkeypatch, tmp_path):
+        """rebuild_taxonomy creates entry_groups nodes and memberships."""
+        self._seed(monkeypatch, tmp_path)
+        con = duckdb_repo.get_config_connection(read_only=False)
+        try:
+            memberships = rebuild_taxonomy(con)
+            assert memberships > 0
+
+            taxonomy = con.execute(
+                "SELECT key, title FROM category_taxonomies WHERE id = 1"
+            ).fetchone()
+            assert taxonomy == ("entry_groups", "Entry Groups")
+
+            nodes = con.execute("SELECT COUNT(*) FROM category_taxonomy_nodes").fetchone()[0]
+            assert nodes == len(ENTRY_GROUPS)
+
+            mem_count = con.execute("SELECT COUNT(*) FROM category_taxonomy_membership").fetchone()[
+                0
+            ]
+            assert mem_count == memberships
+        finally:
+            con.close()
+
+    def test_taxonomy_rebuild_idempotent(self, monkeypatch, tmp_path):
+        """Running rebuild_taxonomy twice produces the same result."""
+        self._seed(monkeypatch, tmp_path)
+        con = duckdb_repo.get_config_connection(read_only=False)
+        try:
+            m1 = rebuild_taxonomy(con)
+            m2 = rebuild_taxonomy(con)
+            assert m1 == m2
+        finally:
+            con.close()
+
+    def test_travel_does_not_create_category_group(self, monkeypatch, tmp_path):
+        """Travel envelope should not create a 'путешествия' category — only uses event."""
+        self._seed(monkeypatch, tmp_path)
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            row = con.execute("SELECT 1 FROM categories WHERE name = 'путешествия'").fetchone()
+            assert row is None
         finally:
             con.close()

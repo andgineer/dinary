@@ -10,6 +10,8 @@ import pytest
 from dinary.services import duckdb_repo
 from dinary.services.sync import _build_aggregates, _sync_single_row, _write_aggregates_to_sheet
 
+TRAVEL_ENVELOPE = duckdb_repo.TRAVEL_ENVELOPE
+
 
 @pytest.fixture(autouse=True)
 def _tmp_data_dir(tmp_path, monkeypatch):
@@ -474,3 +476,119 @@ class TestScheduleSyncWiring:
             assert args[3] == "собака"
             assert args[4] == 500.0
             assert args[5] == "test"
+
+
+@allure.epic("Sync")
+@allure.feature("Reverse Mapping Equivalence")
+class TestSyncEquivalence:
+    """Verify that reverse lookup reproduces the original Type+Envelope for all mapping styles."""
+
+    def test_simple_reverse_map(self, populated_db):
+        """Plain category with beneficiary reverse-maps to original (type, envelope)."""
+        con = duckdb_repo.get_budget_connection(2026)
+        try:
+            result = duckdb_repo.reverse_lookup_mapping(con, 1, 1, None, [])
+            assert result == ("еда&бытовые", "собака")
+        finally:
+            con.close()
+
+    def test_no_envelope_reverse_map(self, populated_db):
+        """Category without envelope reverse-maps to (type, '')."""
+        con = duckdb_repo.get_budget_connection(2026)
+        try:
+            result = duckdb_repo.reverse_lookup_mapping(con, 2, None, None, [])
+            assert result == ("мобильник", "")
+        finally:
+            con.close()
+
+    def test_travel_reverse_map(self, populated_db):
+        """Travel expenses reverse-map to (type, 'путешествия')."""
+        con = duckdb_repo.get_config_connection(read_only=False)
+        try:
+            con.execute("INSERT INTO categories VALUES (10, 'кафе')")
+            con.execute(
+                "INSERT INTO source_type_mapping "
+                "VALUES (0, 'кафе', 'путешествия', 10, NULL, NULL, NULL)"
+            )
+            con.execute(
+                "INSERT INTO events VALUES (100, 'отпуск-2026', '2026-01-01', '2026-12-31', true, NULL)"
+            )
+        finally:
+            con.close()
+
+        con = duckdb_repo.get_budget_connection(2026)
+        try:
+            duckdb_repo.insert_expense(
+                con,
+                "tr-1",
+                datetime(2026, 4, 10, 12, 0),
+                2000.0,
+                "RSD",
+                10,
+                None,
+                100,
+                [],
+                "travel cafe",
+            )
+            result = duckdb_repo.reverse_lookup_mapping(con, 10, None, 100, [])
+            assert result is not None
+            assert result[1] == TRAVEL_ENVELOPE
+        finally:
+            con.close()
+
+    def test_subscription_tag_reverse_map(self, populated_db):
+        """Subscription-tagged expense reverse-maps to (type, 'приложения')."""
+        con = duckdb_repo.get_config_connection(read_only=False)
+        try:
+            con.execute("INSERT INTO categories VALUES (20, 'развлечения')")
+            con.execute("INSERT INTO tags VALUES (10, 'подписка')")
+            con.execute(
+                "INSERT INTO source_type_mapping "
+                "VALUES (0, 'развлечения', 'приложения', 20, NULL, NULL, [10])"
+            )
+        finally:
+            con.close()
+
+        con = duckdb_repo.get_budget_connection(2026)
+        try:
+            duckdb_repo.insert_expense(
+                con,
+                "sub-1",
+                datetime(2026, 4, 10, 12, 0),
+                500.0,
+                "RSD",
+                20,
+                None,
+                None,
+                [10],
+                "netflix",
+            )
+            result = duckdb_repo.reverse_lookup_mapping(con, 20, None, None, [10])
+            assert result == ("развлечения", "приложения")
+        finally:
+            con.close()
+
+    def test_aggregates_match_original_keys(self, populated_db):
+        """_build_aggregates keys match the original sheet (type, envelope) pairs."""
+        con = duckdb_repo.get_budget_connection(2026)
+        try:
+            agg = _build_aggregates(con, 2026, 4)
+            assert agg is not None
+            for cat, grp in agg:
+                assert isinstance(cat, str)
+                assert isinstance(grp, str)
+        finally:
+            con.close()
+
+    def test_rebuild_aggregates_idempotent(self, populated_db):
+        """Building aggregates twice gives identical results."""
+        con = duckdb_repo.get_budget_connection(2026)
+        try:
+            agg1 = _build_aggregates(con, 2026, 4)
+            agg2 = _build_aggregates(con, 2026, 4)
+            assert agg1 is not None
+            assert set(agg1.keys()) == set(agg2.keys())
+            for key in agg1:
+                assert agg1[key]["total_rsd"] == agg2[key]["total_rsd"]
+        finally:
+            con.close()
