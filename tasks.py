@@ -474,12 +474,15 @@ def build_static(c):
 
 
 @task
-def backup(c, dest="./backups"):
-    """Download DuckDB data files from the server."""
-    os.makedirs(dest, exist_ok=True)
+def backup(c):
+    """Download DuckDB data files from the server to ~/Library/dinary/."""
+    dest = Path.home() / "Library" / "dinary"
+    ts = _dt.now().strftime("%Y%m%d-%H%M%S")
+    backup_dir = dest / ts
+    backup_dir.mkdir(parents=True, exist_ok=True)
     host = _host()
-    c.run(f"scp -r {host}:~/dinary-server/data/ {dest}/")
-    print(f"Backed up to {dest}/")
+    c.run(f"scp -r {host}:~/dinary-server/data/ {backup_dir}/")
+    print(f"Backed up to {backup_dir}/")
 
 
 namespace = Collection.from_module(sys.modules[__name__])
