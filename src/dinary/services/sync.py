@@ -168,7 +168,6 @@ def _build_aggregates(
             exp.category_id,
             exp.beneficiary_id,
             exp.event_id,
-            exp.store_id,
             exp.tag_ids,
         )
         if result is None:

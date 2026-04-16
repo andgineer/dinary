@@ -26,15 +26,16 @@ class TestConfigMigrations:
         try:
             tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
             expected = {
-                "category_groups",
                 "categories",
                 "family_members",
                 "events",
                 "event_members",
                 "tags",
-                "stores",
-                "sheet_category_mapping",
+                "source_type_mapping",
                 "sheet_import_sources",
+                "category_taxonomies",
+                "category_taxonomy_nodes",
+                "category_taxonomy_membership",
             }
             assert expected.issubset(tables)
         finally:
@@ -66,7 +67,34 @@ class TestConfigMigrations:
             tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
             assert "_yoyo_migration" in tables
             rows = con.execute("SELECT * FROM _yoyo_migration").fetchall()
-            assert len(rows) == 2
+            assert len(rows) == 1
+        finally:
+            con.close()
+
+    def test_categories_are_atomic(self, tmp_path: Path):
+        """After migration, categories table should have no group_id column."""
+        db_path = tmp_path / "config.duckdb"
+        db_migrations.migrate_config_db(db_path)
+
+        con = duckdb.connect(str(db_path))
+        try:
+            cols = {r[0] for r in con.execute("DESCRIBE categories").fetchall()}
+            assert "id" in cols
+            assert "name" in cols
+            assert "group_id" not in cols
+        finally:
+            con.close()
+
+    def test_no_stores_table(self, tmp_path: Path):
+        """After migration, stores table should not exist."""
+        db_path = tmp_path / "config.duckdb"
+        db_migrations.migrate_config_db(db_path)
+
+        con = duckdb.connect(str(db_path))
+        try:
+            tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            assert "stores" not in tables
+            assert "category_groups" not in tables
         finally:
             con.close()
 
@@ -94,6 +122,18 @@ class TestBudgetMigrations:
         try:
             tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
             assert "expenses" in tables
+        finally:
+            con.close()
+
+    def test_no_store_id_in_expenses(self, tmp_path: Path):
+        """After migration, expenses should not have store_id."""
+        db_path = tmp_path / "budget_2026.duckdb"
+        db_migrations.migrate_budget_db(db_path)
+
+        con = duckdb.connect(str(db_path))
+        try:
+            cols = {r[0] for r in con.execute("DESCRIBE expenses").fetchall()}
+            assert "store_id" not in cols
         finally:
             con.close()
 

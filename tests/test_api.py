@@ -16,20 +16,17 @@ def _tmp_duckdb(tmp_path, monkeypatch):
 
     con = duckdb_repo.get_config_connection(read_only=False)
     try:
-        con.execute("INSERT INTO category_groups VALUES (1, '', NULL)")
-        con.execute("INSERT INTO category_groups VALUES (2, 'Essentials', NULL)")
-        con.execute("INSERT INTO category_groups VALUES (3, 'путешествия', NULL)")
-        con.execute("INSERT INTO categories VALUES (1, 'Food', 2)")
-        con.execute("INSERT INTO categories VALUES (2, 'Transport', 2)")
-        con.execute("INSERT INTO categories VALUES (3, 'кафе', 3)")
+        con.execute("INSERT INTO categories VALUES (1, 'Food')")
+        con.execute("INSERT INTO categories VALUES (2, 'Transport')")
+        con.execute("INSERT INTO categories VALUES (3, 'кафе')")
         con.execute(
-            "INSERT INTO sheet_category_mapping VALUES (0, 'Food', 'Essentials', 1, NULL, NULL, NULL, NULL)"
+            "INSERT INTO source_type_mapping VALUES (0, 'Food', 'Essentials', 1, NULL, NULL, NULL)"
         )
         con.execute(
-            "INSERT INTO sheet_category_mapping VALUES (0, 'Transport', 'Essentials', 2, NULL, NULL, NULL, NULL)"
+            "INSERT INTO source_type_mapping VALUES (0, 'Transport', 'Essentials', 2, NULL, NULL, NULL)"
         )
         con.execute(
-            "INSERT INTO sheet_category_mapping VALUES (0, 'кафе', 'путешествия', 3, NULL, NULL, NULL, NULL)"
+            "INSERT INTO source_type_mapping VALUES (0, 'кафе', 'путешествия', 3, NULL, NULL, NULL)"
         )
     finally:
         con.close()

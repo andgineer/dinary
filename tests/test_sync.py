@@ -24,17 +24,14 @@ def populated_db(tmp_path):
 
     con = duckdb_repo.get_config_connection(read_only=False)
     try:
-        con.execute("INSERT INTO category_groups VALUES (1, 'питание', NULL)")
-        con.execute("INSERT INTO category_groups VALUES (2, '', NULL)")
-        con.execute("INSERT INTO categories VALUES (1, 'еда&бытовые', 1)")
-        con.execute("INSERT INTO categories VALUES (2, 'мобильник', 2)")
+        con.execute("INSERT INTO categories VALUES (1, 'еда&бытовые')")
+        con.execute("INSERT INTO categories VALUES (2, 'мобильник')")
         con.execute("INSERT INTO family_members VALUES (1, 'собака')")
         con.execute(
-            "INSERT INTO sheet_category_mapping "
-            "VALUES (0, 'еда&бытовые', 'собака', 1, 1, NULL, NULL, NULL)"
+            "INSERT INTO source_type_mapping VALUES (0, 'еда&бытовые', 'собака', 1, 1, NULL, NULL)"
         )
         con.execute(
-            "INSERT INTO sheet_category_mapping VALUES (0, 'мобильник', '', 2, NULL, NULL, NULL, NULL)"
+            "INSERT INTO source_type_mapping VALUES (0, 'мобильник', '', 2, NULL, NULL, NULL)"
         )
     finally:
         con.close()
@@ -50,7 +47,6 @@ def populated_db(tmp_path):
             1,
             1,
             None,
-            None,
             [],
             "lunch",
         )
@@ -63,7 +59,6 @@ def populated_db(tmp_path):
             1,
             1,
             None,
-            None,
             [],
             "dinner",
         )
@@ -74,7 +69,6 @@ def populated_db(tmp_path):
             400.0,
             "RSD",
             2,
-            None,
             None,
             None,
             [],
@@ -284,7 +278,6 @@ class TestSyncIdempotency:
                 1,
                 1,
                 None,
-                None,
                 [],
                 "",
             )
@@ -409,7 +402,14 @@ class TestSyncSingleRow:
             mock_sheet.return_value.sheet1 = ws_mock
 
             _sync_single_row(
-                2026, 4, "еда&бытовые", "собака", 100.0, "", date(2026, 4, 1), rate=Decimal("117.5")
+                2026,
+                4,
+                "еда&бытовые",
+                "собака",
+                100.0,
+                "",
+                date(2026, 4, 1),
+                rate=Decimal("117.5"),
             )
 
             ws_mock.update_cell.assert_any_call(2, COL_RATE_EUR, "117.5")

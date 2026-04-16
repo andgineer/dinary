@@ -5,7 +5,6 @@ SELECT e.id,
        e.category_id,
        e.beneficiary_id,
        e.event_id,
-       e.store_id,
        e.comment,
        (SELECT list(tag_id ORDER BY tag_id)
         FROM expense_tags

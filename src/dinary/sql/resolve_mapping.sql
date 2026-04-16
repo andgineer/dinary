@@ -1,3 +1,3 @@
-SELECT category_id, beneficiary_id, event_id, store_id, tag_ids
-FROM config.sheet_category_mapping
-WHERE sheet_category = ? AND sheet_group = ? AND year = 0
+SELECT category_id, beneficiary_id, event_id, tag_ids
+FROM config.source_type_mapping
+WHERE source_type = ? AND source_envelope = ? AND year = 0

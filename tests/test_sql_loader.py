@@ -15,10 +15,10 @@ ALL_SQL_FILES = [
     "insert_expense.sql",
     "list_sheet_categories.sql",
     "resolve_mapping.sql",
+    "resolve_mapping_for_year.sql",
     "reverse_lookup_5d.sql",
     "reverse_lookup_travel.sql",
     "seed_load_categories.sql",
-    "seed_load_groups.sql",
     "seed_load_members.sql",
     "seed_load_tags.sql",
 ]

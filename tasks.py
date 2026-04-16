@@ -125,7 +125,10 @@ def _setup_tailscale(c):
     _ssh_sudo(c, "tailscale up")
 
     print("=== Enabling Tailscale Serve (tailnet only) ===")
-    _ssh_sudo(c, "tailscale serve reset 2>/dev/null; tailscale funnel reset 2>/dev/null; tailscale serve --bg 8000")
+    _ssh_sudo(
+        c,
+        "tailscale serve reset 2>/dev/null; tailscale funnel reset 2>/dev/null; tailscale serve --bg 8000",
+    )
 
 
 def _setup_cloudflare(c):
@@ -241,7 +244,9 @@ def setup(c):
 
     print("=== Uploading credentials ===")
     _ssh(c, "mkdir -p ~/.config/gspread")
-    c.run(f"scp ~/.config/gspread/service_account.json {host}:~/.config/gspread/service_account.json")
+    c.run(
+        f"scp ~/.config/gspread/service_account.json {host}:~/.config/gspread/service_account.json"
+    )
 
     bind_host = "0.0.0.0" if tunnel == "none" else "127.0.0.1"
     print(f"=== Creating dinary service (bind {bind_host}) ===")
@@ -271,9 +276,14 @@ def deploy(c, ref=""):
 
     print("=== Deploying dinary-server ===")
     if ref:
-        _ssh(c, f"cd ~/dinary-server && git fetch --tags && git checkout {ref} && source ~/.local/bin/env && uv sync --no-dev")
-        print(f"=== WARNING: Remote is in detached HEAD at '{ref}'. "
-              "Future `inv deploy` without --ref will `git pull` on whatever branch is checked out. ===")
+        _ssh(
+            c,
+            f"cd ~/dinary-server && git fetch --tags && git checkout {ref} && source ~/.local/bin/env && uv sync --no-dev",
+        )
+        print(
+            f"=== WARNING: Remote is in detached HEAD at '{ref}'. "
+            "Future `inv deploy` without --ref will `git pull` on whatever branch is checked out. ==="
+        )
     else:
         _ssh(c, "cd ~/dinary-server && git pull && source ~/.local/bin/env && uv sync --no-dev")
 
@@ -288,15 +298,11 @@ def deploy(c, ref=""):
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && "
         "uv run python -c 'from dinary.services import duckdb_repo; duckdb_repo.init_config_db(); "
-        "print(\"Migrated config.duckdb\")'"
+        'print("Migrated config.duckdb")\'',
     )
 
     print("=== Building _static/ with version ===")
-    _ssh(
-        c,
-        "cd ~/dinary-server && source ~/.local/bin/env && "
-        "uv run inv build-static"
-    )
+    _ssh(c, "cd ~/dinary-server && source ~/.local/bin/env && uv run inv build-static")
 
     _ssh_sudo(c, "systemctl restart dinary")
     print("=== Restarted. Checking health... ===")
@@ -330,9 +336,12 @@ def ssh(c):
 @task(name="seed-config")
 def seed_config(c):
     """Seed config.duckdb from Google Sheets categories (run on server)."""
-    _ssh(c, "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-         "from dinary.services.seed_config import seed_from_sheet; "
-         "import json; print(json.dumps(seed_from_sheet()))'")
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.services.seed_config import seed_from_sheet; "
+        "import json; print(json.dumps(seed_from_sheet()))'",
+    )
 
 
 @task(name="migrate-config")
@@ -342,7 +351,7 @@ def migrate_config(c):
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && "
         "uv run python -c 'from dinary.services import duckdb_repo; "
-        "duckdb_repo.init_config_db(); print(\"Migrated config.duckdb\")'"
+        'duckdb_repo.init_config_db(); print("Migrated config.duckdb")\'',
     )
 
 
@@ -354,16 +363,19 @@ def migrate_budget(c, year):
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && "
         f"uv run python -c 'from dinary.services import duckdb_repo; "
-        f"print(duckdb_repo.init_budget_db({year}))'"
+        f"print(duckdb_repo.init_budget_db({year}))'",
     )
 
 
 @task
 def sync(c):
     """Run sheet sync for all dirty months (on server)."""
-    _ssh(c, "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-         "from dinary.services.sync import sync_all_dirty; "
-         "print(f\"Synced {sync_all_dirty()} months\")'")
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.services.sync import sync_all_dirty; "
+        'print(f"Synced {sync_all_dirty()} months")\'',
+    )
 
 
 @task(name="import-sheet")
@@ -383,6 +395,41 @@ def import_sheet(c, year="", yes=False):
         if answer.strip().lower() != "yes":
             print("Aborted.")
             return
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.services.import_sheet import import_year; "
+        f"import json; print(json.dumps(import_year({year})))'",
+    )
+
+
+@task(name="rebuild-4d-config")
+def rebuild_4d_config(c):
+    """DESTRUCTIVE: Wipe and rebuild config.duckdb under the 4D model from Google Sheets."""
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.services.seed_config import seed_from_sheet, rebuild_taxonomy; "
+        "from dinary.services import duckdb_repo; "
+        "import json; "
+        "summary = seed_from_sheet(); "
+        "con = duckdb_repo.get_config_connection(read_only=False); "
+        "memberships = rebuild_taxonomy(con); con.close(); "
+        'summary["taxonomy_memberships"] = memberships; '
+        "print(json.dumps(summary))'",
+    )
+
+
+@task(name="rebuild-4d-budget")
+def rebuild_4d_budget(c, year=""):
+    """DESTRUCTIVE: Wipe and re-import budget_YYYY.duckdb from Google Sheet."""
+    if not year:
+        year = str(_dt.now().year)
+    print(f"WARNING: This will DELETE ALL expenses for {year} and re-import from Google Sheets.")
+    answer = input("Type 'yes' to continue: ")
+    if answer.strip().lower() != "yes":
+        print("Aborted.")
+        return
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"

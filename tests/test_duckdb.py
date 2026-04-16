@@ -25,38 +25,34 @@ def populated_config(config_db, tmp_path):
     """Seed config.duckdb with a minimal reference dataset."""
     con = duckdb_repo.get_config_connection(read_only=False)
     try:
-        con.execute("INSERT INTO category_groups VALUES (1, 'еда&бытовые', NULL)")
-        con.execute("INSERT INTO category_groups VALUES (2, 'путешествия', NULL)")
-        con.execute("INSERT INTO category_groups VALUES (3, '', NULL)")
-        con.execute("INSERT INTO categories VALUES (1, 'еда&бытовые', 1)")
-        con.execute("INSERT INTO categories VALUES (2, 'кафе', 2)")
-        con.execute("INSERT INTO categories VALUES (3, 'топливо', 2)")
-        con.execute("INSERT INTO categories VALUES (4, 'мобильник', 3)")
+        con.execute("INSERT INTO categories VALUES (1, 'еда&бытовые')")
+        con.execute("INSERT INTO categories VALUES (2, 'кафе')")
+        con.execute("INSERT INTO categories VALUES (3, 'топливо')")
+        con.execute("INSERT INTO categories VALUES (4, 'мобильник')")
         con.execute("INSERT INTO family_members VALUES (1, 'собака')")
         con.execute("INSERT INTO tags VALUES (1, 'test-tag')")
-        con.execute("INSERT INTO stores VALUES (1, 'Lidl', 'supermarket')")
         con.execute(
             """
-            INSERT INTO sheet_category_mapping
-            VALUES (0, 'еда&бытовые', 'собака', 1, 1, NULL, NULL, NULL)
+            INSERT INTO source_type_mapping
+            VALUES (0, 'еда&бытовые', 'собака', 1, 1, NULL, NULL)
             """
         )
         con.execute(
             """
-            INSERT INTO sheet_category_mapping
-            VALUES (0, 'кафе', 'путешествия', 2, NULL, NULL, NULL, NULL)
+            INSERT INTO source_type_mapping
+            VALUES (0, 'кафе', 'путешествия', 2, NULL, NULL, NULL)
             """
         )
         con.execute(
             """
-            INSERT INTO sheet_category_mapping
-            VALUES (0, 'топливо', 'путешествия', 3, NULL, NULL, NULL, NULL)
+            INSERT INTO source_type_mapping
+            VALUES (0, 'топливо', 'путешествия', 3, NULL, NULL, NULL)
             """
         )
         con.execute(
             """
-            INSERT INTO sheet_category_mapping
-            VALUES (0, 'мобильник', '', 4, NULL, NULL, NULL, NULL)
+            INSERT INTO source_type_mapping
+            VALUES (0, 'мобильник', '', 4, NULL, NULL, NULL)
             """
         )
     finally:
@@ -71,15 +67,16 @@ class TestBootstrap:
         try:
             tables = [r[0] for r in con.execute("SHOW TABLES").fetchall()]
             expected = {
-                "category_groups",
                 "categories",
                 "family_members",
                 "events",
                 "event_members",
                 "tags",
-                "stores",
-                "sheet_category_mapping",
+                "source_type_mapping",
                 "sheet_import_sources",
+                "category_taxonomies",
+                "category_taxonomy_nodes",
+                "category_taxonomy_membership",
             }
             assert expected.issubset(set(tables))
         finally:
@@ -190,7 +187,6 @@ class TestIdempotentInsert:
                 1,
                 1,
                 None,
-                None,
                 [],
                 "lunch",
             )
@@ -213,7 +209,6 @@ class TestIdempotentInsert:
                 1,
                 None,
                 None,
-                None,
                 [],
                 "lunch",
             )
@@ -224,7 +219,6 @@ class TestIdempotentInsert:
                 1500.0,
                 "RSD",
                 1,
-                None,
                 None,
                 None,
                 [],
@@ -246,7 +240,6 @@ class TestIdempotentInsert:
                 1,
                 None,
                 None,
-                None,
                 [],
                 "lunch",
             )
@@ -257,7 +250,6 @@ class TestIdempotentInsert:
                 2000.0,
                 "RSD",
                 1,
-                None,
                 None,
                 None,
                 [],
@@ -279,7 +271,6 @@ class TestIdempotentInsert:
                 1,
                 None,
                 None,
-                None,
                 [],
                 "",
             )
@@ -298,7 +289,6 @@ class TestIdempotentInsert:
                 1500.0,
                 "RSD",
                 1,
-                None,
                 None,
                 None,
                 [1],
@@ -326,7 +316,6 @@ class TestIdempotentInsert:
                 1,
                 None,
                 None,
-                None,
                 [1],
                 "lunch",
             )
@@ -337,7 +326,6 @@ class TestIdempotentInsert:
                 1500.0,
                 "RSD",
                 1,
-                None,
                 None,
                 None,
                 [1],
@@ -359,7 +347,6 @@ class TestIdempotentInsert:
                 1,
                 None,
                 None,
-                None,
                 [],
                 "lunch",
             )
@@ -370,7 +357,6 @@ class TestIdempotentInsert:
                 1500.0,
                 "RSD",
                 1,
-                None,
                 None,
                 None,
                 [1],
@@ -392,7 +378,6 @@ class TestIdempotentInsert:
                 1,
                 None,
                 None,
-                None,
                 [],
                 "",
             )
@@ -403,7 +388,6 @@ class TestIdempotentInsert:
                 1500.0,
                 "RSD",
                 1,
-                None,
                 None,
                 None,
                 [],
@@ -421,7 +405,7 @@ class TestReverseMapping:
     def test_reverse_lookup_simple(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 1, 1, None, None, [])
+            result = duckdb_repo.reverse_lookup_mapping(con, 1, 1, None, [])
             assert result == ("еда&бытовые", "собака")
         finally:
             con.close()
@@ -430,7 +414,7 @@ class TestReverseMapping:
         event_id = duckdb_repo.resolve_travel_event(date(2026, 4, 14))
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 2, None, event_id, None, [])
+            result = duckdb_repo.reverse_lookup_mapping(con, 2, None, event_id, [])
             assert result is not None
             assert result[1] == "путешествия"
         finally:
@@ -439,7 +423,7 @@ class TestReverseMapping:
     def test_reverse_lookup_no_group(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 4, None, None, None, [])
+            result = duckdb_repo.reverse_lookup_mapping(con, 4, None, None, [])
             assert result == ("мобильник", "")
         finally:
             con.close()
@@ -447,7 +431,7 @@ class TestReverseMapping:
     def test_reverse_lookup_unknown(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 999, None, None, None, [])
+            result = duckdb_repo.reverse_lookup_mapping(con, 999, None, None, [])
             assert result is None
         finally:
             con.close()
@@ -469,7 +453,6 @@ class TestReferentialIntegrity:
                     999,
                     None,
                     None,
-                    None,
                     [],
                     "",
                 )
@@ -488,7 +471,6 @@ class TestReferentialIntegrity:
                     "RSD",
                     1,
                     999,
-                    None,
                     None,
                     [],
                     "",
@@ -509,7 +491,6 @@ class TestReferentialIntegrity:
                     1,
                     None,
                     None,
-                    None,
                     [999],
                     "",
                 )
@@ -527,27 +508,6 @@ class TestReferentialIntegrity:
                     100.0,
                     "RSD",
                     1,
-                    None,
-                    999,
-                    None,
-                    [],
-                    "",
-                )
-        finally:
-            con.close()
-
-    def test_insert_with_invalid_store_raises(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            with pytest.raises(ValueError, match="store_id 999"):
-                duckdb_repo.insert_expense(
-                    con,
-                    "ri-5",
-                    datetime(2026, 4, 14, 12, 0),
-                    100.0,
-                    "RSD",
-                    1,
-                    None,
                     None,
                     999,
                     [],
@@ -573,7 +533,6 @@ class TestYearBoundary:
                 1,
                 None,
                 None,
-                None,
                 [],
                 "",
             )
@@ -584,7 +543,6 @@ class TestYearBoundary:
                 2000.0,
                 "RSD",
                 1,
-                None,
                 None,
                 None,
                 [],

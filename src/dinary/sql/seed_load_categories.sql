@@ -1,1 +1,1 @@
-SELECT id, name, group_id FROM categories
+SELECT id, name FROM categories

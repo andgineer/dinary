@@ -21,7 +21,7 @@ DATA_DIR = Path("data")
 CONFIG_DB = DATA_DIR / "config.duckdb"
 
 SYNTHETIC_EVENT_PREFIX = "отпуск-"
-TRAVEL_GROUP = "путешествия"
+TRAVEL_ENVELOPE = "путешествия"
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +34,6 @@ class MappingRow:
     category_id: int
     beneficiary_id: int | None
     event_id: int | None
-    store_id: int | None
     tag_ids: list[int]
 
     def __post_init__(self) -> None:
@@ -50,7 +49,6 @@ class ExpenseRow:
     category_id: int
     beneficiary_id: int | None
     event_id: int | None
-    store_id: int | None
     comment: str | None
     tag_ids: list[int]
 
@@ -59,15 +57,15 @@ class ExpenseRow:
 
 
 @dataclasses.dataclass(slots=True)
-class SheetCategoryRow:
-    sheet_category: str
-    sheet_group: str
+class SourceMappingRow:
+    source_type: str
+    source_envelope: str
 
 
 @dataclasses.dataclass(slots=True)
 class ReverseMappingRow:
-    sheet_category: str
-    sheet_group: str
+    source_type: str
+    source_envelope: str
     tag_ids: list[int] | None
 
 
@@ -92,7 +90,6 @@ class ExistingExpenseRow:
     category_id: int
     beneficiary_id: int | None
     event_id: int | None
-    store_id: int | None
     comment: str | None
     datetime: datetime
 
@@ -101,13 +98,6 @@ class ExistingExpenseRow:
 class IdNameRow:
     id: int
     name: str
-
-
-@dataclasses.dataclass(slots=True)
-class CategoryRefRow:
-    id: int
-    name: str
-    group_id: int
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +163,7 @@ def resolve_mapping(
     category: str,
     group: str,
 ) -> MappingRow | None:
-    """Look up (category, group) in sheet_category_mapping via ATTACHed config.
+    """Look up (source_type, source_envelope) in source_type_mapping via ATTACHed config.
 
     Returns MappingRow or None if not found.
     """
@@ -186,7 +176,7 @@ def resolve_mapping_for_year(
     group: str,
     year: int,
 ) -> MappingRow | None:
-    """Look up (category, group) with year-scoped override support.
+    """Look up (source_type, source_envelope) with year-scoped override support.
 
     Prefers an exact year match; falls back to year=0 (default).
     """
@@ -259,7 +249,6 @@ def insert_expense(  # noqa: C901, PLR0913
     category_id: int,
     beneficiary_id: int | None,
     event_id: int | None,
-    store_id: int | None,
     tag_ids: list[int],
     comment: str,
 ) -> str:
@@ -292,14 +281,6 @@ def insert_expense(  # noqa: C901, PLR0913
             ).fetchone()
         ):
             raise ValueError(f"event_id {event_id} not found in config.events")
-        if (
-            store_id is not None
-            and not con.execute(
-                "SELECT 1 FROM config.stores WHERE id = ?",
-                [store_id],
-            ).fetchone()
-        ):
-            raise ValueError(f"store_id {store_id} not found in config.stores")
         for tid in tag_ids:
             if not con.execute(
                 "SELECT 1 FROM config.tags WHERE id = ?",
@@ -317,7 +298,6 @@ def insert_expense(  # noqa: C901, PLR0913
                 category_id,
                 beneficiary_id,
                 event_id,
-                store_id,
                 comment,
             ],
         ).fetchone()
@@ -357,7 +337,6 @@ def insert_expense(  # noqa: C901, PLR0913
             existing.category_id,
             existing.beneficiary_id,
             existing.event_id,
-            existing.store_id,
             existing.comment,
             existing.datetime,
         )
@@ -367,7 +346,6 @@ def insert_expense(  # noqa: C901, PLR0913
             category_id,
             beneficiary_id,
             event_id,
-            store_id,
             comment,
             expense_datetime,
         )
@@ -404,20 +382,19 @@ def get_month_expenses(
     return fetchall_as(ExpenseRow, con, load_sql("get_month_expenses.sql"), [year, month])
 
 
-def reverse_lookup_mapping(  # noqa: PLR0913
+def reverse_lookup_mapping(
     con: duckdb.DuckDBPyConnection,
     category_id: int,
     beneficiary_id: int | None,
     event_id: int | None,
-    store_id: int | None,
     tag_ids: list[int],
 ) -> tuple[str, str] | None:
-    """Reverse-map a 5D expense back to (sheet_category, sheet_group).
+    """Reverse-map a 4D expense back to (source_type, source_envelope).
 
     Two paths:
     1. Travel expenses (event_id references a synthetic event): match by
-       category_id + TRAVEL_GROUP.
-    2. All others: full 5D null-safe match.
+       category_id + TRAVEL_ENVELOPE.
+    2. All others: full 4D null-safe match.
     """
     if event_id is not None:
         is_travel = con.execute(
@@ -426,24 +403,24 @@ def reverse_lookup_mapping(  # noqa: PLR0913
         ).fetchone()
         if is_travel:
             row = fetchone_as(
-                SheetCategoryRow,
+                SourceMappingRow,
                 con,
                 load_sql("reverse_lookup_travel.sql"),
-                [TRAVEL_GROUP, category_id],
+                [TRAVEL_ENVELOPE, category_id],
             )
-            return (row.sheet_category, row.sheet_group) if row else None
+            return (row.source_type, row.source_envelope) if row else None
 
     sorted_tags = sorted(tag_ids) if tag_ids else []
     rows = fetchall_as(
         ReverseMappingRow,
         con,
         load_sql("reverse_lookup_5d.sql"),
-        [category_id, beneficiary_id, event_id, store_id],
+        [category_id, beneficiary_id, event_id],
     )
 
     for r in rows:
         mapping_tags = sorted(r.tag_ids) if r.tag_ids else []
         if mapping_tags == sorted_tags:
-            return (r.sheet_category, r.sheet_group)
+            return (r.source_type, r.source_envelope)
 
     return None

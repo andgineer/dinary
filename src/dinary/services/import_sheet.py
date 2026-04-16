@@ -178,10 +178,9 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
             category_id = mapping.category_id
             beneficiary_id = mapping.beneficiary_id
             event_id = mapping.event_id
-            store_id = mapping.store_id
             tag_ids = mapping.tag_ids
 
-            if group == duckdb_repo.TRAVEL_GROUP and event_id is None:
+            if group == duckdb_repo.TRAVEL_ENVELOPE and event_id is None:
                 event_id = travel_event_id
 
             months_seen.add(month)
@@ -195,9 +194,9 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
                     con.execute(
                         """INSERT INTO expenses
                         (id, datetime, name, amount, currency,
-                         category_id, beneficiary_id, event_id, store_id,
+                         category_id, beneficiary_id, event_id,
                          comment, source)
-                        VALUES (?, ?, ?, ?, 'RSD', ?, ?, ?, ?, ?, 'legacy_import')
+                        VALUES (?, ?, ?, ?, 'RSD', ?, ?, ?, ?, 'legacy_import')
                         ON CONFLICT DO NOTHING""",
                         [
                             expense_id,
@@ -207,7 +206,6 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
                             category_id,
                             beneficiary_id,
                             event_id,
-                            store_id,
                             comment,
                         ],
                     )

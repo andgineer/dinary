@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from dinary.services import duckdb_repo
-from dinary.services.duckdb_repo import TRAVEL_GROUP
+from dinary.services.duckdb_repo import TRAVEL_ENVELOPE
 from dinary.services.sync import schedule_sync
 
 logger = logging.getLogger(__name__)
@@ -49,12 +49,9 @@ async def create_expense(req: ExpenseRequest):
         category_id = mapping.category_id
         beneficiary_id = mapping.beneficiary_id
         event_id = mapping.event_id
-        store_id = mapping.store_id
         tag_ids = mapping.tag_ids
 
-        if req.group == TRAVEL_GROUP:
-            # resolve_travel_event writes to config.duckdb which is ATTACHed
-            # read-only on `con` — close first to avoid file handle conflict
+        if req.group == TRAVEL_ENVELOPE:
             con.close()
             event_id = duckdb_repo.resolve_travel_event(req.date)
             con = duckdb_repo.get_budget_connection(year)
@@ -71,7 +68,6 @@ async def create_expense(req: ExpenseRequest):
                 category_id=category_id,
                 beneficiary_id=beneficiary_id,
                 event_id=event_id,
-                store_id=store_id,
                 tag_ids=tag_ids,
                 comment=req.comment,
             )
