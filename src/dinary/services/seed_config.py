@@ -197,7 +197,7 @@ _CATEGORY_COLUMNS_BY_LAYOUT = {
     "rub": (4, 5),
     "rub_fallback": (4, 5),
     "rub_6col": (3, 4),
-    "rub_2016": (2, 3),
+    "rub_2016": (3, 4),
 }
 
 
