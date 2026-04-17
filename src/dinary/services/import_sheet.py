@@ -44,6 +44,10 @@ class SheetLayout:
     # The fallback amount is in the same currency as resolved by
     # _resolve_currency() for the given year+month.
     col_amount_fallback: int | None = None
+    # Optional beneficiary column ("Кто" in 2014 sheet). Values like
+    # "Ребенок"/"Лариса" override the default beneficiary resolved from
+    # source_type/envelope.
+    col_beneficiary: int | None = None
 
 
 LAYOUTS: dict[str, SheetLayout] = {
@@ -86,6 +90,23 @@ LAYOUTS: dict[str, SheetLayout] = {
         col_month=8,
         currency="RUB",
     ),
+    "rub_2014": SheetLayout(
+        col_amount=2,
+        col_category=3,
+        col_group=4,
+        col_comment=6,
+        col_month=10,
+        currency="RUB",
+        col_beneficiary=5,
+    ),
+}
+
+# Maps the raw sheet value in the "Кто" column to a canonical beneficiary name
+# stored in config.family_members.
+_SHEET_BENEFICIARY_BY_VALUE: dict[str, str] = {
+    "ребенок": "Аня",
+    "аня": "Аня",
+    "лариса": "Лариса",
 }
 
 _MONTHS_IN_YEAR = 12
@@ -535,6 +556,19 @@ def import_year(year: int, *, wipe_all: bool = False) -> dict:  # noqa: C901, PL
                 event_name = _event_name_for_source(category, group, year)
                 if event_name is not None:
                     event_id = travel_event_id
+
+            if layout.col_beneficiary is not None:
+                who_raw = _cell(row_display, layout.col_beneficiary)
+                who_key = who_raw.lower().strip()
+                ben_name = _SHEET_BENEFICIARY_BY_VALUE.get(who_key)
+                if ben_name is not None:
+                    ben_id = _lookup_id_by_name(
+                        con,
+                        table="family_members",
+                        name=ben_name,
+                    )
+                    if ben_id is not None:
+                        beneficiary_id = ben_id
 
             months_seen.add(month)
 

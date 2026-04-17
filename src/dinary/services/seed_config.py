@@ -71,12 +71,15 @@ class ImportSourceSeedRow:
     notes: str | None
 
 
+_RUB_2014_LAST_YEAR = 2014
 _RUB_2016_LAST_YEAR = 2016
 _RUB_6COL_LAST_YEAR = 2021
 _RUB_FALLBACK_YEAR = 2022
 
 
 def _default_layout_for_year(year: int) -> str:
+    if year <= _RUB_2014_LAST_YEAR:
+        return "rub_2014"
     if year <= _RUB_2016_LAST_YEAR:
         return "rub_2016"
     if year <= _RUB_6COL_LAST_YEAR:
@@ -198,6 +201,7 @@ _CATEGORY_COLUMNS_BY_LAYOUT = {
     "rub_fallback": (4, 5),
     "rub_6col": (3, 4),
     "rub_2016": (3, 4),
+    "rub_2014": (3, 4),
 }
 
 
@@ -368,6 +372,8 @@ _CATEGORY_BY_SOURCE_TYPE: dict[str, str] = {
     "собака": "карманные",
     "подарки": "подарки",
     "социальное": "подарки",
+    "социализация": "подарки",  # typo/alias in 2014 sheet
+    "страховка": "коммунальные",
     "одежда": "одежда",
     # State
     "налог": "налог",
@@ -393,6 +399,8 @@ _COMMUNAL_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
     "мобильный": "мобильник",
     "internet": "интернет",
     "интернет": "интернет",
+    "video": "сервисы",
+    "skype": "сервисы",
 }
 
 _MASHINA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
@@ -401,6 +409,8 @@ _MASHINA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
     "такси": "транспорт",
     "налог": "налог",
     "налоги": "налог",
+    "штраф": "штрафы",
+    "штрафы": "штрафы",
 }
 
 _DACHA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
@@ -430,6 +440,11 @@ _RAZVL_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
     "спорт": "спорт",
     "skiitime": "лыжи",
     "wellness": "гигиена",
+    "diy": "электроника",
+    "dyi": "электроника",  # typo preserved from 2014 sheet
+    "подарок": "подарки",
+    "подарки": "подарки",
+    "отпуск": "аренда",
 }
 
 _SKI_ENVELOPES: frozenset[str] = frozenset(
@@ -518,14 +533,19 @@ def _canonical_category_for_source(source_type: str, source_envelope: str) -> st
     if source_lower == "дача":
         return _DACHA_SUBCATEGORY_BY_ENVELOPE.get(envelope_lower, "хозтовары")
     if source_lower == "развлечения":
+        if envelope_lower in _SKI_ENVELOPES:
+            return "лыжи"
         return _RAZVL_SUBCATEGORY_BY_ENVELOPE.get(envelope_lower, "развлечения")
     if source_lower == "спорт":
         if envelope_lower in _SKI_ENVELOPES:
             return "лыжи"
         return "спорт"
 
-    if source_lower == "household" and envelope_lower in {"налог", "налоги"}:
-        return "налог"
+    if source_lower == "household":
+        if envelope_lower in {"налог", "налоги"}:
+            return "налог"
+        if envelope_lower == "мебель":
+            return "мебель"
 
     if source_lower in _CATEGORY_BY_SOURCE_TYPE:
         return _CATEGORY_BY_SOURCE_TYPE[source_lower]
@@ -567,7 +587,7 @@ def _sphere_for_source(source_type: str, source_envelope: str) -> str | None:
 
 
 _VACATION_ENVELOPES: frozenset[str] = frozenset(
-    {duckdb_repo.TRAVEL_ENVELOPE, "sim-travel"},
+    {duckdb_repo.TRAVEL_ENVELOPE, "sim-travel", "отпуск"},
 )
 
 
