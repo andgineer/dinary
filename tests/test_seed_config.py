@@ -370,7 +370,7 @@ class TestSeedConfig:
         monkeypatch.setattr(
             settings,
             "sheet_import_sources_json",
-            '[{"year": 2026, "spreadsheet_id": "boot-sheet", "worksheet_name": "", "layout_key": "eur_primary"}]',
+            '[{"year": 2026, "spreadsheet_id": "boot-sheet", "worksheet_name": "", "layout_key": "default"}]',
         )
 
         boot_ws = type(
@@ -399,6 +399,6 @@ class TestSeedConfig:
             source_row = con.execute(
                 "SELECT spreadsheet_id, worksheet_name, layout_key FROM sheet_import_sources WHERE year = 2026"
             ).fetchone()
-            assert source_row == ("boot-sheet", "", "eur_primary")
+            assert source_row == ("boot-sheet", "", "default")
         finally:
             con.close()

@@ -193,7 +193,6 @@ _CATEGORY_COLUMNS_BY_LAYOUT = {
     "default": (4, 5),
     "rub": (4, 5),
     "rub_fallback": (4, 5),
-    "eur_primary": (4, 5),
     "rub_6col": (3, 4),
 }
 

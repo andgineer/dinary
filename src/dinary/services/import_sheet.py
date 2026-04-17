@@ -66,15 +66,6 @@ LAYOUTS: dict[str, SheetLayout] = {
         col_month=7,
         col_amount_eur=3,
     ),
-    "eur_primary": SheetLayout(
-        col_amount=2,
-        col_category=4,
-        col_group=5,
-        col_comment=6,
-        col_month=7,
-        col_amount_eur=3,
-        use_eur_column_as_canonical=True,
-    ),
     "rub_6col": SheetLayout(
         col_amount=2,
         col_category=3,
@@ -90,7 +81,6 @@ _MONTHS_IN_YEAR = 12
 # 2022 Apr+ is RSD; Jan-Mar is RUB
 _RUB_RSD_TRANSITION_YEAR = 2022
 _RUB_RSD_TRANSITION_MONTH = 4
-_EUR_PRIMARY_IMPORT_FROM_YEAR = 2026
 _RELOCATION_UTILITIES_THRESHOLD_EUR = 200
 _RUSSIA_TRIP_FIX_YEAR = 2026
 _RUSSIA_TRIP_EVENT_NAME = "поездка в Россию"
@@ -177,9 +167,7 @@ def _resolve_currency(year: int, month: int, layout: SheetLayout) -> str:
     return "RSD"
 
 
-def _resolve_layout(year: int, layout_key: str) -> SheetLayout:
-    if layout_key == "default" and year >= _EUR_PRIMARY_IMPORT_FROM_YEAR:
-        return LAYOUTS["eur_primary"]
+def _resolve_layout(year: int, layout_key: str) -> SheetLayout:  # noqa: ARG001
     return LAYOUTS[layout_key]
 
 

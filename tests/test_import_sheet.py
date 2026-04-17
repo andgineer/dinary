@@ -20,7 +20,7 @@ def _seed_config():
     con = duckdb_repo.get_config_connection(read_only=False)
     try:
         con.execute(
-            "INSERT INTO sheet_import_sources VALUES (2026, 'test-sheet', '', 'eur_primary', NULL)"
+            "INSERT INTO sheet_import_sources VALUES (2026, 'test-sheet', '', 'default', NULL)"
         )
         con.execute("INSERT INTO categories VALUES (1, 'еда')")
         con.execute("INSERT INTO categories VALUES (2, 'мобильник')")
@@ -188,7 +188,9 @@ class TestImportYear:
         finally:
             con.close()
 
-    def test_uses_eur_column_as_canonical_amount_for_2026(self):
+    def test_ignores_informational_eur_column_for_2026(self):
+        """For 2026+ the EUR column in the sheet is informational (annual fixed
+        rate) and must be ignored; amount is computed from RSD via NBS rate."""
         _seed_config()
         with (
             patch("dinary.services.import_sheet.get_sheet", return_value=_mock_sheet_with_eur()),
@@ -206,9 +208,9 @@ class TestImportYear:
                 "SELECT amount, amount_original, currency_original FROM expenses WHERE category_id = 1"
             ).fetchone()
             assert row is not None
-            assert float(row[0]) == 38.46
             assert float(row[1]) == 4500.0
             assert row[2] == "RSD"
+            assert float(row[0]) == 4500.0
         finally:
             con.close()
 
