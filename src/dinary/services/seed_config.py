@@ -440,8 +440,8 @@ _RAZVL_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
     "спорт": "спорт",
     "skiitime": "лыжи",
     "wellness": "гигиена",
-    "diy": "электроника",
-    "dyi": "электроника",  # typo preserved from 2014 sheet
+    "diy": "гаджеты",
+    "dyi": "гаджеты",  # typo preserved from 2014 sheet
     "подарок": "подарки",
     "подарки": "подарки",
     "отпуск": "аренда",
