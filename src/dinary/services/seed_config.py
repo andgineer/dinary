@@ -402,7 +402,10 @@ _MASHINA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
 }
 
 _DACHA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
+    "": "ремонт",
     "ремонт": "ремонт",
+    "колодец": "ремонт",
+    "electro": "ремонт",  # Latin 'Electro' in 2016 — electrical work, not utility
     "налог": "налог",
     "налоги": "налог",
     "свет": "коммунальные",

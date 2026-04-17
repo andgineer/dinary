@@ -136,6 +136,20 @@ _APPLIANCE_KEYWORDS = (
     "кофемаш",
     "зарядник",
 )
+_TOOL_KEYWORDS = (
+    "шуруповёрт",
+    "шуруповерт",
+    "бензопила",
+    "триммер",
+    "газонокосилка",
+    "косилка",
+    "перфоратор",
+    "рубанок",
+    "лобзик",
+    "культиватор",
+    "мотоблок",
+    "секатор",
+)
 _HOUSING_SOURCE_TYPES = {
     "аренда",
     "квартира",
@@ -292,6 +306,9 @@ def _apply_housing_heuristics(
     source_lower = source_type.lower()
     comment_lower = comment.lower()
 
+    if source_lower == "дача" and any(kw in comment_lower for kw in _TOOL_KEYWORDS):
+        return "инструменты"
+
     if source_type == "аренда" and source_envelope == "релокация":
         category_name = (
             "коммунальные" if amount_eur < _RELOCATION_UTILITIES_THRESHOLD_EUR else "аренда"
@@ -301,7 +318,9 @@ def _apply_housing_heuristics(
     elif source_type == "Ремонт комнаты Ани":
         category_name = "ремонт"
     elif source_lower in _HOUSING_SOURCE_TYPES:
-        if any(keyword in comment_lower for keyword in _REPAIR_KEYWORDS):
+        if any(keyword in comment_lower for keyword in _TOOL_KEYWORDS):
+            category_name = "инструменты"
+        elif any(keyword in comment_lower for keyword in _REPAIR_KEYWORDS):
             category_name = "ремонт"
         elif any(keyword in comment_lower for keyword in _FURNITURE_KEYWORDS):
             category_name = "мебель"
