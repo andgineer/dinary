@@ -23,19 +23,19 @@ CREATE TABLE event_members (
     PRIMARY KEY (event_id, member_id)
 );
 
-CREATE TABLE tags (
+CREATE TABLE spheres_of_life (
     id   INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE source_type_mapping (
-    year            INTEGER NOT NULL DEFAULT 0,
-    source_type     TEXT NOT NULL,
-    source_envelope TEXT NOT NULL DEFAULT '',
-    category_id     INTEGER NOT NULL REFERENCES categories(id),
-    beneficiary_id  INTEGER REFERENCES family_members(id),
-    event_id        INTEGER REFERENCES events(id),
-    tag_ids         INTEGER[],
+    year               INTEGER NOT NULL DEFAULT 0,
+    source_type        TEXT NOT NULL,
+    source_envelope    TEXT NOT NULL DEFAULT '',
+    category_id        INTEGER NOT NULL REFERENCES categories(id),
+    beneficiary_id     INTEGER REFERENCES family_members(id),
+    event_id           INTEGER REFERENCES events(id),
+    sphere_of_life_id  INTEGER REFERENCES spheres_of_life(id),
     PRIMARY KEY (year, source_type, source_envelope)
 );
 
@@ -66,4 +66,11 @@ CREATE TABLE category_taxonomy_membership (
     category_id INTEGER NOT NULL REFERENCES categories(id),
     node_id     INTEGER NOT NULL REFERENCES category_taxonomy_nodes(id),
     PRIMARY KEY (category_id, node_id)
+);
+
+CREATE TABLE exchange_rates (
+    date     DATE NOT NULL,
+    currency TEXT NOT NULL,
+    rate     DECIMAL(10,4) NOT NULL,
+    PRIMARY KEY (date, currency)
 );

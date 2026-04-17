@@ -2,20 +2,16 @@
 
 Compares DuckDB aggregates (via reverse lookup) against the actual sheet data
 row-by-row for each month. Any diff means the rebuild changed observable behavior.
+
+Equivalence is based on amount_original (the value as it appears in the sheet).
 """
 
 import logging
 from collections import defaultdict
 from decimal import Decimal
 
-from gspread.utils import ValueRenderOption
-
 from dinary.services import duckdb_repo
-from dinary.services.import_sheet import (
-    _RUB_TO_RSD,
-    LAYOUTS,
-    _parse_formula_amounts,
-)
+from dinary.services.import_sheet import LAYOUTS
 from dinary.services.sheets import (
     HEADER_ROWS,
     _cell,
@@ -28,14 +24,15 @@ logger = logging.getLogger(__name__)
 _MONTHS_IN_YEAR = 12
 
 
-def _formula_cell_str(row: list, col_1indexed: int) -> str:
-    idx = col_1indexed - 1
-    if len(row) <= idx:
-        return ""
-    val = row[idx]
-    if isinstance(val, int | float):
-        return str(val)
-    return str(val).strip()
+def _parse_display_amount(display: str) -> float | None:
+    if not display:
+        return None
+    cleaned = display.replace(" ", "").replace(",", "")
+    try:
+        val = float(cleaned)
+        return val if val != 0 else None
+    except ValueError:
+        return None
 
 
 def _read_sheet_aggregates(
@@ -46,21 +43,22 @@ def _read_sheet_aggregates(
     Returns {month: {(type, envelope): {amount, comment}}}.
     """
     source = duckdb_repo.get_import_source(year)
-    spreadsheet_id = source.spreadsheet_id if source else ""
-    worksheet_name = source.worksheet_name if source else ""
-    layout_key = source.layout_key if source else "default"
+    if source is None:
+        msg = f"sheet_import_sources is missing a row for year {year}"
+        raise ValueError(msg)
+    spreadsheet_id = source.spreadsheet_id
+    worksheet_name = source.worksheet_name
+    layout_key = source.layout_key
     layout = LAYOUTS[layout_key]
 
     ss = get_sheet(spreadsheet_id)
     ws = ss.worksheet(worksheet_name) if worksheet_name else ss.sheet1
     all_values = ws.get_all_values()
-    all_formulas = ws.get_all_values(value_render_option=ValueRenderOption.formula)
 
     result: dict[int, dict[tuple[str, str], dict]] = defaultdict(dict)
 
     for row_idx in range(HEADER_ROWS, len(all_values)):
         row_display = all_values[row_idx]
-        row_formula = all_formulas[row_idx] if row_idx < len(all_formulas) else row_display
 
         month_str = _cell(row_display, layout.col_month)
         if not month_str or not month_str.isdigit():
@@ -74,18 +72,10 @@ def _read_sheet_aggregates(
         if not category:
             continue
 
-        formula_raw = _formula_cell_str(row_formula, layout.col_amount)
         display_raw = _cell(row_display, layout.col_amount)
-        amounts = _parse_formula_amounts(formula_raw, display_raw)
-        if not amounts and layout.col_amount_rub_fallback:
-            rub_formula = _formula_cell_str(row_formula, layout.col_amount_rub_fallback)
-            rub_display = _cell(row_display, layout.col_amount_rub_fallback)
-            rub_amounts = _parse_formula_amounts(rub_formula, rub_display)
-            amounts = [round(a * _RUB_TO_RSD, 2) for a in rub_amounts]
-        if layout.rub_multiplier != 1.0:
-            amounts = [round(a * layout.rub_multiplier, 2) for a in amounts]
+        amount_val = _parse_display_amount(display_raw)
 
-        total = Decimal(str(sum(amounts))) if amounts else Decimal(0)
+        total = Decimal(str(amount_val)) if amount_val else Decimal(0)
         comment = _cell(row_display, layout.col_comment)
 
         key = (category, group)

@@ -20,6 +20,8 @@ dependencies = [
     "pydantic-settings>=2.8.0",
     "duckdb>=1.5.2",
     "yoyo-migrations>=9.0.0",
+    "holidays>=0.94",
+    "tenacity>=9.1.4",
 ]
 [[project.authors]]
 name = "Andrey Sorokin"

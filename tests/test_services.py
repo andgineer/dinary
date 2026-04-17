@@ -1,12 +1,11 @@
 from datetime import date
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import allure
 import pytest
 
 from dinary.services.category_store import Category, CategoryStore
-from dinary.services.exchange_rate import fetch_eur_rsd_rate
 
 
 @allure.epic("Services")
@@ -49,43 +48,89 @@ class TestCategoryStore:
 
 
 @allure.epic("Services")
-@allure.feature("Exchange Rate")
-class TestExchangeRate:
-    @pytest.mark.anyio
-    @patch("dinary.services.exchange_rate.httpx.AsyncClient")
-    async def test_fetch_rate(self, mock_client_cls):
+@allure.feature("NBS Exchange Rate")
+class TestNbsExchangeRate:
+    @patch("dinary.services.nbs.httpx.get")
+    def test_get_rate_fetches_and_caches(self, mock_get, tmp_path):
+        from dinary.services import duckdb_repo
+        from dinary.services.nbs import get_rate
+
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "code": "EUR",
-            "date": "2026-04-01",
-            "exchange_middle": 117.32,
-        }
+        mock_resp.json.return_value = {"exchange_middle": 117.32}
         mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
 
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_resp
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
+        duckdb_repo.ensure_data_dir()
+        from dinary.services import db_migrations
 
-        rate = await fetch_eur_rsd_rate(date(2026, 4, 1))
-        assert rate == Decimal("117.32")
+        db_path = tmp_path / "config.duckdb"
+        db_migrations.migrate_config_db(db_path)
 
-    @pytest.mark.anyio
-    @patch("dinary.services.exchange_rate.httpx.AsyncClient")
-    async def test_fetch_rate_missing_field(self, mock_client_cls):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"code": "EUR", "date": "2026-04-01"}
-        mock_resp.raise_for_status = MagicMock()
+        import duckdb
 
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_resp
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
+        con = duckdb.connect(str(db_path))
+        try:
+            rate = get_rate(con, date(2026, 4, 1), "EUR")
+            assert rate == Decimal("117.32")
 
-        with pytest.raises(ValueError, match="No exchange_middle"):
-            await fetch_eur_rsd_rate(date(2026, 4, 1))
+            cached = con.execute(
+                "SELECT rate FROM exchange_rates WHERE currency = 'EUR' AND date = '2026-04-01'"
+            ).fetchone()
+            assert cached is not None
+        finally:
+            con.close()
+
+    def test_convert_to_eur_identity(self, tmp_path):
+        """EUR to EUR conversion should be identity."""
+        from dinary.services.nbs import convert_to_eur
+
+        import duckdb
+        from dinary.services import db_migrations
+
+        db_path = tmp_path / "config.duckdb"
+        db_migrations.migrate_config_db(db_path)
+
+        con = duckdb.connect(str(db_path))
+        try:
+            result = convert_to_eur(con, Decimal("100.00"), "EUR", date(2026, 4, 1))
+            assert result == Decimal("100.00")
+        finally:
+            con.close()
+
+    @patch("dinary.services.nbs.httpx.get")
+    def test_convert_rsd_to_eur(self, mock_get, tmp_path):
+        from dinary.services.nbs import convert_to_eur
+
+        import duckdb
+        from dinary.services import db_migrations
+
+        db_path = tmp_path / "config.duckdb"
+        db_migrations.migrate_config_db(db_path)
+
+        call_count = 0
+
+        def mock_responses(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            url = args[0]
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            if "/rsd/" in url:
+                mock_resp.json.return_value = {"exchange_middle": 1.0}
+            elif "/eur/" in url:
+                mock_resp.json.return_value = {"exchange_middle": 117.0}
+            else:
+                mock_resp.json.return_value = {"exchange_middle": 117.0}
+            return mock_resp
+
+        mock_get.side_effect = mock_responses
+
+        con = duckdb.connect(str(db_path))
+        try:
+            result = convert_to_eur(con, Decimal("11700"), "RSD", date(2026, 4, 1))
+            assert result == Decimal("100.00")
+        finally:
+            con.close()
 
 
 @allure.epic("Services")

@@ -32,6 +32,11 @@ def _tmp_duckdb(tmp_path, monkeypatch):
         con.close()
 
 
+def _mock_convert_to_eur(config_con, amount_original, currency_original, rate_date):
+    """Identity conversion for API tests (1:1)."""
+    return amount_original
+
+
 @allure.epic("API")
 @allure.feature("Health")
 def test_health(client):
@@ -64,8 +69,6 @@ def test_categories(client):
 @allure.epic("API")
 @allure.feature("Categories")
 def test_categories_db_failure(client, monkeypatch):
-    """If config.duckdb is unreadable, /api/categories returns 502."""
-
     def bad_connection(**kwargs):
         raise RuntimeError("DB corrupted")
 
@@ -78,7 +81,8 @@ def test_categories_db_failure(client, monkeypatch):
 @allure.epic("API")
 @allure.feature("Expenses")
 @patch("dinary.api.expenses.schedule_sync")
-def test_create_expense(mock_sync, client):
+@patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
+def test_create_expense(mock_convert, mock_sync, client):
     resp = client.post(
         "/api/expenses",
         json={
@@ -103,7 +107,8 @@ def test_create_expense(mock_sync, client):
 @allure.epic("API")
 @allure.feature("Expenses")
 @patch("dinary.api.expenses.schedule_sync")
-def test_create_expense_unknown_category(mock_sync, client):
+@patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
+def test_create_expense_unknown_category(mock_convert, mock_sync, client):
     resp = client.post(
         "/api/expenses",
         json={
@@ -153,10 +158,8 @@ def test_create_expense_missing_expense_id(client):
 @allure.epic("Data Safety")
 @allure.feature("Deduplication")
 @patch("dinary.api.expenses.schedule_sync")
-def test_identical_expense_submitted_twice_creates_one_entry(mock_sync, client):
-    """POST the same expense twice with the same expense_id.
-    The second should return 'duplicate', not create a second row.
-    """
+@patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
+def test_identical_expense_submitted_twice_creates_one_entry(mock_convert, mock_sync, client):
     payload = {
         "expense_id": "dedup-test-1",
         "amount": 1500,
@@ -179,10 +182,8 @@ def test_identical_expense_submitted_twice_creates_one_entry(mock_sync, client):
 @allure.epic("Data Safety")
 @allure.feature("Deduplication")
 @patch("dinary.api.expenses.schedule_sync")
-def test_retry_after_successful_write_does_not_double_count(mock_sync, client):
-    """Simulate: POST succeeds, client retries with same expense_id.
-    The total in DuckDB must not double.
-    """
+@patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
+def test_retry_after_successful_write_does_not_double_count(mock_convert, mock_sync, client):
     payload = {
         "expense_id": "dedup-test-2",
         "amount": 1500,
@@ -198,7 +199,7 @@ def test_retry_after_successful_write_does_not_double_count(mock_sync, client):
 
     con = duckdb_repo.get_budget_connection(2026)
     try:
-        total = con.execute("SELECT SUM(amount) FROM expenses").fetchone()
+        total = con.execute("SELECT SUM(amount_original) FROM expenses").fetchone()
         assert float(total[0]) == 1500.0
     finally:
         con.close()
@@ -207,8 +208,8 @@ def test_retry_after_successful_write_does_not_double_count(mock_sync, client):
 @allure.epic("Data Safety")
 @allure.feature("Deduplication")
 @patch("dinary.api.expenses.schedule_sync")
-def test_conflict_on_different_payload(mock_sync, client):
-    """Same expense_id but different amount -> 409 Conflict."""
+@patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
+def test_conflict_on_different_payload(mock_convert, mock_sync, client):
     client.post(
         "/api/expenses",
         json={
@@ -268,8 +269,8 @@ def test_qr_parse_failure(mock_parse, client):
 @allure.feature("Expenses")
 @allure.story("Travel forward lookup")
 @patch("dinary.api.expenses.schedule_sync")
-def test_create_travel_expense_resolves_event(mock_sync, client):
-    """POST with group='путешествия' creates a synthetic event and stores it."""
+@patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
+def test_create_travel_expense_resolves_event(mock_convert, mock_sync, client):
     resp = client.post(
         "/api/expenses",
         json={
@@ -301,8 +302,8 @@ def test_create_travel_expense_resolves_event(mock_sync, client):
 @allure.epic("Data Safety")
 @allure.feature("Deduplication")
 @patch("dinary.api.expenses.schedule_sync")
-def test_sync_not_called_on_duplicate(mock_sync, client):
-    """schedule_sync must not be called for duplicate submissions."""
+@patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
+def test_sync_not_called_on_duplicate(mock_convert, mock_sync, client):
     payload = {
         "expense_id": "sync-dedup-1",
         "amount": 500,
@@ -323,8 +324,8 @@ def test_sync_not_called_on_duplicate(mock_sync, client):
 @allure.epic("Data Safety")
 @allure.feature("Referential Integrity")
 @patch("dinary.api.expenses.schedule_sync")
-def test_referential_integrity_error_returns_422(mock_sync, client, monkeypatch):
-    """ValueError from insert_expense (bad dimension ID) surfaces as 422, not 500."""
+@patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
+def test_referential_integrity_error_returns_422(mock_convert, mock_sync, client, monkeypatch):
     from dinary.services import duckdb_repo as repo
 
     def bad_insert(*args, **kwargs):

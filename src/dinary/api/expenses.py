@@ -2,6 +2,7 @@
 
 import logging
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from dinary.services import duckdb_repo
 from dinary.services.duckdb_repo import TRAVEL_ENVELOPE
+from dinary.services.nbs import convert_to_eur
 from dinary.services.sync import schedule_sync
 
 logger = logging.getLogger(__name__)
@@ -34,8 +36,24 @@ class ExpenseResponse(BaseModel):
 
 
 @router.post("/api/expenses")
-async def create_expense(req: ExpenseRequest):
+async def create_expense(req: ExpenseRequest):  # noqa: C901
     year = req.date.year
+    amount_original = req.amount
+    currency_original = req.currency
+
+    config_con = duckdb_repo.get_config_connection(read_only=False)
+    try:
+        rate_date = req.date.replace(day=1)
+        amount_eur = float(
+            convert_to_eur(
+                config_con,
+                Decimal(str(amount_original)),
+                currency_original,
+                rate_date,
+            ),
+        )
+    finally:
+        config_con.close()
 
     con = duckdb_repo.get_budget_connection(year)
     try:
@@ -49,7 +67,7 @@ async def create_expense(req: ExpenseRequest):
         category_id = mapping.category_id
         beneficiary_id = mapping.beneficiary_id
         event_id = mapping.event_id
-        tag_ids = mapping.tag_ids
+        sphere_of_life_id = mapping.sphere_of_life_id
 
         if req.group == TRAVEL_ENVELOPE:
             con.close()
@@ -63,13 +81,16 @@ async def create_expense(req: ExpenseRequest):
                 con=con,
                 expense_id=req.expense_id,
                 expense_datetime=expense_dt,
-                amount=req.amount,
-                currency=req.currency,
+                amount=amount_eur,
+                amount_original=amount_original,
+                currency_original=currency_original,
                 category_id=category_id,
                 beneficiary_id=beneficiary_id,
                 event_id=event_id,
-                tag_ids=tag_ids,
+                sphere_of_life_id=sphere_of_life_id,
                 comment=req.comment,
+                source_type=req.category,
+                source_envelope=req.group,
             )
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from None
@@ -88,7 +109,7 @@ async def create_expense(req: ExpenseRequest):
             req.date.month,
             sheet_category=req.category,
             sheet_group=req.group,
-            amount=req.amount,
+            amount=amount_original,
             comment=req.comment,
             expense_date=req.date,
         )
@@ -100,5 +121,5 @@ async def create_expense(req: ExpenseRequest):
         expense_id=req.expense_id,
         month=month_label,
         category=req.category,
-        amount_rsd=req.amount,
+        amount_rsd=amount_original,
     )

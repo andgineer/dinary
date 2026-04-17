@@ -20,7 +20,7 @@ ALL_SQL_FILES = [
     "reverse_lookup_travel.sql",
     "seed_load_categories.sql",
     "seed_load_members.sql",
-    "seed_load_tags.sql",
+    "seed_load_spheres.sql",
 ]
 
 

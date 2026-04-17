@@ -30,12 +30,13 @@ class TestConfigMigrations:
                 "family_members",
                 "events",
                 "event_members",
-                "tags",
+                "spheres_of_life",
                 "source_type_mapping",
                 "sheet_import_sources",
                 "category_taxonomies",
                 "category_taxonomy_nodes",
                 "category_taxonomy_membership",
+                "exchange_rates",
             }
             assert expected.issubset(tables)
         finally:
@@ -72,7 +73,6 @@ class TestConfigMigrations:
             con.close()
 
     def test_categories_are_atomic(self, tmp_path: Path):
-        """After migration, categories table should have no group_id column."""
         db_path = tmp_path / "config.duckdb"
         db_migrations.migrate_config_db(db_path)
 
@@ -86,7 +86,6 @@ class TestConfigMigrations:
             con.close()
 
     def test_no_stores_table(self, tmp_path: Path):
-        """After migration, stores table should not exist."""
         db_path = tmp_path / "config.duckdb"
         db_migrations.migrate_config_db(db_path)
 
@@ -109,7 +108,7 @@ class TestBudgetMigrations:
         con = duckdb.connect(str(db_path))
         try:
             tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
-            assert {"expenses", "expense_tags", "sheet_sync_jobs"}.issubset(tables)
+            assert {"expenses", "sheet_sync_jobs"}.issubset(tables)
         finally:
             con.close()
 
@@ -126,7 +125,6 @@ class TestBudgetMigrations:
             con.close()
 
     def test_no_store_id_in_expenses(self, tmp_path: Path):
-        """After migration, expenses should not have store_id."""
         db_path = tmp_path / "budget_2026.duckdb"
         db_migrations.migrate_budget_db(db_path)
 
@@ -134,6 +132,20 @@ class TestBudgetMigrations:
         try:
             cols = {r[0] for r in con.execute("DESCRIBE expenses").fetchall()}
             assert "store_id" not in cols
+        finally:
+            con.close()
+
+    def test_expenses_has_new_amount_fields(self, tmp_path: Path):
+        db_path = tmp_path / "budget_2026.duckdb"
+        db_migrations.migrate_budget_db(db_path)
+
+        con = duckdb.connect(str(db_path))
+        try:
+            cols = {r[0] for r in con.execute("DESCRIBE expenses").fetchall()}
+            assert "amount" in cols
+            assert "amount_original" in cols
+            assert "currency_original" in cols
+            assert "sphere_of_life_id" in cols
         finally:
             con.close()
 

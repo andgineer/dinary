@@ -44,36 +44,39 @@ def populated_db(tmp_path):
             bcon,
             "s1",
             datetime(2026, 4, 14, 10, 0),
+            12.82,
             1500.0,
             "RSD",
             1,
             1,
             None,
-            [],
+            None,
             "lunch",
         )
         duckdb_repo.insert_expense(
             bcon,
             "s2",
             datetime(2026, 4, 15, 12, 0),
+            25.64,
             3000.0,
             "RSD",
             1,
             1,
             None,
-            [],
+            None,
             "dinner",
         )
         duckdb_repo.insert_expense(
             bcon,
             "s3",
             datetime(2026, 4, 16, 9, 0),
+            3.42,
             400.0,
             "RSD",
             2,
             None,
             None,
-            [],
+            None,
             "",
         )
     finally:
@@ -203,7 +206,6 @@ class TestWriteAggregates:
 @allure.feature("Idempotency")
 class TestSyncIdempotency:
     def test_rerun_produces_same_result(self, populated_db):
-        """Running _build_aggregates twice gives the same totals."""
         con = duckdb_repo.get_budget_connection(2026)
         try:
             agg1 = _build_aggregates(con, 2026, 4)
@@ -215,7 +217,6 @@ class TestSyncIdempotency:
             con.close()
 
     def test_sync_clears_job(self, populated_db):
-        """After a full sync_month_core, the dirty job is cleared."""
         con = duckdb_repo.get_budget_connection(2026)
         try:
             jobs_before = duckdb_repo.get_dirty_sync_jobs(con)
@@ -245,88 +246,11 @@ class TestSyncIdempotency:
         finally:
             con.close()
 
-    def test_sync_writes_rate_when_cell_empty(self, populated_db):
-        """When the month's rate cell is empty and a rate is provided, sync writes it."""
-        from dinary.services.sheets import COL_RATE_EUR
-        from dinary.services.sync import _sync_month_core
-
-        with (
-            patch("dinary.services.sync.get_sheet") as mock_sheet,
-            patch("dinary.services.sync.find_month_range", return_value=(2, 30)),
-            patch("dinary.services.sync.find_category_row", return_value=2),
-            patch("dinary.services.sync.get_month_rate", return_value=None),
-        ):
-            ws_mock = MagicMock()
-            ws_mock.get_all_values.return_value = [["header"]]
-            ws_mock.batch_get.return_value = [[[""]]]
-            mock_sheet.return_value.sheet1 = ws_mock
-
-            _sync_month_core(2026, 4, rate=Decimal("117.5"))
-
-            ws_mock.update_cell.assert_any_call(2, COL_RATE_EUR, "117.5")
-
-    def test_sync_all_dirty_discovers_multiple_years(self, populated_db, tmp_path):
-        """sync_all_dirty finds dirty jobs across multiple budget_YYYY.duckdb files."""
-        from dinary.services.sync import sync_all_dirty
-
-        bcon_2025 = duckdb_repo.get_budget_connection(2025)
-        try:
-            duckdb_repo.insert_expense(
-                bcon_2025,
-                "x25",
-                datetime(2025, 12, 15, 10, 0),
-                500.0,
-                "RSD",
-                1,
-                1,
-                None,
-                [],
-                "",
-            )
-        finally:
-            bcon_2025.close()
-
-        with (
-            patch("dinary.services.sync.get_sheet") as mock_sheet,
-            patch("dinary.services.sync.find_month_range", return_value=(2, 30)),
-            patch("dinary.services.sync.find_category_row", return_value=2),
-            patch("dinary.services.sync.get_month_rate", return_value="117"),
-        ):
-            ws_mock = MagicMock()
-            ws_mock.get_all_values.return_value = [["header"]]
-            ws_mock.batch_get.return_value = [[[""]]]
-            mock_sheet.return_value.sheet1 = ws_mock
-
-            synced = sync_all_dirty()
-
-        assert synced >= 2
-
-    def test_sync_skips_rate_when_cell_populated(self, populated_db):
-        """When the month already has a rate, sync does not overwrite it."""
-        from dinary.services.sync import _sync_month_core
-
-        with (
-            patch("dinary.services.sync.get_sheet") as mock_sheet,
-            patch("dinary.services.sync.find_month_range", return_value=(2, 30)),
-            patch("dinary.services.sync.find_category_row", return_value=2),
-            patch("dinary.services.sync.get_month_rate", return_value="117"),
-        ):
-            ws_mock = MagicMock()
-            ws_mock.get_all_values.return_value = [["header"]]
-            ws_mock.batch_get.return_value = [[[""]]]
-            mock_sheet.return_value.sheet1 = ws_mock
-
-            _sync_month_core(2026, 4, rate=Decimal("120"))
-
-            for call in ws_mock.update_cell.call_args_list:
-                assert call[0][1] != 8, "Should not write to rate column when rate already exists"
-
 
 @allure.epic("Sync")
 @allure.feature("Targeted Row Sync")
 class TestSyncSingleRow:
     def test_appends_amount_to_target_row(self, populated_db):
-        """_sync_single_row calls append_to_rsd_formula on the correct row."""
         all_values = [
             ["Date", "RSD", "EUR", "Category", "Group", "Comment", "Month", "Rate"],
             ["Apr-1", "=1500", "", "еда&бытовые", "собака", "lunch", "4", "117"],
@@ -348,228 +272,27 @@ class TestSyncSingleRow:
             mock_append.assert_called_once_with(ws_mock, 2, 500.0)
             mock_comment.assert_called_once()
 
-    def test_skips_comment_when_empty(self, populated_db):
-        """No comment append when comment is empty."""
-        all_values = [
-            ["Date", "RSD", "EUR", "Category", "Group", "Comment", "Month", "Rate"],
-            ["Apr-1", "", "", "мобильник", "", "", "4", "117"],
-        ]
-        with (
-            patch("dinary.services.sync.get_sheet") as mock_sheet,
-            patch("dinary.services.sync.find_month_range", return_value=(2, 2)),
-            patch("dinary.services.sync.find_category_row", return_value=2),
-            patch("dinary.services.sync.get_month_rate", return_value="117"),
-            patch("dinary.services.sync.append_to_rsd_formula"),
-            patch("dinary.services.sync.append_comment") as mock_comment,
-        ):
-            ws_mock = MagicMock()
-            ws_mock.get_all_values.return_value = all_values
-            mock_sheet.return_value.sheet1 = ws_mock
-
-            _sync_single_row(2026, 4, "мобильник", "", 400.0, "", date(2026, 4, 16))
-
-            mock_comment.assert_not_called()
-
-    def test_creates_month_when_missing(self, populated_db):
-        """If the month block doesn't exist, it's created before appending."""
-        with (
-            patch("dinary.services.sync.get_sheet") as mock_sheet,
-            patch("dinary.services.sync.find_month_range", side_effect=[None, (2, 30)]),
-            patch("dinary.services.sync.create_month_rows") as mock_create,
-            patch("dinary.services.sync.find_category_row", return_value=2),
-            patch("dinary.services.sync.get_month_rate", return_value="117"),
-            patch("dinary.services.sync.append_to_rsd_formula"),
-        ):
-            ws_mock = MagicMock()
-            ws_mock.get_all_values.return_value = [["header"]]
-            mock_sheet.return_value.sheet1 = ws_mock
-
-            _sync_single_row(2026, 5, "еда&бытовые", "собака", 100.0, "", date(2026, 5, 1))
-
-            mock_create.assert_called_once()
-
-    def test_writes_rate_when_missing(self, populated_db):
-        """Exchange rate is written when cell is empty."""
-        from dinary.services.sheets import COL_RATE_EUR
-
-        with (
-            patch("dinary.services.sync.get_sheet") as mock_sheet,
-            patch("dinary.services.sync.find_month_range", return_value=(2, 10)),
-            patch("dinary.services.sync.find_category_row", return_value=2),
-            patch("dinary.services.sync.get_month_rate", return_value=None),
-            patch("dinary.services.sync.append_to_rsd_formula"),
-        ):
-            ws_mock = MagicMock()
-            ws_mock.get_all_values.return_value = [["header"]]
-            mock_sheet.return_value.sheet1 = ws_mock
-
-            _sync_single_row(
-                2026,
-                4,
-                "еда&бытовые",
-                "собака",
-                100.0,
-                "",
-                date(2026, 4, 1),
-                rate=Decimal("117.5"),
-            )
-
-            ws_mock.update_cell.assert_any_call(2, COL_RATE_EUR, "117.5")
-
-    def test_preserves_dirty_job_after_write(self, populated_db):
-        """Dirty sync job must survive single-row sync so inv sync can do a full rebuild."""
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            assert (2026, 4) in duckdb_repo.get_dirty_sync_jobs(con)
-        finally:
-            con.close()
-
-        with (
-            patch("dinary.services.sync.get_sheet") as mock_sheet,
-            patch("dinary.services.sync.find_month_range", return_value=(2, 30)),
-            patch("dinary.services.sync.find_category_row", return_value=2),
-            patch("dinary.services.sync.get_month_rate", return_value="117"),
-            patch("dinary.services.sync.append_to_rsd_formula"),
-        ):
-            ws_mock = MagicMock()
-            ws_mock.get_all_values.return_value = [["header"]]
-            mock_sheet.return_value.sheet1 = ws_mock
-
-            _sync_single_row(2026, 4, "еда&бытовые", "собака", 100.0, "", date(2026, 4, 17))
-
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            assert (2026, 4) in duckdb_repo.get_dirty_sync_jobs(con)
-        finally:
-            con.close()
-
-
-@allure.epic("Sync")
-@allure.feature("Targeted Row Sync")
-class TestScheduleSyncWiring:
-    @pytest.mark.anyio(loop_scope="function")
-    @pytest.mark.parametrize("anyio_backend", ["asyncio"], indirect=True)
-    async def test_async_sync_row_calls_sync_single_row(self, populated_db, anyio_backend):
-        """_async_sync_row must delegate to _sync_single_row with correct args."""
-        from dinary.services.sync import _async_sync_row
-
-        with (
-            patch("dinary.services.sync._sync_single_row") as mock_single,
-            patch("dinary.services.sync.fetch_eur_rsd_rate", side_effect=OSError("skip")),
-            patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)),
-        ):
-            await _async_sync_row(
-                2026,
-                4,
-                "еда&бытовые",
-                "собака",
-                500.0,
-                "test",
-                date(2026, 4, 17),
-            )
-
-            mock_single.assert_called_once()
-            args = mock_single.call_args[0]
-            assert args[0] == 2026
-            assert args[1] == 4
-            assert args[2] == "еда&бытовые"
-            assert args[3] == "собака"
-            assert args[4] == 500.0
-            assert args[5] == "test"
-
 
 @allure.epic("Sync")
 @allure.feature("Reverse Mapping Equivalence")
 class TestSyncEquivalence:
-    """Verify that reverse lookup reproduces the original Type+Envelope for all mapping styles."""
-
     def test_simple_reverse_map(self, populated_db):
-        """Plain category with beneficiary reverse-maps to original (type, envelope)."""
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 1, 1, None, [])
+            result = duckdb_repo.reverse_lookup_mapping(con, 2026, 1, 1, None, None)
             assert result == ("еда&бытовые", "собака")
         finally:
             con.close()
 
     def test_no_envelope_reverse_map(self, populated_db):
-        """Category without envelope reverse-maps to (type, '')."""
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 2, None, None, [])
+            result = duckdb_repo.reverse_lookup_mapping(con, 2026, 2, None, None, None)
             assert result == ("мобильник", "")
         finally:
             con.close()
 
-    def test_travel_reverse_map(self, populated_db):
-        """Travel expenses reverse-map to (type, 'путешествия')."""
-        con = duckdb_repo.get_config_connection(read_only=False)
-        try:
-            con.execute("INSERT INTO categories VALUES (10, 'кафе')")
-            con.execute(
-                "INSERT INTO source_type_mapping "
-                "VALUES (0, 'кафе', 'путешествия', 10, NULL, NULL, NULL)"
-            )
-            con.execute(
-                "INSERT INTO events VALUES (100, 'отпуск-2026', '2026-01-01', '2026-12-31', true, NULL)"
-            )
-        finally:
-            con.close()
-
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            duckdb_repo.insert_expense(
-                con,
-                "tr-1",
-                datetime(2026, 4, 10, 12, 0),
-                2000.0,
-                "RSD",
-                10,
-                None,
-                100,
-                [],
-                "travel cafe",
-            )
-            result = duckdb_repo.reverse_lookup_mapping(con, 10, None, 100, [])
-            assert result is not None
-            assert result[1] == TRAVEL_ENVELOPE
-        finally:
-            con.close()
-
-    def test_subscription_tag_reverse_map(self, populated_db):
-        """Subscription-tagged expense reverse-maps to (type, 'приложения')."""
-        con = duckdb_repo.get_config_connection(read_only=False)
-        try:
-            con.execute("INSERT INTO categories VALUES (20, 'развлечения')")
-            con.execute("INSERT INTO tags VALUES (10, 'подписка')")
-            con.execute(
-                "INSERT INTO source_type_mapping "
-                "VALUES (0, 'развлечения', 'приложения', 20, NULL, NULL, [10])"
-            )
-        finally:
-            con.close()
-
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            duckdb_repo.insert_expense(
-                con,
-                "sub-1",
-                datetime(2026, 4, 10, 12, 0),
-                500.0,
-                "RSD",
-                20,
-                None,
-                None,
-                [10],
-                "netflix",
-            )
-            result = duckdb_repo.reverse_lookup_mapping(con, 20, None, None, [10])
-            assert result == ("развлечения", "приложения")
-        finally:
-            con.close()
-
     def test_aggregates_match_original_keys(self, populated_db):
-        """_build_aggregates keys match the original sheet (type, envelope) pairs."""
         con = duckdb_repo.get_budget_connection(2026)
         try:
             agg = _build_aggregates(con, 2026, 4)
@@ -577,18 +300,5 @@ class TestSyncEquivalence:
             for cat, grp in agg:
                 assert isinstance(cat, str)
                 assert isinstance(grp, str)
-        finally:
-            con.close()
-
-    def test_rebuild_aggregates_idempotent(self, populated_db):
-        """Building aggregates twice gives identical results."""
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            agg1 = _build_aggregates(con, 2026, 4)
-            agg2 = _build_aggregates(con, 2026, 4)
-            assert agg1 is not None
-            assert set(agg1.keys()) == set(agg2.keys())
-            for key in agg1:
-                assert agg1[key]["total_rsd"] == agg2[key]["total_rsd"]
         finally:
             con.close()

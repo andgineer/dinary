@@ -34,10 +34,7 @@ class MappingRow:
     category_id: int
     beneficiary_id: int | None
     event_id: int | None
-    tag_ids: list[int]
-
-    def __post_init__(self) -> None:
-        self.tag_ids = sorted(self.tag_ids) if self.tag_ids else []
+    sphere_of_life_id: int | None
 
 
 @dataclasses.dataclass(slots=True)
@@ -45,15 +42,15 @@ class ExpenseRow:
     id: str
     datetime: datetime
     amount: Decimal
-    currency: str
+    amount_original: Decimal
+    currency_original: str
     category_id: int
     beneficiary_id: int | None
     event_id: int | None
+    sphere_of_life_id: int | None
     comment: str | None
-    tag_ids: list[int]
-
-    def __post_init__(self) -> None:
-        self.tag_ids = self.tag_ids if self.tag_ids else []
+    source_type: str
+    source_envelope: str
 
 
 @dataclasses.dataclass(slots=True)
@@ -66,7 +63,7 @@ class SourceMappingRow:
 class ReverseMappingRow:
     source_type: str
     source_envelope: str
-    tag_ids: list[int] | None
+    sphere_of_life_id: int | None
 
 
 @dataclasses.dataclass(slots=True)
@@ -86,12 +83,16 @@ class EventIdRow:
 @dataclasses.dataclass(slots=True)
 class ExistingExpenseRow:
     amount: Decimal
-    currency: str
+    amount_original: Decimal
+    currency_original: str
     category_id: int
     beneficiary_id: int | None
     event_id: int | None
+    sphere_of_life_id: int | None
     comment: str | None
     datetime: datetime
+    source_type: str
+    source_envelope: str
 
 
 @dataclasses.dataclass(slots=True)
@@ -163,10 +164,7 @@ def resolve_mapping(
     category: str,
     group: str,
 ) -> MappingRow | None:
-    """Look up (source_type, source_envelope) in source_type_mapping via ATTACHed config.
-
-    Returns MappingRow or None if not found.
-    """
+    """Look up (source_type, source_envelope) in source_type_mapping via ATTACHed config."""
     return fetchone_as(MappingRow, con, load_sql("resolve_mapping.sql"), [category, group])
 
 
@@ -206,9 +204,6 @@ def get_import_source(year: int) -> ImportSourceRow | None:
 def resolve_travel_event(expense_date: date) -> int:
     """Find or create a synthetic travel event for the expense's year.
 
-    Looks for an event named 'отпуск-YYYY' whose date range contains
-    the expense date. Auto-creates one if missing.
-
     Operates directly on config.duckdb (not ATTACHed) to avoid handle conflicts.
     """
     year = expense_date.year
@@ -240,17 +235,51 @@ def resolve_travel_event(expense_date: date) -> int:
         config_con.close()
 
 
-def insert_expense(  # noqa: C901, PLR0913
+def ensure_event(
+    *,
+    name: str,
+    date_from: date,
+    date_to: date,
+    comment: str | None = None,
+) -> int:
+    """Find or create a named event in config.duckdb and return its id."""
+    config_con = get_config_connection(read_only=False)
+    try:
+        row = config_con.execute(
+            "SELECT id FROM events WHERE name = ? AND date_from = ? AND date_to = ?",
+            [name, date_from, date_to],
+        ).fetchone()
+        if row:
+            return row[0]
+
+        max_row = config_con.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()
+        max_event_id = max_row[0] if max_row else 0
+        new_id = max_event_id + 1
+        config_con.execute(
+            "INSERT INTO events (id, name, date_from, date_to, comment) VALUES (?, ?, ?, ?, ?)",
+            [new_id, name, date_from, date_to, comment],
+        )
+        logger.info("Created event: %s (id=%d)", name, new_id)
+        return new_id
+    finally:
+        config_con.close()
+
+
+def insert_expense(  # noqa: PLR0913
     con: duckdb.DuckDBPyConnection,
     expense_id: str,
     expense_datetime: datetime,
     amount: float,
-    currency: str,
+    amount_original: float,
+    currency_original: str,
     category_id: int,
     beneficiary_id: int | None,
     event_id: int | None,
-    tag_ids: list[int],
+    sphere_of_life_id: int | None,
     comment: str,
+    *,
+    source_type: str = "",
+    source_envelope: str = "",
 ) -> str:
     """Insert an expense, returning 'created', 'duplicate', or 'conflict'.
 
@@ -281,12 +310,16 @@ def insert_expense(  # noqa: C901, PLR0913
             ).fetchone()
         ):
             raise ValueError(f"event_id {event_id} not found in config.events")
-        for tid in tag_ids:
-            if not con.execute(
-                "SELECT 1 FROM config.tags WHERE id = ?",
-                [tid],
-            ).fetchone():
-                raise ValueError(f"tag_id {tid} not found in config.tags")
+        if (
+            sphere_of_life_id is not None
+            and not con.execute(
+                "SELECT 1 FROM config.spheres_of_life WHERE id = ?",
+                [sphere_of_life_id],
+            ).fetchone()
+        ):
+            raise ValueError(
+                f"sphere_of_life_id {sphere_of_life_id} not found in config.spheres_of_life",
+            )
 
         inserted = con.execute(
             load_sql("insert_expense.sql"),
@@ -294,20 +327,19 @@ def insert_expense(  # noqa: C901, PLR0913
                 expense_id,
                 expense_datetime,
                 amount,
-                currency,
+                amount_original,
+                currency_original,
                 category_id,
                 beneficiary_id,
                 event_id,
+                sphere_of_life_id,
                 comment,
+                source_type,
+                source_envelope,
             ],
         ).fetchone()
 
         if inserted is not None:
-            for tag_id in tag_ids:
-                con.execute(
-                    "INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)",
-                    [expense_id, tag_id],
-                )
             year = expense_datetime.year
             month = expense_datetime.month
             con.execute(
@@ -325,34 +357,36 @@ def insert_expense(  # noqa: C901, PLR0913
         )
         assert existing is not None, f"expense {expense_id} vanished after ON CONFLICT"
 
-        existing_tags_row = con.execute(
-            "SELECT list(tag_id ORDER BY tag_id) FROM expense_tags WHERE expense_id = ?",
-            [expense_id],
-        ).fetchone()
-        existing_tags = existing_tags_row[0] if existing_tags_row and existing_tags_row[0] else []
-
         stored = (
             existing.amount,
-            existing.currency,
+            existing.amount_original,
+            existing.currency_original,
             existing.category_id,
             existing.beneficiary_id,
             existing.event_id,
+            existing.sphere_of_life_id,
             existing.comment,
             existing.datetime,
+            existing.source_type,
+            existing.source_envelope,
         )
         incoming = (
             Decimal(str(amount)),
-            currency,
+            Decimal(str(amount_original)),
+            currency_original,
             category_id,
             beneficiary_id,
             event_id,
+            sphere_of_life_id,
             comment,
             expense_datetime,
+            source_type,
+            source_envelope,
         )
 
         con.execute("ROLLBACK")
 
-        if stored == incoming and sorted(existing_tags) == sorted(tag_ids):
+        if stored == incoming:
             return "duplicate"
         return "conflict"
 
@@ -378,23 +412,24 @@ def get_month_expenses(
     year: int,
     month: int,
 ) -> list[ExpenseRow]:
-    """Read all expenses for a given month with their tags."""
+    """Read all expenses for a given month."""
     return fetchall_as(ExpenseRow, con, load_sql("get_month_expenses.sql"), [year, month])
 
 
-def reverse_lookup_mapping(
+def reverse_lookup_mapping(  # noqa: PLR0913
     con: duckdb.DuckDBPyConnection,
+    year: int,
     category_id: int,
     beneficiary_id: int | None,
     event_id: int | None,
-    tag_ids: list[int],
+    sphere_of_life_id: int | None,
 ) -> tuple[str, str] | None:
     """Reverse-map a 4D expense back to (source_type, source_envelope).
 
     Two paths:
     1. Travel expenses (event_id references a synthetic event): match by
        category_id + TRAVEL_ENVELOPE.
-    2. All others: full 4D null-safe match.
+    2. All others: match by category_id + beneficiary + event + sphere_of_life.
     """
     if event_id is not None:
         is_travel = con.execute(
@@ -406,21 +441,19 @@ def reverse_lookup_mapping(
                 SourceMappingRow,
                 con,
                 load_sql("reverse_lookup_travel.sql"),
-                [TRAVEL_ENVELOPE, category_id],
+                [year, TRAVEL_ENVELOPE, category_id],
             )
             return (row.source_type, row.source_envelope) if row else None
 
-    sorted_tags = sorted(tag_ids) if tag_ids else []
     rows = fetchall_as(
         ReverseMappingRow,
         con,
         load_sql("reverse_lookup_5d.sql"),
-        [category_id, beneficiary_id, event_id],
+        [year, category_id, beneficiary_id, event_id],
     )
 
     for r in rows:
-        mapping_tags = sorted(r.tag_ids) if r.tag_ids else []
-        if mapping_tags == sorted_tags:
+        if r.sphere_of_life_id == sphere_of_life_id:
             return (r.source_type, r.source_envelope)
 
     return None

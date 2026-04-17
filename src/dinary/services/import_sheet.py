@@ -1,32 +1,32 @@
 """Import historical Google Sheets data into DuckDB for a given year.
 
-Reads the sheet with raw formulas, parses individual amounts from the
-RSD formula column (e.g. =460+373+1500), and creates one expense row
-per individual amount in budget_YYYY.duckdb.
-
-For formulas containing cell references (e.g. =550*H134 for EUR amounts),
-falls back to the evaluated display value as a single aggregate amount.
+Reads the sheet, takes the evaluated display value as a single aggregate
+amount per row (no formula splitting), converts to EUR via NBS rates,
+and creates one expense row per sheet row in budget_YYYY.duckdb.
 
 Idempotent: uses deterministic expense IDs so re-running is safe.
-Does NOT create sheet_sync_jobs — the data is already in the sheet.
+Does NOT create sheet_sync_jobs -- the data is already in the sheet.
 """
 
 import dataclasses
 import hashlib
 import logging
-import re
-from datetime import date, datetime, timedelta
-
-from gspread.utils import ValueRenderOption
+from datetime import date, datetime
+from decimal import Decimal
 
 from dinary.services import duckdb_repo
+from dinary.services.seed_config import (
+    BENEFICIARY_ENVELOPES,
+    SPHERE_OF_LIFE_ENVELOPES,
+    _canonical_category_for_source,
+)
 from dinary.services.sheets import (
     HEADER_ROWS,
     _cell,
     get_sheet,
 )
 
-_RUB_TO_RSD = 1.5
+logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -36,19 +36,43 @@ class SheetLayout:
     col_group: int
     col_comment: int
     col_month: int
-    rub_multiplier: float = 1.0
-    col_amount_rub_fallback: int | None = None
+    currency: str = "RSD"
+    col_amount_eur: int | None = None
+    use_eur_column_as_canonical: bool = False
 
 
 LAYOUTS: dict[str, SheetLayout] = {
-    "default": SheetLayout(col_amount=2, col_category=4, col_group=5, col_comment=6, col_month=7),
+    "default": SheetLayout(
+        col_amount=2,
+        col_category=4,
+        col_group=5,
+        col_comment=6,
+        col_month=7,
+    ),
+    "rub": SheetLayout(
+        col_amount=2,
+        col_category=4,
+        col_group=5,
+        col_comment=6,
+        col_month=7,
+        currency="RUB",
+    ),
     "rub_fallback": SheetLayout(
         col_amount=2,
         col_category=4,
         col_group=5,
         col_comment=6,
         col_month=7,
-        col_amount_rub_fallback=3,
+        col_amount_eur=3,
+    ),
+    "eur_primary": SheetLayout(
+        col_amount=2,
+        col_category=4,
+        col_group=5,
+        col_comment=6,
+        col_month=7,
+        col_amount_eur=3,
+        use_eur_column_as_canonical=True,
     ),
     "rub_6col": SheetLayout(
         col_amount=2,
@@ -56,25 +80,77 @@ LAYOUTS: dict[str, SheetLayout] = {
         col_group=4,
         col_comment=5,
         col_month=6,
-        rub_multiplier=_RUB_TO_RSD,
+        currency="RUB",
     ),
 }
 
-logger = logging.getLogger(__name__)
-
-_PURE_ADDITIVE_RE = re.compile(r"^[\d.+\s]+$")
 _MONTHS_IN_YEAR = 12
 
-
-def _formula_cell_str(row: list, col_1indexed: int) -> str:
-    """Get a formula cell value as string (gspread may return int/float)."""
-    idx = col_1indexed - 1
-    if len(row) <= idx:
-        return ""
-    val = row[idx]
-    if isinstance(val, int | float):
-        return str(val)
-    return str(val).strip()
+# 2022 Apr+ is RSD; Jan-Mar is RUB
+_RUB_RSD_TRANSITION_YEAR = 2022
+_RUB_RSD_TRANSITION_MONTH = 4
+_EUR_PRIMARY_IMPORT_FROM_YEAR = 2026
+_RELOCATION_UTILITIES_THRESHOLD_EUR = 200
+_RUSSIA_TRIP_FIX_YEAR = 2026
+_RUSSIA_TRIP_EVENT_NAME = "поездка в Россию"
+_REPAIR_KEYWORDS = (
+    "ремонт",
+    "мастер",
+    "сантех",
+    "электрик",
+    "покраск",
+    "краск",
+    "ламинат",
+    "обои",
+    "дрель",
+    "перфорат",
+    "шпаклев",
+    "цемент",
+)
+_FURNITURE_KEYWORDS = (
+    "стол",
+    "стул",
+    "шкаф",
+    "полка",
+    "вешалка",
+    "матрас",
+    "кровать",
+    "тумба",
+    "зеркало",
+    "диван",
+    "комод",
+)
+_APPLIANCE_KEYWORDS = (
+    "гриль",
+    "чайник",
+    "пылесос",
+    "блендер",
+    "микроволнов",
+    "холодильник",
+    "стирал",
+    "утюг",
+    "сушилка",
+    "кофемаш",
+    "зарядник",
+)
+_HOUSING_SOURCE_TYPES = {
+    "аренда",
+    "коммунальные",
+    "квартира",
+    "жильё",
+    "жилье",
+    "обустройство",
+    "household",
+    "дом",
+}
+_POST_IMPORT_CATEGORY_FIXES = {
+    "эпоксидка гриль зарядник батарейки ножи аккумулятор": "бытовая техника",
+    "кабель для наушников кино проектор byintek ufo p20": "электроника",
+    "амазон - наушники перчатки стевия фильтр вентилятор": "электроника",
+    "маме на др iphone 7 gold 128gb цветы бабушке": "подарки",
+    "папе на ячейку": "сервисы",
+    "переводы родителям": "подарки",
+}
 
 
 def _parse_display_amount(display: str) -> float | None:
@@ -89,50 +165,26 @@ def _parse_display_amount(display: str) -> float | None:
         return None
 
 
-def _parse_formula_amounts(formula_raw: str, display_raw: str) -> list[float]:
-    """Extract individual amounts from a formula, falling back to display value.
-
-    Pure additive formulas (=460+373+1500) are split into individual amounts.
-    Formulas with cell references or multiplication (=550*H134) fall back
-    to the display value as a single amount.
-    """
-    if not formula_raw and not display_raw:
-        return []
-
-    if formula_raw.startswith("="):
-        body = formula_raw[1:].strip()
-        if _PURE_ADDITIVE_RE.match(body):
-            parts = body.split("+")
-            amounts: list[float] = []
-            for part in parts:
-                cleaned = part.strip().replace(",", ".")
-                if not cleaned:
-                    continue
-                try:
-                    val = float(cleaned)
-                    if val != 0:
-                        amounts.append(val)
-                except ValueError:
-                    pass
-            if amounts:
-                return amounts
-
-    val = _parse_display_amount(display_raw)
-    if val is not None:
-        return [val]
-    return []
+def _resolve_currency(year: int, month: int, layout: SheetLayout) -> str:
+    """Determine the original currency for this row based on year/month and layout."""
+    if layout.currency != "RSD":
+        return layout.currency
+    if year < _RUB_RSD_TRANSITION_YEAR:
+        return "RUB"
+    if year == _RUB_RSD_TRANSITION_YEAR and month < _RUB_RSD_TRANSITION_MONTH:
+        return "RUB"
+    return "RSD"
 
 
-def _stable_id(  # noqa: PLR0913
-    year: int,
-    month: int,
-    row_idx: int,
-    category: str,
-    group: str,
-    idx: int,
-) -> str:
+def _resolve_layout(year: int, layout_key: str) -> SheetLayout:
+    if layout_key == "default" and year >= _EUR_PRIMARY_IMPORT_FROM_YEAR:
+        return LAYOUTS["eur_primary"]
+    return LAYOUTS[layout_key]
+
+
+def _stable_id(year: int, month: int, row_idx: int, category: str, group: str) -> str:
     """Deterministic expense ID for idempotent import."""
-    raw = f"legacy-{year}-{month:02d}-r{row_idx}-{category}-{group}-{idx}"
+    raw = f"legacy-{year}-{month:02d}-r{row_idx}-{category}-{group}"
     short_hash = hashlib.sha256(raw.encode()).hexdigest()[:8]
     return f"legacy-{year}{month:02d}-{short_hash}"
 
@@ -142,34 +194,244 @@ def _ensure_travel_event(year: int) -> int:
     return duckdb_repo.resolve_travel_event(date(year, 1, 1))
 
 
-def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
-    """Import all months for *year* from Google Sheets into DuckDB.
+def _prefetch_monthly_rates(year: int, layout: SheetLayout) -> dict[int, dict[str, Decimal]]:
+    """Pre-fetch NBS rates for all months in the year, keyed by month.
 
-    Resolves the spreadsheet and worksheet from sheet_import_sources
-    if a row exists for *year*; otherwise falls back to the default
-    spreadsheet configured via DINARY_GOOGLE_SHEETS_SPREADSHEET_ID.
+    Opens and closes config_con internally so it doesn't conflict with budget_con.
+    Returns {month: {currency: eur_equivalent_factor}}.
+    """
+    rates: dict[int, dict[str, Decimal]] = {}
+    config_con = duckdb_repo.get_config_connection(read_only=False)
+    try:
+        for month in range(1, _MONTHS_IN_YEAR + 1):
+            currency = _resolve_currency(year, month, layout)
+            if currency == "EUR":
+                rates[month] = {}
+                continue
+            rate_date = date(year, month, 1)
+            from dinary.services.nbs import get_rate
+
+            rate_cur = get_rate(config_con, rate_date, currency)
+            rate_eur = get_rate(config_con, rate_date, "EUR")
+            rates[month] = {"rate_cur": rate_cur, "rate_eur": rate_eur}
+    finally:
+        config_con.close()
+    return rates
+
+
+def _convert_with_prefetched(
+    amount_original: Decimal,
+    currency_original: str,
+    month_rates: dict[str, Decimal],
+) -> Decimal:
+    """Convert using pre-fetched rates (avoids opening config_con during import)."""
+    if currency_original == "EUR":
+        return amount_original
+    rate_cur = month_rates["rate_cur"]
+    rate_eur = month_rates["rate_eur"]
+    return (amount_original * rate_cur / rate_eur).quantize(Decimal("0.01"))
+
+
+def _read_amounts_for_row(
+    *,
+    row_display: list[str],
+    layout: SheetLayout,
+    year: int,
+    month: int,
+    monthly_rates: dict[int, dict[str, Decimal]],
+) -> tuple[float, str, float] | None:
+    display_raw = _cell(row_display, layout.col_amount)
+    amount_original = _parse_display_amount(display_raw)
+    if amount_original is None:
+        return None
+
+    currency_original = _resolve_currency(year, month, layout)
+    amount_eur_decimal: Decimal | None = None
+    if layout.use_eur_column_as_canonical and layout.col_amount_eur is not None:
+        amount_eur_raw = _cell(row_display, layout.col_amount_eur)
+        amount_eur_direct = _parse_display_amount(amount_eur_raw)
+        if amount_eur_direct is not None:
+            amount_eur_decimal = Decimal(str(amount_eur_direct))
+
+    if amount_eur_decimal is None:
+        amount_eur_decimal = _convert_with_prefetched(
+            Decimal(str(amount_original)),
+            currency_original,
+            monthly_rates[month],
+        )
+
+    return amount_original, currency_original, float(amount_eur_decimal)
+
+
+def _lookup_id_by_name(
+    con,
+    *,
+    table: str,
+    name: str,
+) -> int | None:
+    query_by_table = {
+        "categories": "SELECT id FROM config.categories WHERE name = ?",
+        "family_members": "SELECT id FROM config.family_members WHERE name = ?",
+        "spheres_of_life": "SELECT id FROM config.spheres_of_life WHERE name = ?",
+    }
+    row = con.execute(query_by_table[table], [name]).fetchone()
+    return row[0] if row else None
+
+
+def _apply_housing_heuristics(
+    *,
+    source_type: str,
+    source_envelope: str,
+    comment: str,
+    amount_eur: float,
+    default_category_name: str,
+) -> str:
+    category_name = default_category_name
+    source_lower = source_type.lower()
+    comment_lower = comment.lower()
+
+    if source_type == "аренда" and source_envelope == "релокация":
+        category_name = (
+            "коммунальные" if amount_eur < _RELOCATION_UTILITIES_THRESHOLD_EUR else "аренда"
+        )
+    elif source_type == "Коммунальные":
+        category_name = "коммунальные"
+    elif source_type == "Household" and source_envelope == "Бытовая техника":
+        category_name = "бытовая техника"
+    elif source_type == "Ремонт комнаты Ани":
+        category_name = "ремонт"
+    elif source_lower in _HOUSING_SOURCE_TYPES:
+        if any(keyword in comment_lower for keyword in _REPAIR_KEYWORDS):
+            category_name = "ремонт"
+        elif any(keyword in comment_lower for keyword in _FURNITURE_KEYWORDS):
+            category_name = "мебель"
+        elif any(keyword in comment_lower for keyword in _APPLIANCE_KEYWORDS):
+            category_name = "бытовая техника"
+
+    return category_name
+
+
+def _fallback_dimensions_from_plan(  # noqa: PLR0913
+    con,
+    *,
+    source_type: str,
+    source_envelope: str,
+    comment: str,
+    amount_eur: float,
+    travel_event_id: int,
+) -> tuple[int, int | None, int | None, int | None] | None:
+    category_name = _canonical_category_for_source(source_type, source_envelope)
+    category_name = _apply_housing_heuristics(
+        source_type=source_type,
+        source_envelope=source_envelope,
+        comment=comment,
+        amount_eur=amount_eur,
+        default_category_name=category_name,
+    )
+    category_id = _lookup_id_by_name(con, table="categories", name=category_name)
+    if category_id is None:
+        return None
+
+    beneficiary_id = None
+    beneficiary_name = BENEFICIARY_ENVELOPES.get(source_envelope)
+    if source_type == "Ремонт комнаты Ани":
+        beneficiary_name = None
+    if beneficiary_name is not None:
+        beneficiary_id = _lookup_id_by_name(con, table="family_members", name=beneficiary_name)
+
+    sphere_of_life_id = None
+    sphere_name = SPHERE_OF_LIFE_ENVELOPES.get(source_envelope)
+    if sphere_name is not None:
+        sphere_of_life_id = _lookup_id_by_name(con, table="spheres_of_life", name=sphere_name)
+
+    event_id = travel_event_id if source_envelope == duckdb_repo.TRAVEL_ENVELOPE else None
+    return category_id, beneficiary_id, event_id, sphere_of_life_id
+
+
+def _apply_post_import_fixes(year: int, con, *, russia_trip_event_id: int | None = None) -> None:
+    for comment_text, category_name in _POST_IMPORT_CATEGORY_FIXES.items():
+        category_id = _lookup_id_by_name(con, table="categories", name=category_name)
+        if category_id is None:
+            continue
+        con.execute(
+            """
+            UPDATE expenses
+            SET category_id = ?
+            WHERE source = 'sheet_import'
+              AND YEAR(datetime) = ?
+              AND LOWER(COALESCE(comment, '')) = ?
+            """,
+            [category_id, year, comment_text],
+        )
+
+    rent_category_id = _lookup_id_by_name(con, table="categories", name="аренда")
+    if rent_category_id is not None:
+        con.execute(
+            """
+            UPDATE expenses
+            SET category_id = ?
+            WHERE source = 'sheet_import'
+              AND YEAR(datetime) = 2018
+              AND (id = 'legacy-201806-269ec46a' OR LOWER(COALESCE(comment, '')) = 'покупка валюты')
+            """,
+            [rent_category_id],
+        )
+
+    if year == _RUSSIA_TRIP_FIX_YEAR:
+        transport_category_id = _lookup_id_by_name(con, table="categories", name="транспорт")
+        if transport_category_id is not None and russia_trip_event_id is not None:
+            con.execute(
+                """
+                UPDATE expenses
+                SET category_id = ?, event_id = ?, beneficiary_id = NULL
+                WHERE source = 'sheet_import'
+                  AND YEAR(datetime) = 2026
+                  AND LOWER(COALESCE(comment, '')) = 'билеты в россию август 2026'
+                """,
+                [transport_category_id, russia_trip_event_id],
+            )
+    logger.info("Applied post-import fixes for %d", year)
+
+
+def import_year(year: int, *, wipe_all: bool = False) -> dict:  # noqa: C901, PLR0912, PLR0915
+    """Import all months for *year* from Google Sheets into DuckDB.
 
     Returns a summary dict with counts.
     """
     duckdb_repo.init_config_db()
     travel_event_id = _ensure_travel_event(year)
+    russia_trip_event_id = None
+    if year == _RUSSIA_TRIP_FIX_YEAR:
+        russia_trip_event_id = duckdb_repo.ensure_event(
+            name=_RUSSIA_TRIP_EVENT_NAME,
+            date_from=date(_RUSSIA_TRIP_FIX_YEAR, 8, 1),
+            date_to=date(_RUSSIA_TRIP_FIX_YEAR, 8, 31),
+            comment="Auto-created from import post-fix",
+        )
 
     source = duckdb_repo.get_import_source(year)
-    spreadsheet_id = source.spreadsheet_id if source else ""
-    worksheet_name = source.worksheet_name if source else ""
-    layout_key = source.layout_key if source else "default"
-    layout = LAYOUTS[layout_key]
+    if source is None:
+        msg = f"sheet_import_sources is missing a row for year {year}"
+        raise ValueError(msg)
+
+    spreadsheet_id = source.spreadsheet_id
+    worksheet_name = source.worksheet_name
+    layout_key = source.layout_key
+    layout = _resolve_layout(year, layout_key)
+
+    monthly_rates = _prefetch_monthly_rates(year, layout)
 
     con = duckdb_repo.get_budget_connection(year)
 
     try:
-        con.execute("DELETE FROM expense_tags WHERE expense_id LIKE 'legacy-%'")
-        con.execute("DELETE FROM expenses WHERE source = 'legacy_import'")
+        if wipe_all:
+            con.execute("DELETE FROM expenses")
+        else:
+            con.execute("DELETE FROM expenses WHERE source = 'sheet_import'")
 
         ss = get_sheet(spreadsheet_id)
         ws = ss.worksheet(worksheet_name) if worksheet_name else ss.sheet1
         all_values = ws.get_all_values()
-        all_formulas = ws.get_all_values(value_render_option=ValueRenderOption.formula)
 
         created = 0
         skipped = 0
@@ -178,7 +440,6 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
 
         for row_idx in range(HEADER_ROWS, len(all_values)):
             row_display = all_values[row_idx]
-            row_formula = all_formulas[row_idx] if row_idx < len(all_formulas) else row_display
 
             month_str = _cell(row_display, layout.col_month)
             if not month_str or not month_str.isdigit():
@@ -192,78 +453,83 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
             if not category:
                 continue
 
-            formula_raw = _formula_cell_str(row_formula, layout.col_amount)
-            display_raw = _cell(row_display, layout.col_amount)
-            amounts = _parse_formula_amounts(formula_raw, display_raw)
-            if not amounts and layout.col_amount_rub_fallback:
-                rub_formula = _formula_cell_str(row_formula, layout.col_amount_rub_fallback)
-                rub_display = _cell(row_display, layout.col_amount_rub_fallback)
-                rub_amounts = _parse_formula_amounts(rub_formula, rub_display)
-                amounts = [round(a * _RUB_TO_RSD, 2) for a in rub_amounts]
-            if layout.rub_multiplier != 1.0:
-                amounts = [round(a * layout.rub_multiplier, 2) for a in amounts]
-            if not amounts:
+            amounts = _read_amounts_for_row(
+                row_display=row_display,
+                layout=layout,
+                year=year,
+                month=month,
+                monthly_rates=monthly_rates,
+            )
+            if amounts is None:
                 continue
+            amount_original, currency_original, amount_eur = amounts
 
-            comment_raw = _cell(row_display, layout.col_comment)
-            comments = [c.strip() for c in comment_raw.split(";")] if comment_raw else []
+            comment = _cell(row_display, layout.col_comment)
 
             mapping = duckdb_repo.resolve_mapping_for_year(con, category, group, year)
             if mapping is None:
-                logger.warning("No mapping for %s/%s — skipping row", category, group)
-                errors += 1
-                continue
-
-            category_id = mapping.category_id
-            beneficiary_id = mapping.beneficiary_id
-            event_id = mapping.event_id
-            tag_ids = mapping.tag_ids
+                fallback = _fallback_dimensions_from_plan(
+                    con,
+                    source_type=category,
+                    source_envelope=group,
+                    comment=comment,
+                    amount_eur=amount_eur,
+                    travel_event_id=travel_event_id,
+                )
+                if fallback is None:
+                    logger.warning("No mapping for %s/%s — skipping row", category, group)
+                    errors += 1
+                    continue
+                category_id, beneficiary_id, event_id, sphere_of_life_id = fallback
+            else:
+                category_id = mapping.category_id
+                beneficiary_id = mapping.beneficiary_id
+                event_id = mapping.event_id
+                sphere_of_life_id = mapping.sphere_of_life_id
 
             if group == duckdb_repo.TRAVEL_ENVELOPE and event_id is None:
                 event_id = travel_event_id
 
             months_seen.add(month)
 
-            for i, amount in enumerate(amounts):
-                expense_id = _stable_id(year, month, row_idx, category, group, i)
-                expense_dt = datetime(year, month, 1, 12, 0, 0) + timedelta(seconds=i)
-                comment = comments[i] if i < len(comments) else ""
+            expense_id = _stable_id(year, month, row_idx, category, group)
+            expense_dt = datetime(year, month, 1, 12, 0, 0)
 
-                try:
-                    con.execute(
-                        """INSERT INTO expenses
-                        (id, datetime, name, amount, currency,
-                         category_id, beneficiary_id, event_id,
-                         comment, source)
-                        VALUES (?, ?, ?, ?, 'RSD', ?, ?, ?, ?, 'legacy_import')
-                        ON CONFLICT DO NOTHING""",
-                        [
-                            expense_id,
-                            expense_dt,
-                            category,
-                            amount,
-                            category_id,
-                            beneficiary_id,
-                            event_id,
-                            comment,
-                        ],
-                    )
-                    for tid in tag_ids:
-                        con.execute(
-                            """INSERT INTO expense_tags (expense_id, tag_id)
-                            VALUES (?, ?)
-                            ON CONFLICT DO NOTHING""",
-                            [expense_id, tid],
-                        )
-                    created += 1
-                except Exception:
-                    logger.exception(
-                        "Failed to insert expense %s for %s/%s",
+            try:
+                con.execute(
+                    """INSERT INTO expenses
+                    (id, datetime, name, amount, amount_original, currency_original,
+                     category_id, beneficiary_id, event_id, sphere_of_life_id,
+                     comment, source, source_type, source_envelope)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'sheet_import', ?, ?)
+                    ON CONFLICT DO NOTHING""",
+                    [
                         expense_id,
+                        expense_dt,
+                        category,
+                        amount_eur,
+                        amount_original,
+                        currency_original,
+                        category_id,
+                        beneficiary_id,
+                        event_id,
+                        sphere_of_life_id,
+                        comment,
                         category,
                         group,
-                    )
-                    errors += 1
+                    ],
+                )
+                created += 1
+            except Exception:
+                logger.exception(
+                    "Failed to insert expense %s for %s/%s",
+                    expense_id,
+                    category,
+                    group,
+                )
+                errors += 1
+
+        _apply_post_import_fixes(year, con, russia_trip_event_id=russia_trip_event_id)
 
         return {
             "year": year,

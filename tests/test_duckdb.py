@@ -30,7 +30,7 @@ def populated_config(config_db, tmp_path):
         con.execute("INSERT INTO categories VALUES (3, 'топливо')")
         con.execute("INSERT INTO categories VALUES (4, 'мобильник')")
         con.execute("INSERT INTO family_members VALUES (1, 'собака')")
-        con.execute("INSERT INTO tags VALUES (1, 'test-tag')")
+        con.execute("INSERT INTO spheres_of_life VALUES (1, 'релокация')")
         con.execute(
             """
             INSERT INTO source_type_mapping
@@ -71,12 +71,13 @@ class TestBootstrap:
                 "family_members",
                 "events",
                 "event_members",
-                "tags",
+                "spheres_of_life",
                 "source_type_mapping",
                 "sheet_import_sources",
                 "category_taxonomies",
                 "category_taxonomy_nodes",
                 "category_taxonomy_membership",
+                "exchange_rates",
             }
             assert expected.issubset(set(tables))
         finally:
@@ -87,7 +88,6 @@ class TestBootstrap:
         try:
             tables = [r[0] for r in con.execute("SHOW TABLES").fetchall()]
             assert "expenses" in tables
-            assert "expense_tags" in tables
             assert "sheet_sync_jobs" in tables
         finally:
             con.close()
@@ -182,18 +182,22 @@ class TestIdempotentInsert:
                 con,
                 "test-uuid-1",
                 datetime(2026, 4, 14, 12, 0),
+                12.82,
                 1500.0,
                 "RSD",
                 1,
                 1,
                 None,
-                [],
+                None,
                 "lunch",
             )
             assert result == "created"
 
-            row = con.execute("SELECT amount FROM expenses WHERE id = 'test-uuid-1'").fetchone()
-            assert float(row[0]) == 1500.0
+            row = con.execute(
+                "SELECT amount, amount_original FROM expenses WHERE id = 'test-uuid-1'"
+            ).fetchone()
+            assert float(row[0]) == 12.82
+            assert float(row[1]) == 1500.0
         finally:
             con.close()
 
@@ -204,24 +208,26 @@ class TestIdempotentInsert:
                 con,
                 "test-uuid-2",
                 datetime(2026, 4, 14, 12, 0),
+                12.82,
                 1500.0,
                 "RSD",
                 1,
                 None,
                 None,
-                [],
+                None,
                 "lunch",
             )
             result = duckdb_repo.insert_expense(
                 con,
                 "test-uuid-2",
                 datetime(2026, 4, 14, 12, 0),
+                12.82,
                 1500.0,
                 "RSD",
                 1,
                 None,
                 None,
-                [],
+                None,
                 "lunch",
             )
             assert result == "duplicate"
@@ -235,24 +241,26 @@ class TestIdempotentInsert:
                 con,
                 "test-uuid-3",
                 datetime(2026, 4, 14, 12, 0),
+                12.82,
                 1500.0,
                 "RSD",
                 1,
                 None,
                 None,
-                [],
+                None,
                 "lunch",
             )
             result = duckdb_repo.insert_expense(
                 con,
                 "test-uuid-3",
                 datetime(2026, 4, 14, 12, 0),
+                17.09,
                 2000.0,
                 "RSD",
                 1,
                 None,
                 None,
-                [],
+                None,
                 "dinner",
             )
             assert result == "conflict"
@@ -266,12 +274,13 @@ class TestIdempotentInsert:
                 con,
                 "test-uuid-4",
                 datetime(2026, 4, 14, 12, 0),
+                12.82,
                 1500.0,
                 "RSD",
                 1,
                 None,
                 None,
-                [],
+                None,
                 "",
             )
             jobs = duckdb_repo.get_dirty_sync_jobs(con)
@@ -279,90 +288,28 @@ class TestIdempotentInsert:
         finally:
             con.close()
 
-    def test_insert_with_tags(self, populated_config):
+    def test_insert_with_sphere_of_life(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
         try:
             result = duckdb_repo.insert_expense(
                 con,
                 "test-uuid-5",
                 datetime(2026, 4, 14, 12, 0),
+                12.82,
                 1500.0,
                 "RSD",
                 1,
                 None,
                 None,
-                [1],
+                1,
                 "lunch",
             )
             assert result == "created"
 
-            tags = con.execute(
-                "SELECT tag_id FROM expense_tags WHERE expense_id = 'test-uuid-5'"
-            ).fetchall()
-            assert len(tags) == 1
-            assert tags[0][0] == 1
-        finally:
-            con.close()
-
-    def test_duplicate_with_matching_tags(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            duckdb_repo.insert_expense(
-                con,
-                "test-uuid-6",
-                datetime(2026, 4, 14, 12, 0),
-                1500.0,
-                "RSD",
-                1,
-                None,
-                None,
-                [1],
-                "lunch",
-            )
-            result = duckdb_repo.insert_expense(
-                con,
-                "test-uuid-6",
-                datetime(2026, 4, 14, 12, 0),
-                1500.0,
-                "RSD",
-                1,
-                None,
-                None,
-                [1],
-                "lunch",
-            )
-            assert result == "duplicate"
-        finally:
-            con.close()
-
-    def test_conflict_on_different_tags(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            duckdb_repo.insert_expense(
-                con,
-                "test-uuid-7",
-                datetime(2026, 4, 14, 12, 0),
-                1500.0,
-                "RSD",
-                1,
-                None,
-                None,
-                [],
-                "lunch",
-            )
-            result = duckdb_repo.insert_expense(
-                con,
-                "test-uuid-7",
-                datetime(2026, 4, 14, 12, 0),
-                1500.0,
-                "RSD",
-                1,
-                None,
-                None,
-                [1],
-                "lunch",
-            )
-            assert result == "conflict"
+            row = con.execute(
+                "SELECT sphere_of_life_id FROM expenses WHERE id = 'test-uuid-5'"
+            ).fetchone()
+            assert row[0] == 1
         finally:
             con.close()
 
@@ -373,27 +320,29 @@ class TestIdempotentInsert:
                 con,
                 "test-uuid-8",
                 datetime(2026, 4, 14, 12, 0),
+                12.82,
                 1500.0,
                 "RSD",
                 1,
                 None,
                 None,
-                [],
+                None,
                 "",
             )
             duckdb_repo.insert_expense(
                 con,
                 "test-uuid-8",
                 datetime(2026, 4, 14, 12, 0),
+                12.82,
                 1500.0,
                 "RSD",
                 1,
                 None,
                 None,
-                [],
+                None,
                 "",
             )
-            total = con.execute("SELECT SUM(amount) FROM expenses").fetchone()
+            total = con.execute("SELECT SUM(amount_original) FROM expenses").fetchone()
             assert float(total[0]) == 1500.0
         finally:
             con.close()
@@ -405,7 +354,7 @@ class TestReverseMapping:
     def test_reverse_lookup_simple(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 1, 1, None, [])
+            result = duckdb_repo.reverse_lookup_mapping(con, 2026, 1, 1, None, None)
             assert result == ("еда&бытовые", "собака")
         finally:
             con.close()
@@ -414,7 +363,7 @@ class TestReverseMapping:
         event_id = duckdb_repo.resolve_travel_event(date(2026, 4, 14))
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 2, None, event_id, [])
+            result = duckdb_repo.reverse_lookup_mapping(con, 2026, 2, None, event_id, None)
             assert result is not None
             assert result[1] == "путешествия"
         finally:
@@ -423,7 +372,7 @@ class TestReverseMapping:
     def test_reverse_lookup_no_group(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 4, None, None, [])
+            result = duckdb_repo.reverse_lookup_mapping(con, 2026, 4, None, None, None)
             assert result == ("мобильник", "")
         finally:
             con.close()
@@ -431,8 +380,25 @@ class TestReverseMapping:
     def test_reverse_lookup_unknown(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 999, None, None, [])
+            result = duckdb_repo.reverse_lookup_mapping(con, 2026, 999, None, None, None)
             assert result is None
+        finally:
+            con.close()
+
+    def test_reverse_lookup_prefers_year_scoped_mapping(self, populated_config):
+        con_cfg = duckdb_repo.get_config_connection(read_only=False)
+        try:
+            con_cfg.execute("INSERT INTO categories VALUES (10, 'продуктивность')")
+            con_cfg.execute(
+                "INSERT INTO source_type_mapping VALUES (2023, 'professional', 'apps', 10, NULL, NULL, NULL)"
+            )
+        finally:
+            con_cfg.close()
+
+        con = duckdb_repo.get_budget_connection(2023)
+        try:
+            result = duckdb_repo.reverse_lookup_mapping(con, 2023, 10, None, None, None)
+            assert result == ("professional", "apps")
         finally:
             con.close()
 
@@ -448,12 +414,13 @@ class TestReferentialIntegrity:
                     con,
                     "ri-1",
                     datetime(2026, 4, 14, 12, 0),
+                    0.85,
                     100.0,
                     "RSD",
                     999,
                     None,
                     None,
-                    [],
+                    None,
                     "",
                 )
         finally:
@@ -467,31 +434,33 @@ class TestReferentialIntegrity:
                     con,
                     "ri-2",
                     datetime(2026, 4, 14, 12, 0),
+                    0.85,
                     100.0,
                     "RSD",
                     1,
                     999,
                     None,
-                    [],
+                    None,
                     "",
                 )
         finally:
             con.close()
 
-    def test_insert_with_invalid_tag_raises(self, populated_config):
+    def test_insert_with_invalid_sphere_raises(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            with pytest.raises(ValueError, match="tag_id 999"):
+            with pytest.raises(ValueError, match="sphere_of_life_id 999"):
                 duckdb_repo.insert_expense(
                     con,
                     "ri-3",
                     datetime(2026, 4, 14, 12, 0),
+                    0.85,
                     100.0,
                     "RSD",
                     1,
                     None,
                     None,
-                    [999],
+                    999,
                     "",
                 )
         finally:
@@ -505,12 +474,13 @@ class TestReferentialIntegrity:
                     con,
                     "ri-4",
                     datetime(2026, 4, 14, 12, 0),
+                    0.85,
                     100.0,
                     "RSD",
                     1,
                     None,
                     999,
-                    [],
+                    None,
                     "",
                 )
         finally:
@@ -528,24 +498,26 @@ class TestYearBoundary:
                 con_2025,
                 "exp-2025",
                 datetime(2025, 12, 31, 23, 59),
+                8.55,
                 1000.0,
                 "RSD",
                 1,
                 None,
                 None,
-                [],
+                None,
                 "",
             )
             duckdb_repo.insert_expense(
                 con_2026,
                 "exp-2026",
                 datetime(2026, 1, 1, 0, 1),
+                17.09,
                 2000.0,
                 "RSD",
                 1,
                 None,
                 None,
-                [],
+                None,
                 "",
             )
 

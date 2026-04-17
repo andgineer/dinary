@@ -382,13 +382,14 @@ def sync(c):
 def import_sheet(c, year="", yes=False):
     """Import a year's data from Google Sheets into DuckDB (on server).
 
-    DESTRUCTIVE: deletes all legacy_import rows for the year before
-    re-importing. Use --yes to skip the confirmation prompt.
+    DESTRUCTIVE: deletes existing sheet_import rows for the year before
+    re-importing. Manual expenses are preserved. Use --yes to skip the
+    confirmation prompt.
     """
     if not year:
         year = str(_dt.now().year)
     if not yes:
-        print(f"WARNING: This will DELETE all legacy_import expenses for {year}")
+        print(f"WARNING: This will DELETE all sheet_import expenses for {year}")
         print("and re-import them from the Google Sheet.")
         print("Manual expenses will NOT be affected.")
         answer = input("Type 'yes' to continue: ")
@@ -406,17 +407,17 @@ def import_sheet(c, year="", yes=False):
 @task(name="rebuild-4d-config")
 def rebuild_4d_config(c):
     """DESTRUCTIVE: Wipe and rebuild config.duckdb under the 4D model from Google Sheets."""
+    print("WARNING: This will DELETE config.duckdb and rebuild it from Google Sheets.")
+    print("Configured sheet_import_sources will be preserved and restored if present.")
+    answer = input("Type 'yes' to continue: ")
+    if answer.strip().lower() != "yes":
+        print("Aborted.")
+        return
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.seed_config import seed_from_sheet, rebuild_taxonomy; "
-        "from dinary.services import duckdb_repo; "
-        "import json; "
-        "summary = seed_from_sheet(); "
-        "con = duckdb_repo.get_config_connection(read_only=False); "
-        "memberships = rebuild_taxonomy(con); con.close(); "
-        'summary["taxonomy_memberships"] = memberships; '
-        "print(json.dumps(summary))'",
+        "from dinary.services.seed_config import rebuild_config_from_sheets; "
+        "import json; print(json.dumps(rebuild_config_from_sheets()))'",
     )
 
 
@@ -434,7 +435,7 @@ def rebuild_4d_budget(c, year=""):
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services.import_sheet import import_year; "
-        f"import json; print(json.dumps(import_year({year})))'",
+        f"import json; print(json.dumps(import_year({year}, wipe_all=True)))'",
     )
 
 
