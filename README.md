@@ -14,15 +14,15 @@
 | src/dinary/services/db\_migrations.py      |       55 |        2 |     96% |    51, 54 |
 | src/dinary/services/duckdb\_repo.py        |      138 |        3 |     98% |   146-148 |
 | src/dinary/services/exchange\_rate.py      |       16 |        9 |     44% |     19-28 |
-| src/dinary/services/import\_sheet.py       |      228 |       76 |     67% |150, 155-156, 162, 164, 166, 192-208, 218, 240-243, 283, 287, 289, 291, 293-298, 313-340, 348, 361, 375, 420, 438, 441, 446, 463-476, 485-486, 496-502, 539-546 |
+| src/dinary/services/import\_sheet.py       |      221 |       73 |     67% |154, 159-160, 166, 168, 170, 196-212, 222, 238, 281, 285, 287, 289, 291-296, 311-338, 346, 359, 373, 418, 436, 439, 444, 461-474, 483-484, 494-500, 537-544 |
 | src/dinary/services/nbs.py                 |       55 |       12 |     78% |31, 63-65, 68-69, 76, 78-84 |
 | src/dinary/services/qr\_parser.py          |       16 |        1 |     94% |        31 |
 | src/dinary/services/seed\_config.py        |      285 |       36 |     87% |80, 82, 102, 255-256, 425, 428-430, 433, 436, 441-448, 456, 458, 460, 469, 471, 477, 542, 565-569, 605-615, 706-708, 768 |
 | src/dinary/services/sheets.py              |      165 |       15 |     91% |38-44, 48-49, 81, 101-104, 109-111, 261 |
 | src/dinary/services/sql\_loader.py         |       34 |        0 |    100% |           |
 | src/dinary/services/sync.py                |      176 |       78 |     56% |46-60, 73-92, 122-127, 131, 135-136, 167, 178-185, 213-219, 228, 248-249, 279-281, 289-294, 298-300, 314-321, 326-331, 340-365 |
-| src/dinary/services/verify\_equivalence.py |      105 |      105 |      0% |     9-200 |
-| **TOTAL**                                  | **1470** |  **344** | **77%** |           |
+| src/dinary/services/verify\_equivalence.py |      106 |      106 |      0% |     9-203 |
+| **TOTAL**                                  | **1464** |  **342** | **77%** |           |
 
 
 ## Setup coverage badge
