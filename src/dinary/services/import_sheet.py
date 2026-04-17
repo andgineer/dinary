@@ -234,14 +234,22 @@ def _read_amounts_for_row(
     monthly_rates: dict[int, dict[str, Decimal]],
 ) -> tuple[float, str, float] | None:
     amount_original = _parse_display_amount(_cell(row_display, layout.col_amount))
-    if amount_original is None and layout.col_amount_fallback is not None:
+    currency_original = _resolve_currency(year, month, layout)
+
+    # Fallback column is authoritative only when we expect RUB (pre-April 2022).
+    # For Apr 2022+ col C in the 2022 sheet is a rough auto-conversion from col B
+    # (RSD) by a fixed annual rate and must not be read.
+    if (
+        amount_original is None
+        and layout.col_amount_fallback is not None
+        and currency_original == "RUB"
+    ):
         amount_original = _parse_display_amount(
             _cell(row_display, layout.col_amount_fallback),
         )
     if amount_original is None:
         return None
 
-    currency_original = _resolve_currency(year, month, layout)
     amount_eur_decimal = _convert_with_prefetched(
         Decimal(str(amount_original)),
         currency_original,

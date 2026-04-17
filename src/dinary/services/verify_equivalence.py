@@ -11,7 +11,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from dinary.services import duckdb_repo
-from dinary.services.import_sheet import LAYOUTS
+from dinary.services.import_sheet import LAYOUTS, _resolve_currency
 from dinary.services.sheets import (
     HEADER_ROWS,
     _cell,
@@ -73,7 +73,11 @@ def _read_sheet_aggregates(
             continue
 
         amount_val = _parse_display_amount(_cell(row_display, layout.col_amount))
-        if amount_val is None and layout.col_amount_fallback is not None:
+        if (
+            amount_val is None
+            and layout.col_amount_fallback is not None
+            and _resolve_currency(year, month, layout) == "RUB"
+        ):
             amount_val = _parse_display_amount(
                 _cell(row_display, layout.col_amount_fallback),
             )
