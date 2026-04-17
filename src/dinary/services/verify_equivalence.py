@@ -72,8 +72,11 @@ def _read_sheet_aggregates(
         if not category:
             continue
 
-        display_raw = _cell(row_display, layout.col_amount)
-        amount_val = _parse_display_amount(display_raw)
+        amount_val = _parse_display_amount(_cell(row_display, layout.col_amount))
+        if amount_val is None and layout.col_amount_fallback is not None:
+            amount_val = _parse_display_amount(
+                _cell(row_display, layout.col_amount_fallback),
+            )
 
         total = Decimal(str(amount_val)) if amount_val else Decimal(0)
         comment = _cell(row_display, layout.col_comment)

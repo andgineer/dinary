@@ -38,8 +38,12 @@ class SheetLayout:
     col_comment: int
     col_month: int
     currency: str = "RSD"
-    col_amount_eur: int | None = None
-    use_eur_column_as_canonical: bool = False
+    # Fallback column used when the primary amount cell is empty.
+    # Used for 2022, where col B (RSD) is empty for Jan-Mar (pre-relocation,
+    # the user lived in Russia and recorded amounts in RUB in col C).
+    # The fallback amount is in the same currency as resolved by
+    # _resolve_currency() for the given year+month.
+    col_amount_fallback: int | None = None
 
 
 LAYOUTS: dict[str, SheetLayout] = {
@@ -64,7 +68,7 @@ LAYOUTS: dict[str, SheetLayout] = {
         col_group=5,
         col_comment=6,
         col_month=7,
-        col_amount_eur=3,
+        col_amount_fallback=3,
     ),
     "rub_6col": SheetLayout(
         col_amount=2,
@@ -229,26 +233,20 @@ def _read_amounts_for_row(
     month: int,
     monthly_rates: dict[int, dict[str, Decimal]],
 ) -> tuple[float, str, float] | None:
-    display_raw = _cell(row_display, layout.col_amount)
-    amount_original = _parse_display_amount(display_raw)
+    amount_original = _parse_display_amount(_cell(row_display, layout.col_amount))
+    if amount_original is None and layout.col_amount_fallback is not None:
+        amount_original = _parse_display_amount(
+            _cell(row_display, layout.col_amount_fallback),
+        )
     if amount_original is None:
         return None
 
     currency_original = _resolve_currency(year, month, layout)
-    amount_eur_decimal: Decimal | None = None
-    if layout.use_eur_column_as_canonical and layout.col_amount_eur is not None:
-        amount_eur_raw = _cell(row_display, layout.col_amount_eur)
-        amount_eur_direct = _parse_display_amount(amount_eur_raw)
-        if amount_eur_direct is not None:
-            amount_eur_decimal = Decimal(str(amount_eur_direct))
-
-    if amount_eur_decimal is None:
-        amount_eur_decimal = _convert_with_prefetched(
-            Decimal(str(amount_original)),
-            currency_original,
-            monthly_rates[month],
-        )
-
+    amount_eur_decimal = _convert_with_prefetched(
+        Decimal(str(amount_original)),
+        currency_original,
+        monthly_rates[month],
+    )
     return amount_original, currency_original, float(amount_eur_decimal)
 
 
