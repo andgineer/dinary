@@ -365,6 +365,57 @@ _CATEGORY_BY_SOURCE_TYPE: dict[str, str] = {
     "штрафы": "штрафы",
 }
 
+_EDA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
+    "кафе": "кафе",
+    "lunch": "кафе",
+    "кофе": "кафе",
+    "ужин": "кафе",
+    "перекусы": "кафе",
+    "фрукты": "фрукты",
+    "деликатесы": "деликатесы",
+    "алкоголь": "алкоголь",
+}
+
+_COMMUNAL_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
+    "mobile": "мобильник",
+    "phone": "мобильник",
+    "мобильник": "мобильник",
+    "мобильный": "мобильник",
+    "internet": "интернет",
+    "интернет": "интернет",
+}
+
+_MASHINA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
+    "gas": "топливо",
+    "топливо": "топливо",
+    "такси": "транспорт",
+}
+
+_DACHA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
+    "ремонт": "ремонт",
+    "налог": "налог",
+    "налоги": "налог",
+    "свет": "коммунальные",
+    "электро": "коммунальные",
+    "электроэнергия": "коммунальные",
+    "сигнализация": "коммунальные",
+    "сингнализация": "коммунальные",  # typo in source sheet preserved
+    "страховка": "коммунальные",
+    "интернет": "интернет",
+    "транспорт": "транспорт",
+    "техника": "бытовая техника",
+}
+
+_RAZVL_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
+    "спорт": "спорт",
+    "skiitime": "лыжи",
+    "wellness": "гигиена",
+}
+
+_SKI_ENVELOPES: frozenset[str] = frozenset(
+    {"skiitime", "skitime", "лыжи", "лыжероллеры"},
+)
+
 _VACATION_CATEGORY_BY_ENVELOPE: dict[str, str] = {
     "": "аренда",
     "проживание": "аренда",
@@ -412,12 +463,10 @@ _KOMANDIROVKA_CATEGORY_BY_ENVELOPE: dict[str, str] = {
 }
 
 
-def _canonical_category_for_source(source_type: str, source_envelope: str) -> str:  # noqa: C901, PLR0911
+def _canonical_category_for_source(source_type: str, source_envelope: str) -> str:  # noqa: C901, PLR0911, PLR0912
     source_lower = source_type.lower().strip()
     envelope_lower = source_envelope.lower().strip()
 
-    if source_type == LEGACY_FOOD_CATEGORY:
-        return "еда"
     if source_type == BULAVKI_CATEGORY:
         return "карманные"
 
@@ -434,6 +483,22 @@ def _canonical_category_for_source(source_type: str, source_envelope: str) -> st
 
     if source_lower == "командировка":
         return _KOMANDIROVKA_CATEGORY_BY_ENVELOPE.get(envelope_lower, "аренда")
+
+    # Multi-category source_types: envelope picks the sub-category.
+    if source_lower in {"еда", LEGACY_FOOD_CATEGORY}:
+        return _EDA_SUBCATEGORY_BY_ENVELOPE.get(envelope_lower, "еда")
+    if source_lower == "коммунальные":
+        return _COMMUNAL_SUBCATEGORY_BY_ENVELOPE.get(envelope_lower, "коммунальные")
+    if source_lower == "машина":
+        return _MASHINA_SUBCATEGORY_BY_ENVELOPE.get(envelope_lower, "машина")
+    if source_lower == "дача":
+        return _DACHA_SUBCATEGORY_BY_ENVELOPE.get(envelope_lower, "хозтовары")
+    if source_lower == "развлечения":
+        return _RAZVL_SUBCATEGORY_BY_ENVELOPE.get(envelope_lower, "развлечения")
+    if source_lower == "спорт":
+        if envelope_lower in _SKI_ENVELOPES:
+            return "лыжи"
+        return "спорт"
 
     if source_lower in _CATEGORY_BY_SOURCE_TYPE:
         return _CATEGORY_BY_SOURCE_TYPE[source_lower]
