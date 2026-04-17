@@ -399,6 +399,8 @@ _MASHINA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
     "gas": "топливо",
     "топливо": "топливо",
     "такси": "транспорт",
+    "налог": "налог",
+    "налоги": "налог",
 }
 
 _DACHA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
@@ -406,6 +408,7 @@ _DACHA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
     "ремонт": "ремонт",
     "колодец": "ремонт",
     "electro": "ремонт",  # Latin 'Electro' in 2016 — electrical work, not utility
+    "diy": "ремонт",
     "инструменты": "инструменты",
     "налог": "налог",
     "налоги": "налог",
@@ -460,6 +463,10 @@ _VACATION_CATEGORY_BY_ENVELOPE: dict[str, str] = {
     "мобильный": "мобильник",
     "sim-travel": "мобильник",
     "duty free": "гаджеты",
+    "сейф": "аренда",
+    "фото": "развлечения",
+    "чемодан": "одежда",
+    "ларисе": "подарки",
 }
 
 _KOMANDIROVKA_CATEGORY_BY_ENVELOPE: dict[str, str] = {
@@ -490,7 +497,7 @@ def _canonical_category_for_source(source_type: str, source_envelope: str) -> st
     if source_lower == "приложения":
         return "продуктивность" if envelope_lower == "профессиональное" else "развлечения"
 
-    if source_lower == "wellness":
+    if source_lower in {"wellness", "welness"}:  # typo preserved in 2015 sheet
         if envelope_lower in {"yazio"}:
             return "ЗОЖ"
         return "гигиена"
@@ -516,6 +523,9 @@ def _canonical_category_for_source(source_type: str, source_envelope: str) -> st
         if envelope_lower in _SKI_ENVELOPES:
             return "лыжи"
         return "спорт"
+
+    if source_lower == "household" and envelope_lower in {"налог", "налоги"}:
+        return "налог"
 
     if source_lower in _CATEGORY_BY_SOURCE_TYPE:
         return _CATEGORY_BY_SOURCE_TYPE[source_lower]
