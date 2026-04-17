@@ -566,10 +566,15 @@ def _sphere_for_source(source_type: str, source_envelope: str) -> str | None:
     return None
 
 
+_VACATION_ENVELOPES: frozenset[str] = frozenset(
+    {duckdb_repo.TRAVEL_ENVELOPE, "sim-travel"},
+)
+
+
 def _event_name_for_source(source_type: str, source_envelope: str, year: int) -> str | None:
     if source_type.lower().strip() == "отпуск":
         return f"{SYNTHETIC_EVENT_PREFIX}{year}"
-    if source_envelope.lower().strip() == duckdb_repo.TRAVEL_ENVELOPE:
+    if source_envelope.lower().strip() in _VACATION_ENVELOPES:
         return f"{SYNTHETIC_EVENT_PREFIX}{year}"
     return None
 
