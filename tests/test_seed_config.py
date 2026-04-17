@@ -342,7 +342,7 @@ class TestSeedConfig:
             {
                 "get_all_values": lambda self: [
                     ["Date", "RSD", "EUR", "Category", "Group", "Comment", "Month", "Rate"],
-                    ["2026-01-01", "0", "", "special-cat", "special-group", "", "1", ""],
+                    ["2026-01-01", "0", "", "еда", "special-group", "", "1", ""],
                 ]
             },
         )()
@@ -358,7 +358,7 @@ class TestSeedConfig:
         con = duckdb_repo.get_config_connection(read_only=True)
         try:
             mapping_row = con.execute(
-                "SELECT 1 FROM source_type_mapping WHERE source_type = 'special-cat' AND source_envelope = 'special-group'"
+                "SELECT 1 FROM source_type_mapping WHERE source_type = 'еда' AND source_envelope = 'special-group'"
             ).fetchone()
             assert mapping_row is not None
         finally:
@@ -379,7 +379,7 @@ class TestSeedConfig:
             {
                 "get_all_values": lambda self: [
                     ["Date", "RSD", "EUR", "Category", "Group", "Comment", "Month", "Rate"],
-                    ["2026-01-01", "0", "", "boot-cat", "", "", "1", ""],
+                    ["2026-01-01", "0", "", "еда", "", "", "1", ""],
                 ]
             },
         )()

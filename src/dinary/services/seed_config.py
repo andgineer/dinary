@@ -294,30 +294,191 @@ def _restore_import_sources(rows: list[ImportSourceSeedRow]) -> None:
         con.close()
 
 
+TAXONOMY_CATEGORIES: frozenset[str] = frozenset(
+    cat for _group, cats in ENTRY_GROUPS for cat in cats
+)
+
+
+_CATEGORY_BY_SOURCE_TYPE: dict[str, str] = {
+    # Food & household
+    "еда&бытовые": "еда",
+    "еда": "еда",
+    "фрукты": "фрукты",
+    "деликатесы": "деликатесы",
+    "алкоголь": "алкоголь",
+    "бытовые": "хозтовары",
+    "хозтовары": "хозтовары",
+    "household": "хозтовары",
+    "дача": "хозтовары",
+    "обустройство": "хозтовары",
+    # Housing
+    "аренда": "аренда",
+    "ремонт": "ремонт",
+    "ремонт комнаты ани": "ремонт",
+    "мебель": "мебель",
+    "бытовая техника": "бытовая техника",
+    # Utilities & services
+    "коммунальные": "коммунальные",
+    "мобильник": "мобильник",
+    "интернет": "интернет",
+    "сервисы": "сервисы",
+    # Health
+    "медицина": "медицина",
+    "лекарства": "лекарства",
+    "страхование жизни": "медицина",
+    "очки": "медицина",
+    # Hygiene & wellness (baseline; wellness envelope handled below)
+    "гигиена": "гигиена",
+    "стрижка": "гигиена",
+    "косметика": "гигиена",
+    "зож": "ЗОЖ",
+    "бад": "ЗОЖ",
+    # Sport
+    "спорт": "спорт",
+    "велосипед": "велосипед",
+    "лыжи": "лыжи",
+    # Leisure
+    "развлечения": "развлечения",
+    "кафе": "кафе",
+    "гаджеты": "гаджеты",
+    "электроника": "электроника",
+    "инструменты": "инструменты",
+    "avito": "гаджеты",
+    # Transport
+    "транспорт": "транспорт",
+    "танспорт": "транспорт",
+    "pubtransport": "транспорт",
+    "машина": "машина",
+    "топливо": "топливо",
+    # Knowledge & productivity
+    "обучение": "обучение",
+    "продуктивность": "продуктивность",
+    "работа": "продуктивность",
+    "professional": "продуктивность",
+    # Personal / family
+    "карманные": "карманные",
+    "собака": "карманные",
+    "подарки": "подарки",
+    "социальное": "подарки",
+    "одежда": "одежда",
+    # State
+    "налог": "налог",
+    "штрафы": "штрафы",
+}
+
+_VACATION_CATEGORY_BY_ENVELOPE: dict[str, str] = {
+    "": "аренда",
+    "проживание": "аренда",
+    "жилье": "аренда",
+    "отель": "аренда",
+    "еда": "кафе",
+    "кафе": "кафе",
+    "кофе": "кафе",
+    "перекусы": "кафе",
+    "ужин": "кафе",
+    "продукты": "еда",
+    "магазин": "еда",
+    "фрукты": "фрукты",
+    "транспорт": "транспорт",
+    "билеты": "транспорт",
+    "такси": "транспорт",
+    "перелет": "транспорт",
+    "развлечения": "развлечения",
+    "музей": "развлечения",
+    "шезлонги": "развлечения",
+    "экскурсии": "развлечения",
+    "подарки": "подарки",
+    "игрушки и подарки": "подарки",
+    "медицина": "медицина",
+    "мобильный": "мобильник",
+    "sim-travel": "мобильник",
+    "duty free": "гаджеты",
+}
+
+_KOMANDIROVKA_CATEGORY_BY_ENVELOPE: dict[str, str] = {
+    "": "аренда",
+    "аренда": "аренда",
+    "обустройство": "бытовая техника",
+    "транспорт": "транспорт",
+    "еда": "еда",
+    "развлечения": "развлечения",
+    "внж": "налог",
+    "банк": "сервисы",
+    "комуннальные": "коммунальные",
+    "коммунальные": "коммунальные",
+    "налог": "налог",
+    "обучение": "обучение",
+    "поиск квартиры": "сервисы",
+    "школа": "обучение",
+}
+
+
 def _canonical_category_for_source(source_type: str, source_envelope: str) -> str:  # noqa: C901, PLR0911
-    source_lower = source_type.lower()
-    envelope_lower = source_envelope.lower()
+    source_lower = source_type.lower().strip()
+    envelope_lower = source_envelope.lower().strip()
 
     if source_type == LEGACY_FOOD_CATEGORY:
         return "еда"
     if source_type == BULAVKI_CATEGORY:
         return "карманные"
-    if source_lower == "бытовые":
-        return "хозтовары"
-    if source_lower == "стрижка":
-        return "гигиена"
-    if source_lower == "бад":
-        return "ЗОЖ"
-    if source_lower == "подарки":
-        return "подарки"
+
     if source_lower == "приложения":
         return "продуктивность" if envelope_lower == "профессиональное" else "развлечения"
+
     if source_lower == "wellness":
-        if envelope_lower in {"стрижка", "рив гош"}:
-            return "гигиена"
         if envelope_lower in {"yazio"}:
             return "ЗОЖ"
-    return source_type
+        return "гигиена"
+
+    if source_lower == "отпуск":
+        return _VACATION_CATEGORY_BY_ENVELOPE.get(envelope_lower, "аренда")
+
+    if source_lower == "командировка":
+        return _KOMANDIROVKA_CATEGORY_BY_ENVELOPE.get(envelope_lower, "аренда")
+
+    if source_lower in _CATEGORY_BY_SOURCE_TYPE:
+        return _CATEGORY_BY_SOURCE_TYPE[source_lower]
+
+    if source_type in TAXONOMY_CATEGORIES:
+        return source_type
+
+    msg = (
+        f"Unmapped sheet source_type={source_type!r} (envelope={source_envelope!r}). "
+        "Add a rule to _CATEGORY_BY_SOURCE_TYPE or EXPLICIT_MAPPING_OVERRIDES."
+    )
+    raise ValueError(msg)
+
+
+def _beneficiary_for_source(source_type: str, source_envelope: str) -> str | None:
+    if source_envelope in BENEFICIARY_ENVELOPES:
+        return BENEFICIARY_ENVELOPES[source_envelope]
+    source_lower = source_type.lower().strip()
+    if source_type == BULAVKI_CATEGORY:
+        return "Лариса"
+    if source_lower == "собака":
+        return "собака"
+    if source_type == "Ремонт комнаты Ани":
+        return "Аня"
+    return None
+
+
+def _sphere_for_source(source_type: str, source_envelope: str) -> str | None:
+    if source_envelope in SPHERE_OF_LIFE_ENVELOPES:
+        return SPHERE_OF_LIFE_ENVELOPES[source_envelope]
+    source_lower = source_type.lower().strip()
+    if source_lower == "дача":
+        return "дача"
+    if source_lower == "командировка":
+        return "релокация"
+    return None
+
+
+def _event_name_for_source(source_type: str, source_envelope: str, year: int) -> str | None:
+    if source_type.lower().strip() == "отпуск":
+        return f"{SYNTHETIC_EVENT_PREFIX}{year}"
+    if source_envelope.lower().strip() == duckdb_repo.TRAVEL_ENVELOPE:
+        return f"{SYNTHETIC_EVENT_PREFIX}{year}"
+    return None
 
 
 def _upsert_mapping(  # noqa: PLR0913
@@ -401,6 +562,12 @@ def seed_from_sheet(year: int | None = None) -> dict:  # noqa: C901, PLR0912, PL
 
         def ensure_category(cat_name: str) -> int:
             nonlocal next_cat_id
+            if cat_name not in TAXONOMY_CATEGORIES:
+                msg = (
+                    f"ensure_category({cat_name!r}): only categories from ENTRY_GROUPS "
+                    "may be created in config.duckdb."
+                )
+                raise ValueError(msg)
             if cat_name not in cat_ids:
                 cid = next_cat_id
                 next_cat_id += 1
@@ -448,45 +615,12 @@ def seed_from_sheet(year: int | None = None) -> dict:  # noqa: C901, PLR0912, PL
             )
             return new_id
 
-        mapping_count = 0
+        for _group_title, category_names in ENTRY_GROUPS:
+            for cat_name in category_names:
+                ensure_category(cat_name)
 
-        for c in cats:
-            source_type = c.name
-            source_envelope = c.group or ""
-
-            category_name = _canonical_category_for_source(source_type, source_envelope)
-            category_id = ensure_category(category_name)
-
-            beneficiary_id = None
-            if source_envelope in BENEFICIARY_ENVELOPES:
-                beneficiary_id = ensure_beneficiary(BENEFICIARY_ENVELOPES[source_envelope])
-            if source_type == BULAVKI_CATEGORY:
-                beneficiary_id = ensure_beneficiary("Лариса")
-
-            event_id = None
-            sphere_of_life_id = None
-
-            if source_envelope in SPHERE_OF_LIFE_ENVELOPES:
-                sphere_of_life_id = ensure_sphere(SPHERE_OF_LIFE_ENVELOPES[source_envelope])
-
-            existing_mapping = con.execute(
-                "SELECT 1 FROM source_type_mapping "
-                "WHERE year = 0 AND source_type = ? AND source_envelope = ?",
-                [source_type, source_envelope],
-            ).fetchone()
-
-            _upsert_mapping(
-                con,
-                year=0,
-                source_type=source_type,
-                source_envelope=source_envelope,
-                category_id=category_id,
-                beneficiary_id=beneficiary_id,
-                event_id=event_id,
-                sphere_of_life_id=sphere_of_life_id,
-            )
-            if not existing_mapping:
-                mapping_count += 1
+        for sphere_name in SPHERE_OF_LIFE_ENVELOPES.values():
+            ensure_sphere(sphere_name)
 
         event_name = f"{SYNTHETIC_EVENT_PREFIX}{year}"
         existing_event = con.execute(
@@ -502,14 +636,39 @@ def seed_from_sheet(year: int | None = None) -> dict:  # noqa: C901, PLR0912, PL
             )
             logger.info("Created synthetic travel event: %s", event_name)
 
-        # Ensure all categories from taxonomy exist even if not in the sheet
-        for _group_title, category_names in ENTRY_GROUPS:
-            for cat_name in category_names:
-                ensure_category(cat_name)
+        mapping_count = 0
 
-        # Ensure all spheres of life exist
-        for sphere_name in SPHERE_OF_LIFE_ENVELOPES.values():
-            ensure_sphere(sphere_name)
+        for c in cats:
+            source_type = c.name
+            source_envelope = c.group or ""
+
+            category_name = _canonical_category_for_source(source_type, source_envelope)
+            category_id = ensure_category(category_name)
+
+            beneficiary_name = _beneficiary_for_source(source_type, source_envelope)
+            beneficiary_id = ensure_beneficiary(beneficiary_name) if beneficiary_name else None
+
+            sphere_name = _sphere_for_source(source_type, source_envelope)
+            sphere_of_life_id = ensure_sphere(sphere_name) if sphere_name else None
+
+            existing_mapping = con.execute(
+                "SELECT 1 FROM source_type_mapping "
+                "WHERE year = 0 AND source_type = ? AND source_envelope = ?",
+                [source_type, source_envelope],
+            ).fetchone()
+
+            _upsert_mapping(
+                con,
+                year=0,
+                source_type=source_type,
+                source_envelope=source_envelope,
+                category_id=category_id,
+                beneficiary_id=beneficiary_id,
+                event_id=None,
+                sphere_of_life_id=sphere_of_life_id,
+            )
+            if not existing_mapping:
+                mapping_count += 1
 
         for row in EXPLICIT_MAPPING_OVERRIDES:
             existing = con.execute(

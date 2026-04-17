@@ -16,9 +16,10 @@ from decimal import Decimal
 
 from dinary.services import duckdb_repo
 from dinary.services.seed_config import (
-    BENEFICIARY_ENVELOPES,
-    SPHERE_OF_LIFE_ENVELOPES,
+    _beneficiary_for_source,
     _canonical_category_for_source,
+    _event_name_for_source,
+    _sphere_for_source,
 )
 from dinary.services.sheets import (
     HEADER_ROWS,
@@ -318,9 +319,13 @@ def _fallback_dimensions_from_plan(  # noqa: PLR0913
     source_envelope: str,
     comment: str,
     amount_eur: float,
+    year: int,
     travel_event_id: int,
 ) -> tuple[int, int | None, int | None, int | None] | None:
-    category_name = _canonical_category_for_source(source_type, source_envelope)
+    try:
+        category_name = _canonical_category_for_source(source_type, source_envelope)
+    except ValueError:
+        return None
     category_name = _apply_housing_heuristics(
         source_type=source_type,
         source_envelope=source_envelope,
@@ -333,18 +338,17 @@ def _fallback_dimensions_from_plan(  # noqa: PLR0913
         return None
 
     beneficiary_id = None
-    beneficiary_name = BENEFICIARY_ENVELOPES.get(source_envelope)
-    if source_type == "Ремонт комнаты Ани":
-        beneficiary_name = None
+    beneficiary_name = _beneficiary_for_source(source_type, source_envelope)
     if beneficiary_name is not None:
         beneficiary_id = _lookup_id_by_name(con, table="family_members", name=beneficiary_name)
 
     sphere_of_life_id = None
-    sphere_name = SPHERE_OF_LIFE_ENVELOPES.get(source_envelope)
+    sphere_name = _sphere_for_source(source_type, source_envelope)
     if sphere_name is not None:
         sphere_of_life_id = _lookup_id_by_name(con, table="spheres_of_life", name=sphere_name)
 
-    event_id = travel_event_id if source_envelope == duckdb_repo.TRAVEL_ENVELOPE else None
+    event_name = _event_name_for_source(source_type, source_envelope, year)
+    event_id = travel_event_id if event_name is not None else None
     return category_id, beneficiary_id, event_id, sphere_of_life_id
 
 
@@ -474,6 +478,7 @@ def import_year(year: int, *, wipe_all: bool = False) -> dict:  # noqa: C901, PL
                     source_envelope=group,
                     comment=comment,
                     amount_eur=amount_eur,
+                    year=year,
                     travel_event_id=travel_event_id,
                 )
                 if fallback is None:
@@ -487,8 +492,31 @@ def import_year(year: int, *, wipe_all: bool = False) -> dict:  # noqa: C901, PL
                 event_id = mapping.event_id
                 sphere_of_life_id = mapping.sphere_of_life_id
 
-            if group == duckdb_repo.TRAVEL_ENVELOPE and event_id is None:
-                event_id = travel_event_id
+                try:
+                    canonical_default = _canonical_category_for_source(category, group)
+                except ValueError:
+                    canonical_default = None
+                if canonical_default is not None:
+                    adjusted_name = _apply_housing_heuristics(
+                        source_type=category,
+                        source_envelope=group,
+                        comment=comment,
+                        amount_eur=amount_eur,
+                        default_category_name=canonical_default,
+                    )
+                    if adjusted_name != canonical_default:
+                        adjusted_id = _lookup_id_by_name(
+                            con,
+                            table="categories",
+                            name=adjusted_name,
+                        )
+                        if adjusted_id is not None:
+                            category_id = adjusted_id
+
+            if event_id is None:
+                event_name = _event_name_for_source(category, group, year)
+                if event_name is not None:
+                    event_id = travel_event_id
 
             months_seen.add(month)
 
