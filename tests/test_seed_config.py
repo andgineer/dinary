@@ -128,7 +128,7 @@ class TestSeedConfig:
             con.close()
 
     def test_булавки_maps_to_карманные_with_лариса(self, monkeypatch, tmp_path):
-        """'булавки' should map to category 'карманные' with beneficiary 'Лариса'."""
+        """The "булавки" source_type maps to category "карманные" with beneficiary "Лариса"."""
         self._seed(monkeypatch, tmp_path)
         con = duckdb_repo.get_config_connection(read_only=True)
         try:

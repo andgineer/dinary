@@ -21,7 +21,9 @@ DATA_DIR = Path("data")
 CONFIG_DB = DATA_DIR / "config.duckdb"
 
 SYNTHETIC_EVENT_PREFIX = "отпуск-"
+BUSINESS_TRIP_EVENT_PREFIX = "командировка-"
 TRAVEL_ENVELOPE = "путешествия"
+BUSINESS_TRIP_EVENT_LAST_YEAR = 2021  # after this year, "командировка" rows are relocation
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +232,37 @@ def resolve_travel_event(expense_date: date) -> int:
             [new_id, event_name, date(year, 1, 1), date(year, 12, 31)],
         )
         logger.info("Auto-created synthetic travel event: %s (id=%d)", event_name, new_id)
+        return new_id
+    finally:
+        config_con.close()
+
+
+def resolve_business_trip_event(expense_date: date) -> int:
+    """Find or create a synthetic business trip event for the expense's year.
+
+    Pre-2022 envelope/source_type "командировка" marks real work trips.
+    """
+    year = expense_date.year
+    event_name = f"{BUSINESS_TRIP_EVENT_PREFIX}{year}"
+
+    config_con = get_config_connection(read_only=False)
+    try:
+        row = config_con.execute(
+            "SELECT id FROM events WHERE name = ? AND date_from = ? AND date_to = ?",
+            [event_name, date(year, 1, 1), date(year, 12, 31)],
+        ).fetchone()
+        if row:
+            return row[0]
+        max_id_row = config_con.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM events",
+        ).fetchone()
+        max_id = max_id_row[0] if max_id_row else 0
+        new_id = max_id + 1
+        config_con.execute(
+            "INSERT INTO events (id, name, date_from, date_to) VALUES (?, ?, ?, ?)",
+            [new_id, event_name, date(year, 1, 1), date(year, 12, 31)],
+        )
+        logger.info("Auto-created synthetic business trip event: %s (id=%d)", event_name, new_id)
         return new_id
     finally:
         config_con.close()

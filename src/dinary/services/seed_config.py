@@ -71,6 +71,7 @@ class ImportSourceSeedRow:
     notes: str | None
 
 
+_RUB_2012_LAST_YEAR = 2012
 _RUB_2014_LAST_YEAR = 2014
 _RUB_2016_LAST_YEAR = 2016
 _RUB_6COL_LAST_YEAR = 2021
@@ -78,6 +79,8 @@ _RUB_FALLBACK_YEAR = 2022
 
 
 def _default_layout_for_year(year: int) -> str:
+    if year <= _RUB_2012_LAST_YEAR:
+        return "rub_2012"
     if year <= _RUB_2014_LAST_YEAR:
         return "rub_2014"
     if year <= _RUB_2016_LAST_YEAR:
@@ -202,6 +205,7 @@ _CATEGORY_COLUMNS_BY_LAYOUT = {
     "rub_6col": (3, 4),
     "rub_2016": (3, 4),
     "rub_2014": (3, 4),
+    "rub_2012": (3, 4),
 }
 
 
@@ -375,6 +379,8 @@ _CATEGORY_BY_SOURCE_TYPE: dict[str, str] = {
     "социализация": "подарки",  # typo/alias in 2014 sheet
     "страховка": "коммунальные",
     "одежда": "одежда",
+    # Banking / financial services (2013+ sheets)
+    "банк": "сервисы",
     # State
     "налог": "налог",
     "налоги": "налог",
@@ -384,6 +390,8 @@ _CATEGORY_BY_SOURCE_TYPE: dict[str, str] = {
 _EDA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
     "кафе": "кафе",
     "lunch": "кафе",
+    "общепит": "кафе",  # 2012 sheet
+    "ресторан": "кафе",
     "кофе": "кафе",
     "ужин": "кафе",
     "перекусы": "кафе",
@@ -411,6 +419,8 @@ _MASHINA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
     "налоги": "налог",
     "штраф": "штрафы",
     "штрафы": "штрафы",
+    "страховка": "машина",  # car insurance counts as car-ownership cost
+    "gadgets": "гаджеты",  # car gadgets/electronics
 }
 
 _DACHA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
@@ -419,6 +429,8 @@ _DACHA_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
     "колодец": "ремонт",
     "electro": "ремонт",  # Latin 'Electro' in 2016 — electrical work, not utility
     "diy": "ремонт",
+    "краски": "ремонт",  # 2013 sheet
+    "мебель": "мебель",  # 2013 sheet
     "инструменты": "инструменты",
     "налог": "налог",
     "налоги": "налог",
@@ -440,11 +452,20 @@ _RAZVL_SUBCATEGORY_BY_ENVELOPE: dict[str, str] = {
     "спорт": "спорт",
     "skiitime": "лыжи",
     "wellness": "гигиена",
-    "diy": "гаджеты",
+    "diy": "гаджеты",  # default; refined by import-time keyword check (tool/material/electronics)
     "dyi": "гаджеты",  # typo preserved from 2014 sheet
+    "gadgets": "гаджеты",  # 2013 sheet
     "подарок": "подарки",
     "подарки": "подарки",
     "отпуск": "аренда",
+    # 2012/2013 sheet envelopes
+    "игрушки": "игрушки",
+    "игрушка": "игрушки",
+    "ресторан": "кафе",
+    "books": "книги",
+    "книги": "книги",
+    "журналы": "книги",
+    "apps": "продуктивность",  # mobile/desktop apps purchases
 }
 
 _SKI_ENVELOPES: frozenset[str] = frozenset(
@@ -510,9 +531,15 @@ def _canonical_category_for_source(source_type: str, source_envelope: str) -> st
         return "карманные"
 
     if source_lower == "приложения":
-        return "продуктивность" if envelope_lower == "профессиональное" else "развлечения"
+        # Apps purchases historically lean productivity (utilities/tools/dictionaries);
+        # leisure-only apps were rare in pre-2018 data.
+        return "продуктивность"
 
     if source_lower in {"wellness", "welness"}:  # typo preserved in 2015 sheet
+        if envelope_lower in _SKI_ENVELOPES:
+            return "лыжи"
+        if envelope_lower == "спорт":
+            return "спорт"
         if envelope_lower in {"yazio"}:
             return "ЗОЖ"
         return "гигиена"
@@ -546,6 +573,12 @@ def _canonical_category_for_source(source_type: str, source_envelope: str) -> st
             return "налог"
         if envelope_lower == "мебель":
             return "мебель"
+        if envelope_lower == "страховка":
+            return "коммунальные"  # home insurance, mirrors "Дача/Страховка"
+        if envelope_lower in {"diy", "dyi"}:
+            # Maker hobby (same default as "Развлечения/DIY"); the smart
+            # keyword heuristic refines this at import time.
+            return "гаджеты"
 
     if source_lower in _CATEGORY_BY_SOURCE_TYPE:
         return _CATEGORY_BY_SOURCE_TYPE[source_lower]
@@ -575,27 +608,49 @@ def _beneficiary_for_source(source_type: str, source_envelope: str) -> str | Non
     return None
 
 
-def _sphere_for_source(source_type: str, source_envelope: str) -> str | None:
+def _sphere_for_source(source_type: str, source_envelope: str, year: int) -> str | None:
     if source_envelope in SPHERE_OF_LIFE_ENVELOPES:
         return SPHERE_OF_LIFE_ENVELOPES[source_envelope]
     source_lower = source_type.lower().strip()
+    envelope_lower = source_envelope.lower().strip()
     if source_lower == "дача":
         return "дача"
-    if source_lower == "командировка":
-        return "релокация"
+    # year=0 is the seed-time wildcard; year-dependent rules below should be
+    # applied at import-time only (per-row real year).
+    if year == 0:
+        return None
+    # "командировка": through 2021 it marks a real business trip
+    # (sphere="профессиональное"). From 2022 onward the spreadsheet reuses the
+    # same word for the relocation to Serbia (sphere="релокация"); no real
+    # business trips were imported for that period.
+    is_komandirovka = source_lower == "командировка" or envelope_lower == "командировка"
+    if is_komandirovka:
+        if year > duckdb_repo.BUSINESS_TRIP_EVENT_LAST_YEAR:
+            return "релокация"
+        return "профессиональное"
     return None
 
 
 _VACATION_ENVELOPES: frozenset[str] = frozenset(
-    {duckdb_repo.TRAVEL_ENVELOPE, "sim-travel", "отпуск"},
+    {duckdb_repo.TRAVEL_ENVELOPE, "sim-travel", "отпуск", "travel"},
 )
 
 
 def _event_name_for_source(source_type: str, source_envelope: str, year: int) -> str | None:
-    if source_type.lower().strip() == "отпуск":
+    source_lower = source_type.lower().strip()
+    envelope_lower = source_envelope.lower().strip()
+    if source_lower == "отпуск":
         return f"{SYNTHETIC_EVENT_PREFIX}{year}"
-    if source_envelope.lower().strip() in _VACATION_ENVELOPES:
+    if envelope_lower in _VACATION_ENVELOPES:
         return f"{SYNTHETIC_EVENT_PREFIX}{year}"
+    # "командировка": through 2021 it marks a real business trip, so we create
+    # a synthetic event "командировка-YYYY". From 2022 onward the spreadsheet
+    # reused the word for the relocation to Serbia and no real trips were
+    # taken; future real trips will be entered directly into the DB (which
+    # becomes the source of truth).
+    is_komandirovka = source_lower == "командировка" or envelope_lower == "командировка"
+    if is_komandirovka and year <= duckdb_repo.BUSINESS_TRIP_EVENT_LAST_YEAR:
+        return f"{duckdb_repo.BUSINESS_TRIP_EVENT_PREFIX}{year}"
     return None
 
 
@@ -766,7 +821,7 @@ def seed_from_sheet(year: int | None = None) -> dict:  # noqa: C901, PLR0912, PL
             beneficiary_name = _beneficiary_for_source(source_type, source_envelope)
             beneficiary_id = ensure_beneficiary(beneficiary_name) if beneficiary_name else None
 
-            sphere_name = _sphere_for_source(source_type, source_envelope)
+            sphere_name = _sphere_for_source(source_type, source_envelope, 0)
             sphere_of_life_id = ensure_sphere(sphere_name) if sphere_name else None
 
             existing_mapping = con.execute(

@@ -44,9 +44,9 @@ class SheetLayout:
     # The fallback amount is in the same currency as resolved by
     # _resolve_currency() for the given year+month.
     col_amount_fallback: int | None = None
-    # Optional beneficiary column ("Кто" in 2014 sheet). Values like
-    # "Ребенок"/"Лариса" override the default beneficiary resolved from
-    # source_type/envelope.
+    # Optional beneficiary column ("kto" / who) used by 2014+ sheets. Raw values
+    # are mapped via _SHEET_BENEFICIARY_BY_VALUE and override the default
+    # beneficiary resolved from source_type/envelope.
     col_beneficiary: int | None = None
 
 
@@ -99,14 +99,27 @@ LAYOUTS: dict[str, SheetLayout] = {
         currency="RUB",
         col_beneficiary=5,
     ),
+    "rub_2012": SheetLayout(
+        col_amount=2,
+        col_category=3,
+        col_group=4,
+        col_comment=6,
+        col_month=8,  # 2012 sheet has no L/LS columns
+        currency="RUB",
+        col_beneficiary=5,
+    ),
 }
 
-# Maps the raw sheet value in the "Кто" column to a canonical beneficiary name
+# Maps the raw sheet value in the beneficiary column to a canonical name
 # stored in config.family_members.
 _SHEET_BENEFICIARY_BY_VALUE: dict[str, str] = {
     "ребенок": "Аня",
     "аня": "Аня",
     "лариса": "Лариса",
+    "iskin": "Лариса",  # 2012-2013 sheet
+    "anso": "Андрей",  # 2012 sheet
+    "andrey": "Андрей",
+    "андрей": "Андрей",
 }
 
 _MONTHS_IN_YEAR = 12
@@ -171,6 +184,74 @@ _TOOL_KEYWORDS = (
     "мотоблок",
     "секатор",
 )
+# Keywords that classify a DIY/DYI envelope row as electronics (-> "гаджеты")
+# rather than repair/household. Applied only when envelope is DIY/DYI.
+_ELECTRONICS_KEYWORDS = (
+    "паяльн",
+    "припой",
+    "флюс",
+    "ардуино",
+    "arduino",
+    "raspberry",
+    "распберри",
+    "расберри",
+    "atmega",
+    "esp32",
+    "esp8266",
+    "stm32",
+    "светодиод",
+    " led ",
+    "led ",
+    " led",
+    "rgb",
+    "диммер",
+    "контроллер",
+    "controller",
+    "конденсатор",
+    "резистор",
+    "транзистор",
+    " smd",
+    "усилитель",
+    "цап",
+    " dac",
+    "разъём",
+    "разъем",
+    "разьем",
+    "коннектор",
+    "lightning",
+    "hdmi",
+    "raspberrypi",
+    "ebay rgb",
+    "магнитол",
+    "оплетка",
+    "оплётка",
+)
+# Repair/construction materials. Intentionally excludes "клей" (to avoid
+# confusion with hot-glue guns used in maker projects) and small fasteners
+# ("винт"/"гайк"/"стяжк"/"крючк"), which often appear in maker kits next to
+# soldering gear and would otherwise drag those rows into "ремонт" by mistake.
+_MATERIAL_KEYWORDS = (
+    "фанера",
+    "оргстекл",
+    " лак ",
+    " лак,",
+    " лак.",
+    "морилк",
+    "эпоксид",
+    "изолент",
+    "саморез",
+    "гипсокартон",
+    "обои",
+    "цемент",
+    "штукатур",
+    "плитк",
+    "выключател",
+    "клемм",
+    "щиток",
+    "лампочк",
+    "розетк",
+    "патрон ",
+)
 _HOUSING_SOURCE_TYPES = {
     "аренда",
     "квартира",
@@ -227,6 +308,16 @@ def _stable_id(year: int, month: int, row_idx: int, category: str, group: str) -
 def _ensure_travel_event(year: int) -> int:
     """Pre-create the synthetic travel event before budget connection locks config.duckdb."""
     return duckdb_repo.resolve_travel_event(date(year, 1, 1))
+
+
+def _ensure_business_trip_event(year: int) -> int | None:
+    """Pre-create the synthetic business trip event for pre-2022 years.
+
+    Returns None for 2022+ years (where the "командировка" label means relocation).
+    """
+    if year > duckdb_repo.BUSINESS_TRIP_EVENT_LAST_YEAR:
+        return None
+    return duckdb_repo.resolve_business_trip_event(date(year, 1, 1))
 
 
 def _prefetch_monthly_rates(year: int, layout: SheetLayout) -> dict[int, dict[str, Decimal]]:
@@ -315,7 +406,7 @@ def _lookup_id_by_name(
     return row[0] if row else None
 
 
-def _apply_housing_heuristics(
+def _apply_housing_heuristics(  # noqa: C901, PLR0912
     *,
     source_type: str,
     source_envelope: str,
@@ -325,7 +416,22 @@ def _apply_housing_heuristics(
 ) -> str:
     category_name = default_category_name
     source_lower = source_type.lower()
+    envelope_lower = source_envelope.lower()
     comment_lower = comment.lower()
+
+    # DIY/DYI is a mixed envelope. Priority (target category in parens):
+    #   1) explicit power tool                                     ("инструменты")
+    #   2) electronics: soldering, LEDs, Raspberry, ...            ("гаджеты")
+    #   3) repair materials: plywood, acrylic, varnish, tape, ...  ("ремонт")
+    #   4) default (historically the user used DIY for maker hobby) ("гаджеты")
+    if envelope_lower in {"diy", "dyi"}:
+        if any(kw in comment_lower for kw in _TOOL_KEYWORDS):
+            return "инструменты"
+        if any(kw in comment_lower for kw in _ELECTRONICS_KEYWORDS):
+            return "гаджеты"
+        if any(kw in comment_lower for kw in _MATERIAL_KEYWORDS):
+            return "ремонт"
+        return default_category_name
 
     if source_lower == "дача" and any(kw in comment_lower for kw in _TOOL_KEYWORDS):
         return "инструменты"
@@ -351,6 +457,21 @@ def _apply_housing_heuristics(
     return category_name
 
 
+def _resolve_event_id_by_name(
+    event_name: str | None,
+    *,
+    travel_event_id: int,
+    business_trip_event_id: int | None,
+) -> int | None:
+    if event_name is None:
+        return None
+    if event_name.startswith(duckdb_repo.BUSINESS_TRIP_EVENT_PREFIX):
+        return business_trip_event_id
+    if event_name.startswith(duckdb_repo.SYNTHETIC_EVENT_PREFIX):
+        return travel_event_id
+    return None
+
+
 def _fallback_dimensions_from_plan(  # noqa: PLR0913
     con,
     *,
@@ -360,6 +481,7 @@ def _fallback_dimensions_from_plan(  # noqa: PLR0913
     amount_eur: float,
     year: int,
     travel_event_id: int,
+    business_trip_event_id: int | None,
 ) -> tuple[int, int | None, int | None, int | None] | None:
     try:
         category_name = _canonical_category_for_source(source_type, source_envelope)
@@ -382,12 +504,16 @@ def _fallback_dimensions_from_plan(  # noqa: PLR0913
         beneficiary_id = _lookup_id_by_name(con, table="family_members", name=beneficiary_name)
 
     sphere_of_life_id = None
-    sphere_name = _sphere_for_source(source_type, source_envelope)
+    sphere_name = _sphere_for_source(source_type, source_envelope, year)
     if sphere_name is not None:
         sphere_of_life_id = _lookup_id_by_name(con, table="spheres_of_life", name=sphere_name)
 
     event_name = _event_name_for_source(source_type, source_envelope, year)
-    event_id = travel_event_id if event_name is not None else None
+    event_id = _resolve_event_id_by_name(
+        event_name,
+        travel_event_id=travel_event_id,
+        business_trip_event_id=business_trip_event_id,
+    )
     return category_id, beneficiary_id, event_id, sphere_of_life_id
 
 
@@ -443,6 +569,7 @@ def import_year(year: int, *, wipe_all: bool = False) -> dict:  # noqa: C901, PL
     """
     duckdb_repo.init_config_db()
     travel_event_id = _ensure_travel_event(year)
+    business_trip_event_id = _ensure_business_trip_event(year)
     russia_trip_event_id = None
     if year == _RUSSIA_TRIP_FIX_YEAR:
         russia_trip_event_id = duckdb_repo.ensure_event(
@@ -519,6 +646,7 @@ def import_year(year: int, *, wipe_all: bool = False) -> dict:  # noqa: C901, PL
                     amount_eur=amount_eur,
                     year=year,
                     travel_event_id=travel_event_id,
+                    business_trip_event_id=business_trip_event_id,
                 )
                 if fallback is None:
                     logger.warning("No mapping for %s/%s — skipping row", category, group)
@@ -552,10 +680,24 @@ def import_year(year: int, *, wipe_all: bool = False) -> dict:  # noqa: C901, PL
                         if adjusted_id is not None:
                             category_id = adjusted_id
 
+                # Year=0 catch-all mappings leave sphere/event NULL when the rule
+                # depends on the actual year (e.g. komandirovka). Resolve per row.
+                if sphere_of_life_id is None:
+                    sphere_name = _sphere_for_source(category, group, year)
+                    if sphere_name is not None:
+                        sphere_of_life_id = _lookup_id_by_name(
+                            con,
+                            table="spheres_of_life",
+                            name=sphere_name,
+                        )
+
             if event_id is None:
                 event_name = _event_name_for_source(category, group, year)
-                if event_name is not None:
-                    event_id = travel_event_id
+                event_id = _resolve_event_id_by_name(
+                    event_name,
+                    travel_event_id=travel_event_id,
+                    business_trip_event_id=business_trip_event_id,
+                )
 
             if layout.col_beneficiary is not None:
                 who_raw = _cell(row_display, layout.col_beneficiary)
