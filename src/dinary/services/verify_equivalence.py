@@ -11,13 +11,12 @@ from decimal import Decimal
 from gspread.utils import ValueRenderOption
 
 from dinary.services import duckdb_repo
-from dinary.services.import_sheet import _parse_formula_amounts
+from dinary.services.import_sheet import (
+    _RUB_TO_RSD,
+    LAYOUTS,
+    _parse_formula_amounts,
+)
 from dinary.services.sheets import (
-    COL_AMOUNT_RSD,
-    COL_CATEGORY,
-    COL_COMMENT,
-    COL_GROUP,
-    COL_MONTH,
     HEADER_ROWS,
     _cell,
     get_sheet,
@@ -49,6 +48,8 @@ def _read_sheet_aggregates(
     source = duckdb_repo.get_import_source(year)
     spreadsheet_id = source.spreadsheet_id if source else ""
     worksheet_name = source.worksheet_name if source else ""
+    layout_key = source.layout_key if source else "default"
+    layout = LAYOUTS[layout_key]
 
     ss = get_sheet(spreadsheet_id)
     ws = ss.worksheet(worksheet_name) if worksheet_name else ss.sheet1
@@ -61,24 +62,31 @@ def _read_sheet_aggregates(
         row_display = all_values[row_idx]
         row_formula = all_formulas[row_idx] if row_idx < len(all_formulas) else row_display
 
-        month_str = _cell(row_display, COL_MONTH)
+        month_str = _cell(row_display, layout.col_month)
         if not month_str or not month_str.isdigit():
             continue
         month = int(month_str)
         if not 1 <= month <= _MONTHS_IN_YEAR:
             continue
 
-        category = _cell(row_display, COL_CATEGORY)
-        group = _cell(row_display, COL_GROUP)
+        category = _cell(row_display, layout.col_category)
+        group = _cell(row_display, layout.col_group)
         if not category:
             continue
 
-        formula_raw = _formula_cell_str(row_formula, COL_AMOUNT_RSD)
-        display_raw = _cell(row_display, COL_AMOUNT_RSD)
+        formula_raw = _formula_cell_str(row_formula, layout.col_amount)
+        display_raw = _cell(row_display, layout.col_amount)
         amounts = _parse_formula_amounts(formula_raw, display_raw)
+        if not amounts and layout.col_amount_rub_fallback:
+            rub_formula = _formula_cell_str(row_formula, layout.col_amount_rub_fallback)
+            rub_display = _cell(row_display, layout.col_amount_rub_fallback)
+            rub_amounts = _parse_formula_amounts(rub_formula, rub_display)
+            amounts = [round(a * _RUB_TO_RSD, 2) for a in rub_amounts]
+        if layout.rub_multiplier != 1.0:
+            amounts = [round(a * layout.rub_multiplier, 2) for a in amounts]
 
         total = Decimal(str(sum(amounts))) if amounts else Decimal(0)
-        comment = _cell(row_display, COL_COMMENT)
+        comment = _cell(row_display, layout.col_comment)
 
         key = (category, group)
         if key in result[month]:

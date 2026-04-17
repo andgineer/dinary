@@ -11,6 +11,7 @@ Idempotent: uses deterministic expense IDs so re-running is safe.
 Does NOT create sheet_sync_jobs — the data is already in the sheet.
 """
 
+import dataclasses
 import hashlib
 import logging
 import re
@@ -20,15 +21,44 @@ from gspread.utils import ValueRenderOption
 
 from dinary.services import duckdb_repo
 from dinary.services.sheets import (
-    COL_AMOUNT_RSD,
-    COL_CATEGORY,
-    COL_COMMENT,
-    COL_GROUP,
-    COL_MONTH,
     HEADER_ROWS,
     _cell,
     get_sheet,
 )
+
+_RUB_TO_RSD = 1.5
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SheetLayout:
+    col_amount: int
+    col_category: int
+    col_group: int
+    col_comment: int
+    col_month: int
+    rub_multiplier: float = 1.0
+    col_amount_rub_fallback: int | None = None
+
+
+LAYOUTS: dict[str, SheetLayout] = {
+    "default": SheetLayout(col_amount=2, col_category=4, col_group=5, col_comment=6, col_month=7),
+    "rub_fallback": SheetLayout(
+        col_amount=2,
+        col_category=4,
+        col_group=5,
+        col_comment=6,
+        col_month=7,
+        col_amount_rub_fallback=3,
+    ),
+    "rub_6col": SheetLayout(
+        col_amount=2,
+        col_category=3,
+        col_group=4,
+        col_comment=5,
+        col_month=6,
+        rub_multiplier=_RUB_TO_RSD,
+    ),
+}
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +157,8 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
     source = duckdb_repo.get_import_source(year)
     spreadsheet_id = source.spreadsheet_id if source else ""
     worksheet_name = source.worksheet_name if source else ""
+    layout_key = source.layout_key if source else "default"
+    layout = LAYOUTS[layout_key]
 
     con = duckdb_repo.get_budget_connection(year)
 
@@ -148,25 +180,32 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0912, PLR0915
             row_display = all_values[row_idx]
             row_formula = all_formulas[row_idx] if row_idx < len(all_formulas) else row_display
 
-            month_str = _cell(row_display, COL_MONTH)
+            month_str = _cell(row_display, layout.col_month)
             if not month_str or not month_str.isdigit():
                 continue
             month = int(month_str)
             if not 1 <= month <= _MONTHS_IN_YEAR:
                 continue
 
-            category = _cell(row_display, COL_CATEGORY)
-            group = _cell(row_display, COL_GROUP)
+            category = _cell(row_display, layout.col_category)
+            group = _cell(row_display, layout.col_group)
             if not category:
                 continue
 
-            formula_raw = _formula_cell_str(row_formula, COL_AMOUNT_RSD)
-            display_raw = _cell(row_display, COL_AMOUNT_RSD)
+            formula_raw = _formula_cell_str(row_formula, layout.col_amount)
+            display_raw = _cell(row_display, layout.col_amount)
             amounts = _parse_formula_amounts(formula_raw, display_raw)
+            if not amounts and layout.col_amount_rub_fallback:
+                rub_formula = _formula_cell_str(row_formula, layout.col_amount_rub_fallback)
+                rub_display = _cell(row_display, layout.col_amount_rub_fallback)
+                rub_amounts = _parse_formula_amounts(rub_formula, rub_display)
+                amounts = [round(a * _RUB_TO_RSD, 2) for a in rub_amounts]
+            if layout.rub_multiplier != 1.0:
+                amounts = [round(a * layout.rub_multiplier, 2) for a in amounts]
             if not amounts:
                 continue
 
-            comment_raw = _cell(row_display, COL_COMMENT)
+            comment_raw = _cell(row_display, layout.col_comment)
             comments = [c.strip() for c in comment_raw.split(";")] if comment_raw else []
 
             mapping = duckdb_repo.resolve_mapping_for_year(con, category, group, year)
