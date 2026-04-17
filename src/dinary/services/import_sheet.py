@@ -130,7 +130,6 @@ _APPLIANCE_KEYWORDS = (
 )
 _HOUSING_SOURCE_TYPES = {
     "аренда",
-    "коммунальные",
     "квартира",
     "жильё",
     "жилье",
@@ -289,8 +288,6 @@ def _apply_housing_heuristics(
         category_name = (
             "коммунальные" if amount_eur < _RELOCATION_UTILITIES_THRESHOLD_EUR else "аренда"
         )
-    elif source_type == "Коммунальные":
-        category_name = "коммунальные"
     elif source_type == "Household" and source_envelope == "Бытовая техника":
         category_name = "бытовая техника"
     elif source_type == "Ремонт комнаты Ани":
