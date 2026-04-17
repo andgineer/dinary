@@ -78,6 +78,14 @@ LAYOUTS: dict[str, SheetLayout] = {
         col_month=6,
         currency="RUB",
     ),
+    "rub_2016": SheetLayout(
+        col_amount=1,
+        col_category=2,
+        col_group=3,
+        col_comment=4,
+        col_month=7,
+        currency="RUB",
+    ),
 }
 
 _MONTHS_IN_YEAR = 12

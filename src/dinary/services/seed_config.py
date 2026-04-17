@@ -71,11 +71,14 @@ class ImportSourceSeedRow:
     notes: str | None
 
 
+_RUB_2016_LAST_YEAR = 2016
 _RUB_6COL_LAST_YEAR = 2021
 _RUB_FALLBACK_YEAR = 2022
 
 
 def _default_layout_for_year(year: int) -> str:
+    if year <= _RUB_2016_LAST_YEAR:
+        return "rub_2016"
     if year <= _RUB_6COL_LAST_YEAR:
         return "rub_6col"
     if year == _RUB_FALLBACK_YEAR:
@@ -194,6 +197,7 @@ _CATEGORY_COLUMNS_BY_LAYOUT = {
     "rub": (4, 5),
     "rub_fallback": (4, 5),
     "rub_6col": (3, 4),
+    "rub_2016": (2, 3),
 }
 
 
@@ -354,6 +358,11 @@ _CATEGORY_BY_SOURCE_TYPE: dict[str, str] = {
     "продуктивность": "продуктивность",
     "работа": "продуктивность",
     "professional": "продуктивность",
+    "учеба": "обучение",
+    "школа": "обучение",
+    "курсы": "обучение",
+    # Appliances (explicit "Техника" source_type in 2016 sheet)
+    "техника": "бытовая техника",
     # Personal / family
     "карманные": "карманные",
     "собака": "карманные",
@@ -362,6 +371,7 @@ _CATEGORY_BY_SOURCE_TYPE: dict[str, str] = {
     "одежда": "одежда",
     # State
     "налог": "налог",
+    "налоги": "налог",
     "штрафы": "штрафы",
 }
 
@@ -522,6 +532,8 @@ def _beneficiary_for_source(source_type: str, source_envelope: str) -> str | Non
     if source_lower == "собака":
         return "собака"
     if source_type == "Ремонт комнаты Ани":
+        return "Аня"
+    if source_lower == "школа":
         return "Аня"
     return None
 
