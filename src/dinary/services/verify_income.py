@@ -1,7 +1,7 @@
 """Verify imported income against Google Sheets source data.
 
-Re-reads the Income worksheet, aggregates EUR per month using the same
-layout logic as import_income, and compares against the DB with 0.01 tolerance.
+Re-reads the Income/Balance worksheet, aggregates EUR per month using the
+same layout logic as import_income, and compares against the DB.
 """
 
 import logging

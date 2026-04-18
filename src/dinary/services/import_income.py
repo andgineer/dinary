@@ -1,13 +1,14 @@
 """Import monthly income from Google Sheets into DuckDB.
 
-Reads the Income worksheet for a given year, aggregates EUR totals per month,
-and stores one row per (year, month) in budget_YYYY.duckdb.income.
+Reads the Income/Balance worksheet for a given year, aggregates EUR totals
+per month, and stores one row per (year, month) in budget_YYYY.duckdb.income.
 
 Destructive re-import: wipes existing sheet_import rows before inserting.
 """
 
 import dataclasses
 import logging
+import re
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
@@ -34,14 +35,32 @@ class IncomeLayout:
 
     col_date: int
     col_amount: int
-    currency: str = "EUR"
-    col_amount_fallback: int | None = None
-    fallback_currency: str = "RSD"
+    currency: str
     header_rows: int = 1
-    month_is_date: bool = True
+    # Mid-year currency transition: if set, months >= transition_month
+    # use transition_currency instead of currency.
+    transition_month: int | None = None
+    transition_currency: str | None = None
 
 
-INCOME_LAYOUTS: dict[str, IncomeLayout] = {}
+_INCOME_RUB_RSD_TRANSITION_MONTH = 8  # August 2022: RUB before, RSD from
+
+INCOME_LAYOUTS: dict[str, IncomeLayout] = {
+    # 2019-2021: Balance tab, col A = date, col B = salary in RUB
+    "balance_rub": IncomeLayout(col_date=1, col_amount=2, currency="RUB"),
+    # 2022: Balance tab, RUB until July, RSD from August
+    "balance_rub_rsd": IncomeLayout(
+        col_date=1,
+        col_amount=2,
+        currency="RUB",
+        transition_month=_INCOME_RUB_RSD_TRANSITION_MONTH,
+        transition_currency="RSD",
+    ),
+    # 2023: Balance tab, col A = date, col B = salary in RSD
+    "balance_rsd": IncomeLayout(col_date=1, col_amount=2, currency="RSD"),
+    # 2024-2026: Income tab, col A = date, col B = salary in RSD
+    "income_rsd": IncomeLayout(col_date=1, col_amount=2, currency="RSD"),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -55,10 +74,10 @@ def _cell(row: list[str], col_1indexed: int) -> str:
 
 
 def _parse_amount(raw: str) -> Decimal | None:
-    """Parse a numeric cell, handling locale separators."""
+    """Parse a numeric cell, handling locale separators and $ prefix."""
     if not raw:
         return None
-    cleaned = raw.replace("\xa0", "").replace(" ", "").replace(",", ".")
+    cleaned = raw.replace("\xa0", "").replace(" ", "").replace(",", ".").lstrip("$")
     try:
         val = Decimal(cleaned)
     except Exception:  # noqa: BLE001
@@ -66,45 +85,23 @@ def _parse_amount(raw: str) -> Decimal | None:
     return val if val != 0 else None
 
 
-_DATE_FORMATS = ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y")
+_DATE_FORMATS = ("%Y-%m-%d", "%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%m/%d/%Y")
+_LOOSE_DATE_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
 
 
-def _parse_month_from_date(raw: str) -> int | None:
-    """Extract month number from a date string (DD.MM.YYYY or YYYY-MM-DD)."""
+def _parse_date(raw: str) -> tuple[int, int] | None:
+    """Extract (year, month) from a date string. Returns None if unparseable."""
     if not raw:
         return None
+    m = _LOOSE_DATE_RE.match(raw)
+    if m:
+        return int(m.group(1)), int(m.group(2))
     for fmt in _DATE_FORMATS:
         try:
-            return datetime.strptime(raw, fmt).month  # noqa: DTZ007
+            dt = datetime.strptime(raw, fmt)  # noqa: DTZ007
+            return dt.year, dt.month
         except ValueError:
             continue
-    return None
-
-
-def _parse_month_bare(raw: str) -> int | None:
-    """Parse a bare month number 1..12."""
-    if not raw or not raw.strip().isdigit():
-        return None
-    m = int(raw.strip())
-    return m if 1 <= m <= _MONTHS_IN_YEAR else None
-
-
-def _parse_month(raw: str, *, is_date: bool) -> int | None:
-    return _parse_month_from_date(raw) if is_date else _parse_month_bare(raw)
-
-
-def _read_amount(
-    row: list[str],
-    layout: IncomeLayout,
-) -> tuple[Decimal, str] | None:
-    """Read amount + currency from a row, trying primary then fallback column."""
-    amount = _parse_amount(_cell(row, layout.col_amount))
-    if amount is not None:
-        return amount, layout.currency
-    if layout.col_amount_fallback is not None:
-        amount = _parse_amount(_cell(row, layout.col_amount_fallback))
-        if amount is not None:
-            return amount, layout.fallback_currency
     return None
 
 
@@ -128,7 +125,11 @@ def _aggregate_from_sheet(
     source: duckdb_repo.ImportSourceRow,
     layout: IncomeLayout,
 ) -> tuple[dict[int, Decimal], int]:
-    """Read Income worksheet and return {month: eur_total} and row count."""
+    """Read Income/Balance worksheet and return {month: eur_total} and row count.
+
+    Only rows whose date falls within the target year are included — Balance
+    tabs accumulate rows across multiple years.
+    """
     ss = get_sheet(source.spreadsheet_id)
     ws = ss.worksheet(source.income_worksheet_name)
     all_values = ws.get_all_values()
@@ -140,14 +141,34 @@ def _aggregate_from_sheet(
     try:
         for row_idx in range(layout.header_rows, len(all_values)):
             row = all_values[row_idx]
-            month = _parse_month(_cell(row, layout.col_date), is_date=layout.month_is_date)
-            if month is None:
+            parsed_date = _parse_date(_cell(row, layout.col_date))
+            if parsed_date is None:
                 continue
-            parsed = _read_amount(row, layout)
-            if parsed is None:
+            row_year, month = parsed_date
+            if row_year != year:
                 continue
-            amount, currency = parsed
-            amount_eur = _convert_to_eur(amount, currency, year, month, config_con)
+            if not 1 <= month <= _MONTHS_IN_YEAR:
+                continue
+
+            amount = _parse_amount(_cell(row, layout.col_amount))
+            if amount is None:
+                continue
+
+            currency = layout.currency
+            if (
+                layout.transition_month is not None
+                and layout.transition_currency is not None
+                and month >= layout.transition_month
+            ):
+                currency = layout.transition_currency
+
+            amount_eur = _convert_to_eur(
+                amount,
+                currency,
+                year,
+                month,
+                config_con,
+            )
             monthly_eur[month] += amount_eur
             rows_read += 1
     finally:
