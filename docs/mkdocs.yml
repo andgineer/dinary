@@ -72,6 +72,8 @@ nav:
   - index.md
   - installation.md
   - operations.md
+  - taxonomy.md
+  - income.md
   - google-sheets-setup.md
   - pwa-install.md
   - cloudflare-setup.md

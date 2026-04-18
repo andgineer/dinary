@@ -720,4 +720,6 @@ Original plan: after cutover DuckDB holds only post-cutover expenses; everything
 
 **Actual outcome (2026-04):** historical data migration was pulled into Phase 1 scope. DuckDB now holds **all** expenses 2012–2026, reimported from their respective spreadsheets with zero-diff verification. See "Current state (post-implementation)" at the top of this document.
 
+**Income import (2026-04):** monthly income data for 2019–2026 imported from Google Sheets into `budget_YYYY.duckdb` with currency conversion (RUB/RSD → EUR) and zero-diff verification. See [income.md](income.md) for details.
+
 Still out of scope: receipt parsing, AI classification, native 4D PWA UI -- see [architecture.md](architecture.md).
