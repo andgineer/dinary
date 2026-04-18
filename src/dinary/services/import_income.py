@@ -15,6 +15,7 @@ from decimal import Decimal
 import duckdb
 
 from dinary.services import duckdb_repo
+from dinary.services.nbs import get_rate
 from dinary.services.sheets import get_sheet
 
 logger = logging.getLogger(__name__)
@@ -116,8 +117,6 @@ def _convert_to_eur(
 ) -> Decimal:
     if currency == "EUR":
         return amount
-    from dinary.services.nbs import get_rate
-
     rate_date = date(year, month, 1)
     rate_cur = get_rate(config_con, rate_date, currency)
     rate_eur = get_rate(config_con, rate_date, "EUR")

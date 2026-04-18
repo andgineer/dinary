@@ -15,6 +15,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from dinary.services import duckdb_repo
+from dinary.services.nbs import get_rate
 from dinary.services.seed_config import (
     _beneficiary_for_source,
     _canonical_category_for_source,
@@ -335,8 +336,6 @@ def _prefetch_monthly_rates(year: int, layout: SheetLayout) -> dict[int, dict[st
                 rates[month] = {}
                 continue
             rate_date = date(year, month, 1)
-            from dinary.services.nbs import get_rate
-
             rate_cur = get_rate(config_con, rate_date, currency)
             rate_eur = get_rate(config_con, rate_date, "EUR")
             rates[month] = {"rate_cur": rate_cur, "rate_eur": rate_eur}
