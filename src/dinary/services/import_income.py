@@ -6,20 +6,16 @@ and stores one row per (year, month) in budget_YYYY.duckdb.income.
 Destructive re-import: wipes existing sheet_import rows before inserting.
 """
 
-from __future__ import annotations
-
 import dataclasses
 import logging
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+
+import duckdb
 
 from dinary.services import duckdb_repo
 from dinary.services.sheets import get_sheet
-
-if TYPE_CHECKING:
-    import duckdb
 
 logger = logging.getLogger(__name__)
 

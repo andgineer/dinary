@@ -4,8 +4,6 @@ Re-reads the Income worksheet, aggregates EUR per month using the same
 layout logic as import_income, and compares against the DB with 0.01 tolerance.
 """
 
-from __future__ import annotations
-
 import logging
 from decimal import Decimal
 
