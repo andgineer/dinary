@@ -531,6 +531,11 @@ def canonical_category_for_source(  # noqa: C901, PLR0911, PLR0912
     if source_type == BULAVKI_CATEGORY:
         return "карманные"
     if source_lower == "приложения":
+        # Empty envelope = entertainment apps, "профессиональное" envelope = work
+        # productivity tools. Without this split the year=0 fallback collapses
+        # both into one row and conflicts with EXPLICIT_MAPPING_OVERRIDES.
+        if not envelope_lower:
+            return "развлечения"
         return "продуктивность"
     if source_lower in {"wellness", "welness"}:
         if envelope_lower in _SKI_ENVELOPES:
@@ -660,8 +665,9 @@ class MappingSeedRow:
 
 
 EXPLICIT_MAPPING_OVERRIDES: list[MappingSeedRow] = [
-    MappingSeedRow(0, "приложения", "профессиональное", "продуктивность", ("профессиональное",)),
-    MappingSeedRow(0, "приложения", "", "развлечения"),
+    # ("приложения", "") and ("приложения", "профессиональное") are now resolved
+    # entirely by canonical_category_for_source + tags_for_source, so the
+    # year=0 entries that used to live here are intentionally absent.
     MappingSeedRow(2023, "professional", "apps", "продуктивность", ("профессиональное",)),
     MappingSeedRow(2018, "Работа", "App", "продуктивность", ("профессиональное",)),
     MappingSeedRow(2018, "Parallels", "", "развлечения"),
