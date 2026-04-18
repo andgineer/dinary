@@ -278,8 +278,15 @@ def setup(c):
 
 
 @task
-def deploy(c, ref=""):
-    """Deploy latest code: git pull, sync deps, render version, restart service. Use --ref to deploy a specific version."""
+def deploy(c, ref="", no_restart=False):
+    """Deploy latest code: git pull, sync deps, render version, restart service.
+
+    Use --ref to deploy a specific version. Use --no-restart for the coordinated
+    destructive reset flow: it skips both the post-deploy systemctl restart and
+    the auto-applied config migration, because the very next step in that flow
+    is `inv stop` followed by `inv rebuild-catalog --yes` which wipes
+    config.duckdb anyway.
+    """
     print("=== Pre-deploy backup ===")
     ts = _dt.now().strftime("%Y%m%d-%H%M%S")
     backup_dir = f"backups/pre-deploy-{ts}"
@@ -306,19 +313,50 @@ def deploy(c, ref=""):
     print("=== Syncing .env to server ===")
     _sync_remote_env(c)
 
-    print("=== Applying config migrations ===")
-    _ssh(
-        c,
-        "cd ~/dinary-server && source ~/.local/bin/env && "
-        "uv run python -c 'from dinary.services import duckdb_repo; duckdb_repo.init_config_db(); "
-        'print("Migrated config.duckdb")\'',
-    )
+    if not no_restart:
+        print("=== Applying config migrations ===")
+        _ssh(
+            c,
+            "cd ~/dinary-server && source ~/.local/bin/env && "
+            "uv run python -c 'from dinary.services import duckdb_repo; duckdb_repo.init_config_db(); "
+            'print("Migrated config.duckdb")\'',
+        )
 
     print("=== Building _static/ with version ===")
     _ssh(c, "cd ~/dinary-server && source ~/.local/bin/env && uv run inv build-static")
 
+    if no_restart:
+        print(
+            "=== --no-restart set: SKIPPING systemctl restart and config migration. ===\n"
+            "=== Next steps in the coordinated reset flow: ===\n"
+            "===   inv stop                                ===\n"
+            "===   inv rebuild-catalog --yes               ===\n"
+            "===   inv rebuild-budget-all --yes            ===\n"
+            "===   inv rebuild-income-all --yes            ===\n"
+            "===   inv verify-bootstrap-import-all         ===\n"
+            "===   inv verify-income-equivalence-all       ===\n"
+            "===   inv start                               ==="
+        )
+        return
+
     _ssh_sudo(c, "systemctl restart dinary")
     print("=== Restarted. Checking health... ===")
+    _ssh(c, "sleep 5 && curl -s http://localhost:8000/api/health")
+
+
+@task
+def stop(c):
+    """Stop the dinary systemd service (used during the coordinated reset flow)."""
+    _ssh_sudo(c, "systemctl stop dinary")
+    print("=== dinary stopped ===")
+    _ssh_sudo(c, "systemctl is-active dinary || true")
+
+
+@task
+def start(c):
+    """Start the dinary systemd service after a coordinated reset completes."""
+    _ssh_sudo(c, "systemctl start dinary")
+    print("=== dinary started, checking health... ===")
     _ssh(c, "sleep 5 && curl -s http://localhost:8000/api/health")
 
 
@@ -478,6 +516,37 @@ def rebuild_budget(c, year="", yes=False):
     )
 
 
+@task(name="rebuild-budget-all")
+def rebuild_budget_all(c, yes=False):
+    """DESTRUCTIVE: Wipe and re-import every budget_YYYY.duckdb listed in sheet_import_sources.
+
+    Iterates the years registered in `config.duckdb.sheet_import_sources` (in
+    ascending order) and re-imports each one via `import_year`. Intended for
+    use inside the coordinated reset flow after `rebuild-catalog --yes`.
+    """
+    if not _require_yes(
+        yes,
+        "WARNING: rebuild-budget-all will DELETE every budget_YYYY.duckdb "
+        "registered in sheet_import_sources and re-import each year from the "
+        "Google Sheet. There is no manual-vs-import distinction anymore; "
+        "nothing in any budget DB is preserved.",
+    ):
+        return
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.services import duckdb_repo; "
+        "from dinary.services.import_sheet import import_year; "
+        "import json, duckdb; "
+        "con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True); "
+        "years = [r[0] for r in con.execute("
+        "\"SELECT year FROM sheet_import_sources WHERE year > 0 ORDER BY year\""
+        ").fetchall()]; "
+        "con.close(); "
+        "[print(json.dumps({\"year\": y, **import_year(y)})) for y in years]'",
+    )
+
+
 @task(name="verify-bootstrap-import")
 def verify_bootstrap_import(c, year=""):
     """Verify that bootstrap-imported budget DB reproduces sheet aggregates (on server)."""
@@ -494,6 +563,31 @@ def verify_bootstrap_import(c, year=""):
         f"import json; result = verify_bootstrap_import({year_int}); "
         "print(json.dumps(result, indent=2, ensure_ascii=False)); "
         "import sys; sys.exit(0 if result[\"ok\"] else 1)'",
+    )
+
+
+@task(name="verify-bootstrap-import-all")
+def verify_bootstrap_import_all(c):
+    """Run verify-bootstrap-import for every year registered in sheet_import_sources.
+
+    Used by the coordinated reset flow so verification covers every rebuilt
+    year, not just the current calendar year. Exits non-zero if any single
+    year fails the equivalence check.
+    """
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.services import duckdb_repo; "
+        "from dinary.services.verify_equivalence import verify_bootstrap_import; "
+        "import json, duckdb, sys; "
+        "con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True); "
+        "years = [r[0] for r in con.execute("
+        "\"SELECT year FROM sheet_import_sources WHERE year > 0 ORDER BY year\""
+        ").fetchall()]; "
+        "con.close(); "
+        "results = [{**verify_bootstrap_import(y), \"year\": y} for y in years]; "
+        "print(json.dumps(results, indent=2, ensure_ascii=False)); "
+        "sys.exit(0 if all(r[\"ok\"] for r in results) else 1)'",
     )
 
 
@@ -554,6 +648,31 @@ def verify_income_equivalence(c, year=""):
         f"import json; result = verify_income_equivalence({year_int}); "
         "print(json.dumps(result, indent=2, ensure_ascii=False)); "
         "import sys; sys.exit(0 if result[\"ok\"] else 1)'",
+    )
+
+
+@task(name="verify-income-equivalence-all")
+def verify_income_equivalence_all(c):
+    """Run verify-income-equivalence for every year that has an income worksheet.
+
+    Used by the coordinated reset flow so verification covers every rebuilt
+    income year. Exits non-zero if any single year fails the equivalence
+    check.
+    """
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.services import duckdb_repo; "
+        "from dinary.services.verify_income import verify_income_equivalence; "
+        "import json, duckdb, sys; "
+        "con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True); "
+        "years = [r[0] for r in con.execute("
+        "\"SELECT year FROM sheet_import_sources WHERE income_worksheet_name != \\x27\\x27 ORDER BY year\""
+        ").fetchall()]; "
+        "con.close(); "
+        "results = [{**verify_income_equivalence(y), \"year\": y} for y in years]; "
+        "print(json.dumps(results, indent=2, ensure_ascii=False)); "
+        "sys.exit(0 if all(r[\"ok\"] for r in results) else 1)'",
     )
 
 
