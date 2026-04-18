@@ -11,20 +11,20 @@
 | src/dinary/config.py                       |       20 |        1 |     95% |        15 |
 | src/dinary/main.py                         |       57 |       13 |     77% |27-29, 51-52, 70, 74, 78-81, 96, 106 |
 | src/dinary/services/category\_store.py     |       27 |        0 |    100% |           |
-| src/dinary/services/db\_migrations.py      |       55 |        1 |     98% |        51 |
+| src/dinary/services/db\_migrations.py      |       54 |        1 |     98% |        49 |
 | src/dinary/services/duckdb\_repo.py        |      157 |      104 |     34% |114, 129-135, 144-153, 158, 172, 185, 195-206, 214-240, 248-271, 282-301, 326-431, 436, 443, 452, 470-495 |
 | src/dinary/services/exchange\_rate.py      |       16 |        9 |     44% |     19-28 |
-| src/dinary/services/import\_income.py      |      109 |      109 |      0% |     9-202 |
-| src/dinary/services/import\_sheet.py       |      261 |      216 |     17% |276-283, 288-294, 298, 303-305, 310, 318-320, 329-345, 354-358, 369-391, 400-406, 417-457, 466-472, 486-517, 521-562, 570-764 |
+| src/dinary/services/import\_income.py      |      109 |      109 |      0% |     9-201 |
+| src/dinary/services/import\_sheet.py       |      261 |      215 |     18% |277-284, 289-295, 299, 304-306, 311, 319-321, 330-344, 353-357, 368-390, 399-405, 416-456, 465-471, 485-516, 520-561, 569-763 |
 | src/dinary/services/nbs.py                 |      100 |       77 |     23% |27-35, 46-55, 69-78, 82-86, 90, 98-122, 126-133, 144-156, 170-175 |
 | src/dinary/services/qr\_parser.py          |       16 |        1 |     94% |        31 |
 | src/dinary/services/seed\_config.py        |      343 |      277 |     19% |84-94, 99-123, 131-149, 219-232, 237-255, 262-275, 290-321, 543-609, 613-624, 628-647, 656-670, 684, 721, 724-900, 907, 910-921, 929-960 |
 | src/dinary/services/sheets.py              |      165 |       15 |     91% |38-44, 48-49, 81, 101-104, 109-111, 261 |
-| src/dinary/services/sql\_loader.py         |       34 |        0 |    100% |           |
+| src/dinary/services/sql\_loader.py         |       33 |        0 |    100% |           |
 | src/dinary/services/sync.py                |      176 |      156 |     11% |46-60, 73-92, 117-144, 158-194, 208-266, 275-309, 314-321, 326-331, 340-365 |
 | src/dinary/services/verify\_equivalence.py |      106 |      106 |      0% |     9-207 |
 | src/dinary/services/verify\_income.py      |       36 |       36 |      0% |      7-81 |
-| **TOTAL**                                  | **1771** | **1170** | **34%** |           |
+| **TOTAL**                                  | **1769** | **1169** | **34%** |           |
 
 
 ## Setup coverage badge
