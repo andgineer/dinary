@@ -1,7 +1,5 @@
 """Versioned DuckDB schema migrations via yoyo."""
 
-from __future__ import annotations
-
 import contextlib
 import typing as t
 from collections import abc

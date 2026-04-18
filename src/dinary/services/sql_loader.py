@@ -4,8 +4,6 @@ Loads .sql files from the dinary.sql package and maps DuckDB tuple results
 to typed dataclass instances using con.description column names.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from importlib import resources
 from typing import TypeVar
