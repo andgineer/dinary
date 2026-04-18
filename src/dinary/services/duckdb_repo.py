@@ -125,7 +125,13 @@ class ForwardProjectionCandidateRow:
 # ---------------------------------------------------------------------------
 
 
-def _budget_path(year: int) -> Path:
+def budget_path(year: int) -> Path:
+    """Return the absolute path of `budget_YYYY.duckdb`.
+
+    Public so callers like `import_sheet.import_year` can unlink the file
+    before re-creating it under a new schema (yoyo otherwise treats the
+    pre-existing migration row as already applied).
+    """
     return DATA_DIR / f"budget_{year}.duckdb"
 
 
@@ -142,7 +148,7 @@ def init_config_db() -> None:
 def init_budget_db(year: int) -> Path:
     """Create or migrate a yearly budget DB and return its path."""
     ensure_data_dir()
-    path = _budget_path(year)
+    path = budget_path(year)
     created = not path.exists()
     db_migrations.migrate_budget_db(path)
     if created:

@@ -658,6 +658,17 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
 
     monthly_rates = _prefetch_monthly_rates(year, layout)
 
+    # `import_year` is the destructive bootstrap path called only by
+    # `inv rebuild-budget --yes`. Unlink the budget DB file before opening
+    # so that:
+    #   1. Schema migrations from a prior incompatible model (e.g. 4D vs 3D)
+    #      cannot leak through yoyo's "already applied" tracking.
+    #   2. The DELETE-based wipe below is unnecessary on a fresh DB but
+    #      remains as defence-in-depth against partial-state edge cases.
+    budget_db_path = duckdb_repo.budget_path(year)
+    if budget_db_path.exists():
+        budget_db_path.unlink()
+
     con = duckdb_repo.get_budget_connection(year)
     try:
         # Wipe order matters: sheet_sync_jobs -> expense_tags -> expenses.
