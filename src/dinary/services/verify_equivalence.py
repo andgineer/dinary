@@ -1,9 +1,18 @@
-"""Verify that the rebuilt DB produces the same Google Sheet representation.
+"""Verify a bootstrap-imported `budget_YYYY.duckdb` matches the source sheet.
 
-Compares DuckDB aggregates (via reverse lookup) against the actual sheet data
-row-by-row for each month. Any diff means the rebuild changed observable behavior.
+Run after `inv rebuild-budget --year=YYYY`. Aggregates by
+`(sheet_category, sheet_group)` per month on both sides:
 
-Equivalence is based on amount_original (the value as it appears in the sheet).
+  * sheet side — re-reads the historical worksheet exactly as
+    `import_sheet` does (same layout, same RUB/RSD currency rules);
+  * DB side — sums `amount_original` on every row of `budget_YYYY.duckdb`
+    grouped by the `(sheet_category, sheet_group)` provenance pair that
+    `import_sheet` baked in.
+
+Equivalence is on `amount_original` (the raw value as it appears in the
+sheet). Any diff means the rebuild changed observable behavior. Runtime
+expenses (`sheet_category IS NULL`) are intentionally not part of this
+check — they are produced by the runtime export path, not by import.
 """
 
 import logging
@@ -11,48 +20,30 @@ from collections import defaultdict
 from decimal import Decimal
 
 from dinary.services import duckdb_repo
-from dinary.services.import_sheet import LAYOUTS, _resolve_currency
+from dinary.services.import_sheet import LAYOUTS, parse_display_amount, resolve_currency
 from dinary.services.sheets import (
     HEADER_ROWS,
     _cell,
     get_sheet,
 )
-from dinary.services.sync import _build_aggregates
 
 logger = logging.getLogger(__name__)
 
 _MONTHS_IN_YEAR = 12
-
-
-def _parse_display_amount(display: str) -> float | None:
-    if not display:
-        return None
-    cleaned = display.replace(" ", "").replace(",", "")
-    try:
-        val = float(cleaned)
-        return val if val != 0 else None
-    except ValueError:
-        return None
+_DIFF_TOLERANCE = Decimal("0.01")
 
 
 def _read_sheet_aggregates(
     year: int,
 ) -> dict[int, dict[tuple[str, str], dict]]:
-    """Read the Google Sheet and build per-month aggregates.
-
-    Returns {month: {(type, envelope): {amount, comment}}}.
-    """
     source = duckdb_repo.get_import_source(year)
     if source is None:
         msg = f"sheet_import_sources is missing a row for year {year}"
         raise ValueError(msg)
-    spreadsheet_id = source.spreadsheet_id
-    worksheet_name = source.worksheet_name
-    layout_key = source.layout_key
-    layout = LAYOUTS[layout_key]
+    layout = LAYOUTS[source.layout_key]
 
-    ss = get_sheet(spreadsheet_id)
-    ws = ss.worksheet(worksheet_name) if worksheet_name else ss.sheet1
+    ss = get_sheet(source.spreadsheet_id)
+    ws = ss.worksheet(source.worksheet_name) if source.worksheet_name else ss.sheet1
     all_values = ws.get_all_values()
 
     result: dict[int, dict[tuple[str, str], dict]] = defaultdict(dict)
@@ -72,16 +63,22 @@ def _read_sheet_aggregates(
         if not category:
             continue
 
-        amount_val = _parse_display_amount(_cell(row_display, layout.col_amount))
+        amount_val = parse_display_amount(_cell(row_display, layout.col_amount))
         if (
             amount_val is None
             and layout.col_amount_fallback is not None
-            and _resolve_currency(year, month, layout) == "RUB"
+            and resolve_currency(year, month, layout) == "RUB"
         ):
-            amount_val = _parse_display_amount(
+            amount_val = parse_display_amount(
                 _cell(row_display, layout.col_amount_fallback),
             )
 
+        # Treating "no parseable amount" the same as "explicit zero" is
+        # intentional here: equivalence is computed by summing per-month,
+        # per-(category, group), and a missing cell can't legitimately
+        # appear next to a real expense in the same group anyway. A
+        # falsely-zero row still makes both sides agree and a bug that
+        # produces extra/missing rows shows up in row counts elsewhere.
         total = Decimal(str(amount_val)) if amount_val else Decimal(0)
         comment = _cell(row_display, layout.col_comment)
 
@@ -98,39 +95,36 @@ def _read_sheet_aggregates(
 
 
 def _read_db_aggregates(year: int) -> dict[int, dict[tuple[str, str], dict]]:
-    """Build per-month aggregates from DuckDB using the sync reverse-lookup path."""
-    result: dict[int, dict[tuple[str, str], dict]] = {}
+    """Aggregate every bootstrap-imported expense row by sheet provenance."""
+    result: dict[int, dict[tuple[str, str], dict]] = defaultdict(dict)
 
     con = duckdb_repo.get_budget_connection(year)
     try:
-        for month in range(1, _MONTHS_IN_YEAR + 1):
-            agg = _build_aggregates(con, year, month)
-            if agg is None:
-                continue
-            month_data: dict[tuple[str, str], dict] = {}
-            for (cat, grp), data in agg.items():
-                comments = data.get("comments", [])
-                month_data[(cat, grp)] = {
-                    "amount": data["total_rsd"],
-                    "comment": "; ".join(comments) if comments else "",
-                }
-            result[month] = month_data
+        rows = con.execute(
+            "SELECT MONTH(datetime), sheet_category, sheet_group, amount_original, comment"
+            " FROM expenses"
+            " WHERE sheet_category IS NOT NULL AND sheet_group IS NOT NULL",
+        ).fetchall()
     finally:
         con.close()
 
-    return result
+    for month, sheet_cat, sheet_grp, amt, comment in rows:
+        key = (sheet_cat, sheet_grp)
+        bucket = result[month].setdefault(key, {"amount": Decimal(0), "comment": ""})
+        bucket["amount"] += Decimal(str(amt))
+        if comment:
+            bucket["comment"] = f"{bucket['comment']}; {comment}" if bucket["comment"] else comment
+
+    return dict(result)
 
 
-def verify_sheet_equivalence(year: int) -> dict:
-    """Compare sheet data against DB aggregates and return a diff report.
+def verify_bootstrap_import(year: int) -> dict:
+    """Compare sheet aggregates against bootstrap-imported DB rows.
 
-    Returns a dict with:
-      - months_checked: int
-      - missing_rows: list of rows in sheet but not in DB
-      - extra_rows: list of rows in DB but not in sheet
-      - amount_diffs: list of rows with different amounts
-      - comment_diffs: list of rows with different comments
-      - ok: bool (True when zero diffs)
+    Returns a dict with `ok=True` when amount totals match per
+    `(month, sheet_category, sheet_group)`. Comment differences are reported
+    but do not flip `ok` (sheet-side comments are concatenated with `;` and
+    the import path may have applied normalization).
     """
     duckdb_repo.init_config_db()
     sheet_data = _read_sheet_aggregates(year)
@@ -159,8 +153,8 @@ def verify_sheet_equivalence(year: int) -> dict:
                     missing_rows.append(
                         {
                             "month": month,
-                            "type": cat,
-                            "envelope": grp,
+                            "sheet_category": cat,
+                            "sheet_group": grp,
                             "sheet_amount": float(sheet_amt),
                         },
                     )
@@ -170,8 +164,8 @@ def verify_sheet_equivalence(year: int) -> dict:
                 extra_rows.append(
                     {
                         "month": month,
-                        "type": cat,
-                        "envelope": grp,
+                        "sheet_category": cat,
+                        "sheet_group": grp,
                         "db_amount": float(d_month[key]["amount"]),
                     },
                 )
@@ -179,12 +173,12 @@ def verify_sheet_equivalence(year: int) -> dict:
 
             s_amt = s_month[key]["amount"]
             d_amt = d_month[key]["amount"]
-            if abs(s_amt - d_amt) > Decimal("0.01"):
+            if abs(s_amt - d_amt) > _DIFF_TOLERANCE:
                 amount_diffs.append(
                     {
                         "month": month,
-                        "type": cat,
-                        "envelope": grp,
+                        "sheet_category": cat,
+                        "sheet_group": grp,
                         "sheet_amount": float(s_amt),
                         "db_amount": float(d_amt),
                     },
@@ -196,8 +190,8 @@ def verify_sheet_equivalence(year: int) -> dict:
                 comment_diffs.append(
                     {
                         "month": month,
-                        "type": cat,
-                        "envelope": grp,
+                        "sheet_category": cat,
+                        "sheet_group": grp,
                         "sheet_comment": s_comment,
                         "db_comment": d_comment,
                     },

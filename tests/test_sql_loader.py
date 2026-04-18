@@ -9,18 +9,14 @@ import pytest
 from dinary.services.sql_loader import _cache, fetchall_as, fetchone_as, load_sql
 
 ALL_SQL_FILES = [
-    "find_travel_event.sql",
+    "forward_projection.sql",
     "get_existing_expense.sql",
     "get_month_expenses.sql",
     "insert_expense.sql",
-    "list_sheet_categories.sql",
+    "list_categories.sql",
     "resolve_mapping.sql",
     "resolve_mapping_for_year.sql",
-    "reverse_lookup_5d.sql",
-    "reverse_lookup_travel.sql",
     "seed_load_categories.sql",
-    "seed_load_members.sql",
-    "seed_load_spheres.sql",
 ]
 
 

@@ -1,11 +1,10 @@
+DROP TABLE IF EXISTS app_metadata;
 DROP TABLE IF EXISTS exchange_rates;
-DROP TABLE IF EXISTS category_taxonomy_membership;
-DROP TABLE IF EXISTS category_taxonomy_nodes;
-DROP TABLE IF EXISTS category_taxonomies;
 DROP TABLE IF EXISTS sheet_import_sources;
-DROP TABLE IF EXISTS source_type_mapping;
-DROP TABLE IF EXISTS spheres_of_life;
-DROP TABLE IF EXISTS event_members;
+DROP TABLE IF EXISTS expense_id_registry;
+DROP TABLE IF EXISTS sheet_mapping_tags;
+DROP TABLE IF EXISTS sheet_mapping;
+DROP TABLE IF EXISTS tags;
 DROP TABLE IF EXISTS events;
-DROP TABLE IF EXISTS family_members;
 DROP TABLE IF EXISTS categories;
+DROP TABLE IF EXISTS category_groups;

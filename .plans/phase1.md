@@ -1,78 +1,97 @@
-# Phase 1: DuckDB Foundation And Idempotent Ingestion ✓ IMPLEMENTED
+# Phase 1: DuckDB Foundation, Idempotent Ingestion, Export-Only Sheets ✓ IMPLEMENTED (3D reset, 2026-04)
+
+> **Status note:** Phase 1 was reset from the originally-shipped 4D model (`category`, `beneficiary`, `event`, `sphere_of_life`) to the **3D model** (`category`, `event`, `tag_ids[]`) plus an export-only Google Sheets contract. The "Current state" section below is the source of truth. Older sections below preserve the original design rationale but contradict the current schema and contract — treat them as historical reference, not as documentation.
 
 ## Goal
 
 Move from Phase 0 (direct Google Sheets writes) to a DuckDB-backed architecture:
 
-- **DuckDB becomes the source of truth**
-- **Google Sheets becomes a derived read-only view**
-- **Deduplication is enforced at the database layer** via `expenses.id PRIMARY KEY` -- the client sends `expense_id`, duplicates hit the same PK and become idempotent success
+- **DuckDB is the source of truth.** Google Sheets are export-only from Phase 1 onward; historical sheet import is a one-shot bootstrap.
+- **Idempotency is enforced at the database layer** via `expenses.id PRIMARY KEY` plus a global cross-year `expense_id_registry` so the same UUID cannot land in two different yearly DB files.
+- **PWA never blocks on Google API**: `POST /api/expenses` enqueues `sheet_sync_jobs(expense_id)` in the same DuckDB transaction and returns; an `asyncio` worker performs the single-row append outside the request cycle, with `inv sync` as the durable retry path.
 
-This is **replay protection** (retry of the same queued item, timeout retries, same `expense_id` from another device). Semantic dedup (user enters the same purchase twice with different IDs) is out of scope for Phase 1.
+This is replay protection (retry of the same queued item, timeout retries, same `expense_id` from another device). Semantic dedup (user enters the same purchase twice with different IDs) is out of scope for Phase 1.
 
-## Current state (post-implementation, 2026-04)
+## Current state (post-3D-reset, 2026-04)
 
-Parts of the original Phase 1 design diverged during implementation. This section is the source of truth for the actual system; older sections below describe the design intent and rationale but may differ in details.
+### Dimensional model: 3D
 
-### Dimensional model: 4D, not 5D
+The implemented model has three orthogonal dimensions:
 
-The implemented model has **four** dimensions instead of the originally planned five:
+1. `category` — what was bought (from the fixed taxonomy in [docs/src/ru/taxonomy.md](../docs/src/ru/taxonomy.md), authoritative source: [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py)).
+2. `event` — bounded context (trips, camps, business trips, relocation). One event per expense (nullable). In Phase 1 only the historical sheet import originates `event_id`; the PWA stores `event_id=NULL`.
+3. `tag_ids[]` — flat many-to-many flags. Replaces both the former `beneficiary` and `sphere_of_life` axes. Phase-1 dictionary is fixed in `seed_config.PHASE1_TAGS` and hardcoded in the PWA.
 
-1. `category` — what was bought (from the fixed taxonomy in [docs/src/ru/taxonomy.md](../docs/src/ru/taxonomy.md))
-2. `beneficiary` — for whom (nullable)
-3. `event` — as part of which event (nullable; auto-created `отпуск-YYYY` / `командировка-YYYY`)
-4. `sphere_of_life` (сфера жизни) — cross-cutting context (nullable; `релокация` / `профессиональное` / `дача`)
+Dropped vs. earlier 4D Phase-1 implementation:
 
-Dropped vs. original Phase 1 design:
+- `beneficiary` and `sphere_of_life` as first-class axes — collapsed into the flat tag dictionary.
+- `store` — never re-introduced.
 
-- `tags` — replaced by the single-valued `sphere_of_life` dimension. The original multi-tag array model was not needed in practice.
-- `store` — dropped entirely. No practical use case emerged; can be reintroduced later if needed.
+The PWA contract is intentionally narrow: `expense_id` (UUID), `category_id`, optional `tag_ids[]`, plus `datetime` / `amount` / `amount_original` / `currency_original` / `comment`. Sending `event_id` from the client is rejected with 4xx.
 
-The taxonomy of 35 categories is declared in `ENTRY_GROUPS` (see [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py)) and enforced by `ensure_category()` — any attempt to create a category outside the frozen taxonomy raises `ValueError`. See [docs/src/ru/taxonomy.md](../docs/src/ru/taxonomy.md) for the full list and boundary rules (insurance, books, toys, командировка vs релокация, etc.).
+### Catalog versioning
+
+`config.duckdb.app_metadata.catalog_version` is monotonic. The only Phase-1 bump path is `inv rebuild-catalog` (previous + 1 after wipe + reseed). `GET /api/categories` and `POST /api/expenses` echo the current value so the PWA can opportunistically invalidate the cached category list.
 
 ### Currency model
 
 - All amounts are stored in **EUR** in `expenses.amount`.
 - `amount_original` + `currency_original` preserve the original value for audit.
 - Historical conversion uses the NBS (National Bank of Serbia) middle rate on the 1st of the expense month. The cache lives in `config.duckdb.exchange_rates`.
-- **Frankfurter fallback**: NBS has no RUB rates before Dec 2012. `get_rate` falls back to Frankfurter (ECB historical) for the missing currency, then bridges via NBS `EUR → RSD` to produce a `CURRENCY → RSD` rate. Implemented in [src/dinary/services/nbs.py](../src/dinary/services/nbs.py).
+- **Frankfurter fallback**: NBS has no RUB rates before Dec 2012. `get_rate` falls back to Frankfurter (ECB historical) for the missing currency, then bridges via NBS `EUR → RSD`. Implemented in [src/dinary/services/nbs.py](../src/dinary/services/nbs.py).
 
-### Historical data import IS in scope
+### Historical data import (bootstrap-only)
 
-The "Scope boundary" at the bottom of this file was wrong: historical data migration is now implemented and executed. All years 2012–2026 (minus 2020 until it was rediscovered) have been re-imported from their respective Google Sheets into `budget_YYYY.duckdb`.
+Historical data migration is **bootstrap-only and operator-driven**. The `import_sheet.py` codepath is reused exclusively by `inv rebuild-budget`; the standalone `inv import-sheet` operator workflow has been retired.
 
-- `sheet_import_sources` in `config.duckdb` maps each year to its spreadsheet ID, worksheet name, and layout key.
-- `SheetLayout` (in [src/dinary/services/import_sheet.py](../src/dinary/services/import_sheet.py)) describes the column positions for each historical sheet generation: `default`, `rub`, `rub_fallback`, `rub_6col`, `rub_2016`, `rub_2014`, `rub_2012`.
-- `import_year(year, wipe_all=True)` is the destructive re-import entry point used for full rebuilds.
-- The `source_type` and `source_envelope` of every imported row are stored on `expenses` so that round-trip verification (`inv verify-sheet-equivalence`) can aggregate back into the original sheet shape and compare totals cell-by-cell.
+- `sheet_import_sources` (in `config.duckdb`) maps each year to its spreadsheet ID, worksheet name, and layout key.
+- `SheetLayout` (in [src/dinary/services/import_sheet.py](../src/dinary/services/import_sheet.py)) describes column positions for each historical sheet generation (`default`, `rub`, `rub_fallback`, `rub_6col`, `rub_2016`, `rub_2014`, `rub_2012`).
+- Bootstrap import resolves each legacy `(year, sheet_category, sheet_group)` row through `sheet_mapping` (exact-year row first, then year=0 fallback), pulls `category_id`, `event_id`, and the tag set from `sheet_mapping_tags`, generates a fresh UUID4 per row, and writes both `expenses` and `expense_tags`. Imported rows populate `sheet_category` / `sheet_group` together as audit provenance (with `sheet_group=''` when the legacy row had no envelope); runtime rows leave both NULL.
+- `inv verify-bootstrap-import --year=YYYY` validates that DB rows match the resolved 3D mapping for the bootstrap-imported set. The coordinated reset flow loops verification across every rebuilt year.
 
-As of 2026-04, the DB holds ~3 900 historical expenses across 2012–2026 with **zero diff in totals** vs. the source spreadsheets for every year (`comment_diffs` are informational only — they appear when multiple rows with the same `(type, envelope)` within a month each carry partial comments joined with `;` in the sheet representation).
+### Sheet write model: persistent queue + async worker
 
-### Mapping table
+From Phase 1 onward Google Sheets are export-only. The write model is:
 
-The design table `sheet_category_mapping` is implemented as **`source_type_mapping`** in `config.duckdb`. Key differences vs. original design:
+- `sheet_sync_jobs(expense_id, status, claim_token, claimed_at)` in each `budget_YYYY.duckdb` is the durable queue. The in-process async task is just an opportunistic fast path over that queue.
+- Producer: `POST /api/expenses` inserts the queue row in the same DuckDB transaction as the `expenses` row.
+- Consumers (both run the same `_sync_single_row` code path):
+  - async worker spawned by `asyncio.create_task` right before the API returns, only on the fresh-insert path that also created the queue row;
+  - `inv sync`, which iterates every `sheet_sync_jobs` row across all `budget_*.duckdb` files and re-runs the same single-row append, including stale `in_progress` rows past the claim timeout.
+- Atomic claim: workers must transition the row from `pending` to `in_progress` with a unique `claim_token` and fresh `claimed_at` before appending. If the claim fails (row absent, already claimed and not stale), the worker no-ops. On success the row is deleted; on failure after claim, the row is released back to `pending`.
+- No full-month rebuild, no DB-to-sheet reconciliation.
 
-- Primary key is `(year, source_type, source_envelope)` — mappings can be year-specific, with `year = 0` acting as a catch-all wildcard. When resolving a mapping for year `Y`, the row with `year = Y` wins over the row with `year = 0`.
-- Columns: `category_id`, `beneficiary_id`, `event_id`, `sphere_of_life_id` (not `tag_ids[]`, not `store_id`).
-- Year-dependent fallback resolution happens at import time (see `_sphere_for_source` / `_event_name_for_source` in [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py)). This is how `командировка`'s sphere and event flip between `профессиональное+event` (≤ 2021) and `релокация+no event` (≥ 2022) without needing a separate mapping row per year.
+### Forward-projection rules
 
-Automatic category resolution from `(source_type, source_envelope)` is handled by `_canonical_category_for_source()` and a set of envelope-based sub-dispatchers (`_EDA_*`, `_MASHINA_*`, `_DACHA_*`, `_RAZVL_*`, `_COMMUNAL_*`, etc.), plus `_apply_housing_heuristics()` which uses comment keywords (`_TOOL_KEYWORDS`, `_ELECTRONICS_KEYWORDS`, `_MATERIAL_KEYWORDS`) to refine the category for mixed envelopes like `DIY` / `DYI`.
+The async worker maps `(category_id, event_id, tag set)` to a target `(sheet_category, sheet_group)` row in **the latest configured sheet year only** — never `YEAR(expense.datetime)`. The latest configured sheet year is `MAX(sheet_import_sources.year > 0)`. Lookup order:
 
-### Operational workflow (verified 2026-04)
+1. exact match on `category_id`, `event_id` (NULL matches NULL), and tag-id set;
+2. fallback: first `sheet_mapping` row with the same `category_id` (tag set / `event_id` ignored);
+3. ties resolved by `sheet_mapping.id ASC`.
 
-1. `inv deploy` — pulls latest code, applies config migrations, restarts service (with a pre-deploy backup of `data/`).
-2. `inv rebuild-4d-config` — destructive wipe + rebuild of `config.duckdb` from Google Sheets. Preserves registered `sheet_import_sources`. Yields `{"categories": 35, "beneficiaries": 3, "spheres_of_life": 3, "mappings_created": ~360, "taxonomy_memberships": 35}`.
-3. `inv rebuild-4d-budget --year=YYYY` — destructive re-import of a single year. Used in a loop for 2012…2026 after any taxonomy/mapping change.
-4. `inv verify-sheet-equivalence --year=YYYY` — aggregates DB back into the spreadsheet shape and diffs totals. `"ok": true` means totals match; `comment_diffs` are informational only.
-5. `inv backup` — rsyncs `data/` from the server to the operator's laptop.
+Hard invariants (seed/verification fail loudly otherwise): at least one positive year in `sheet_import_sources`; the latest-year row is a valid expense-append target (`spreadsheet_id`, `worksheet_name`, supported `layout_key`); the latest year has a `sheet_mapping` row for every category exposed by `GET /api/categories`.
 
-### What still matches the original plan
+This is best-effort placement into existing latest-year rows, not a round-trip guarantee. Re-importing a runtime row later may recover only an approximation of the original 3D tuple. That is accepted because post-bootstrap reverse import is not an operational goal.
 
-- `config.duckdb` + `budget_YYYY.duckdb` separation with `ATTACH` for cross-DB lookups.
-- `expenses.id PRIMARY KEY` for idempotent ingestion and 409 on same-ID-different-payload.
-- `sheet_sync_jobs` + `inv sync` / fire-and-forget for forward sync (PWA → DB → Sheets) during live operation.
-- Synthetic `отпуск-YYYY` events auto-created for `путешествия` expenses, plus `командировка-YYYY` (pre-2022 only).
-- `GET /api/categories` reads from `config.duckdb`; the PWA still sends flat `(category, group)` pairs.
+### Operational workflow
+
+1. `inv backup` — rsyncs `data/` from the server to the operator's laptop.
+2. **Coordinated full reset (destructive, requires `--yes`)** — keep the server stopped for the entire flow:
+   1. deploy code/assets via the no-restart deploy path;
+   2. `inv rebuild-catalog --yes` (preserves and bumps `catalog_version` to `previous + 1`);
+   3. `inv rebuild-budget --yes` for every historical year (also wipes any `sheet_sync_jobs` rows in those files);
+   4. `inv rebuild-income-all --yes`;
+   5. `inv verify-bootstrap-import` and income verification across **every** rebuilt year (multi-year, not current-year only);
+   6. start server.
+3. `inv sync` — re-runs the single-row append for every `sheet_sync_jobs` row across all `budget_*.duckdb` files. Used after process crashes, transient Google API failures, or manual recovery.
+
+The destructive commands print loud warnings and do nothing without `--yes`. Running `inv rebuild-catalog` alone leaves existing `budget_YYYY.duckdb` files temporarily inconsistent with the reseeded catalog until `rebuild-budget` is rerun for all years; the operator workflow only supports the full coordinated reset (or a fresh empty setup).
+
+---
+
+# Historical design intent (pre-3D-reset)
+
+The sections below preserve the original 5D / 4D Phase-1 design rationale for context. They contradict the current schema, mapping table, API contract, and sync model in many places. Where they disagree with the "Current state" section above or with the code in [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py), the current code wins.
 
 ## Target flow
 

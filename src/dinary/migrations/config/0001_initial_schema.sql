@@ -1,71 +1,63 @@
+CREATE TABLE category_groups (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    sort_order INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE categories (
-    id   INTEGER PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE
+    id       INTEGER PRIMARY KEY,
+    name     TEXT NOT NULL UNIQUE,
+    group_id INTEGER NOT NULL REFERENCES category_groups(id)
 );
 
-CREATE TABLE family_members (
-    id   INTEGER PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE
-);
-
+-- `name` is UNIQUE because seed_classification_catalog and import_sheet
+-- both look events up by name, and `INSERT ... ON CONFLICT DO NOTHING`
+-- in the seed path needs the unique constraint to dedupe re-runs (the PK
+-- on id only catches collisions when the deterministic id assignment
+-- happens to align, which is fragile).
 CREATE TABLE events (
-    id        INTEGER PRIMARY KEY,
-    name      TEXT NOT NULL,
-    date_from DATE NOT NULL,
-    date_to   DATE NOT NULL,
-    is_active BOOLEAN DEFAULT true,
-    comment   TEXT
+    id                  INTEGER PRIMARY KEY,
+    name                TEXT NOT NULL UNIQUE,
+    date_from           DATE NOT NULL,
+    date_to             DATE NOT NULL,
+    auto_attach_enabled BOOLEAN NOT NULL DEFAULT true,
+    CHECK (date_to >= date_from)
 );
 
-CREATE TABLE event_members (
-    event_id  INTEGER NOT NULL REFERENCES events(id),
-    member_id INTEGER NOT NULL REFERENCES family_members(id),
-    PRIMARY KEY (event_id, member_id)
-);
-
-CREATE TABLE spheres_of_life (
+CREATE TABLE tags (
     id   INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE
 );
 
-CREATE TABLE source_type_mapping (
-    year               INTEGER NOT NULL DEFAULT 0,
-    source_type        TEXT NOT NULL,
-    source_envelope    TEXT NOT NULL DEFAULT '',
-    category_id        INTEGER NOT NULL REFERENCES categories(id),
-    beneficiary_id     INTEGER REFERENCES family_members(id),
-    event_id           INTEGER REFERENCES events(id),
-    sphere_of_life_id  INTEGER REFERENCES spheres_of_life(id),
-    PRIMARY KEY (year, source_type, source_envelope)
+CREATE TABLE sheet_mapping (
+    id             INTEGER PRIMARY KEY,
+    year           INTEGER NOT NULL DEFAULT 0,
+    sheet_category TEXT NOT NULL,
+    sheet_group    TEXT NOT NULL DEFAULT '',
+    category_id    INTEGER NOT NULL REFERENCES categories(id),
+    event_id       INTEGER REFERENCES events(id),
+    UNIQUE (year, sheet_category, sheet_group)
+);
+
+CREATE TABLE sheet_mapping_tags (
+    mapping_id INTEGER NOT NULL REFERENCES sheet_mapping(id),
+    tag_id     INTEGER NOT NULL REFERENCES tags(id),
+    PRIMARY KEY (mapping_id, tag_id)
+);
+
+CREATE TABLE expense_id_registry (
+    expense_id TEXT PRIMARY KEY,
+    year       INTEGER NOT NULL
 );
 
 CREATE TABLE sheet_import_sources (
-    year           INTEGER PRIMARY KEY,
-    spreadsheet_id TEXT NOT NULL,
-    worksheet_name TEXT NOT NULL DEFAULT '',
-    layout_key     TEXT NOT NULL DEFAULT 'default',
-    notes          TEXT
-);
-
-CREATE TABLE category_taxonomies (
-    id    INTEGER PRIMARY KEY,
-    key   TEXT NOT NULL UNIQUE,
-    title TEXT NOT NULL
-);
-
-CREATE TABLE category_taxonomy_nodes (
-    id          INTEGER PRIMARY KEY,
-    taxonomy_id INTEGER NOT NULL REFERENCES category_taxonomies(id),
-    key         TEXT NOT NULL,
-    title       TEXT NOT NULL,
-    sort_order  INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(taxonomy_id, key)
-);
-
-CREATE TABLE category_taxonomy_membership (
-    category_id INTEGER NOT NULL REFERENCES categories(id),
-    node_id     INTEGER NOT NULL REFERENCES category_taxonomy_nodes(id),
-    PRIMARY KEY (category_id, node_id)
+    year                  INTEGER PRIMARY KEY,
+    spreadsheet_id        TEXT NOT NULL,
+    worksheet_name        TEXT NOT NULL DEFAULT '',
+    layout_key            TEXT NOT NULL DEFAULT 'default',
+    notes                 TEXT,
+    income_worksheet_name TEXT DEFAULT '',
+    income_layout_key     TEXT DEFAULT ''
 );
 
 CREATE TABLE exchange_rates (
@@ -74,3 +66,11 @@ CREATE TABLE exchange_rates (
     rate     DECIMAL(10,4) NOT NULL,
     PRIMARY KEY (date, currency)
 );
+
+CREATE TABLE app_metadata (
+    id              INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    catalog_version INTEGER NOT NULL DEFAULT 1 CHECK (catalog_version >= 1)
+);
+-- Defensive INSERT OR IGNORE so that a re-run of the migration on a non-wiped DB
+-- (e.g. an accidental yoyo replay) does not break on the singleton PK.
+INSERT OR IGNORE INTO app_metadata (id, catalog_version) VALUES (1, 1);

@@ -1,39 +1,39 @@
-"""Tests for the Google Sheets sync layer."""
+"""Tests for the queue-based, append-only sync layer (3D)."""
 
-from datetime import date, datetime
-from decimal import Decimal
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import allure
+import duckdb
 import pytest
 
-from dinary.services import duckdb_repo
-from dinary.services.sync import _build_aggregates, _sync_single_row, _write_aggregates_to_sheet
-
-TRAVEL_ENVELOPE = duckdb_repo.TRAVEL_ENVELOPE
+from dinary.services import duckdb_repo, sync
 
 
 @pytest.fixture(autouse=True)
 def _tmp_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
     monkeypatch.setattr(duckdb_repo, "CONFIG_DB", tmp_path / "config.duckdb")
+    # The export-target cache is module-level; without invalidation, a
+    # second test would read the previous tmp_path's spreadsheet_id.
+    sync.invalidate_export_target_cache()
 
 
 @pytest.fixture
-def populated_db(tmp_path):
-    """Config + budget DBs with a couple of expenses."""
+def setup():
     duckdb_repo.init_config_db()
-
     con = duckdb_repo.get_config_connection(read_only=False)
     try:
-        con.execute("INSERT INTO categories VALUES (1, 'еда&бытовые')")
-        con.execute("INSERT INTO categories VALUES (2, 'мобильник')")
-        con.execute("INSERT INTO family_members VALUES (1, 'собака')")
+        con.execute("INSERT INTO category_groups VALUES (1, 'g', 1)")
+        con.execute("INSERT INTO categories VALUES (1, 'еда', 1)")
         con.execute(
-            "INSERT INTO source_type_mapping VALUES (0, 'еда&бытовые', 'собака', 1, 1, NULL, NULL)"
+            "INSERT INTO sheet_import_sources"
+            " (year, spreadsheet_id, worksheet_name, layout_key, notes)"
+            " VALUES (2026, 'sheet-id', 'Sheet1', 'default', NULL)",
         )
         con.execute(
-            "INSERT INTO source_type_mapping VALUES (0, 'мобильник', '', 2, NULL, NULL, NULL)"
+            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            " category_id, event_id) VALUES (1, 2026, 'Food', 'Essentials', 1, NULL)",
         )
     finally:
         con.close()
@@ -42,263 +42,482 @@ def populated_db(tmp_path):
     try:
         duckdb_repo.insert_expense(
             bcon,
-            "s1",
-            datetime(2026, 4, 14, 10, 0),
-            12.82,
-            1500.0,
-            "RSD",
-            1,
-            1,
-            None,
-            None,
-            "lunch",
-        )
-        duckdb_repo.insert_expense(
-            bcon,
-            "s2",
-            datetime(2026, 4, 15, 12, 0),
-            25.64,
-            3000.0,
-            "RSD",
-            1,
-            1,
-            None,
-            None,
-            "dinner",
-        )
-        duckdb_repo.insert_expense(
-            bcon,
-            "s3",
-            datetime(2026, 4, 16, 9, 0),
-            3.42,
-            400.0,
-            "RSD",
-            2,
-            None,
-            None,
-            None,
-            "",
+            expense_id="exp1",
+            expense_datetime=datetime(2026, 4, 14, 10),
+            amount=12.0,
+            amount_original=1500.0,
+            currency_original="RSD",
+            category_id=1,
+            event_id=None,
+            comment="lunch",
+            sheet_category=None,
+            sheet_group=None,
+            tag_ids=[],
+            enqueue_sync=True,
         )
     finally:
         bcon.close()
 
 
 @allure.epic("Sync")
-@allure.feature("Aggregation")
-class TestBuildAggregates:
-    def test_aggregates_by_sheet_key(self, populated_db):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            agg = _build_aggregates(con, 2026, 4)
-            assert agg is not None
-            assert ("еда&бытовые", "собака") in agg
-            assert ("мобильник", "") in agg
-        finally:
-            con.close()
-
-    def test_totals_correct(self, populated_db):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            agg = _build_aggregates(con, 2026, 4)
-            food_total = agg[("еда&бытовые", "собака")]["total_rsd"]
-            assert food_total == Decimal("4500")
-
-            phone_total = agg[("мобильник", "")]["total_rsd"]
-            assert phone_total == Decimal("400")
-        finally:
-            con.close()
-
-    def test_individual_amounts_tracked(self, populated_db):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            agg = _build_aggregates(con, 2026, 4)
-            food_amounts = agg[("еда&бытовые", "собака")]["amounts"]
-            assert len(food_amounts) == 2
-            assert Decimal("1500") in food_amounts
-            assert Decimal("3000") in food_amounts
-        finally:
-            con.close()
-
-    def test_empty_month_returns_none(self, populated_db):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            agg = _build_aggregates(con, 2026, 1)
-            assert agg is None
-        finally:
-            con.close()
-
-    def test_comments_collected(self, populated_db):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            agg = _build_aggregates(con, 2026, 4)
-            comments = agg[("еда&бытовые", "собака")]["comments"]
-            assert "lunch" in comments
-            assert "dinner" in comments
-        finally:
-            con.close()
-
-
-@allure.epic("Sync")
-@allure.feature("Sheet Write")
-class TestWriteAggregates:
-    def _make_mock_ws(self, existing_formula=""):
+@allure.feature("sync_pending")
+class TestSyncPending:
+    @patch("dinary.services.sync.get_sheet")
+    @patch("dinary.services.sync._fetch_rate_blocking", return_value=None)
+    @patch("dinary.services.sync.find_month_range", return_value=(2, 5))
+    @patch("dinary.services.sync.get_month_rate", return_value="117.0")
+    @patch("dinary.services.sync.find_category_row", return_value=3)
+    @patch("dinary.services.sync.append_to_rsd_formula")
+    @patch("dinary.services.sync.append_comment")
+    def test_drains_pending_job(
+        self,
+        _ac,
+        _af,
+        _fcr,
+        _gmr,
+        _fmr,
+        _fr,
+        mock_sheet,
+        setup,
+    ):
         ws = MagicMock()
-        vr = [[existing_formula]] if existing_formula else [[]]
-        ws.batch_get.return_value = [vr]
-        ws.batch_update = MagicMock()
-        return ws
+        ws.get_all_values.return_value = [["header"], ["row1"], ["row2"], ["row3"]]
+        mock_sheet.return_value.worksheet.return_value = ws
+        mock_sheet.return_value.sheet1 = ws
 
-    def test_writes_running_sum_formula(self, populated_db):
-        ws = self._make_mock_ws("")
-        agg = {
-            ("еда&бытовые", "собака"): {
-                "total_rsd": Decimal("4500"),
-                "amounts": [Decimal("1500"), Decimal("3000")],
-                "comments": ["lunch", "dinner"],
-            },
-        }
-        all_values = [
-            ["Date", "RSD", "EUR", "Category", "Group", "Comment", "Month", "Rate"],
-            ["Apr-1", "", "", "еда&бытовые", "собака", "", "4", ""],
-        ]
+        result = sync.sync_pending()
 
-        def find_row(vals, month, cat, grp):
-            return 2
+        assert result["years"] == 1
+        assert result["attempted"] == 1
+        assert result["appended"] == 1
+        assert result["failed"] == 0
+        assert result["recovered_with_duplicate"] == 0
+        # K4: pin the new key so a future change that misclassifies a
+        # clean append as orphaned (or vice versa) shows up here instead
+        # of slipping through with a green test.
+        assert result["noop_orphan"] == 0
 
-        with patch("dinary.services.sync.find_category_row", side_effect=find_row):
-            written = _write_aggregates_to_sheet(ws, all_values, 4, agg)
+        bcon = duckdb_repo.get_budget_connection(2026)
+        try:
+            assert duckdb_repo.list_sync_jobs(bcon) == []
+        finally:
+            bcon.close()
 
-        assert written > 0
-        args = ws.batch_update.call_args
-        batch = args[0][0]
+    @patch("dinary.services.sync.get_sheet")
+    @patch("dinary.services.sync._fetch_rate_blocking", return_value=None)
+    @patch("dinary.services.sync.find_month_range", return_value=(2, 5))
+    @patch("dinary.services.sync.get_month_rate", return_value="117.0")
+    @patch("dinary.services.sync.find_category_row", return_value=None)
+    def test_missing_row_keeps_job_pending(
+        self,
+        _fcr,
+        _gmr,
+        _fmr,
+        _fr,
+        mock_sheet,
+        setup,
+    ):
+        ws = MagicMock()
+        ws.get_all_values.return_value = [["header"]]
+        mock_sheet.return_value.worksheet.return_value = ws
+        mock_sheet.return_value.sheet1 = ws
 
-        rsd_update = next(u for u in batch if u["values"][0][0].startswith("="))
-        formula = rsd_update["values"][0][0]
-        assert "+" in formula
-        assert "1500" in formula
-        assert "3000" in formula
+        result = sync.sync_pending()
 
-    def test_skips_unchanged_total(self, populated_db):
-        ws = self._make_mock_ws("=1500+3000")
-        agg = {
-            ("еда&бытовые", "собака"): {
-                "total_rsd": Decimal("4500"),
-                "amounts": [Decimal("1500"), Decimal("3000")],
-                "comments": [],
-            },
-        }
-        all_values = [
-            ["Date", "RSD", "EUR", "Category", "Group", "Comment", "Month", "Rate"],
-            ["Apr-1", "", "", "еда&бытовые", "собака", "", "4", ""],
-        ]
-
-        def find_row(vals, month, cat, grp):
-            return 2
-
-        with patch("dinary.services.sync.find_category_row", side_effect=find_row):
-            written = _write_aggregates_to_sheet(ws, all_values, 4, agg)
-
-        assert written == 0
-        ws.batch_update.assert_not_called()
+        assert result["failed"] == 1
+        bcon = duckdb_repo.get_budget_connection(2026)
+        try:
+            assert duckdb_repo.list_sync_jobs(bcon) == ["exp1"]
+        finally:
+            bcon.close()
 
 
 @allure.epic("Sync")
-@allure.feature("Idempotency")
-class TestSyncIdempotency:
-    def test_rerun_produces_same_result(self, populated_db):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            agg1 = _build_aggregates(con, 2026, 4)
-            agg2 = _build_aggregates(con, 2026, 4)
-            for key in agg1:
-                assert agg1[key]["total_rsd"] == agg2[key]["total_rsd"]
-                assert agg1[key]["amounts"] == agg2[key]["amounts"]
-        finally:
-            con.close()
+@allure.feature("schedule_sync")
+def test_schedule_sync_no_loop_is_safe():
+    sync.schedule_sync("anything", 2026)
 
-    def test_sync_clears_job(self, populated_db):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            jobs_before = duckdb_repo.get_dirty_sync_jobs(con)
-            assert (2026, 4) in jobs_before
-        finally:
-            con.close()
+
+@allure.epic("Sync")
+@allure.feature("_drain_one_job")
+class TestDrainOneJobConnectionLifecycle:
+    """Regression tests: every early-return path in `_drain_one_job` must
+    close its budget connection. Previously three branches (no claim, no
+    expense, no projection target) leaked the connection because `con.close()`
+    only ran inside a `finally` attached to the second `try` block."""
+
+    def test_missing_expense_closes_connection(self, setup):
+        """Queue row whose expense lookup returns None -> clear the row,
+        return `NOOP_ORPHAN` (Nit J7: distinct from APPENDED so the
+        operational metric reflects only actual Sheets writes), and (the
+        bug we're guarding against) close the budget connection so the
+        underlying file is not held open. Real DuckDB FKs prevent this
+        state via DELETE, so we simulate it by patching
+        `get_expense_by_id` to return None."""
+        opened: list[object] = []
+        real_get_budget = duckdb_repo.get_budget_connection
+
+        def tracking_get_budget(year):
+            con = real_get_budget(year)
+            opened.append(con)
+            return con
 
         with (
-            patch("dinary.services.sync.get_sheet") as mock_sheet,
-            patch("dinary.services.sync.find_month_range", return_value=(2, 30)),
-            patch("dinary.services.sync.find_category_row", return_value=2),
-            patch("dinary.services.sync.get_month_rate", return_value="117"),
+            patch.object(duckdb_repo, "get_budget_connection", tracking_get_budget),
+            patch.object(duckdb_repo, "get_expense_by_id", return_value=None),
         ):
-            ws_mock = MagicMock()
-            ws_mock.get_all_values.return_value = [["header"]]
-            ws_mock.batch_get.return_value = [[[""]]]
-            mock_sheet.return_value.sheet1 = ws_mock
+            result = sync._drain_one_job("exp1", 2026)
 
-            from dinary.services.sync import _sync_month_core
+        assert result is sync.DrainResult.NOOP_ORPHAN
+        assert opened, "expected _drain_one_job to open a budget connection"
+        with pytest.raises(duckdb.ConnectionException):
+            opened[-1].execute("SELECT 1")
 
-            _sync_month_core(2026, 4, rate=Decimal("117"))
+    def test_no_target_closes_connection(self, setup):
+        """Forward projection returning None must release the claim AND
+        close the budget connection."""
+        opened: list[object] = []
+        real_get_budget = duckdb_repo.get_budget_connection
 
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            jobs_after = duckdb_repo.get_dirty_sync_jobs(con)
-            assert (2026, 4) not in jobs_after
-        finally:
-            con.close()
+        def tracking_get_budget(year):
+            con = real_get_budget(year)
+            opened.append(con)
+            return con
 
-
-@allure.epic("Sync")
-@allure.feature("Targeted Row Sync")
-class TestSyncSingleRow:
-    def test_appends_amount_to_target_row(self, populated_db):
-        all_values = [
-            ["Date", "RSD", "EUR", "Category", "Group", "Comment", "Month", "Rate"],
-            ["Apr-1", "=1500", "", "еда&бытовые", "собака", "lunch", "4", "117"],
-        ]
         with (
-            patch("dinary.services.sync.get_sheet") as mock_sheet,
-            patch("dinary.services.sync.find_month_range", return_value=(2, 2)),
-            patch("dinary.services.sync.find_category_row", return_value=2),
-            patch("dinary.services.sync.get_month_rate", return_value="117"),
-            patch("dinary.services.sync.append_to_rsd_formula") as mock_append,
-            patch("dinary.services.sync.append_comment") as mock_comment,
+            patch.object(duckdb_repo, "get_budget_connection", tracking_get_budget),
+            patch.object(duckdb_repo, "forward_projection", return_value=None),
         ):
-            ws_mock = MagicMock()
-            ws_mock.get_all_values.return_value = all_values
-            mock_sheet.return_value.sheet1 = ws_mock
+            result = sync._drain_one_job("exp1", 2026)
 
-            _sync_single_row(2026, 4, "еда&бытовые", "собака", 500.0, "snack", date(2026, 4, 17))
+        assert result is sync.DrainResult.FAILED
+        assert opened
+        with pytest.raises(duckdb.ConnectionException):
+            opened[-1].execute("SELECT 1")
 
-            mock_append.assert_called_once_with(ws_mock, 2, 500.0)
-            mock_comment.assert_called_once()
+    def test_unclaimable_job_closes_connection(self, setup):
+        """A queue row whose claim cannot be acquired (already in flight by
+        another worker, or row deleted under us) must still close the
+        connection."""
+        opened: list[object] = []
+        real_get_budget = duckdb_repo.get_budget_connection
+
+        def tracking_get_budget(year):
+            con = real_get_budget(year)
+            opened.append(con)
+            return con
+
+        with (
+            patch.object(duckdb_repo, "get_budget_connection", tracking_get_budget),
+            patch.object(duckdb_repo, "claim_sync_job", return_value=None),
+        ):
+            result = sync._drain_one_job("exp1", 2026)
+
+        assert result is sync.DrainResult.FAILED
+        assert opened
+        with pytest.raises(duckdb.ConnectionException):
+            opened[-1].execute("SELECT 1")
 
 
 @allure.epic("Sync")
-@allure.feature("Reverse Mapping Equivalence")
-class TestSyncEquivalence:
-    def test_simple_reverse_map(self, populated_db):
-        con = duckdb_repo.get_budget_connection(2026)
+@allure.feature("_drain_one_job (post-append claim-stolen recovery)")
+class TestDrainOneJobClaimStolen:
+    """Bug NN + AAA regression: when `clear_sync_job` returns False after
+    we already appended to Sheets, we must:
+
+    1. Force-delete the queue row (so the next sweep can't trigger a
+       *third* append) — Bug NN.
+    2. Surface the outcome as `RECOVERED_WITH_DUPLICATE` so the sweep
+       summary distinguishes "audit Sheets" from "retry pending" — Bug AAA.
+    """
+
+    @patch("dinary.services.sync.get_sheet")
+    @patch("dinary.services.sync._fetch_rate_blocking", return_value=None)
+    @patch("dinary.services.sync.find_month_range", return_value=(2, 5))
+    @patch("dinary.services.sync.get_month_rate", return_value="117.0")
+    @patch("dinary.services.sync.find_category_row", return_value=3)
+    @patch("dinary.services.sync.append_to_rsd_formula")
+    @patch("dinary.services.sync.append_comment")
+    def test_force_delete_after_stolen_claim(
+        self,
+        _ac,
+        _af,
+        _fcr,
+        _gmr,
+        _fmr,
+        _fr,
+        mock_sheet,
+        setup,
+    ):
+        ws = MagicMock()
+        ws.get_all_values.return_value = [["header"], ["row1"], ["row2"], ["row3"]]
+        mock_sheet.return_value.worksheet.return_value = ws
+        mock_sheet.return_value.sheet1 = ws
+
+        # `clear_sync_job` returns False -> our claim_token didn't match
+        # (stolen). `force_clear_sync_job` runs against the real DB and
+        # finds the row (the in-test setup left it `pending`/`in_progress`
+        # under our token), so it returns True -> the simulated thief
+        # branch.
+        with patch.object(duckdb_repo, "clear_sync_job", return_value=False):
+            result = sync._drain_one_job("exp1", 2026)
+
+        # Bug AAA: surface the abnormal flow as a distinct outcome, not
+        # conflated with FAILED (which means "needs retry").
+        assert result is sync.DrainResult.RECOVERED_WITH_DUPLICATE
+        # Bug NN: queue row must be deleted regardless of claim_token
+        # mismatch, to prevent a third sweep + third append.
+        bcon = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 2026, 1, 1, None, None)
-            assert result == ("еда&бытовые", "собака")
+            assert duckdb_repo.list_sync_jobs(bcon) == []
+        finally:
+            bcon.close()
+
+    @patch("dinary.services.sync.get_sheet")
+    @patch("dinary.services.sync._fetch_rate_blocking", return_value=None)
+    @patch("dinary.services.sync.find_month_range", return_value=(2, 5))
+    @patch("dinary.services.sync.get_month_rate", return_value="117.0")
+    @patch("dinary.services.sync.find_category_row", return_value=3)
+    @patch("dinary.services.sync.append_to_rsd_formula")
+    @patch("dinary.services.sync.append_comment")
+    def test_recovered_when_row_already_gone(
+        self,
+        _ac,
+        _af,
+        _fcr,
+        _gmr,
+        _fmr,
+        _fr,
+        mock_sheet,
+        setup,
+    ):
+        """Operator-wipe sub-case: the queue row was deleted out from
+        under us mid-append (no thief, no duplicate). Both
+        `clear_sync_job` and `force_clear_sync_job` find nothing, but we
+        still surface the outcome as RECOVERED_WITH_DUPLICATE because we
+        cannot distinguish this case from a stolen claim and the safe
+        direction is to over-warn (cost = a sheet audit; vs. silently
+        leaking a duplicate)."""
+        ws = MagicMock()
+        ws.get_all_values.return_value = [["header"], ["row1"], ["row2"], ["row3"]]
+        mock_sheet.return_value.worksheet.return_value = ws
+        mock_sheet.return_value.sheet1 = ws
+
+        with (
+            patch.object(duckdb_repo, "clear_sync_job", return_value=False),
+            patch.object(duckdb_repo, "force_clear_sync_job", return_value=False),
+        ):
+            result = sync._drain_one_job("exp1", 2026)
+
+        assert result is sync.DrainResult.RECOVERED_WITH_DUPLICATE
+
+
+@allure.epic("Sync")
+@allure.feature("_drain_one_job (return contract)")
+class TestDrainOneJobReturnContract:
+    """Bug J1 regression: every documented `DrainResult` must actually
+    be returned by the corresponding code path — bare `bool`s slipping
+    through would defeat downstream `match`/`if-elif` branching over
+    the enum (and were the original Bug J1)."""
+
+    @patch("dinary.services.sync.get_sheet")
+    @patch("dinary.services.sync._fetch_rate_blocking", return_value=None)
+    @patch("dinary.services.sync.find_month_range", return_value=(2, 5))
+    @patch("dinary.services.sync.get_month_rate", return_value="117.0")
+    @patch("dinary.services.sync.find_category_row", return_value=3)
+    @patch(
+        "dinary.services.sync.append_to_rsd_formula",
+        side_effect=RuntimeError("simulated sheet failure"),
+    )
+    def test_append_failure_returns_drain_result_failed(
+        self,
+        _af,
+        _fcr,
+        _gmr,
+        _fmr,
+        _fr,
+        mock_sheet,
+        setup,
+    ):
+        """The Sheets-append-failure branch must return
+        `DrainResult.FAILED`, not bare `False`. They are currently
+        functionally equivalent in `sync_pending`'s if/elif/else, but a
+        future `match` over `DrainResult` would leave a `False` return
+        silently unhandled."""
+        ws = MagicMock()
+        ws.get_all_values.return_value = [["header"], ["row1"], ["row2"], ["row3"]]
+        mock_sheet.return_value.worksheet.return_value = ws
+        mock_sheet.return_value.sheet1 = ws
+
+        result = sync._drain_one_job("exp1", 2026)
+
+        assert result is sync.DrainResult.FAILED, f"expected DrainResult.FAILED, got {result!r}"
+        # Queue row should remain `pending` (claim released) for the
+        # next sweep to retry.
+        bcon = duckdb_repo.get_budget_connection(2026)
+        try:
+            assert duckdb_repo.list_sync_jobs(bcon) == ["exp1"]
+        finally:
+            bcon.close()
+
+
+@allure.epic("Sync")
+@allure.feature("sync_pending (counter accounting)")
+class TestSyncPendingCounters:
+    """Bug AAA regression: `sync_pending` must split clean appends,
+    real failures, and post-append-recovery into three distinct counters
+    so an operator scanning the summary can tell "needs retry" from
+    "audit the sheet for duplicates"."""
+
+    @patch("dinary.services.sync.get_sheet")
+    @patch("dinary.services.sync._fetch_rate_blocking", return_value=None)
+    @patch("dinary.services.sync.find_month_range", return_value=(2, 5))
+    @patch("dinary.services.sync.get_month_rate", return_value="117.0")
+    @patch("dinary.services.sync.find_category_row", return_value=3)
+    @patch("dinary.services.sync.append_to_rsd_formula")
+    @patch("dinary.services.sync.append_comment")
+    def test_recovered_with_duplicate_increments_dedicated_counter(
+        self,
+        _ac,
+        _af,
+        _fcr,
+        _gmr,
+        _fmr,
+        _fr,
+        mock_sheet,
+        setup,
+    ):
+        ws = MagicMock()
+        ws.get_all_values.return_value = [["header"], ["row1"], ["row2"], ["row3"]]
+        mock_sheet.return_value.worksheet.return_value = ws
+        mock_sheet.return_value.sheet1 = ws
+
+        with patch.object(duckdb_repo, "clear_sync_job", return_value=False):
+            result = sync.sync_pending()
+
+        assert result["appended"] == 0, "must not double-count as appended"
+        assert result["failed"] == 0, (
+            "must not conflate a successful append with a real failure that needs retry"
+        )
+        assert result["recovered_with_duplicate"] == 1
+
+
+@allure.epic("Sync")
+@allure.feature("get_export_target (TTL cache)")
+class TestExportTargetCache:
+    """Concern DD regression: the cache must (a) hand out the same value
+    within the TTL, (b) re-resolve after `force_refresh=True`, and (c)
+    drop a stale entry when resolution raises so the next caller doesn't
+    get pinned to a known-broken value for the full TTL window."""
+
+    def _seed_source(self, year: int, ssid: str) -> None:
+        duckdb_repo.init_config_db()
+        con = duckdb_repo.get_config_connection(read_only=False)
+        try:
+            con.execute("DELETE FROM sheet_import_sources")
+            con.execute(
+                "INSERT INTO sheet_import_sources"
+                " (year, spreadsheet_id, worksheet_name, layout_key, notes)"
+                " VALUES (?, ?, 'Sheet1', 'default', NULL)",
+                [year, ssid],
+            )
         finally:
             con.close()
 
-    def test_no_envelope_reverse_map(self, populated_db):
-        con = duckdb_repo.get_budget_connection(2026)
+    def test_cache_hit_within_ttl(self):
+        self._seed_source(2026, "ssid-A")
+        first = sync.get_export_target()
+        # Mutate the underlying row; without invalidation the cache must
+        # still return the original value (cache hit within TTL).
+        self._seed_source(2026, "ssid-B")
+        second = sync.get_export_target()
+        assert first.spreadsheet_id == "ssid-A"
+        assert second.spreadsheet_id == "ssid-A"
+
+    def test_force_refresh_bypasses_cache(self):
+        self._seed_source(2026, "ssid-A")
+        sync.get_export_target()
+        self._seed_source(2026, "ssid-B")
+        refreshed = sync.get_export_target(force_refresh=True)
+        assert refreshed.spreadsheet_id == "ssid-B"
+
+    def test_invalidate_drops_cache(self):
+        self._seed_source(2026, "ssid-A")
+        sync.get_export_target()
+        self._seed_source(2026, "ssid-B")
+        sync.invalidate_export_target_cache()
+        assert sync.get_export_target().spreadsheet_id == "ssid-B"
+
+    def test_misconfig_raises_and_drops_stale_entry(self):
+        # Pin a good value first, then corrupt the source. We deliberately
+        # do NOT call `invalidate_export_target_cache` here: the regression
+        # we're proving is that the `except RuntimeError` branch in
+        # `get_export_target` clears a *populated* cache. Pre-clearing the
+        # cache would make the test pass even if that line were deleted
+        # (the cache would already be None going in), turning this into a
+        # no-op test.
+        self._seed_source(2026, "ssid-A")
+        assert sync.get_export_target().spreadsheet_id == "ssid-A"
+
+        duckdb_repo.init_config_db()
+        con = duckdb_repo.get_config_connection(read_only=False)
         try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 2026, 2, None, None, None)
-            assert result == ("мобильник", "")
+            con.execute("DELETE FROM sheet_import_sources")
         finally:
             con.close()
 
-    def test_aggregates_match_original_keys(self, populated_db):
-        con = duckdb_repo.get_budget_connection(2026)
+        # Force a re-resolve without touching the cache: TTL is 60s so a
+        # plain call would still hit the cache. The point of this test is
+        # what happens when re-resolution raises while the cache is hot.
+        with pytest.raises(RuntimeError):
+            sync.get_export_target(force_refresh=True)
+
+        # If the error path failed to clear the cache, the next non-forced
+        # call would return the stale "ssid-A" value (TTL hasn't expired).
+        # The fix at sync.get_export_target's `except RuntimeError` branch
+        # is what makes this re-read happen.
+        self._seed_source(2026, "ssid-fixed")
+        assert sync.get_export_target().spreadsheet_id == "ssid-fixed"
+
+
+@allure.epic("DuckDB")
+@allure.feature("claim_sync_job (TransactionException handling)")
+class TestClaimSyncJobTransactionConflict:
+    """Concern GG regression: a `duckdb.TransactionException` raised by
+    DuckDB's optimistic-concurrency layer when two workers race on the
+    same row must surface as a clean `None` return (not a noisy
+    re-raise). The caller treats `None` as "skip this row, the winner
+    will handle it"."""
+
+    def test_transaction_exception_returns_none(self, setup):
+        bcon = duckdb_repo.get_budget_connection(2026)
         try:
-            agg = _build_aggregates(con, 2026, 4)
-            assert agg is not None
-            for cat, grp in agg:
-                assert isinstance(cat, str)
-                assert isinstance(grp, str)
+
+            class _Exploding:
+                """DuckDB connection wrapper that raises TransactionException
+                on the SELECT inside `claim_sync_job` so the caught branch
+                fires deterministically. We can't easily provoke a real
+                conflict from a single-threaded test, so we simulate the
+                exception path."""
+
+                def __init__(self, real):
+                    self._real = real
+                    self._calls = 0
+
+                def execute(self, sql, *args, **kwargs):
+                    self._calls += 1
+                    # First call is BEGIN, second is the SELECT we want
+                    # to fail. After that ROLLBACK should be passed
+                    # through to the real connection.
+                    if self._calls == 2:  # noqa: PLR2004
+                        raise duckdb.TransactionException("simulated conflict")
+                    return self._real.execute(sql, *args, **kwargs)
+
+                def __getattr__(self, name):
+                    return getattr(self._real, name)
+
+            exploding = _Exploding(bcon)
+            token = duckdb_repo.claim_sync_job(exploding, "exp1")
+            assert token is None
         finally:
-            con.close()
+            bcon.close()

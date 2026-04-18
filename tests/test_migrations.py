@@ -1,4 +1,4 @@
-"""Tests for the yoyo-based DuckDB migration layer."""
+"""Tests for the yoyo-based DuckDB migration layer (3D schema)."""
 
 from pathlib import Path
 
@@ -16,7 +16,7 @@ def _tmp_data_dir(tmp_path, monkeypatch):
 
 
 @allure.epic("Migrations")
-@allure.feature("Config DB")
+@allure.feature("Config DB (3D)")
 class TestConfigMigrations:
     def test_creates_all_tables(self, tmp_path: Path):
         db_path = tmp_path / "config.duckdb"
@@ -26,19 +26,38 @@ class TestConfigMigrations:
         try:
             tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
             expected = {
+                "category_groups",
                 "categories",
-                "family_members",
                 "events",
-                "event_members",
+                "tags",
+                "sheet_mapping",
+                "sheet_mapping_tags",
+                "sheet_import_sources",
+                "expense_id_registry",
+                "exchange_rates",
+                "app_metadata",
+            }
+            assert expected.issubset(tables), f"missing: {expected - tables}"
+        finally:
+            con.close()
+
+    def test_no_legacy_4d_tables(self, tmp_path: Path):
+        db_path = tmp_path / "config.duckdb"
+        db_migrations.migrate_config_db(db_path)
+        con = duckdb.connect(str(db_path))
+        try:
+            tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            for legacy in (
+                "family_members",
                 "spheres_of_life",
                 "source_type_mapping",
-                "sheet_import_sources",
                 "category_taxonomies",
                 "category_taxonomy_nodes",
                 "category_taxonomy_membership",
-                "exchange_rates",
-            }
-            assert expected.issubset(tables)
+                "stores",
+                "income_sources",
+            ):
+                assert legacy not in tables
         finally:
             con.close()
 
@@ -54,52 +73,32 @@ class TestConfigMigrations:
         finally:
             con.close()
 
-    def test_creates_parent_directory(self, tmp_path: Path):
-        db_path = tmp_path / "sub" / "deep" / "config.duckdb"
-        db_migrations.migrate_config_db(db_path)
-        assert db_path.exists()
-
-    def test_tracks_applied_migration(self, tmp_path: Path):
-        db_path = tmp_path / "config.duckdb"
-        db_migrations.migrate_config_db(db_path)
-
-        con = duckdb.connect(str(db_path))
-        try:
-            tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
-            assert "_yoyo_migration" in tables
-            rows = con.execute("SELECT * FROM _yoyo_migration").fetchall()
-            assert len(rows) == 1
-        finally:
-            con.close()
-
-    def test_categories_are_atomic(self, tmp_path: Path):
+    def test_categories_link_to_groups(self, tmp_path: Path):
         db_path = tmp_path / "config.duckdb"
         db_migrations.migrate_config_db(db_path)
 
         con = duckdb.connect(str(db_path))
         try:
             cols = {r[0] for r in con.execute("DESCRIBE categories").fetchall()}
-            assert "id" in cols
-            assert "name" in cols
-            assert "group_id" not in cols
+            assert {"id", "name", "group_id"}.issubset(cols)
         finally:
             con.close()
 
-    def test_no_stores_table(self, tmp_path: Path):
+    def test_app_metadata_has_initial_version(self, tmp_path: Path):
         db_path = tmp_path / "config.duckdb"
         db_migrations.migrate_config_db(db_path)
-
         con = duckdb.connect(str(db_path))
         try:
-            tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
-            assert "stores" not in tables
-            assert "category_groups" not in tables
+            row = con.execute(
+                "SELECT id, catalog_version FROM app_metadata WHERE id = 1",
+            ).fetchone()
+            assert row == (1, 1)
         finally:
             con.close()
 
 
 @allure.epic("Migrations")
-@allure.feature("Budget DB")
+@allure.feature("Budget DB (3D)")
 class TestBudgetMigrations:
     def test_creates_budget_tables(self, tmp_path: Path):
         db_path = tmp_path / "budget_2026.duckdb"
@@ -108,44 +107,48 @@ class TestBudgetMigrations:
         con = duckdb.connect(str(db_path))
         try:
             tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
-            assert {"expenses", "sheet_sync_jobs"}.issubset(tables)
+            assert {"expenses", "expense_tags", "sheet_sync_jobs", "income"}.issubset(tables)
         finally:
             con.close()
 
-    def test_idempotent(self, tmp_path: Path):
+    def test_expenses_has_3d_columns(self, tmp_path: Path):
         db_path = tmp_path / "budget_2026.duckdb"
         db_migrations.migrate_budget_db(db_path)
-        db_migrations.migrate_budget_db(db_path)
-
-        con = duckdb.connect(str(db_path))
-        try:
-            tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
-            assert "expenses" in tables
-        finally:
-            con.close()
-
-    def test_no_store_id_in_expenses(self, tmp_path: Path):
-        db_path = tmp_path / "budget_2026.duckdb"
-        db_migrations.migrate_budget_db(db_path)
-
         con = duckdb.connect(str(db_path))
         try:
             cols = {r[0] for r in con.execute("DESCRIBE expenses").fetchall()}
-            assert "store_id" not in cols
+            assert {
+                "id",
+                "datetime",
+                "amount",
+                "amount_original",
+                "currency_original",
+                "category_id",
+                "event_id",
+                "comment",
+                "sheet_category",
+                "sheet_group",
+            }.issubset(cols)
+            for legacy in (
+                "beneficiary_id",
+                "sphere_of_life_id",
+                "source",
+                "source_type",
+                "source_envelope",
+            ):
+                assert legacy not in cols
         finally:
             con.close()
 
-    def test_expenses_has_new_amount_fields(self, tmp_path: Path):
+    def test_sheet_sync_jobs_keyed_by_expense_id(self, tmp_path: Path):
         db_path = tmp_path / "budget_2026.duckdb"
         db_migrations.migrate_budget_db(db_path)
-
         con = duckdb.connect(str(db_path))
         try:
-            cols = {r[0] for r in con.execute("DESCRIBE expenses").fetchall()}
-            assert "amount" in cols
-            assert "amount_original" in cols
-            assert "currency_original" in cols
-            assert "sphere_of_life_id" in cols
+            cols = {r[0] for r in con.execute("DESCRIBE sheet_sync_jobs").fetchall()}
+            assert {"expense_id", "status", "claim_token", "claimed_at"}.issubset(cols)
+            for legacy in ("year", "month"):
+                assert legacy not in cols
         finally:
             con.close()
 

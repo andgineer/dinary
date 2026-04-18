@@ -1,22 +1,49 @@
+-- category_id, event_id: cross-DB references into config.duckdb. Not enforced by DuckDB;
+-- application code + verify-sheet-equivalence enforce integrity.
 CREATE TABLE expenses (
     id                TEXT PRIMARY KEY,
     datetime          TIMESTAMP NOT NULL,
-    name              TEXT NOT NULL DEFAULT '',
     amount            DECIMAL(10,2) NOT NULL,
     amount_original   DECIMAL(10,2) NOT NULL,
     currency_original TEXT NOT NULL DEFAULT 'RSD',
     category_id       INTEGER NOT NULL,
-    beneficiary_id    INTEGER,
     event_id          INTEGER,
-    sphere_of_life_id INTEGER,
     comment           TEXT,
-    source            TEXT NOT NULL DEFAULT 'manual',
-    source_type       TEXT NOT NULL DEFAULT '',
-    source_envelope   TEXT NOT NULL DEFAULT ''
+    sheet_category    TEXT,
+    sheet_group       TEXT
 );
 
+-- tag_id: cross-DB reference into config.duckdb.tags; enforced by application code.
+CREATE TABLE expense_tags (
+    expense_id TEXT NOT NULL REFERENCES expenses(id),
+    tag_id     INTEGER NOT NULL,
+    PRIMARY KEY (expense_id, tag_id)
+);
+
+-- sheet_sync_jobs: durable queue for "this expense still needs to be appended to Google Sheets".
+-- Producer: POST /api/expenses (inserts the queue row in the same DuckDB transaction as expenses).
+-- Consumers (both run the same _sync_single_row code path):
+--   1) async worker started by asyncio.create_task right before the API returns -- opportunistic fast path;
+--   2) `inv sync` CLI -- retries anything the async worker did not finish (process crash, network, etc.).
+-- A row is deleted as soon as its single-row append succeeds; no full-month rebuild exists.
+-- `claimed_at` implements lease-style crash recovery: a later worker may reclaim an
+-- `in_progress` row once the claim is older than the configured timeout.
+-- rebuild-budget does NOT populate this table: historical rows live in Sheets already.
 CREATE TABLE sheet_sync_jobs (
-    year  INTEGER,
-    month INTEGER,
-    PRIMARY KEY (year, month)
+    expense_id TEXT PRIMARY KEY REFERENCES expenses(id),
+    status     TEXT NOT NULL DEFAULT 'pending',
+    claim_token TEXT,
+    claimed_at TIMESTAMP,
+    CHECK (status IN ('pending', 'in_progress'))
+);
+
+-- income: unlike expenses, `year` is kept as an explicit column so cross-year analytics
+-- queries over ATTACHed budget_YYYY.duckdb files stay uniform. Intentional local exception
+-- to the "year is implicit in file name" convention.
+CREATE TABLE income (
+    year   INTEGER NOT NULL,
+    month  INTEGER NOT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    PRIMARY KEY (year, month),
+    CHECK (month BETWEEN 1 AND 12)
 );

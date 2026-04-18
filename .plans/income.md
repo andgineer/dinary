@@ -9,21 +9,28 @@ CREATE TABLE income (
     year   INTEGER NOT NULL,
     month  INTEGER NOT NULL,
     amount DECIMAL(12,2) NOT NULL,          -- EUR
-    origin TEXT NOT NULL DEFAULT 'sheet_import',
-    PRIMARY KEY (year, month)
+    PRIMARY KEY (year, month),
+    CHECK (month BETWEEN 1 AND 12)
 );
 ```
 
-Migration: `src/dinary/migrations/budget/0002_income.sql`
+Defined inline in `src/dinary/migrations/budget/0001_initial_schema.sql` (the legacy `0002_income.sql` migration was deleted in the 3D reset). The `origin` column was dropped because `income` is single-source per year (always sheet-imported via `inv rebuild-income-all`).
 
-### `config.duckdb` — added to `sheet_import_sources`
+### `config.duckdb` — `sheet_import_sources`
 
 ```sql
-ALTER TABLE sheet_import_sources ADD COLUMN income_worksheet_name TEXT DEFAULT '';
-ALTER TABLE sheet_import_sources ADD COLUMN income_layout_key TEXT DEFAULT '';
+CREATE TABLE sheet_import_sources (
+    year                  INTEGER PRIMARY KEY,
+    spreadsheet_id        TEXT NOT NULL,
+    worksheet_name        TEXT NOT NULL DEFAULT '',
+    layout_key            TEXT NOT NULL DEFAULT 'default',
+    notes                 TEXT,
+    income_worksheet_name TEXT DEFAULT '',
+    income_layout_key     TEXT DEFAULT ''
+);
 ```
 
-Migration: `src/dinary/migrations/config/0002_income_sources.sql`
+Defined inline in `src/dinary/migrations/config/0001_initial_schema.sql` (the legacy `0002_income_sources.sql` ALTER migration was folded into the initial schema in the 3D reset).
 
 ## Layouts
 
@@ -77,9 +84,11 @@ Re-reads the sheet, re-aggregates, and compares month-by-month against DB with �
 
 ## Invoke tasks
 
-- `inv rebuild-4d-income --year=YYYY` — import one year
-- `inv rebuild-4d-income-all` — import all registered years
-- `inv verify-income-equivalence --year=YYYY` — verify one year
+All destructive income-import tasks require explicit `--yes` confirmation:
+
+- `inv rebuild-income --year=YYYY --yes` — destructive re-import of one year.
+- `inv rebuild-income-all --yes` — destructive re-import of every registered year (run as part of the coordinated reset flow).
+- `inv verify-income-equivalence --year=YYYY` — verify one year against the source sheet (no `--yes` needed; read-only).
 
 ## Import results (2026-04)
 

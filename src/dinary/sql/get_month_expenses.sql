@@ -4,11 +4,9 @@ SELECT e.id,
        e.amount_original,
        e.currency_original,
        e.category_id,
-       e.beneficiary_id,
        e.event_id,
-       e.sphere_of_life_id,
        e.comment,
-       e.source_type,
-       e.source_envelope
+       e.sheet_category,
+       e.sheet_group
 FROM expenses e
 WHERE YEAR(e.datetime) = ? AND MONTH(e.datetime) = ?

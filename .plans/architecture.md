@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status note (2026-04):** this document describes the original 5-dimensional design (`category`, `beneficiary`, `event`, `tags[]`, `store`). Phase 1 actually shipped with a **4-dimensional model**: `category`, `beneficiary`, `event`, `sphere_of_life` (сфера жизни). `tags[]` and `store` were dropped. Historical data import (2012-2026) was also pulled into Phase 1. See the "Current state (post-implementation)" section of [phase1.md](phase1.md) for the authoritative delta. Treat the schemas and examples below as the design intent being iterated on, not the current runtime shape.
+> **Status note (2026-04):** Phase 1 shipped, then was reset to a **3-dimensional model**: `category`, `event`, `tags[]`. The earlier 5D (with `beneficiary`, `sphere_of_life`, `store`) and the intermediate 4D (`beneficiary` + `sphere_of_life`) are gone. `beneficiary` and `sphere_of_life` collapsed into the flat tag dictionary; `store` was dropped entirely. Google Sheets is **export-only from Phase 1 onward** — historical sheet import is bootstrap-only and runs through the destructive `inv rebuild-budget` path; new manual writes never read from Sheets. The authoritative source for concrete category/group/tag/event values is [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py); when this document disagrees with the seed code, the code wins.
 
 ### Overview
 
@@ -47,7 +47,7 @@ Implications:
 - Do not require Docker in production on the 1 GB instance.
 - Do not run AI/LLM workloads, heavy batch classification, or other memory-hungry jobs on the server. Those stay on the laptop-side `dinary` agent.
 - Keep background work serialized and bounded: no fan-out workers, no parallel sync pipelines, no large in-memory queues.
-- Google Sheets sync should operate on **dirty months / targeted aggregates**, not full-sheet or full-history recomputation on every request.
+- Google Sheets sync is **single-row append per `expense_id`** via the `sheet_sync_jobs` queue; never a full-sheet or full-month recomputation.
 - Caches must stay small and optional. Correctness must not depend on large resident in-memory datasets.
 
 ### Partitioning Strategy
@@ -58,15 +58,14 @@ One DuckDB file per year:
 data/
 ├── budget_2025.duckdb
 ├── budget_2026.duckdb
-├── config.duckdb          # categories, groups, stores, family, events, tags, rules — shared across years
+├── config.duckdb          # categories, groups, events, tags, sheet_mapping, exchange rates, app_metadata
 └── archive/
     └── budget_2024.duckdb
 ```
 
-**Yearly files** contain transactional data (expenses, receipts, income).
+**Yearly files** contain transactional data: `expenses`, `expense_tags`, `sheet_sync_jobs`, `income`.
 
-**config.duckdb** contains classification metadata (categories, groups, stores, family members, events, tags, rules)
-that is shared across all years and evolves independently of the transactional data.
+**config.duckdb** contains classification metadata (`category_groups`, `categories`, `events`, `tags`, `sheet_mapping`, `sheet_mapping_tags`), the global `expense_id_registry`, sheet import sources, exchange rates, and the singleton `app_metadata` row that holds `catalog_version`.
 
 Archiving a year = moving the file to `archive/`. Cross-year queries use ATTACH:
 
@@ -79,230 +78,233 @@ UNION ALL
 SELECT * FROM y2026.main.expenses;
 ```
 
-### Schema
+### Schema (3D)
+
+The authoritative SQL lives in [src/dinary/migrations/](../src/dinary/migrations/). The blocks below are a current snapshot.
 
 #### config.duckdb — Classification & Reference Data
 
 ```sql
--- Category groups: high-level budget buckets for aggregated views.
--- Examples: здоровье, транспорт, жильё, питание, развлечения.
 CREATE TABLE category_groups (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE,
-    monthly_budget_eur DECIMAL(10,2)  -- optional planned budget per month
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    sort_order INTEGER NOT NULL DEFAULT 0
 );
 
--- Specific expense categories: what was bought.
--- Examples: фрукты, топливо, медицина, кафе, аренда.
--- Each category belongs to exactly one group (or none).
 CREATE TABLE categories (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE,
-    group_id    INTEGER REFERENCES category_groups(id)  -- nullable
+    id       INTEGER PRIMARY KEY,
+    name     TEXT NOT NULL UNIQUE,
+    group_id INTEGER NOT NULL REFERENCES category_groups(id)
 );
 
--- Stores: normalized store names.
--- Useful for analytics: "how much do I spend at Maxi vs Lidl".
-CREATE TABLE stores (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE,
-    store_type  TEXT                   -- 'supermarket' | 'pharmacy' | 'gas_station' | 'online' | etc.
-);
-
--- Family members: who the expense is for (beneficiary).
--- Short fixed list. Default = 'семья' (whole family / unspecified).
-CREATE TABLE family_members (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE    -- 'семья', 'Андрей', 'Лариса', 'Аня', 'собака'
-);
-
--- Events: temporary situations with their own spending that should be trackable separately.
--- A trip, a renovation project, hosting guests, a camp for the child, etc.
--- Events have date ranges (informational, used for auto-suggestion at entry time)
--- and participants (which family members are involved).
--- Multiple events can overlap in time (e.g., parents' trip + child's camp).
+-- Events stay first-class because trips/camps/relocation are the one analytical
+-- object that personal-finance tools usually approximate via categories or memos.
+-- `auto_attach_enabled` is a hint for the future receipt-processing pipeline,
+-- not for current server behavior. Stored expenses are never silently re-attached.
 CREATE TABLE events (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL,          -- "Босния Сараево+Мостар", "Дивчибаре", "Аня соревнования Гамбург"
-    date_from   DATE NOT NULL,
-    date_to     DATE NOT NULL,
-    is_active   BOOLEAN DEFAULT true,   -- false = archived, hidden from entry UI
-    comment     TEXT
+    id                  INTEGER PRIMARY KEY,
+    name                TEXT NOT NULL UNIQUE,
+    date_from           DATE NOT NULL,
+    date_to             DATE NOT NULL,
+    auto_attach_enabled BOOLEAN NOT NULL DEFAULT true,
+    CHECK (date_to >= date_from)
 );
 
--- Event participants: which family members are part of each event.
-CREATE TABLE event_members (
-    event_id    INTEGER NOT NULL REFERENCES events(id),
-    member_id   INTEGER NOT NULL REFERENCES family_members(id),
-    PRIMARY KEY (event_id, member_id)
-);
-
--- Tags: small fixed set of flags for cross-cutting concerns.
--- NOT for things that are better modeled as category, group, beneficiary, or event.
--- Examples: 'релокация' (extra cost of living abroad), 'профессиональное' (work-related).
--- Expected count: 2-5, practically never grows.
+-- Phase-1 fixed flat tag dictionary; PWA hardcodes the same list. Tags absorb
+-- everything the old `beneficiary` and `sphere_of_life` axes used to carry.
 CREATE TABLE tags (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE
+    id   INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
 );
 
--- Pattern-based auto-classification of receipt line items.
--- Patterns are matched against item names from parsed receipts.
--- Priority: lower number = higher priority (checked first).
--- Note: for Serbian receipt items (e.g., "AJDARED 1KG", "JAB ZELENA"), rule-based matching
--- has limited effectiveness. Primary classification mechanism is AI (see Classification Layer).
--- Rules capture the easy wins and grow over time from confirmed AI suggestions.
-CREATE TABLE category_rules (
-    id          INTEGER PRIMARY KEY,
-    pattern     TEXT NOT NULL,         -- substring or regex matched against item name
-    category_id INTEGER NOT NULL REFERENCES categories(id),
-    priority    INTEGER DEFAULT 100,
-    created_by  TEXT DEFAULT 'manual'  -- 'manual' | 'ai' — tracks rule origin
+-- Maps legacy Google Sheets `(sheet_category, sheet_group)` rows to the 3D
+-- model. Used in two roles:
+--  - bootstrap historical import (year=Y or year=0 fallback);
+--  - runtime forward projection: route a new manual expense to the best
+--    matching row in the latest configured sheet year.
+CREATE TABLE sheet_mapping (
+    id             INTEGER PRIMARY KEY,
+    year           INTEGER NOT NULL DEFAULT 0,
+    sheet_category TEXT NOT NULL,
+    sheet_group    TEXT NOT NULL DEFAULT '',
+    category_id    INTEGER NOT NULL REFERENCES categories(id),
+    event_id       INTEGER REFERENCES events(id),
+    UNIQUE (year, sheet_category, sheet_group)
 );
+
+CREATE TABLE sheet_mapping_tags (
+    mapping_id INTEGER NOT NULL REFERENCES sheet_mapping(id),
+    tag_id     INTEGER NOT NULL REFERENCES tags(id),
+    PRIMARY KEY (mapping_id, tag_id)
+);
+
+-- Global cross-year ownership of `expense_id`: the API rejects re-using the
+-- same UUID across `datetime.year` boundaries.
+CREATE TABLE expense_id_registry (
+    expense_id TEXT PRIMARY KEY,
+    year       INTEGER NOT NULL
+);
+
+CREATE TABLE sheet_import_sources (
+    year                  INTEGER PRIMARY KEY,
+    spreadsheet_id        TEXT NOT NULL,
+    worksheet_name        TEXT NOT NULL DEFAULT '',
+    layout_key            TEXT NOT NULL DEFAULT 'default',
+    notes                 TEXT,
+    income_worksheet_name TEXT DEFAULT '',
+    income_layout_key     TEXT DEFAULT ''
+);
+
+CREATE TABLE exchange_rates (
+    date     DATE NOT NULL,
+    currency TEXT NOT NULL,
+    rate     DECIMAL(10,4) NOT NULL,
+    PRIMARY KEY (date, currency)
+);
+
+-- Singleton row carrying the monotonic `catalog_version`. Bumped only by
+-- `inv rebuild-catalog` (previous + 1). Echoed by `GET /api/categories` and
+-- `POST /api/expenses` so the PWA can opportunistically invalidate caches.
+CREATE TABLE app_metadata (
+    id              INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    catalog_version INTEGER NOT NULL DEFAULT 1 CHECK (catalog_version >= 1)
+);
+INSERT OR IGNORE INTO app_metadata (id, catalog_version) VALUES (1, 1);
 ```
 
 #### budget_YYYY.duckdb — Yearly Transactional Data
 
 ```sql
--- The single source of truth for all spending.
--- Every expense — whether parsed from a QR receipt, or manually entered (café, taxi, haircut) —
--- is a row in this table.
--- A manual expense is simply a row with no receipt_id and a hand-picked category.
---
--- Five orthogonal dimensions on each expense, each answering a different question:
---   category_id   → what was bought        (→ category_groups via categories.group_id)
---   beneficiary_id → for whom              (family_members; default = 'семья')
---   event_id      → within which event     (events; nullable)
---   tags          → cross-cutting flags    (via expense_tags; e.g., релокация, профессиональное)
---   store_id      → where purchased        (stores; nullable)
+-- expenses is a committed ledger, not a staging area. Once written, the row's
+-- (category_id, event_id, tag set) is final; no auto-re-attach happens server-side.
+-- `category_id` and `event_id` are cross-DB references into config.duckdb (not
+-- enforced by DuckDB; enforced by application code).
+-- `sheet_category` / `sheet_group` are populated together for bootstrap-imported
+-- rows as audit provenance, and stay NULL for runtime rows.
 CREATE TABLE expenses (
-    id              TEXT PRIMARY KEY,      -- UUID or ULID
-    datetime        TIMESTAMP NOT NULL,    -- when the purchase happened
-    name            TEXT NOT NULL,         -- item name (from receipt) or description (manual entry)
-    quantity        DECIMAL(10,3),         -- nullable for manual entries
-    unit_price      DECIMAL(10,2),         -- nullable for manual entries
-    amount          DECIMAL(10,2) NOT NULL,-- total for this line: quantity × unit_price, or manual amount
-    currency        TEXT DEFAULT 'RSD',    -- ISO 4217: RSD, EUR, BAM, etc.
-    category_id     INTEGER,              -- FK to config.categories (nullable until classified)
-    beneficiary_id  INTEGER,              -- FK to config.family_members (nullable → defaults to 'семья')
-    event_id        INTEGER,              -- FK to config.events (nullable)
-    store_id        INTEGER,              -- FK to config.stores (nullable for non-store expenses)
-    receipt_id      TEXT,                  -- FK to receipts.id (nullable; manual entries have none)
-    comment         TEXT,
-    ai_category_suggestion TEXT,          -- raw AI suggestion, stored for review
-    classification_status TEXT DEFAULT 'pending'  -- 'pending' | 'auto' | 'ai_suggested' | 'confirmed'
+    id                TEXT PRIMARY KEY,
+    datetime          TIMESTAMP NOT NULL,
+    amount            DECIMAL(10,2) NOT NULL,
+    amount_original   DECIMAL(10,2) NOT NULL,
+    currency_original TEXT NOT NULL DEFAULT 'RSD',
+    category_id       INTEGER NOT NULL,
+    event_id          INTEGER,
+    comment           TEXT,
+    sheet_category    TEXT,
+    sheet_group       TEXT
 );
 
--- Many-to-many: an expense can have multiple tags (e.g., both 'релокация' and 'профессиональное').
+-- tag_id is a cross-DB ref into config.duckdb.tags; enforced by application code.
 CREATE TABLE expense_tags (
-    expense_id  TEXT NOT NULL REFERENCES expenses(id),
-    tag_id      INTEGER NOT NULL REFERENCES config.tags(id),  -- cross-db FK (enforced in app logic)
+    expense_id TEXT NOT NULL REFERENCES expenses(id),
+    tag_id     INTEGER NOT NULL,
     PRIMARY KEY (expense_id, tag_id)
 );
 
--- Raw receipt archive. NOT used in analytical queries — no JOINs needed.
--- Exists purely to preserve the original data for reproducibility and debugging.
-CREATE TABLE receipts (
-    id          TEXT PRIMARY KEY,
-    datetime    TIMESTAMP NOT NULL,
-    store_id    INTEGER,
-    total       DECIMAL(12,2),
-    currency    TEXT DEFAULT 'RSD',
-    raw_url     TEXT,                  -- SUF PURS URL from QR code
-    raw_html    TEXT,                  -- cached HTML page from tax authority
-    created_at  TIMESTAMP DEFAULT current_timestamp
+-- Durable queue for "this expense still needs to be appended to Google Sheets".
+-- Producer: POST /api/expenses (inserts the queue row in the same DuckDB
+-- transaction as the expenses row).
+-- Consumers: an asyncio task spawned by the API handler (opportunistic fast
+-- path) and `inv sync` (durable retry). Both run the same single-row append.
+-- A row is deleted on success; failure leaves it as `pending` for retry.
+-- `claim_token` + `claimed_at` implement lease-style atomic claim with stale
+-- recovery: a later worker may reclaim an `in_progress` row once `claimed_at`
+-- is older than the configured timeout.
+-- `inv rebuild-budget` does NOT populate this table (historical rows already
+-- live in Sheets and are not projected back).
+CREATE TABLE sheet_sync_jobs (
+    expense_id  TEXT PRIMARY KEY REFERENCES expenses(id),
+    status      TEXT NOT NULL DEFAULT 'pending',
+    claim_token TEXT,
+    claimed_at  TIMESTAMP,
+    CHECK (status IN ('pending', 'in_progress'))
 );
 
+-- Income keeps `year` as an explicit column so cross-year analytics over
+-- ATTACHed budget_YYYY.duckdb files stay uniform.
 CREATE TABLE income (
-    id          TEXT PRIMARY KEY,
-    date        DATE NOT NULL,
-    amount      DECIMAL(12,2) NOT NULL,
-    currency    TEXT DEFAULT 'RSD',
-    source      TEXT DEFAULT 'salary',  -- 'salary' | 'bonus' | 'freelance' | 'espp' | etc.
-    comment     TEXT
-);
-
-CREATE TABLE exchange_rates (
-    currency    TEXT NOT NULL,          -- source currency (e.g., 'RSD')
-    target      TEXT DEFAULT 'EUR',
-    rate        DECIMAL(12,6) NOT NULL, -- 1 unit of currency = rate units of target
-    valid_from  DATE NOT NULL,
-    valid_to    DATE,
-    PRIMARY KEY (currency, target, valid_from)
+    year   INTEGER NOT NULL,
+    month  INTEGER NOT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    PRIMARY KEY (year, month),
+    CHECK (month BETWEEN 1 AND 12)
 );
 ```
 
-### Five Orthogonal Dimensions
+### Three Dimensions
 
-The current spreadsheet mixes several unrelated concepts in the "envelope" field: hierarchical grouping (здоровье = медицина + БАД + лекарства),
-beneficiary (ребенок, лариса), temporary context (путешествия), expense purpose (профессиональное), and relocation overhead (релокация).
-This leads to duplicated category rows and makes cross-cutting analysis impossible.
+The legacy Google Sheets mixed several unrelated concepts in the `(Расходы, Конверт)` pair: hierarchical grouping (`здоровье` = `медицина` + `БАД` + `лекарства`), beneficiary (`ребенок`, `лариса`), temporary context (`путешествия`), expense purpose (`профессиональное`), and relocation overhead (`релокация`). This caused duplicated category rows and made cross-cutting analysis impossible.
 
-The new model separates five independent dimensions:
+The Phase-1 model collapses everything to three orthogonal dimensions:
 
 ```
 expense row
   │
-  ├── category_id ──→ categories ──→ category_groups     WHAT (фрукты → питание)
+  ├── category_id ──→ categories ──→ category_groups     WHAT (фрукты → "Еда")
   │
-  ├── beneficiary_id ──→ family_members                  FOR WHOM (Аня, Лариса, собака, семья)
+  ├── event_id ──→ events                                WITHIN WHAT (поездка в Боснию, релокация-в-Сербию)
   │
-  ├── event_id ──→ events ←── event_members              WITHIN WHAT (поездка в Боснию, лагерь Ани)
-  │
-  ├── expense_tags ──→ tags                              WHY SPECIAL (релокация, профессиональное)
-  │
-  └── store_id ──→ stores                                WHERE (Maxi, Lidl, онлайн)
+  └── expense_tags ──→ tags                              WHY SPECIAL / FOR WHOM
+                                                         (Аня, Лариса, собака, релокация,
+                                                          профессиональное, дача)
 ```
 
-**"How much on fruit?"** → category = фрукты.
-**"How much on health?"** → group = здоровье (медицина + БАД + лекарства + спорт).
-**"How much for the child?"** → beneficiary = Аня.
-**"How much on the Bosnia trip, and on what?"** → event = Босния, GROUP BY category.
-**"How much on fruit during the Bosnia trip?"** → category = фрукты AND event = Босния.
-**"All trips this year?"** → SELECT * FROM events WHERE year = 2026.
-**"All trips the child went on?"** → events JOIN event_members WHERE member = Аня.
-**"How much does relocation cost me?"** → tag = релокация.
-**"How much on professional subscriptions?"** → tag = профессиональное AND group = подписки.
+`beneficiary` and `sphere_of_life` no longer exist as first-class axes — their semantics live in the flat tag dictionary. `store` was dropped entirely and may return in a later phase if a real use case emerges.
 
-No duplicated rows. Each dimension is independent and composable with any other.
+Examples:
 
-### Event Auto-assignment at Entry Time
+- **"How much on fruit?"** → `category = фрукты`.
+- **"How much on Еда group?"** → group = "Еда" (sums `еда`, `фрукты`, `деликатесы`, `алкоголь`).
+- **"How much on the child?"** → `tag = Аня`.
+- **"How much on the Bosnia trip, and on what?"** → `event = Босния`, `GROUP BY category`.
+- **"All trips this year?"** → `SELECT * FROM events WHERE year = 2026`.
+- **"How much does relocation cost me?"** → `event = релокация-в-Сербию` (one long event with `auto_attach_enabled=false`) or `tag = релокация` for older bootstrap rows.
 
-When a new expense is entered, the system checks if its date falls within any active event's date range:
+### Event Semantics
 
-- **Zero matching events** → event_id = NULL (no suggestion).
-- **One matching event** → auto-assigned to that event. User sees it and can remove.
-- **Multiple matching events** (overlapping dates) → dropdown list of matching events. User picks one, or none.
+- `event` is an optional single-valued dimension for trips, camps, business trips, relocation, and other bounded contexts.
+- Each event has `date_from`, `date_to`, and `auto_attach_enabled`.
+- **Attachment is decided before insert; stored rows are never auto-re-attached.** `expenses` is the committed ledger, not a staging area.
+- In Phase 1 the only path that originates `event_id` is the historical sheet import (via `sheet_mapping`). The PWA does not know about events — `POST /api/expenses` always stores `event_id=NULL`. The async sheet-append worker reads `event_id` for forward projection but never originates it.
+- Future receipt-processing pipeline (out of scope for Phase 1) will use `auto_attach_enabled` and overlap rules:
+  - exactly one auto-attach-enabled event covers the date → suggest/attach;
+  - more than one covers the date → user or rule must pick;
+  - zero cover the date → no event unless explicit override;
+  - manual override allowed in either direction.
 
-Manual override in both directions: assign an expense to an event outside its date range (fueling up before a trip),
-or remove auto-assignment (a regular grocery run during a trip that shouldn't count).
+### Tag Semantics
+
+- Tags are flat labels, many-to-many with expenses, and replace both the former `beneficiary` and `sphere_of_life` axes.
+- Phase 1 tag set = the distinct labels referenced by `sheet_mapping_tags` plus the hardcoded `PHASE1_TAGS` list in `seed_config.py`. The PWA hardcodes the same list — there is no `GET /api/tags`, no `POST /api/tags`, no `GET /api/events`, no `POST /api/category-groups`.
+- `POST /api/expenses` validates `tag_ids[]` against the seed tag table; unknown ids are rejected with 4xx.
+- No `tag_type`, no hierarchy, no namespaces, no user-extensible creation in Phase 1.
 
 ### Key Design Decisions
 
-**Raw data is immutable; classification is a layer on top.** Expenses store the original name and amount.
-Category, beneficiary, event, and tags can be changed at any time without touching the expense's core data.
+**Raw data is immutable; classification is a layer on top.** `expenses.amount`, `amount_original`, `currency_original`, and `datetime` are never rewritten by the server.
 
-**Category group is derived, not stored on expenses.** An expense's group is resolved via `category_id → category.group_id`.
-Changing a category's group assignment instantly affects all historical data.
+**Category group is derived, not stored on expenses.** An expense's group is resolved via `category_id → categories.group_id`. Changing a category's group assignment instantly affects all historical data.
 
-**Beneficiary has a default.** If `beneficiary_id` is NULL, it means "семья" (whole family / general).
-This is the common case — only expenses specifically for one person need explicit assignment.
+**`expenses` is a committed ledger.** Once a row is written, its `(category_id, event_id, tag set)` is the final decision. There is no silent re-attach/re-detach. Any future receipt queue, raw receipt storage, AI suggestions, or user-resolution tasks will live in *separate* pipeline tables — not as intermediate states overloaded onto `expenses`.
 
-**Events are archivable.** Once a trip/event is over, `is_active = false` hides it from the entry UI dropdown but preserves all data.
-Past events are accessible in analytics and can be reactivated if needed.
+**Tag dictionary is fixed in Phase 1.** Unlike events (which grow by ~5-10/year) or categories (which grow with QR parsing), tags are a small flat dictionary that practically never changes within Phase 1. User-extensible tags, analytics-only tags, and admin UI for tags are deferred to Phase 2.
 
-**Tags are a tiny fixed set.** Unlike events (which grow by ~5-10/year) or categories (which grow with QR parsing),
-tags are 2-5 conceptual flags that practically never change.
-They mark structural circumstances (relocation, professional use), not temporal events or beneficiaries.
+**`sheet_category` / `sheet_group` are import provenance, not runtime metadata.** Imported rows populate the pair together (with `sheet_group=''` when the legacy row had no envelope); runtime rows leave both NULL. The async append worker does not read these columns.
 
-**One table for all expenses.** A café bill for 500 RSD and a line item from a supermarket receipt are both rows in `expenses`.
-The difference: the café entry has no `receipt_id`, no `quantity`, and was manually categorized at entry time.
+### Catalog versioning
 
-**Receipts table is an archive, not a parent.** `receipts` stores raw HTML and URL for reproducibility.
-It is never JOINed in analytical queries. All fields needed for analytics (datetime, store_id, etc.) are denormalized onto each expense row.
+`config.duckdb.app_metadata.catalog_version` is a monotonic integer. The only Phase-1 bump path is `inv rebuild-catalog`: it preserves the previous value before wipe, runs the migration (`INSERT OR IGNORE` seeds the singleton with `1` on a fresh DB), runs `seed_classification_catalog`, then writes `previous + 1`. `previous = 0` on first-ever run, so the post-seed value is `1`.
 
-**Stores are normalized.** `store_id` on expenses, with a lookup table in config.duckdb.
-The receipt parser maps variant spellings ("MAXI", "Maxi DOO", "MAXI SOMBOR") to a single store_id.
+`GET /api/categories` and `POST /api/expenses` echo the current `catalog_version` (no bump). The PWA uses it to opportunistically invalidate the cached category list. Phase 2 will reintroduce non-destructive bumps (tag admin, receipt pipeline, etc.).
+
+### Cross-database references and year boundaries
+
+- `expenses.category_id`, `expenses.event_id`, and `expense_tags.tag_id` reference entities in `config.duckdb`.
+- DuckDB does not enforce these cross-DB FKs; application code (API validation + ingestion) and verification tasks enforce them.
+- `expenses` is partitioned by year in `budget_YYYY.duckdb`, so any lookup keyed by `expense_id` must be interpreted together with the target year/file.
+- `expense_id_registry` (in `config.duckdb`) is the global source of truth for cross-year ownership: `POST /api/expenses` reserves `(expense_id → year)` on first insert, allows replay only when the registry already points to the same year, and rejects cross-year reuse with 4xx.
+- The registry tracks **runtime** inserts only. `inv rebuild-budget --year=YYYY` truncates `budget_YYYY.duckdb.expenses` and re-imports the historical sheet, but it deliberately does **not** touch `expense_id_registry`: legacy `legacy-YYYYMM-...` ids are not registered (they are deterministic and never collide with the UUIDs the PWA generates), and the runtime-inserted ids that survive in the registry are the correct authoritative mapping — the next runtime POST for one of them will simply re-create the lost row as `created` and the registry stays consistent. Only `inv rebuild-catalog` wipes the registry (it `unlink`s `config.duckdb` wholesale).
+- Destructive wipe + full re-import may reassign integer IDs. That is acceptable for the one-time Phase-1 bootstrap/reset workflow because the operator is explicitly warned by `--yes`.
 
 ---
 
@@ -326,6 +328,26 @@ Serbian fiscal receipts contain a QR code with a URL to `suf.purs.gov.rs`. The H
 5. Each line item is inserted into `expenses` with `classification_status = 'pending'`.
 6. Category rules are applied immediately (pattern matching); matched items get `classification_status = 'auto'`.
 7. Unmatched items remain `'pending'` for batch AI classification (see below).
+
+#### Future Receipt Queue Note
+
+The flow above reflects the original design intent, but it is **not** the desired
+target architecture for future receipt ingestion.
+
+In future versions, receipt processing should use a **separate asynchronous
+pipeline**:
+
+1. A scanned receipt creates a receipt-ingestion job in a dedicated queue / staging area.
+2. Parsing, rule-based classification, AI classification, and user-required
+   disambiguation happen **outside** the `expenses` table.
+3. Only after the receipt is fully resolved are the final expense rows inserted
+   into `expenses`.
+
+This means `expenses` is the **committed ledger of finalized expenses**, not a
+staging table for partially classified receipt lines. Any future receipt queue,
+raw receipt storage, AI suggestions, or user-resolution tasks should live in
+separate pipeline tables rather than overloading `expenses` with intermediate
+states.
 
 ### Manual Entry
 
@@ -479,18 +501,62 @@ The dashboard is a view layer, not a data entry point.
 
 ---
 
-## Export Layer: Google Sheets Sync
+## Export Layer: Google Sheets Sync (Phase 1: persistent queue + async worker)
 
-The existing Google Sheets spreadsheet continues to work as a familiar view.
-A Python script (using `gspread` or Google Sheets API directly) runs on demand or on a schedule:
+From Phase 1 onward Google Sheets are **export-only** — the historical sheets stay as a familiar read-only view, while DuckDB is the single source of truth for all new manual writes. There is no DB-to-sheet reconciliation: we never read sheet state and rewrite it from DuckDB.
 
-1. Queries DuckDB for monthly aggregates by category and group.
-2. Writes the data into the existing sheet format (months as columns, categories as rows).
-3. Updates the income and savings rows.
+### Queue model
 
-This is a **write-only, one-directional sync**: DuckDB → Google Sheets.
-The spreadsheet becomes a read-only view; all data entry happens through the new system.
-The sync script is idempotent — running it twice produces the same result.
+`sheet_sync_jobs` (in `budget_YYYY.duckdb`) is the durable queue: one row per `expense_id` that still needs to be appended to Sheets. The in-process async task spawned by the API handler is just an opportunistic fast path over that queue; the DB queue is the source of truth.
+
+Producer: `POST /api/expenses` inserts the queue row in the *same* DuckDB transaction as the `expenses` row. Consumers (both run the same `_sync_single_row` code path):
+
+1. **Async worker** — `asyncio.create_task` spawned by the API handler right before returning the response, only on the fresh-insert path that also created the queue row. Never spawned on idempotent replay.
+2. **`inv sync`** — iterates every `sheet_sync_jobs` row across all `budget_*.duckdb` files and re-runs the same single-row append. Used after process crashes, transient Google API failures, network outages, etc.
+
+A row is deleted as soon as its single-row append succeeds. On failure (after a successful claim) the row's claim is released back to `pending` so the next sweep retries it.
+
+### Atomic claim and stale-claim recovery
+
+Workers must atomically claim a row before appending. Claim transitions the row from `pending` to `in_progress` with a unique `claim_token` and a fresh `claimed_at`. If the claim fails (row absent, already claimed and not stale), the worker no-ops — it must not append again. A claim older than the configured timeout is treated as stale and may be reclaimed by a later worker; this is the crash-recovery path for workers that die after claim but before release/delete.
+
+There is no in-process state that needs to survive a process restart, so no task-registry or GC mitigation is required.
+
+### Forward-projection rules
+
+The async worker maps `(expense.category_id, expense.event_id, expense tag set)` to a target `(sheet_category, sheet_group)` row in the latest configured sheet year:
+
+- **Runtime export always targets the latest configured sheet year**, not `YEAR(expense.datetime)`. The latest configured sheet year is the maximum positive `year` in `sheet_import_sources`. Older positive years remain in config only for bootstrap import; runtime export never appends into older yearly sheets.
+- **Hard invariants** (seed/verification fail loudly otherwise):
+  - `sheet_import_sources` has at least one positive year;
+  - the latest-year `sheet_import_sources` row is a valid expense-append target (`spreadsheet_id`, `worksheet_name`, supported `layout_key`);
+  - the latest year has a `sheet_mapping` row for every category exposed by `GET /api/categories`.
+- **Lookup order** inside the latest configured year:
+  1. exact match on same `category_id`, same `event_id` (NULL matches NULL), same tag-id set;
+  2. fallback: first `sheet_mapping` row with the same `category_id` (tag set and `event_id` ignored).
+- Ties inside the same preference bucket are resolved deterministically by `sheet_mapping.id ASC`.
+- For Phase-1 manual rows `event_id` is always NULL, so the effective path is "exact match on `(category_id, tag set)`" then category-only fallback. The `event_id`-aware branch is kept for the future receipt-processing pipeline.
+- This is **best-effort placement into existing latest-year rows, not a round-trip guarantee**. Tags whose combination does not match an exact mapping row use the best available latest-year fallback. Re-importing such rows later would only recover an approximation of the original 3D tuple. That trade-off is accepted because post-bootstrap reverse import is not an operational goal.
+
+### POST /api/expenses (consolidated contract)
+
+Request shape:
+
+- `expense_id` — required, client-generated UUID. Used as the year-scoped idempotency key and as the row PK inside the target `budget_YYYY.duckdb`.
+- `category_id` — required, validated against `config.duckdb.categories`.
+- `tag_ids[]` — optional, validated against `config.duckdb.tags`.
+- `datetime`, `amount`, `amount_original`, `currency_original`, `comment` — as before.
+- `event_id` — **rejected with 4xx** if the client sends it (Phase-1 invariant: events stay out of the PWA contract).
+
+The server routes the write to `budget_YYYY.duckdb` by `datetime.year`, enforces cross-year ownership via `expense_id_registry`, inserts with `event_id=NULL`, `sheet_category=NULL`, `sheet_group=NULL`, and enqueues `sheet_sync_jobs(expense_id)` in the same transaction.
+
+Idempotency: same `expense_id` routed to the same `datetime.year` → `200` with the stored row, no rewrite, no new enqueue, no new async scheduling. A WARNING is logged if the replay payload differs from the stored row. Same `expense_id` with a different `datetime.year` → 4xx.
+
+The handler never calls Google API. After building the response, `schedule_sync(expense_id)` spawns an `asyncio.create_task` only on the fresh-insert path. The response includes `catalog_version` (echo only, no bump).
+
+### Historical bootstrap import
+
+Bootstrap historical import is a separate, destructive code path used only by `inv rebuild-budget`. It does **not** populate `sheet_sync_jobs`: historical rows already live in Sheets and are not projected back. Imported rows populate `sheet_category` / `sheet_group` together as audit provenance (with `sheet_group=''` for no-envelope rows).
 
 ---
 
@@ -572,6 +638,7 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 Because the reference production target is the Oracle AMD Micro instance, the server-side implementation must follow these rules:
 
 - Run a single app process by default. Do not scale by adding multiple uvicorn workers on the 1 GB host.
+  - This is also a **correctness** constraint, not just a memory one: `POST /api/expenses` opens `config.duckdb` in **write mode** for the NBS rate cache (`convert_to_eur` can populate `exchange_rates` on a cache miss). DuckDB allows at most one writer per file across processes, so a second uvicorn worker would fail the second concurrent POST with `IO Error: ... is already opened in another process`. Single-worker keeps writes serialized through the event loop. If a future phase needs multiple workers, split rate lookup into a read-only fast path that only takes a write connection on cache miss, and arbitrate the writer through a dedicated background task.
 - Avoid colocating extra infrastructure on the VPS: no separate Postgres, Redis, Celery, message broker, or background analytics service in Phase 1.
 - Treat Google Sheets sync as lightweight projection work, not as a second analytics engine.
 - Prefer on-demand or dirty-month scoped recomputation over broad periodic rebuilds.
@@ -691,37 +758,25 @@ No new database, no line-item parsing — just a mobile frontend that writes dir
 - The user has used the system daily for 2+ weeks and no longer opens the spreadsheet to enter data manually.
 - QR scanning has been used successfully on real receipts (camera → URL extraction → total + date pre-fill) and is confirmed to work reliably with the chosen frontend tool.
 
-### Phase 1: Data Foundation & Idempotent Ingestion (dinary-server) ✓ IMPLEMENTED
+### Phase 1: 3D ledger, idempotent ingestion, export-only Sheets (dinary-server) ✓ IMPLEMENTED (after 2026-04 reset)
 
 Detailed plan: [phase1.md](phase1.md)
 
-- DuckDB with the **full 5-dimensional classification schema** (category, beneficiary, event, tags, store) from day one.
-- **sheet-to-5D mapping table** (`sheet_category_mapping`) decomposes the current Google Sheet's flat `(Расходы, Конверт)` pairs into proper 5D assignments.
-- **PWA unchanged** -- sends `(category, group)` as in Phase 0; server resolves to 5D via mapping table.
-- DuckDB-backed expense ingestion with idempotent deduplication via `expenses.id PRIMARY KEY`.
-- Google Sheets is a derived read-only view: sync layer projects 5D DuckDB data back into sheet format.
-- Client generates `expense_id = crypto.randomUUID()` at enqueue time; server returns `200 created`, `200 duplicate`, or `409 Conflict`.
-- Allure test suite covers: `Data Safety / Deduplication` (Python + JS), `DuckDB / Bootstrap`, `DuckDB / Mapping`, `DuckDB / Travel Events`, `DuckDB / Reverse Mapping`, `DuckDB / Year Boundary`.
-
-**Historical data migration is NOT part of Phase 1.** After Phase 1 cutover, DuckDB holds only new expenses; historical data remains in Google Sheets until Phase 1.5.
-
-### Phase 1.5: Historical Data Migration
-
-The existing Google Sheets contain ~10 years of data. Nearly every year used a slightly different category system (different category names, different envelope groupings) and even different column layouts. This makes bulk import impractical -- each year requires individual analysis and its own mapping.
-
-- Analyze each yearly Google Sheets tab individually: identify that year's category/envelope structure, column layout, and how it differs from other years.
-- Build per-year mapping from that year's flat `(category, envelope)` pairs to the 5D classification model, handling cases where the same category name meant different things in different years.
-- For "путешествия" envelopes: create a per-year synthetic event "отпуск-YYYY" (`date_from = YYYY-01-01`, `date_to = YYYY-12-31`) and map all travel rows to it (same approach as Phase 1 uses for the current year). Once the PWA switches to native 5D input (Phase 2+), set `date_to` of the last synthetic travel event to the release date of the 5D PWA. From that date forward, the user creates specific named trips instead of a per-year umbrella, and the auto-attach rule for `sheet_group = "путешествия"` is retired.
-- Build per-year import scripts that create synthetic expense rows in `budget_YYYY.duckdb` with `source = 'legacy_import'`.
-- Reconcile imported totals against original sheet totals.
-- After successful import, run DuckDB -> Google Sheets sync to verify the rebuilt sheet matches legacy data.
+- DuckDB with the **3D classification schema** (`category`, `event`, `tags[]`) from day one.
+- `sheet_mapping` + `sheet_mapping_tags` decompose legacy Google Sheets `(sheet_category, sheet_group)` pairs into 3D assignments. Used both for one-time bootstrap import and for runtime forward projection into the latest configured sheet year only.
+- **PWA contract**: sends `expense_id` (UUID) + `category_id` + optional `tag_ids[]`. Events stay out of the PWA contract; `event_id` from the client is rejected.
+- DuckDB-backed expense ingestion with idempotent dedup via `expenses.id PRIMARY KEY` plus year-scoped `expense_id_registry` for cross-year ownership.
+- Historical data import (2012–present) imported via destructive `inv rebuild-budget` and verified via `inv verify-bootstrap-import`. Bootstrap-imported rows populate `sheet_category` / `sheet_group` as audit provenance.
+- Google Sheets is **export-only**: a persistent `sheet_sync_jobs` queue plus an `asyncio` worker performs single-row appends to the latest configured sheet year. `inv sync` is the durable retry path. No full-month rebuild, no DB-to-sheet reconciliation.
+- Monotonic `catalog_version` (singleton in `app_metadata`) bumped only by `inv rebuild-catalog`; echoed by `GET /api/categories` and `POST /api/expenses`.
+- Destructive operator commands (`rebuild-catalog`, `rebuild-budget`, `rebuild-income-all`) print loud warnings and require `--yes`. The coordinated reset flow is: stop server → deploy code/assets → `rebuild-catalog --yes` → `rebuild-budget --yes` for every year → `rebuild-income-all --yes` → multi-year `verify-bootstrap-import` and income verification → start server. The legacy standalone `inv import-sheet` operator workflow is retired (Phase 1 has no partial re-import semantics).
 
 ### Phase 2: Receipt Parser
 - Integrate or adapt sr-invoice-parser for fetching and parsing Serbian fiscal receipts from SUF PURS URLs.
-- Build the ingestion pipeline: URL → fetch HTML → parse line items → insert into `expenses` table in DuckDB.
-- Implement fuzzy ML / AI auto-classification that produces 5D classification directly (category, beneficiary, event, tags, store).
-- Change the PWA so it no longer works in Google Sheets terms for new receipt/manual flows. From Phase 2 onward, the PWA should use the native 5D classification model directly instead of asking the user for `(Расходы, Конверт)` from the spreadsheet.
-- Google Sheets sync uses the `sheet_category_mapping` table in reverse: from the 5D classification produced by AI/rules, determine the target `(Расходы, Конверт)` row in the sheet.
+- Add a separate **receipt-ingestion queue** (out of the `expenses` ledger) where parsing, rule/AI classification, and user disambiguation happen *before* a final expense row lands in `expenses`.
+- Implement AI auto-classification that produces 3D classification directly (`category`, `event`, `tag_ids[]`).
+- Switch the PWA receipt flow so a scan submits the receipt-ingestion job immediately; later user interaction is review/correction, not the initial submission.
+- Reintroduce non-destructive `catalog_version` bumps for tag admin and the receipt pipeline.
 
 ### Phase 3: Mobile Input — Full Version (dinary-app)
 **Done as part of MVP**
@@ -771,9 +826,8 @@ The existing Google Sheets contain ~10 years of data. Nearly every year used a s
 Each phase is independently useful.
 
 - Phase 0 alone eliminates manual spreadsheet editing, validates QR scanning, and validates the mobile input tool.
-- Phase 1 establishes the proper data foundation with idempotent ingestion and deduplication.
-- Phase 1.5 migrates historical Google Sheets data into DuckDB (complex, per-year analysis required).
-- Phase 2 solves the supermarket opacity problem.
+- Phase 1 establishes the 3D ledger with idempotent ingestion, cross-year `expense_id` ownership, persistent sheet-export queue, and one-shot historical bootstrap import.
+- Phase 2 solves the supermarket opacity problem and adds the receipt-ingestion pipeline that originates `event_id` and richer tag sets.
 - Phase 3 adds full line-item QR flow and complete mobile input.
 - Phase 4 builds the desktop app (daemon + GUI) with AI classification and responsive receipt extraction.
 - Phases 5-6 add dashboards, AI analysis, and Google Sheets sync.

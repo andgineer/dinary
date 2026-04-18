@@ -1,11 +1,13 @@
-"""Tests for the budget import (import_sheet) layer."""
+"""Tests for the bootstrap budget import (3D)."""
 
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import allure
 import pytest
 
 from dinary.services import duckdb_repo
+from dinary.services import import_sheet as import_sheet_module
 from dinary.services.import_sheet import import_year
 
 
@@ -20,201 +22,195 @@ def _seed_config():
     con = duckdb_repo.get_config_connection(read_only=False)
     try:
         con.execute(
-            "INSERT INTO sheet_import_sources VALUES (2026, 'test-sheet', '', 'default', NULL)"
+            "INSERT INTO sheet_import_sources"
+            " (year, spreadsheet_id, worksheet_name, layout_key, notes)"
+            " VALUES (2026, 'sheet-id', '', 'default', NULL)",
         )
-        con.execute("INSERT INTO categories VALUES (1, 'еда')")
-        con.execute("INSERT INTO categories VALUES (2, 'мобильник')")
-        con.execute("INSERT INTO categories VALUES (3, 'кафе')")
-        con.execute("INSERT INTO family_members VALUES (1, 'собака')")
+        con.execute("INSERT INTO category_groups VALUES (1, 'g', 1)")
+        con.execute("INSERT INTO categories VALUES (1, 'еда', 1)")
+        con.execute("INSERT INTO categories VALUES (2, 'мобильник', 1)")
+        con.execute("INSERT INTO categories VALUES (3, 'кафе', 1)")
+        con.execute("INSERT INTO tags VALUES (1, 'собака')")
         con.execute(
-            "INSERT INTO source_type_mapping VALUES (0, 'еда&бытовые', 'собака', 1, 1, NULL, NULL)"
+            "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
+            " VALUES (1, 'отпуск-2026', '2026-01-01', '2026-12-31', true)",
+        )
+        # Russia-trip one-off event normally seeded by `EXPLICIT_EVENTS`;
+        # `import_sheet.import_year(2026)` looks it up by name.
+        con.execute(
+            "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
+            " VALUES (2, 'поездка в Россию', '2026-08-01', '2026-08-31', false)",
         )
         con.execute(
-            "INSERT INTO source_type_mapping VALUES (0, 'мобильник', '', 2, NULL, NULL, NULL)"
+            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            " category_id, event_id) VALUES (1, 0, 'еда', 'собака', 1, NULL)",
+        )
+        con.execute("INSERT INTO sheet_mapping_tags VALUES (1, 1)")
+        con.execute(
+            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            " category_id, event_id) VALUES (2, 0, 'мобильник', '', 2, NULL)",
         )
         con.execute(
-            "INSERT INTO source_type_mapping VALUES (0, 'кафе', 'путешествия', 3, NULL, NULL, NULL)"
-        )
-        con.execute(
-            "INSERT INTO events VALUES (1, 'отпуск-2026', '2026-01-01', '2026-12-31', true, NULL)"
+            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            " category_id, event_id) VALUES (3, 0, 'кафе', 'путешествия', 3, 1)",
         )
     finally:
         con.close()
 
 
-SHEET_ROWS_DISPLAY = [
+SHEET_ROWS = [
     ["Date", "RSD", "EUR", "Category", "Group", "Comment", "Month", "Rate"],
-    ["2026-01-01", "4500", "", "еда&бытовые", "собака", "lunch; dinner", "1", "117"],
+    ["2026-01-01", "4500", "", "еда", "собака", "lunch", "1", "117"],
     ["2026-01-01", "400", "", "мобильник", "", "", "1", "117"],
     ["2026-01-01", "2000", "", "кафе", "путешествия", "resort", "1", "117"],
-    ["2026-02-01", "1500", "", "еда&бытовые", "собака", "snack", "2", "117"],
-    ["2026-02-01", "0", "", "мобильник", "", "", "2", "117"],
+    ["2026-02-01", "1500", "", "еда", "собака", "snack", "2", "117"],
 ]
 
 
 def _mock_sheet():
     ws = MagicMock()
-    ws.get_all_values.return_value = SHEET_ROWS_DISPLAY
+    ws.get_all_values.return_value = SHEET_ROWS
     ss = MagicMock()
     ss.sheet1 = ws
     return ss
 
 
-def _mock_sheet_with_eur():
-    ws = MagicMock()
-    ws.get_all_values.return_value = [
-        ["Date", "RSD", "EUR", "Category", "Group", "Comment", "Month", "Rate"],
-        ["2026-01-01", "4500", "38.46", "еда&бытовые", "собака", "lunch; dinner", "1", "117"],
-    ]
-    ss = MagicMock()
-    ss.sheet1 = ws
-    return ss
-
-
-def _mock_prefetch_rates(year, layout):
-    """Return rates that produce 1:1 conversion (rate_cur == rate_eur)."""
-    from decimal import Decimal
-
+def _mock_prefetch_rates(_year, _layout):
     one_to_one = {"rate_cur": Decimal("1"), "rate_eur": Decimal("1")}
     return {m: one_to_one for m in range(1, 13)}
 
 
 @allure.epic("Import")
-@allure.feature("Budget Rebuild")
+@allure.feature("Bootstrap (3D)")
 class TestImportYear:
-    def _run_import(self):
+    @patch("dinary.services.import_sheet._prefetch_monthly_rates", side_effect=_mock_prefetch_rates)
+    @patch("dinary.services.import_sheet.get_sheet")
+    def test_imports_rows_with_3d_dimensions(self, mock_sheet, _mr):
         _seed_config()
-        with (
-            patch("dinary.services.import_sheet.get_sheet", return_value=_mock_sheet()),
-            patch("dinary.services.import_sheet._ensure_travel_event", return_value=1),
-            patch(
-                "dinary.services.import_sheet._prefetch_monthly_rates",
-                side_effect=_mock_prefetch_rates,
-            ),
-        ):
-            return import_year(2026)
+        mock_sheet.return_value = _mock_sheet()
 
-    def test_creates_expenses(self):
-        result = self._run_import()
-        assert result["expenses_created"] > 0
+        result = import_year(2026)
+
+        assert result["expenses_created"] == 4
         assert result["errors"] == 0
 
-    def test_correct_months(self):
-        result = self._run_import()
-        assert 1 in result["months"]
-        assert 2 in result["months"]
-
-    def test_food_gets_beneficiary(self):
-        self._run_import()
-        con = duckdb_repo.get_budget_connection(2026)
+        bcon = duckdb_repo.get_budget_connection(2026)
         try:
-            rows = con.execute(
-                "SELECT beneficiary_id FROM expenses WHERE category_id = 1"
+            rows = bcon.execute(
+                "SELECT category_id, event_id, sheet_category, sheet_group, comment"
+                " FROM expenses ORDER BY datetime, sheet_category",
             ).fetchall()
-            assert all(r[0] == 1 for r in rows)
+            assert len(rows) == 4
+            for cat_id, _ev_id, sheet_cat, sheet_grp, _ in rows:
+                assert cat_id is not None
+                assert sheet_cat is not None
+                assert sheet_grp is not None
         finally:
-            con.close()
+            bcon.close()
 
-    def test_travel_gets_event(self):
-        self._run_import()
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            rows = con.execute("SELECT event_id FROM expenses WHERE category_id = 3").fetchall()
-            assert all(r[0] is not None for r in rows)
-        finally:
-            con.close()
-
-    def test_no_formula_split(self):
-        """One sheet row should create one expense (no formula splitting)."""
-        self._run_import()
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            rows = con.execute(
-                "SELECT amount_original FROM expenses WHERE category_id = 1 AND MONTH(datetime) = 1"
-            ).fetchall()
-            assert len(rows) == 1
-            assert float(rows[0][0]) == 4500.0
-        finally:
-            con.close()
-
-    def test_idempotent_reimport(self):
-        """Running import twice produces the same result (DELETE + re-insert)."""
-        self._run_import()
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            count1 = con.execute("SELECT COUNT(*) FROM expenses").fetchone()[0]
-        finally:
-            con.close()
-
-        with (
-            patch("dinary.services.import_sheet.get_sheet", return_value=_mock_sheet()),
-            patch("dinary.services.import_sheet._ensure_travel_event", return_value=1),
-            patch(
-                "dinary.services.import_sheet._prefetch_monthly_rates",
-                side_effect=_mock_prefetch_rates,
-            ),
-        ):
-            result2 = import_year(2026)
-
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            count2 = con.execute("SELECT COUNT(*) FROM expenses").fetchone()[0]
-        finally:
-            con.close()
-
-        assert count1 == count2
-
-    def test_zero_amount_row_skipped(self):
-        self._run_import()
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            rows = con.execute(
-                "SELECT COUNT(*) FROM expenses WHERE MONTH(datetime) = 2 AND category_id = 2"
-            ).fetchone()
-            assert rows[0] == 0
-        finally:
-            con.close()
-
-    def test_stores_amount_original_and_currency(self):
-        self._run_import()
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            row = con.execute(
-                "SELECT amount_original, currency_original FROM expenses "
-                "WHERE category_id = 1 AND MONTH(datetime) = 1"
-            ).fetchone()
-            assert float(row[0]) == 4500.0
-            assert row[1] == "RSD"
-        finally:
-            con.close()
-
-    def test_ignores_informational_eur_column_for_2026(self):
-        """For 2026+ the EUR column in the sheet is informational (annual fixed
-        rate) and must be ignored; amount is computed from RSD via NBS rate."""
+    @patch("dinary.services.import_sheet._prefetch_monthly_rates", side_effect=_mock_prefetch_rates)
+    @patch("dinary.services.import_sheet.get_sheet")
+    def test_attaches_tags_from_mapping(self, mock_sheet, _mr):
         _seed_config()
-        with (
-            patch("dinary.services.import_sheet.get_sheet", return_value=_mock_sheet_with_eur()),
-            patch("dinary.services.import_sheet._ensure_travel_event", return_value=1),
-            patch(
-                "dinary.services.import_sheet._prefetch_monthly_rates",
-                side_effect=_mock_prefetch_rates,
-            ),
-        ):
-            import_year(2026)
+        mock_sheet.return_value = _mock_sheet()
+        import_year(2026)
 
-        con = duckdb_repo.get_budget_connection(2026)
+        bcon = duckdb_repo.get_budget_connection(2026)
         try:
-            row = con.execute(
-                "SELECT amount, amount_original, currency_original FROM expenses WHERE category_id = 1"
-            ).fetchone()
-            assert row is not None
-            assert float(row[1]) == 4500.0
-            assert row[2] == "RSD"
-            assert float(row[0]) == 4500.0
+            tag_rows = bcon.execute(
+                "SELECT t.tag_id FROM expense_tags t"
+                " JOIN expenses e ON e.id = t.expense_id"
+                " WHERE e.sheet_category = 'еда'",
+            ).fetchall()
+            assert {r[0] for r in tag_rows} == {1}
         finally:
-            con.close()
+            bcon.close()
 
-    def test_missing_import_source_raises(self):
-        duckdb_repo.init_config_db()
-        with pytest.raises(ValueError, match="sheet_import_sources is missing a row for year 2026"):
-            import_year(2026)
+    @patch("dinary.services.import_sheet._prefetch_monthly_rates", side_effect=_mock_prefetch_rates)
+    @patch("dinary.services.import_sheet.get_sheet")
+    def test_does_not_enqueue_sync_jobs(self, mock_sheet, _mr):
+        _seed_config()
+        mock_sheet.return_value = _mock_sheet()
+        import_year(2026)
+
+        bcon = duckdb_repo.get_budget_connection(2026)
+        try:
+            assert duckdb_repo.list_sync_jobs(bcon) == []
+        finally:
+            bcon.close()
+
+    @patch("dinary.services.import_sheet._prefetch_monthly_rates", side_effect=_mock_prefetch_rates)
+    @patch("dinary.services.import_sheet.get_sheet")
+    def test_re_import_is_destructive(self, mock_sheet, _mr):
+        _seed_config()
+        mock_sheet.return_value = _mock_sheet()
+        first = import_year(2026)
+        second = import_year(2026)
+        assert first["expenses_created"] == second["expenses_created"]
+
+    @patch("dinary.services.import_sheet._prefetch_monthly_rates", side_effect=_mock_prefetch_rates)
+    @patch("dinary.services.import_sheet.get_sheet")
+    def test_re_import_with_pending_sync_jobs_does_not_violate_fk(
+        self,
+        mock_sheet,
+        _mr,
+    ):
+        # Bug regression: if `sheet_sync_jobs` had pending rows from a prior
+        # runtime session, `DELETE FROM expenses` would fail with a foreign
+        # key violation because the queue rows reference expenses.id with no
+        # ON DELETE CASCADE.
+        _seed_config()
+        mock_sheet.return_value = _mock_sheet()
+        import_year(2026)
+
+        bcon = duckdb_repo.get_budget_connection(2026)
+        try:
+            existing_id = bcon.execute("SELECT id FROM expenses LIMIT 1").fetchone()[0]
+            bcon.execute(
+                "INSERT INTO sheet_sync_jobs (expense_id, status) VALUES (?, 'pending')",
+                [existing_id],
+            )
+        finally:
+            bcon.close()
+
+        result = import_year(2026)
+        assert result["errors"] == 0
+        bcon = duckdb_repo.get_budget_connection(2026)
+        try:
+            assert duckdb_repo.list_sync_jobs(bcon) == []
+        finally:
+            bcon.close()
+
+    @patch("dinary.services.import_sheet._prefetch_monthly_rates", side_effect=_mock_prefetch_rates)
+    @patch("dinary.services.import_sheet.get_sheet")
+    def test_resolve_dimensions_raise_skips_row_instead_of_aborting(
+        self,
+        mock_sheet,
+        _mr,
+        monkeypatch,
+    ):
+        # Bug regression: when `_resolve_dimensions` raised (e.g. via
+        # `_resolve_tag_ids` -> "tag not found" on the no-mapping fallback),
+        # the exception escaped the per-row guard and tore down the whole
+        # import. The fix wraps `_resolve_dimensions` in a try/except that
+        # bumps `errors` and continues.
+        _seed_config()
+        mock_sheet.return_value = _mock_sheet()
+
+        real_resolve = import_sheet_module._resolve_dimensions
+        call_state = {"n": 0}
+
+        def flaky_resolve(*args, **kwargs):
+            call_state["n"] += 1
+            if call_state["n"] == 1:
+                msg = "tag 'phantom' not found in config.tags; re-seed required"
+                raise ValueError(msg)
+            return real_resolve(*args, **kwargs)
+
+        monkeypatch.setattr(import_sheet_module, "_resolve_dimensions", flaky_resolve)
+
+        result = import_year(2026)
+        assert result["errors"] == 1
+        # 4 rows in SHEET_ROWS; first one fails resolution, other three
+        # succeed.
+        assert result["expenses_created"] == 3

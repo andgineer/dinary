@@ -1,6 +1,6 @@
-"""Tests for DuckDB repository layer."""
+"""Tests for the DuckDB repository layer (3D schema)."""
 
-from datetime import date, datetime
+from datetime import datetime, timedelta
 
 import allure
 import pytest
@@ -10,521 +10,509 @@ from dinary.services import duckdb_repo
 
 @pytest.fixture(autouse=True)
 def _tmp_data_dir(tmp_path, monkeypatch):
-    """Point DATA_DIR to a temp directory for test isolation."""
     monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
     monkeypatch.setattr(duckdb_repo, "CONFIG_DB", tmp_path / "config.duckdb")
 
 
 @pytest.fixture
-def config_db(tmp_path):
+def config_db():
     duckdb_repo.init_config_db()
 
 
 @pytest.fixture
-def populated_config(config_db, tmp_path):
-    """Seed config.duckdb with a minimal reference dataset."""
+def populated_config(config_db):
+    """Seed config.duckdb with a minimal 3D dataset."""
     con = duckdb_repo.get_config_connection(read_only=False)
     try:
-        con.execute("INSERT INTO categories VALUES (1, 'еда&бытовые')")
-        con.execute("INSERT INTO categories VALUES (2, 'кафе')")
-        con.execute("INSERT INTO categories VALUES (3, 'топливо')")
-        con.execute("INSERT INTO categories VALUES (4, 'мобильник')")
-        con.execute("INSERT INTO family_members VALUES (1, 'собака')")
-        con.execute("INSERT INTO spheres_of_life VALUES (1, 'релокация')")
+        con.execute("INSERT INTO category_groups VALUES (1, 'Food', 1)")
+        con.execute("INSERT INTO categories VALUES (1, 'еда', 1)")
+        con.execute("INSERT INTO categories VALUES (2, 'кафе', 1)")
         con.execute(
-            """
-            INSERT INTO source_type_mapping
-            VALUES (0, 'еда&бытовые', 'собака', 1, 1, NULL, NULL)
-            """
+            "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
+            " VALUES (10, 'отпуск-2026', '2026-01-01', '2026-12-31', true)",
+        )
+        con.execute("INSERT INTO tags VALUES (1, 'собака')")
+        con.execute("INSERT INTO tags VALUES (2, 'релокация')")
+        con.execute(
+            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            " category_id, event_id) VALUES (1, 0, 'еда', 'собака', 1, NULL)",
         )
         con.execute(
-            """
-            INSERT INTO source_type_mapping
-            VALUES (0, 'кафе', 'путешествия', 2, NULL, NULL, NULL)
-            """
+            "INSERT INTO sheet_mapping_tags (mapping_id, tag_id) VALUES (1, 1)",
         )
         con.execute(
-            """
-            INSERT INTO source_type_mapping
-            VALUES (0, 'топливо', 'путешествия', 3, NULL, NULL, NULL)
-            """
+            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            " category_id, event_id) VALUES (2, 0, 'кафе', 'путешествия', 2, 10)",
         )
         con.execute(
-            """
-            INSERT INTO source_type_mapping
-            VALUES (0, 'мобильник', '', 4, NULL, NULL, NULL)
-            """
+            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            " category_id, event_id) VALUES (3, 2026, 'еда', 'собака', 2, 10)",
         )
     finally:
         con.close()
 
 
 @allure.epic("DuckDB")
-@allure.feature("Bootstrap")
-class TestBootstrap:
-    def test_init_config_creates_all_tables(self, config_db):
-        con = duckdb_repo.get_config_connection()
+@allure.feature("Catalog version")
+class TestCatalogVersion:
+    def test_initial_version_is_one(self, config_db):
+        con = duckdb_repo.get_config_connection(read_only=True)
         try:
-            tables = [r[0] for r in con.execute("SHOW TABLES").fetchall()]
-            expected = {
-                "categories",
-                "family_members",
-                "events",
-                "event_members",
-                "spheres_of_life",
-                "source_type_mapping",
-                "sheet_import_sources",
-                "category_taxonomies",
-                "category_taxonomy_nodes",
-                "category_taxonomy_membership",
-                "exchange_rates",
-            }
-            assert expected.issubset(set(tables))
+            assert duckdb_repo.get_catalog_version(con) == 1
         finally:
             con.close()
 
-    def test_budget_db_created_on_demand(self, config_db):
-        con = duckdb_repo.get_budget_connection(2026)
+    def test_set_then_get(self, config_db):
+        con = duckdb_repo.get_config_connection(read_only=False)
         try:
-            tables = [r[0] for r in con.execute("SHOW TABLES").fetchall()]
-            assert "expenses" in tables
-            assert "sheet_sync_jobs" in tables
-        finally:
-            con.close()
-
-    def test_budget_db_has_config_attached(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            r = con.execute("SELECT COUNT(*) FROM config.categories").fetchone()
-            assert r[0] == 4
-        finally:
-            con.close()
-
-    def test_init_config_idempotent(self, config_db):
-        duckdb_repo.init_config_db()
-        con = duckdb_repo.get_config_connection()
-        try:
-            tables = [r[0] for r in con.execute("SHOW TABLES").fetchall()]
-            assert "categories" in tables
+            duckdb_repo._set_catalog_version(con, 42)
+            assert duckdb_repo.get_catalog_version(con) == 42
         finally:
             con.close()
 
 
 @allure.epic("DuckDB")
-@allure.feature("Mapping")
-class TestMapping:
-    def test_resolve_known_mapping(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
+@allure.feature("Sheet mapping (3D)")
+class TestSheetMapping:
+    def test_resolve_year_zero_default(self, populated_config):
+        con = duckdb_repo.get_budget_connection(2025)
         try:
-            result = duckdb_repo.resolve_mapping(con, "еда&бытовые", "собака")
-            assert result is not None
-            assert result.category_id == 1
-            assert result.beneficiary_id == 1
+            row = duckdb_repo.resolve_mapping(con, "еда", "собака")
+            assert row is not None
+            assert row.category_id == 1
+            assert row.event_id is None
         finally:
             con.close()
 
-    def test_resolve_unknown_mapping_returns_none(self, populated_config):
+    def test_year_specific_overrides_default(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.resolve_mapping(con, "unknown", "")
-            assert result is None
+            row = duckdb_repo.resolve_mapping_for_year(con, "еда", "собака", 2026)
+            assert row is not None
+            assert row.category_id == 2
+            assert row.event_id == 10
         finally:
             con.close()
 
-    def test_resolve_mapping_no_group(self, populated_config):
+    def test_year_falls_back_to_zero(self, populated_config):
+        con = duckdb_repo.get_budget_connection(2024)
+        try:
+            row = duckdb_repo.resolve_mapping_for_year(con, "еда", "собака", 2024)
+            assert row is not None
+            assert row.category_id == 1
+        finally:
+            con.close()
+
+    def test_unknown_returns_none(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
         try:
-            result = duckdb_repo.resolve_mapping(con, "мобильник", "")
-            assert result is not None
-            assert result.category_id == 4
+            assert duckdb_repo.resolve_mapping(con, "missing", "?") is None
+        finally:
+            con.close()
+
+    def test_get_mapping_tag_ids(self, populated_config):
+        con = duckdb_repo.get_budget_connection(2026)
+        try:
+            assert duckdb_repo.get_mapping_tag_ids(con, 1) == [1]
+            assert duckdb_repo.get_mapping_tag_ids(con, 2) == []
         finally:
             con.close()
 
 
 @allure.epic("DuckDB")
-@allure.feature("Travel Events")
-class TestTravelEvents:
-    def test_resolve_creates_synthetic_event(self, populated_config):
-        event_id = duckdb_repo.resolve_travel_event(date(2026, 4, 14))
-        assert event_id is not None
-        assert event_id > 0
-
-        cfg = duckdb_repo.get_config_connection()
+@allure.feature("Forward projection")
+class TestForwardProjection:
+    @pytest.fixture
+    def projection_setup(self, config_db):
+        con = duckdb_repo.get_config_connection(read_only=False)
         try:
-            ev = cfg.execute(
-                "SELECT name, date_from, date_to FROM events WHERE id = ?",
-                [event_id],
-            ).fetchone()
-            assert ev[0] == "отпуск-2026"
-            assert ev[1] == date(2026, 1, 1)
-            assert ev[2] == date(2026, 12, 31)
-        finally:
-            cfg.close()
-
-    def test_resolve_reuses_existing_event(self, populated_config):
-        id1 = duckdb_repo.resolve_travel_event(date(2026, 4, 14))
-        id2 = duckdb_repo.resolve_travel_event(date(2026, 7, 1))
-        assert id1 == id2
-
-    def test_different_years_create_different_events(self, populated_config):
-        id_2026 = duckdb_repo.resolve_travel_event(date(2026, 4, 14))
-        id_2025 = duckdb_repo.resolve_travel_event(date(2025, 6, 1))
-        assert id_2026 != id_2025
-
-
-@allure.epic("Data Safety")
-@allure.feature("Deduplication")
-class TestIdempotentInsert:
-    def test_insert_creates_expense(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            result = duckdb_repo.insert_expense(
-                con,
-                "test-uuid-1",
-                datetime(2026, 4, 14, 12, 0),
-                12.82,
-                1500.0,
-                "RSD",
-                1,
-                1,
-                None,
-                None,
-                "lunch",
+            con.execute("INSERT INTO category_groups VALUES (1, 'g', 1)")
+            con.execute("INSERT INTO categories VALUES (1, 'еда', 1)")
+            con.execute("INSERT INTO tags VALUES (1, 'tag1')")
+            con.execute("INSERT INTO tags VALUES (2, 'tag2')")
+            con.execute(
+                "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
+                " VALUES (1, 'evt', '2026-01-01', '2026-12-31', true)",
             )
-            assert result == "created"
+            con.execute(
+                "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+                " category_id, event_id) VALUES (1, 2026, 'CatA', '', 1, NULL)",
+            )
+            con.execute(
+                "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+                " category_id, event_id) VALUES (2, 2026, 'CatA', 'WithEvt', 1, 1)",
+            )
+            con.execute(
+                "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+                " category_id, event_id) VALUES (3, 2026, 'CatA', 'WithTag', 1, NULL)",
+            )
+            con.execute("INSERT INTO sheet_mapping_tags VALUES (3, 1)")
+        finally:
+            con.close()
 
+    def test_exact_match_with_event(self, projection_setup):
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            target = duckdb_repo.forward_projection(
+                con,
+                latest_sheet_year=2026,
+                category_id=1,
+                event_id=1,
+                tag_ids=[],
+            )
+            assert target == ("CatA", "WithEvt")
+        finally:
+            con.close()
+
+    def test_exact_match_with_tags(self, projection_setup):
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            target = duckdb_repo.forward_projection(
+                con,
+                latest_sheet_year=2026,
+                category_id=1,
+                event_id=None,
+                tag_ids=[1],
+            )
+            assert target == ("CatA", "WithTag")
+        finally:
+            con.close()
+
+    def test_category_only_fallback(self, projection_setup):
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            target = duckdb_repo.forward_projection(
+                con,
+                latest_sheet_year=2026,
+                category_id=1,
+                event_id=None,
+                tag_ids=[2],
+            )
+            # First-by-id fallback wins: row id=1.
+            assert target == ("CatA", "")
+        finally:
+            con.close()
+
+    def test_unknown_category_returns_none(self, projection_setup):
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            target = duckdb_repo.forward_projection(
+                con,
+                latest_sheet_year=2026,
+                category_id=999,
+                event_id=None,
+                tag_ids=[],
+            )
+            assert target is None
+        finally:
+            con.close()
+
+
+@allure.epic("DuckDB")
+@allure.feature("expense_id_registry")
+class TestExpenseIdRegistry:
+    def test_first_reservation_inserts_and_returns_year(self, config_db):
+        stored, newly_inserted = duckdb_repo.reserve_expense_id_year("e1", 2026)
+        assert stored == 2026
+        assert newly_inserted is True
+        assert duckdb_repo.get_registered_expense_year("e1") == 2026
+
+    def test_second_reservation_returns_existing_year(self, config_db):
+        duckdb_repo.reserve_expense_id_year("e1", 2026)
+        stored, newly_inserted = duckdb_repo.reserve_expense_id_year("e1", 2027)
+        assert stored == 2026
+        assert newly_inserted is False
+
+    def test_release_removes_row(self, config_db):
+        duckdb_repo.reserve_expense_id_year("e1", 2026)
+        duckdb_repo.release_expense_id_year("e1")
+        assert duckdb_repo.get_registered_expense_year("e1") is None
+
+    def test_pk_violation_recovers_into_lookup(self, config_db, monkeypatch):
+        """Concurrency regression: if two callers race past the SELECT and
+        both INSERT, the loser used to surface a 5xx ConstraintException.
+        Now the loser catches the PK violation, re-reads, and returns the
+        winner's `(stored_year, False)`.
+
+        We simulate the race by:
+          1. pre-inserting the row (so the INSERT will collide),
+          2. wrapping the DuckDB connection in a proxy that returns an
+             empty fetchone on the first SELECT (forcing reserve_expense_id_year
+             onto the INSERT branch even though the row exists).
+        """
+        duckdb_repo.reserve_expense_id_year("e_race", 2026)
+
+        real_get_config = duckdb_repo.get_config_connection
+
+        class _NoRowResult:
+            @staticmethod
+            def fetchone():
+                return None
+
+        class _ConnProxy:
+            """Forwards every attribute to the wrapped connection except
+            the first SELECT against expense_id_registry, which it stubs
+            to mimic 'row not yet visible to this transaction'."""
+
+            def __init__(self, wrapped):
+                self._wrapped = wrapped
+                self._select_intercepted = False
+
+            def execute(self, sql, *args, **kwargs):
+                if not self._select_intercepted and "SELECT year FROM expense_id_registry" in sql:
+                    self._select_intercepted = True
+                    return _NoRowResult()
+                return self._wrapped.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._wrapped, name)
+
+        def stub_get_config(read_only=True):
+            return _ConnProxy(real_get_config(read_only=read_only))
+
+        # Patch only `get_config_connection` for the reserve call. Restore
+        # via monkeypatch.setattr (idiomatic) and then explicitly undo just
+        # this patch before the post-state assertion so the autouse
+        # tmp-path patches set up by `_tmp_data_dir` survive.
+        monkeypatch.setattr(duckdb_repo, "get_config_connection", stub_get_config)
+        stored, newly_inserted = duckdb_repo.reserve_expense_id_year(
+            "e_race",
+            2027,
+        )
+        monkeypatch.setattr(duckdb_repo, "get_config_connection", real_get_config)
+
+        assert stored == 2026
+        assert newly_inserted is False
+        # Original row must still be the one stored after the race recovery.
+        assert duckdb_repo.get_registered_expense_year("e_race") == 2026
+
+
+@allure.epic("DuckDB")
+@allure.feature("Insert expense (3D)")
+class TestInsertExpense:
+    def _seed_basic(self, populated_config):
+        con = duckdb_repo.get_budget_connection(2026)
+        return con
+
+    def test_insert_then_duplicate(self, populated_config):
+        con = self._seed_basic(populated_config)
+        try:
+            r1 = duckdb_repo.insert_expense(
+                con,
+                expense_id="x1",
+                expense_datetime=datetime(2026, 5, 5, 12),
+                amount=10.0,
+                amount_original=10.0,
+                currency_original="EUR",
+                category_id=1,
+                event_id=None,
+                comment="hi",
+                sheet_category=None,
+                sheet_group=None,
+                tag_ids=[1],
+                enqueue_sync=False,
+            )
+            r2 = duckdb_repo.insert_expense(
+                con,
+                expense_id="x1",
+                expense_datetime=datetime(2026, 5, 5, 12),
+                amount=10.0,
+                amount_original=10.0,
+                currency_original="EUR",
+                category_id=1,
+                event_id=None,
+                comment="hi",
+                sheet_category=None,
+                sheet_group=None,
+                tag_ids=[1],
+                enqueue_sync=False,
+            )
+            assert r1 == "created"
+            assert r2 == "duplicate"
+        finally:
+            con.close()
+
+    def test_conflict_on_changed_amount(self, populated_config):
+        con = self._seed_basic(populated_config)
+        try:
+            duckdb_repo.insert_expense(
+                con,
+                expense_id="x2",
+                expense_datetime=datetime(2026, 5, 5, 12),
+                amount=10.0,
+                amount_original=10.0,
+                currency_original="EUR",
+                category_id=1,
+                event_id=None,
+                comment="",
+                sheet_category=None,
+                sheet_group=None,
+                tag_ids=[],
+                enqueue_sync=False,
+            )
+            r = duckdb_repo.insert_expense(
+                con,
+                expense_id="x2",
+                expense_datetime=datetime(2026, 5, 5, 12),
+                amount=99.0,
+                amount_original=99.0,
+                currency_original="EUR",
+                category_id=1,
+                event_id=None,
+                comment="",
+                sheet_category=None,
+                sheet_group=None,
+                tag_ids=[],
+                enqueue_sync=False,
+            )
+            assert r == "conflict"
+        finally:
+            con.close()
+
+    def test_invalid_category_raises(self, populated_config):
+        con = self._seed_basic(populated_config)
+        try:
+            with pytest.raises(ValueError, match="category_id"):
+                duckdb_repo.insert_expense(
+                    con,
+                    expense_id="x3",
+                    expense_datetime=datetime(2026, 5, 5, 12),
+                    amount=1.0,
+                    amount_original=1.0,
+                    currency_original="EUR",
+                    category_id=9999,
+                    event_id=None,
+                    comment="",
+                    sheet_category=None,
+                    sheet_group=None,
+                    tag_ids=[],
+                )
+        finally:
+            con.close()
+
+    def test_invalid_provenance_pair_raises(self, populated_config):
+        con = self._seed_basic(populated_config)
+        try:
+            with pytest.raises(ValueError, match="sheet_category"):
+                duckdb_repo.insert_expense(
+                    con,
+                    expense_id="x4",
+                    expense_datetime=datetime(2026, 5, 5, 12),
+                    amount=1.0,
+                    amount_original=1.0,
+                    currency_original="EUR",
+                    category_id=1,
+                    event_id=None,
+                    comment="",
+                    sheet_category="X",
+                    sheet_group=None,
+                    tag_ids=[],
+                )
+        finally:
+            con.close()
+
+    def test_enqueue_sync_creates_pending_row(self, populated_config):
+        con = self._seed_basic(populated_config)
+        try:
+            duckdb_repo.insert_expense(
+                con,
+                expense_id="x5",
+                expense_datetime=datetime(2026, 5, 5, 12),
+                amount=1.0,
+                amount_original=1.0,
+                currency_original="EUR",
+                category_id=1,
+                event_id=None,
+                comment="",
+                sheet_category=None,
+                sheet_group=None,
+                tag_ids=[],
+                enqueue_sync=True,
+            )
+            assert duckdb_repo.list_sync_jobs(con) == ["x5"]
+        finally:
+            con.close()
+
+
+@allure.epic("DuckDB")
+@allure.feature("sheet_sync_jobs queue")
+class TestSyncQueue:
+    def _setup_one_job(self, populated_config):
+        con = duckdb_repo.get_budget_connection(2026)
+        duckdb_repo.insert_expense(
+            con,
+            expense_id="job1",
+            expense_datetime=datetime(2026, 1, 1, 12),
+            amount=1.0,
+            amount_original=1.0,
+            currency_original="EUR",
+            category_id=1,
+            event_id=None,
+            comment="",
+            sheet_category=None,
+            sheet_group=None,
+            tag_ids=[],
+            enqueue_sync=True,
+        )
+        return con
+
+    def test_claim_then_clear(self, populated_config):
+        con = self._setup_one_job(populated_config)
+        try:
+            token = duckdb_repo.claim_sync_job(con, "job1")
+            assert token is not None
+            assert duckdb_repo.clear_sync_job(con, "job1", token) is True
+            assert duckdb_repo.list_sync_jobs(con) == []
+        finally:
+            con.close()
+
+    def test_clear_with_wrong_token_returns_false(self, populated_config):
+        con = self._setup_one_job(populated_config)
+        try:
+            duckdb_repo.claim_sync_job(con, "job1")
+            assert duckdb_repo.clear_sync_job(con, "job1", "wrongtoken") is False
+        finally:
+            con.close()
+
+    def test_release_returns_to_pending(self, populated_config):
+        con = self._setup_one_job(populated_config)
+        try:
+            token = duckdb_repo.claim_sync_job(con, "job1")
+            assert duckdb_repo.release_sync_claim(con, "job1", token) is True
             row = con.execute(
-                "SELECT amount, amount_original FROM expenses WHERE id = 'test-uuid-1'"
+                "SELECT status, claim_token FROM sheet_sync_jobs WHERE expense_id = ?",
+                ["job1"],
             ).fetchone()
-            assert float(row[0]) == 12.82
-            assert float(row[1]) == 1500.0
+            assert row[0] == "pending"
+            assert row[1] is None
         finally:
             con.close()
 
-    def test_duplicate_returns_duplicate(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
+    def test_double_claim_blocked(self, populated_config):
+        con = self._setup_one_job(populated_config)
         try:
-            duckdb_repo.insert_expense(
+            t1 = duckdb_repo.claim_sync_job(con, "job1")
+            t2 = duckdb_repo.claim_sync_job(con, "job1")
+            assert t1 is not None
+            assert t2 is None
+        finally:
+            con.close()
+
+    def test_stale_claim_recoverable(self, populated_config):
+        con = self._setup_one_job(populated_config)
+        try:
+            now = datetime(2026, 1, 1, 12)
+            t1 = duckdb_repo.claim_sync_job(con, "job1", now=now)
+            assert t1 is not None
+            # Pretend the prior claim is older than the stale window.
+            future = now + timedelta(hours=1)
+            t2 = duckdb_repo.claim_sync_job(
                 con,
-                "test-uuid-2",
-                datetime(2026, 4, 14, 12, 0),
-                12.82,
-                1500.0,
-                "RSD",
-                1,
-                None,
-                None,
-                None,
-                "lunch",
+                "job1",
+                now=future,
+                stale_before=future - timedelta(minutes=5),
             )
-            result = duckdb_repo.insert_expense(
-                con,
-                "test-uuid-2",
-                datetime(2026, 4, 14, 12, 0),
-                12.82,
-                1500.0,
-                "RSD",
-                1,
-                None,
-                None,
-                None,
-                "lunch",
-            )
-            assert result == "duplicate"
+            assert t2 is not None
+            assert t2 != t1
         finally:
             con.close()
-
-    def test_conflict_on_different_payload(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            duckdb_repo.insert_expense(
-                con,
-                "test-uuid-3",
-                datetime(2026, 4, 14, 12, 0),
-                12.82,
-                1500.0,
-                "RSD",
-                1,
-                None,
-                None,
-                None,
-                "lunch",
-            )
-            result = duckdb_repo.insert_expense(
-                con,
-                "test-uuid-3",
-                datetime(2026, 4, 14, 12, 0),
-                17.09,
-                2000.0,
-                "RSD",
-                1,
-                None,
-                None,
-                None,
-                "dinner",
-            )
-            assert result == "conflict"
-        finally:
-            con.close()
-
-    def test_insert_creates_sync_job(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            duckdb_repo.insert_expense(
-                con,
-                "test-uuid-4",
-                datetime(2026, 4, 14, 12, 0),
-                12.82,
-                1500.0,
-                "RSD",
-                1,
-                None,
-                None,
-                None,
-                "",
-            )
-            jobs = duckdb_repo.get_dirty_sync_jobs(con)
-            assert (2026, 4) in jobs
-        finally:
-            con.close()
-
-    def test_insert_with_sphere_of_life(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            result = duckdb_repo.insert_expense(
-                con,
-                "test-uuid-5",
-                datetime(2026, 4, 14, 12, 0),
-                12.82,
-                1500.0,
-                "RSD",
-                1,
-                None,
-                None,
-                1,
-                "lunch",
-            )
-            assert result == "created"
-
-            row = con.execute(
-                "SELECT sphere_of_life_id FROM expenses WHERE id = 'test-uuid-5'"
-            ).fetchone()
-            assert row[0] == 1
-        finally:
-            con.close()
-
-    def test_amount_not_doubled_on_duplicate(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            duckdb_repo.insert_expense(
-                con,
-                "test-uuid-8",
-                datetime(2026, 4, 14, 12, 0),
-                12.82,
-                1500.0,
-                "RSD",
-                1,
-                None,
-                None,
-                None,
-                "",
-            )
-            duckdb_repo.insert_expense(
-                con,
-                "test-uuid-8",
-                datetime(2026, 4, 14, 12, 0),
-                12.82,
-                1500.0,
-                "RSD",
-                1,
-                None,
-                None,
-                None,
-                "",
-            )
-            total = con.execute("SELECT SUM(amount_original) FROM expenses").fetchone()
-            assert float(total[0]) == 1500.0
-        finally:
-            con.close()
-
-
-@allure.epic("DuckDB")
-@allure.feature("Reverse Mapping")
-class TestReverseMapping:
-    def test_reverse_lookup_simple(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 2026, 1, 1, None, None)
-            assert result == ("еда&бытовые", "собака")
-        finally:
-            con.close()
-
-    def test_reverse_lookup_travel(self, populated_config):
-        event_id = duckdb_repo.resolve_travel_event(date(2026, 4, 14))
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 2026, 2, None, event_id, None)
-            assert result is not None
-            assert result[1] == "путешествия"
-        finally:
-            con.close()
-
-    def test_reverse_lookup_no_group(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 2026, 4, None, None, None)
-            assert result == ("мобильник", "")
-        finally:
-            con.close()
-
-    def test_reverse_lookup_unknown(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 2026, 999, None, None, None)
-            assert result is None
-        finally:
-            con.close()
-
-    def test_reverse_lookup_prefers_year_scoped_mapping(self, populated_config):
-        con_cfg = duckdb_repo.get_config_connection(read_only=False)
-        try:
-            con_cfg.execute("INSERT INTO categories VALUES (10, 'продуктивность')")
-            con_cfg.execute(
-                "INSERT INTO source_type_mapping VALUES (2023, 'professional', 'apps', 10, NULL, NULL, NULL)"
-            )
-        finally:
-            con_cfg.close()
-
-        con = duckdb_repo.get_budget_connection(2023)
-        try:
-            result = duckdb_repo.reverse_lookup_mapping(con, 2023, 10, None, None, None)
-            assert result == ("professional", "apps")
-        finally:
-            con.close()
-
-
-@allure.epic("Data Safety")
-@allure.feature("Referential Integrity")
-class TestReferentialIntegrity:
-    def test_insert_with_invalid_category_raises(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            with pytest.raises(ValueError, match="category_id 999"):
-                duckdb_repo.insert_expense(
-                    con,
-                    "ri-1",
-                    datetime(2026, 4, 14, 12, 0),
-                    0.85,
-                    100.0,
-                    "RSD",
-                    999,
-                    None,
-                    None,
-                    None,
-                    "",
-                )
-        finally:
-            con.close()
-
-    def test_insert_with_invalid_beneficiary_raises(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            with pytest.raises(ValueError, match="beneficiary_id 999"):
-                duckdb_repo.insert_expense(
-                    con,
-                    "ri-2",
-                    datetime(2026, 4, 14, 12, 0),
-                    0.85,
-                    100.0,
-                    "RSD",
-                    1,
-                    999,
-                    None,
-                    None,
-                    "",
-                )
-        finally:
-            con.close()
-
-    def test_insert_with_invalid_sphere_raises(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            with pytest.raises(ValueError, match="sphere_of_life_id 999"):
-                duckdb_repo.insert_expense(
-                    con,
-                    "ri-3",
-                    datetime(2026, 4, 14, 12, 0),
-                    0.85,
-                    100.0,
-                    "RSD",
-                    1,
-                    None,
-                    None,
-                    999,
-                    "",
-                )
-        finally:
-            con.close()
-
-    def test_insert_with_invalid_event_raises(self, populated_config):
-        con = duckdb_repo.get_budget_connection(2026)
-        try:
-            with pytest.raises(ValueError, match="event_id 999"):
-                duckdb_repo.insert_expense(
-                    con,
-                    "ri-4",
-                    datetime(2026, 4, 14, 12, 0),
-                    0.85,
-                    100.0,
-                    "RSD",
-                    1,
-                    None,
-                    999,
-                    None,
-                    "",
-                )
-        finally:
-            con.close()
-
-
-@allure.epic("DuckDB")
-@allure.feature("Year Boundary")
-class TestYearBoundary:
-    def test_expense_routed_to_correct_year_db(self, populated_config):
-        con_2025 = duckdb_repo.get_budget_connection(2025)
-        con_2026 = duckdb_repo.get_budget_connection(2026)
-        try:
-            duckdb_repo.insert_expense(
-                con_2025,
-                "exp-2025",
-                datetime(2025, 12, 31, 23, 59),
-                8.55,
-                1000.0,
-                "RSD",
-                1,
-                None,
-                None,
-                None,
-                "",
-            )
-            duckdb_repo.insert_expense(
-                con_2026,
-                "exp-2026",
-                datetime(2026, 1, 1, 0, 1),
-                17.09,
-                2000.0,
-                "RSD",
-                1,
-                None,
-                None,
-                None,
-                "",
-            )
-
-            r_2025 = con_2025.execute("SELECT COUNT(*) FROM expenses").fetchone()
-            r_2026 = con_2026.execute("SELECT COUNT(*) FROM expenses").fetchone()
-            assert r_2025[0] == 1
-            assert r_2026[0] == 1
-        finally:
-            con_2025.close()
-            con_2026.close()

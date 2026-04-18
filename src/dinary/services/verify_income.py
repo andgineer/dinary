@@ -10,7 +10,7 @@ from decimal import Decimal
 from dinary.services import duckdb_repo
 from dinary.services.import_income import (
     INCOME_LAYOUTS,
-    _aggregate_from_sheet,
+    aggregate_from_sheet,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ def verify_income_equivalence(year: int) -> dict:
         return {"year": year, "ok": False, "error": f"unknown layout key: {layout_key!r}"}
 
     layout = INCOME_LAYOUTS[layout_key]
-    sheet_monthly, _rows = _aggregate_from_sheet(year, source, layout)
+    sheet_monthly, _rows = aggregate_from_sheet(year, source, layout)
 
     con = duckdb_repo.get_budget_connection(year)
     try:

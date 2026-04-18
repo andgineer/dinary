@@ -1,13 +1,15 @@
-"""DuckDB repository: config.duckdb (reference data) and budget_YYYY.duckdb (transactions).
+"""DuckDB repository: config.duckdb (catalog) and budget_YYYY.duckdb (ledger).
 
 Uses ATTACH for cross-DB referential integrity validation.
 """
 
 import dataclasses
 import logging
-from datetime import date, datetime
+import uuid
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
 import duckdb
 
@@ -20,10 +22,28 @@ DATA_DIR = Path("data")
 
 CONFIG_DB = DATA_DIR / "config.duckdb"
 
-SYNTHETIC_EVENT_PREFIX = "отпуск-"
-BUSINESS_TRIP_EVENT_PREFIX = "командировка-"
-TRAVEL_ENVELOPE = "путешествия"
-BUSINESS_TRIP_EVENT_LAST_YEAR = 2021  # after this year, "командировка" rows are relocation
+# Default time after which an in_progress sheet_sync_jobs claim is considered
+# stale and may be reclaimed by a new worker. Workers should pass an explicit
+# `stale_before` (now - timeout); this constant is the canonical timeout used
+# by callers that don't override it.
+DEFAULT_CLAIM_STALE_TIMEOUT = timedelta(minutes=5)
+
+
+def best_effort_rollback(con: duckdb.DuckDBPyConnection, *, context: str) -> None:
+    """Issue ROLLBACK without letting a failed rollback mask the original error.
+
+    Use in `except Exception: best_effort_rollback(con, context=...); raise`
+    blocks. If ROLLBACK itself raises (broken connection, txn already aborted
+    by an earlier error inside the same statement, etc.) we log the
+    secondary failure and swallow it so the caller's `raise` re-raises the
+    *original* exception. The original cause is what an operator needs in
+    the traceback; a "ROLLBACK failed because connection is closed"
+    secondary error just buries the real bug.
+    """
+    try:
+        con.execute("ROLLBACK")
+    except Exception:
+        logger.exception("Best-effort ROLLBACK failed (context: %s)", context)
 
 
 # ---------------------------------------------------------------------------
@@ -33,10 +53,9 @@ BUSINESS_TRIP_EVENT_LAST_YEAR = 2021  # after this year, "командировк
 
 @dataclasses.dataclass(slots=True)
 class MappingRow:
+    id: int
     category_id: int
-    beneficiary_id: int | None
     event_id: int | None
-    sphere_of_life_id: int | None
 
 
 @dataclasses.dataclass(slots=True)
@@ -47,25 +66,23 @@ class ExpenseRow:
     amount_original: Decimal
     currency_original: str
     category_id: int
-    beneficiary_id: int | None
     event_id: int | None
-    sphere_of_life_id: int | None
     comment: str | None
-    source_type: str
-    source_envelope: str
+    sheet_category: str | None
+    sheet_group: str | None
 
 
 @dataclasses.dataclass(slots=True)
-class SourceMappingRow:
-    source_type: str
-    source_envelope: str
-
-
-@dataclasses.dataclass(slots=True)
-class ReverseMappingRow:
-    source_type: str
-    source_envelope: str
-    sphere_of_life_id: int | None
+class ExistingExpenseRow:
+    amount: Decimal
+    amount_original: Decimal
+    currency_original: str
+    category_id: int
+    event_id: int | None
+    comment: str | None
+    datetime: datetime
+    sheet_category: str | None
+    sheet_group: str | None
 
 
 @dataclasses.dataclass(slots=True)
@@ -80,29 +97,27 @@ class ImportSourceRow:
 
 
 @dataclasses.dataclass(slots=True)
-class EventIdRow:
-    event_id: int
-
-
-@dataclasses.dataclass(slots=True)
-class ExistingExpenseRow:
-    amount: Decimal
-    amount_original: Decimal
-    currency_original: str
-    category_id: int
-    beneficiary_id: int | None
-    event_id: int | None
-    sphere_of_life_id: int | None
-    comment: str | None
-    datetime: datetime
-    source_type: str
-    source_envelope: str
-
-
-@dataclasses.dataclass(slots=True)
 class IdNameRow:
     id: int
     name: str
+
+
+@dataclasses.dataclass(slots=True)
+class CategoryListRow:
+    id: int
+    name: str
+    group_id: int
+    group_name: str
+    group_sort_order: int
+
+
+@dataclasses.dataclass(slots=True)
+class ForwardProjectionCandidateRow:
+    id: int
+    sheet_category: str
+    sheet_group: str
+    event_id: int | None
+    tag_ids: list[int]
 
 
 # ---------------------------------------------------------------------------
@@ -144,9 +159,12 @@ def get_budget_connection(year: int) -> duckdb.DuckDBPyConnection:
     path = init_budget_db(year)
     con = duckdb.connect(str(path))
     try:
-        con.execute(
-            f"ATTACH '{CONFIG_DB}' AS config (READ_ONLY)",
-        )
+        # DuckDB's ATTACH does not accept the path as a bound parameter, so
+        # we have to interpolate. SQL-escape the single quote so a path
+        # containing `'` (perfectly legal on macOS user dirs and in tmp
+        # paths used by tests) cannot break out of the string literal.
+        config_path_sql = str(CONFIG_DB).replace("'", "''")
+        con.execute(f"ATTACH '{config_path_sql}' AS config (READ_ONLY)")
     except Exception:
         con.close()
         raise
@@ -158,36 +176,42 @@ def get_config_connection(read_only: bool = True) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(CONFIG_DB), read_only=read_only)
 
 
+def iter_budget_years() -> list[int]:
+    """Return sorted list of years for which a budget_YYYY.duckdb file exists."""
+    if not DATA_DIR.exists():
+        return []
+    years: list[int] = []
+    for path in DATA_DIR.glob("budget_*.duckdb"):
+        stem = path.stem.replace("budget_", "")
+        try:
+            years.append(int(stem))
+        except ValueError:
+            continue
+    return sorted(years)
+
+
 # ---------------------------------------------------------------------------
-# Queries
+# Catalog (config) queries
 # ---------------------------------------------------------------------------
 
 
-def resolve_mapping(
-    con: duckdb.DuckDBPyConnection,
-    category: str,
-    group: str,
-) -> MappingRow | None:
-    """Look up (source_type, source_envelope) in source_type_mapping via ATTACHed config."""
-    return fetchone_as(MappingRow, con, load_sql("resolve_mapping.sql"), [category, group])
+def list_categories(con: duckdb.DuckDBPyConnection) -> list[CategoryListRow]:
+    """Return all categories with embedded group info, ordered by group sort then name."""
+    return fetchall_as(CategoryListRow, con, load_sql("list_categories.sql"))
 
 
-def resolve_mapping_for_year(
-    con: duckdb.DuckDBPyConnection,
-    category: str,
-    group: str,
-    year: int,
-) -> MappingRow | None:
-    """Look up (source_type, source_envelope) with year-scoped override support.
+def get_catalog_version(con: duckdb.DuckDBPyConnection) -> int:
+    """Return the current catalog_version from app_metadata singleton."""
+    row = con.execute("SELECT catalog_version FROM app_metadata WHERE id = 1").fetchone()
+    if row is None:
+        msg = "app_metadata singleton row is missing"
+        raise RuntimeError(msg)
+    return int(row[0])
 
-    Prefers an exact year match; falls back to year=0 (default).
-    """
-    return fetchone_as(
-        MappingRow,
-        con,
-        load_sql("resolve_mapping_for_year.sql"),
-        [category, group, year],
-    )
+
+def _set_catalog_version(con: duckdb.DuckDBPyConnection, value: int) -> None:
+    """Module-internal: only `rebuild-catalog` flow should call this (via tasks.py)."""
+    con.execute("UPDATE app_metadata SET catalog_version = ? WHERE id = 1", [value])
 
 
 def get_import_source(year: int) -> ImportSourceRow | None:
@@ -206,123 +230,242 @@ def get_import_source(year: int) -> ImportSourceRow | None:
         con.close()
 
 
-def resolve_travel_event(expense_date: date) -> int:
-    """Find or create a synthetic travel event for the expense's year.
-
-    Operates directly on config.duckdb (not ATTACHed) to avoid handle conflicts.
-    """
-    year = expense_date.year
-    event_name = f"{SYNTHETIC_EVENT_PREFIX}{year}"
-
-    config_con = get_config_connection(read_only=False)
-    try:
-        row = fetchone_as(
-            EventIdRow,
-            config_con,
-            load_sql("find_travel_event.sql"),
-            [event_name, expense_date, expense_date],
-        )
-        if row:
-            return row.event_id
-
-        row = config_con.execute(
-            "SELECT COALESCE(MAX(id), 0) FROM events",
-        ).fetchone()
-        max_id = row[0] if row else 0
-        new_id = max_id + 1
-        config_con.execute(
-            "INSERT INTO events (id, name, date_from, date_to) VALUES (?, ?, ?, ?)",
-            [new_id, event_name, date(year, 1, 1), date(year, 12, 31)],
-        )
-        logger.info("Auto-created synthetic travel event: %s (id=%d)", event_name, new_id)
-        return new_id
-    finally:
-        config_con.close()
+# ---------------------------------------------------------------------------
+# Sheet mapping resolution (used by historical import only)
+# ---------------------------------------------------------------------------
 
 
-def resolve_business_trip_event(expense_date: date) -> int:
-    """Find or create a synthetic business trip event for the expense's year.
-
-    Pre-2022 envelope/source_type "командировка" marks real work trips.
-    """
-    year = expense_date.year
-    event_name = f"{BUSINESS_TRIP_EVENT_PREFIX}{year}"
-
-    config_con = get_config_connection(read_only=False)
-    try:
-        row = config_con.execute(
-            "SELECT id FROM events WHERE name = ? AND date_from = ? AND date_to = ?",
-            [event_name, date(year, 1, 1), date(year, 12, 31)],
-        ).fetchone()
-        if row:
-            return row[0]
-        max_id_row = config_con.execute(
-            "SELECT COALESCE(MAX(id), 0) FROM events",
-        ).fetchone()
-        max_id = max_id_row[0] if max_id_row else 0
-        new_id = max_id + 1
-        config_con.execute(
-            "INSERT INTO events (id, name, date_from, date_to) VALUES (?, ?, ?, ?)",
-            [new_id, event_name, date(year, 1, 1), date(year, 12, 31)],
-        )
-        logger.info("Auto-created synthetic business trip event: %s (id=%d)", event_name, new_id)
-        return new_id
-    finally:
-        config_con.close()
-
-
-def ensure_event(
-    *,
-    name: str,
-    date_from: date,
-    date_to: date,
-    comment: str | None = None,
-) -> int:
-    """Find or create a named event in config.duckdb and return its id."""
-    config_con = get_config_connection(read_only=False)
-    try:
-        row = config_con.execute(
-            "SELECT id FROM events WHERE name = ? AND date_from = ? AND date_to = ?",
-            [name, date_from, date_to],
-        ).fetchone()
-        if row:
-            return row[0]
-
-        max_row = config_con.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()
-        max_event_id = max_row[0] if max_row else 0
-        new_id = max_event_id + 1
-        config_con.execute(
-            "INSERT INTO events (id, name, date_from, date_to, comment) VALUES (?, ?, ?, ?, ?)",
-            [new_id, name, date_from, date_to, comment],
-        )
-        logger.info("Created event: %s (id=%d)", name, new_id)
-        return new_id
-    finally:
-        config_con.close()
-
-
-def insert_expense(  # noqa: PLR0913
+def resolve_mapping(
     con: duckdb.DuckDBPyConnection,
+    category: str,
+    group: str,
+) -> MappingRow | None:
+    """Look up (sheet_category, sheet_group) in sheet_mapping via ATTACHed config (year=0)."""
+    return fetchone_as(MappingRow, con, load_sql("resolve_mapping.sql"), [category, group])
+
+
+def resolve_mapping_for_year(
+    con: duckdb.DuckDBPyConnection,
+    category: str,
+    group: str,
+    year: int,
+) -> MappingRow | None:
+    """Look up (sheet_category, sheet_group) with year-scoped override support.
+
+    Prefers an exact year match; falls back to year=0 (default).
+    """
+    return fetchone_as(
+        MappingRow,
+        con,
+        load_sql("resolve_mapping_for_year.sql"),
+        [category, group, year],
+    )
+
+
+def get_mapping_tag_ids(
+    con: duckdb.DuckDBPyConnection,
+    mapping_id: int,
+) -> list[int]:
+    """Return tag_ids attached to a given sheet_mapping row, ordered by tag_id."""
+    rows = con.execute(
+        "SELECT tag_id FROM config.sheet_mapping_tags WHERE mapping_id = ? ORDER BY tag_id",
+        [mapping_id],
+    ).fetchall()
+    return [int(r[0]) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Forward projection: pick (sheet_category, sheet_group) for a new expense.
+# Used by the async sheet-append worker. Always targets the latest configured
+# sheet year, never `expense.datetime.year`.
+# ---------------------------------------------------------------------------
+
+
+def forward_projection(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    latest_sheet_year: int,
+    category_id: int,
+    event_id: int | None,
+    tag_ids: list[int] | set[int] | tuple[int, ...],
+) -> tuple[str, str] | None:
+    """Resolve `(category_id, event_id, tag set)` to `(sheet_category, sheet_group)`.
+
+    Lookup order against `sheet_mapping` + `sheet_mapping_tags` inside
+    `latest_sheet_year`:
+      1. exact match: same `category_id`, same `event_id` (NULL matches NULL),
+         and same tag-id set as the expense;
+      2. fallback: first `sheet_mapping` row with the same `category_id`,
+         ignoring `event_id` and tags.
+    Ties inside the same preference bucket are broken by `sheet_mapping.id ASC`.
+    """
+    expected_tags = sorted(int(t) for t in tag_ids)
+    candidates = fetchall_as(
+        ForwardProjectionCandidateRow,
+        con,
+        load_sql("forward_projection.sql"),
+        [latest_sheet_year, category_id],
+    )
+    if not candidates:
+        return None
+
+    for cand in candidates:
+        cand_tags = sorted(int(t) for t in cand.tag_ids)
+        if cand.event_id == event_id and cand_tags == expected_tags:
+            return (cand.sheet_category, cand.sheet_group)
+
+    first = candidates[0]
+    return (first.sheet_category, first.sheet_group)
+
+
+# ---------------------------------------------------------------------------
+# expense_id_registry helpers (cross-year ownership of expense_id, in config.duckdb)
+# ---------------------------------------------------------------------------
+
+
+def reserve_expense_id_year(expense_id: str, year: int) -> tuple[int, bool]:
+    """Atomically claim or look up the year that owns `expense_id`.
+
+    Returns `(stored_year, newly_inserted)`:
+      * `stored_year` is the year currently associated with the id after the
+        call (may differ from `year` if the row already existed — the API
+        layer turns that into a 409 cross-year reuse error).
+      * `newly_inserted` is True iff this call performed the INSERT. The
+        caller MUST `release_expense_id_year(expense_id)` if a downstream
+        step fails, so the registry doesn't end up holding a phantom row
+        for an expense that never made it into the budget DB.
+
+    Concurrency: DuckDB doesn't give us a true row-level "SELECT FOR UPDATE",
+    so two concurrent callers can both fall through the `SELECT NULL` branch
+    and try to INSERT. The PK constraint on `expense_id` makes the loser's
+    INSERT fail with `duckdb.ConstraintException`; we catch that here and
+    re-read so the loser sees the same `(stored_year, False)` result it
+    would have gotten if it had simply run a fraction of a second later.
+    Without this, the loser would surface a 5xx instead of a clean 409.
+    """
+    con = get_config_connection(read_only=False)
+    try:
+        # `txn_active` lets the outer except skip its own rollback when
+        # the inner ConstraintException path has already issued one. The
+        # alternative — a second `best_effort_rollback` against an
+        # already-closed txn — produces a misleading "ROLLBACK failed"
+        # log that masks the real RuntimeError("vanished row") path.
+        txn_active = True
+        con.execute("BEGIN")
+        try:
+            row = con.execute(
+                "SELECT year FROM expense_id_registry WHERE expense_id = ?",
+                [expense_id],
+            ).fetchone()
+            if row is not None:
+                con.execute("COMMIT")
+                txn_active = False
+                return int(row[0]), False
+            try:
+                con.execute(
+                    "INSERT INTO expense_id_registry (expense_id, year) VALUES (?, ?)",
+                    [expense_id, year],
+                )
+            except duckdb.ConstraintException:
+                # Lost a race to a concurrent reserver; the row is now there.
+                # Rollback the failed INSERT (ROLLBACK errors here would
+                # mean the connection is unusable anyway, so we let them
+                # propagate — unlike the outer except block, this path
+                # MUST roll back to release the txn before the SELECT
+                # below can succeed).
+                con.execute("ROLLBACK")
+                txn_active = False
+                raced = con.execute(
+                    "SELECT year FROM expense_id_registry WHERE expense_id = ?",
+                    [expense_id],
+                ).fetchone()
+                if raced is None:
+                    # Constraint fired but row vanished — should be impossible
+                    # for a PK insert, but bubble up as-is rather than guess.
+                    msg = (
+                        f"expense_id_registry race for {expense_id!r}: PK "
+                        "violation on INSERT but row not present on re-read"
+                    )
+                    raise RuntimeError(msg) from None
+                return int(raced[0]), False
+            con.execute("COMMIT")
+            txn_active = False
+            return year, True
+        except Exception:
+            if txn_active:
+                best_effort_rollback(
+                    con,
+                    context=f"reserve_expense_id({expense_id!r})",
+                )
+            raise
+    finally:
+        con.close()
+
+
+def get_registered_expense_year(expense_id: str) -> int | None:
+    """Return the year currently registered for `expense_id`, or None if absent."""
+    con = get_config_connection(read_only=True)
+    try:
+        row = con.execute(
+            "SELECT year FROM expense_id_registry WHERE expense_id = ?",
+            [expense_id],
+        ).fetchone()
+        return int(row[0]) if row else None
+    finally:
+        con.close()
+
+
+def release_expense_id_year(expense_id: str) -> None:
+    """Remove an expense_id from the registry. Use only on rollback/error cleanup."""
+    con = get_config_connection(read_only=False)
+    try:
+        con.execute("DELETE FROM expense_id_registry WHERE expense_id = ?", [expense_id])
+    finally:
+        con.close()
+
+
+# ---------------------------------------------------------------------------
+# Expense insert (3D)
+# ---------------------------------------------------------------------------
+
+
+InsertExpenseResult = Literal["created", "duplicate", "conflict"]
+
+
+def insert_expense(  # noqa: PLR0913, C901
+    con: duckdb.DuckDBPyConnection,
+    *,
     expense_id: str,
     expense_datetime: datetime,
     amount: float,
     amount_original: float,
     currency_original: str,
     category_id: int,
-    beneficiary_id: int | None,
-    event_id: int | None,
-    sphere_of_life_id: int | None,
-    comment: str,
-    *,
-    source_type: str = "",
-    source_envelope: str = "",
-) -> str:
-    """Insert an expense, returning 'created', 'duplicate', or 'conflict'.
+    event_id: int | None = None,
+    comment: str = "",
+    sheet_category: str | None = None,
+    sheet_group: str | None = None,
+    tag_ids: list[int] | None = None,
+    enqueue_sync: bool = True,
+) -> InsertExpenseResult:
+    """Insert an expense + tags + queue row in one transaction.
 
-    Uses INSERT ... ON CONFLICT DO NOTHING RETURNING id for idempotent inserts.
-    On PK conflict, compares stored values to detect true duplicates vs conflicts.
-    Validates dimension IDs against ATTACHed config tables before inserting.
+    Returns 'created', 'duplicate', or 'conflict'.
+    Validates `category_id` against ATTACHed config.categories and `event_id`
+    against ATTACHed config.events. Tag IDs are validated against
+    config.tags. Provenance pair `(sheet_category, sheet_group)` must be
+    NULL/NULL or both non-NULL — this is a runtime invariant enforced here
+    instead of a CHECK so the migration stays simple.
     """
+    if (sheet_category is None) != (sheet_group is None):
+        msg = (
+            "sheet_category and sheet_group must be both NULL (runtime row) "
+            "or both non-NULL (bootstrap-imported provenance row)"
+        )
+        raise ValueError(msg)
+
+    tag_ids = tag_ids or []
+
     con.execute("BEGIN")
     try:
         if not con.execute(
@@ -331,14 +474,6 @@ def insert_expense(  # noqa: PLR0913
         ).fetchone():
             raise ValueError(f"category_id {category_id} not found in config.categories")
         if (
-            beneficiary_id is not None
-            and not con.execute(
-                "SELECT 1 FROM config.family_members WHERE id = ?",
-                [beneficiary_id],
-            ).fetchone()
-        ):
-            raise ValueError(f"beneficiary_id {beneficiary_id} not found in config.family_members")
-        if (
             event_id is not None
             and not con.execute(
                 "SELECT 1 FROM config.events WHERE id = ?",
@@ -346,16 +481,12 @@ def insert_expense(  # noqa: PLR0913
             ).fetchone()
         ):
             raise ValueError(f"event_id {event_id} not found in config.events")
-        if (
-            sphere_of_life_id is not None
-            and not con.execute(
-                "SELECT 1 FROM config.spheres_of_life WHERE id = ?",
-                [sphere_of_life_id],
-            ).fetchone()
-        ):
-            raise ValueError(
-                f"sphere_of_life_id {sphere_of_life_id} not found in config.spheres_of_life",
-            )
+        for tid in tag_ids:
+            if not con.execute(
+                "SELECT 1 FROM config.tags WHERE id = ?",
+                [tid],
+            ).fetchone():
+                raise ValueError(f"tag_id {tid} not found in config.tags")
 
         inserted = con.execute(
             load_sql("insert_expense.sql"),
@@ -366,22 +497,26 @@ def insert_expense(  # noqa: PLR0913
                 amount_original,
                 currency_original,
                 category_id,
-                beneficiary_id,
                 event_id,
-                sphere_of_life_id,
                 comment,
-                source_type,
-                source_envelope,
+                sheet_category,
+                sheet_group,
             ],
         ).fetchone()
 
         if inserted is not None:
-            year = expense_datetime.year
-            month = expense_datetime.month
-            con.execute(
-                "INSERT INTO sheet_sync_jobs (year, month) VALUES (?, ?) ON CONFLICT DO NOTHING",
-                [year, month],
-            )
+            for tid in tag_ids:
+                con.execute(
+                    "INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)"
+                    " ON CONFLICT DO NOTHING",
+                    [expense_id, tid],
+                )
+            if enqueue_sync:
+                con.execute(
+                    "INSERT INTO sheet_sync_jobs (expense_id, status) VALUES (?, 'pending')"
+                    " ON CONFLICT DO NOTHING",
+                    [expense_id],
+                )
             con.execute("COMMIT")
             return "created"
 
@@ -393,33 +528,44 @@ def insert_expense(  # noqa: PLR0913
         )
         assert existing is not None, f"expense {expense_id} vanished after ON CONFLICT"
 
+        existing_tag_ids = sorted(
+            int(r[0])
+            for r in con.execute(
+                "SELECT tag_id FROM expense_tags WHERE expense_id = ?",
+                [expense_id],
+            ).fetchall()
+        )
+        incoming_tag_ids = sorted(int(t) for t in tag_ids)
+
         stored = (
             existing.amount,
             existing.amount_original,
             existing.currency_original,
             existing.category_id,
-            existing.beneficiary_id,
             existing.event_id,
-            existing.sphere_of_life_id,
             existing.comment,
             existing.datetime,
-            existing.source_type,
-            existing.source_envelope,
+            existing.sheet_category,
+            existing.sheet_group,
+            existing_tag_ids,
         )
         incoming = (
             Decimal(str(amount)),
             Decimal(str(amount_original)),
             currency_original,
             category_id,
-            beneficiary_id,
             event_id,
-            sphere_of_life_id,
             comment,
             expense_datetime,
-            source_type,
-            source_envelope,
+            sheet_category,
+            sheet_group,
+            incoming_tag_ids,
         )
 
+        # NOT best-effort: this is the SUCCESS path (no INSERT
+        # happened, "duplicate"/"conflict" doesn't write). A failing
+        # ROLLBACK here is the primary error — bubbling it out is
+        # correct, masking it would leave the txn open.
         con.execute("ROLLBACK")
 
         if stored == incoming:
@@ -427,20 +573,187 @@ def insert_expense(  # noqa: PLR0913
         return "conflict"
 
     except Exception:
-        con.execute("ROLLBACK")
+        # The outer except catches genuine failures (the SQL above
+        # raised). Use best-effort rollback so a secondary ROLLBACK
+        # failure doesn't replace the original error in the traceback.
+        best_effort_rollback(con, context=f"insert_expense({expense_id!r})")
         raise
 
 
-def get_dirty_sync_jobs(con: duckdb.DuckDBPyConnection) -> list[tuple[int, int]]:
-    """Return all (year, month) pairs pending sync."""
-    return con.execute(
-        "SELECT year, month FROM sheet_sync_jobs ORDER BY year, month",
+def get_expense_tags(con: duckdb.DuckDBPyConnection, expense_id: str) -> list[int]:
+    """Return the tag_ids attached to an expense, sorted ascending."""
+    rows = con.execute(
+        "SELECT tag_id FROM expense_tags WHERE expense_id = ? ORDER BY tag_id",
+        [expense_id],
     ).fetchall()
+    return [int(r[0]) for r in rows]
 
 
-def clear_sync_job(con: duckdb.DuckDBPyConnection, year: int, month: int) -> None:
-    """Remove a completed sync job."""
-    con.execute("DELETE FROM sheet_sync_jobs WHERE year = ? AND month = ?", [year, month])
+def get_expense_by_id(con: duckdb.DuckDBPyConnection, expense_id: str) -> ExistingExpenseRow | None:
+    """Read a stored expense row by id."""
+    return fetchone_as(
+        ExistingExpenseRow,
+        con,
+        load_sql("get_existing_expense.sql"),
+        [expense_id],
+    )
+
+
+# ---------------------------------------------------------------------------
+# sheet_sync_jobs queue helpers (keyed by expense_id, with atomic claim/release)
+# ---------------------------------------------------------------------------
+
+
+def enqueue_sync_job(con: duckdb.DuckDBPyConnection, expense_id: str) -> None:
+    """Insert a `pending` row for `expense_id` (no-op if it already exists)."""
+    con.execute(
+        "INSERT INTO sheet_sync_jobs (expense_id, status) VALUES (?, 'pending')"
+        " ON CONFLICT DO NOTHING",
+        [expense_id],
+    )
+
+
+def list_sync_jobs(con: duckdb.DuckDBPyConnection) -> list[str]:
+    """Return all expense_ids currently waiting in sheet_sync_jobs (any status)."""
+    rows = con.execute("SELECT expense_id FROM sheet_sync_jobs ORDER BY expense_id").fetchall()
+    return [str(r[0]) for r in rows]
+
+
+def claim_sync_job(
+    con: duckdb.DuckDBPyConnection,
+    expense_id: str,
+    *,
+    claim_token: str | None = None,
+    now: datetime | None = None,
+    stale_before: datetime | None = None,
+) -> str | None:
+    """Atomically claim `expense_id`. Returns the claim_token on success, None otherwise.
+
+    A row is claimable if it is `pending`, OR if it is `in_progress` with
+    `claimed_at < stale_before` (lease-style stale-claim recovery).
+    """
+    if claim_token is None:
+        claim_token = uuid.uuid4().hex
+    if now is None:
+        now = datetime.now()
+    if stale_before is None:
+        stale_before = now - DEFAULT_CLAIM_STALE_TIMEOUT
+
+    con.execute("BEGIN")
+    try:
+        row = con.execute(
+            "SELECT status, claim_token, claimed_at FROM sheet_sync_jobs WHERE expense_id = ?",
+            [expense_id],
+        ).fetchone()
+        if row is None:
+            con.execute("COMMIT")
+            return None
+        status, _existing_token, claimed_at = row
+
+        is_pending = status == "pending"
+        is_stale = status == "in_progress" and claimed_at is not None and claimed_at < stale_before
+        if not (is_pending or is_stale):
+            con.execute("COMMIT")
+            return None
+
+        con.execute(
+            "UPDATE sheet_sync_jobs SET status = 'in_progress',"
+            " claim_token = ?, claimed_at = ? WHERE expense_id = ?",
+            [claim_token, now, expense_id],
+        )
+        con.execute("COMMIT")
+        return claim_token
+    except duckdb.TransactionException:
+        # DuckDB uses optimistic concurrency control; under concurrent
+        # claim attempts on the same row the loser gets a transaction
+        # conflict here. Treat that as "not claimable right now" — the
+        # winner already moved the row to `in_progress`, so the next
+        # sweep (or the in-flight worker) will own it. Returning None
+        # avoids blowing up the sweep with a noisy exception that the
+        # caller would have to translate back to "skip this row" anyway.
+        best_effort_rollback(con, context=f"claim_sync_job({expense_id}) txn conflict")
+        logger.debug("Transaction conflict claiming %s; another worker won", expense_id)
+        return None
+    except Exception:
+        # Best-effort rollback: if ROLLBACK itself raises (broken
+        # connection, constraint surfacing only at boundary, etc.) we
+        # log and re-raise the *original* exception, not the secondary
+        # one, so the caller's traceback points at the real cause
+        # instead of a confusing rollback failure that masks it.
+        best_effort_rollback(con, context=f"claim_sync_job({expense_id}) generic error")
+        raise
+
+
+def release_sync_claim(
+    con: duckdb.DuckDBPyConnection,
+    expense_id: str,
+    claim_token: str,
+) -> bool:
+    """Release a held claim back to `pending` (only if `claim_token` still matches).
+
+    Returns True if the row was released, False if not (different claimant
+    has taken over, or the row no longer exists).
+    """
+    rows = con.execute(
+        "UPDATE sheet_sync_jobs SET status = 'pending', claim_token = NULL, claimed_at = NULL"
+        " WHERE expense_id = ? AND claim_token = ? RETURNING expense_id",
+        [expense_id, claim_token],
+    ).fetchall()
+    return len(rows) > 0
+
+
+def _delete_sync_job(
+    con: duckdb.DuckDBPyConnection,
+    expense_id: str,
+    *,
+    claim_token: str | None,
+) -> bool:
+    """Single source of truth for deleting a `sheet_sync_jobs` row.
+
+    `claim_token=None` skips the token check (force-delete by expense_id
+    only). Factored out so a future column change to `sheet_sync_jobs`
+    only updates one DELETE statement instead of two divergent ones; the
+    public `clear_sync_job` and `force_clear_sync_job` are thin wrappers
+    that document the two distinct legitimate use cases.
+    """
+    if claim_token is None:
+        rows = con.execute(
+            "DELETE FROM sheet_sync_jobs WHERE expense_id = ? RETURNING expense_id",
+            [expense_id],
+        ).fetchall()
+    else:
+        rows = con.execute(
+            "DELETE FROM sheet_sync_jobs WHERE expense_id = ? AND claim_token = ?"
+            " RETURNING expense_id",
+            [expense_id, claim_token],
+        ).fetchall()
+    return len(rows) > 0
+
+
+def clear_sync_job(
+    con: duckdb.DuckDBPyConnection,
+    expense_id: str,
+    claim_token: str,
+) -> bool:
+    """Delete the queue row after a successful append. Requires matching claim_token."""
+    return _delete_sync_job(con, expense_id, claim_token=claim_token)
+
+
+def force_clear_sync_job(con: duckdb.DuckDBPyConnection, expense_id: str) -> bool:
+    """Delete the queue row by expense_id, ignoring claim_token.
+
+    Use ONLY when the caller has definitively succeeded at the side-effect
+    that the queue row was tracking (e.g. the Sheets append already
+    happened) and a normal claim-token-protected `clear_sync_job` failed
+    because the claim was stolen by a stale-claim sweep. Deleting
+    unconditionally here prevents a *third* sheet append: the thief who
+    stole the claim will (or already did) cause the second append, and
+    leaving the row in place would cause the next sweep to claim and
+    append a third copy.
+
+    Returns True if a row was deleted.
+    """
+    return _delete_sync_job(con, expense_id, claim_token=None)
 
 
 def get_month_expenses(
@@ -450,46 +763,3 @@ def get_month_expenses(
 ) -> list[ExpenseRow]:
     """Read all expenses for a given month."""
     return fetchall_as(ExpenseRow, con, load_sql("get_month_expenses.sql"), [year, month])
-
-
-def reverse_lookup_mapping(  # noqa: PLR0913
-    con: duckdb.DuckDBPyConnection,
-    year: int,
-    category_id: int,
-    beneficiary_id: int | None,
-    event_id: int | None,
-    sphere_of_life_id: int | None,
-) -> tuple[str, str] | None:
-    """Reverse-map a 4D expense back to (source_type, source_envelope).
-
-    Two paths:
-    1. Travel expenses (event_id references a synthetic event): match by
-       category_id + TRAVEL_ENVELOPE.
-    2. All others: match by category_id + beneficiary + event + sphere_of_life.
-    """
-    if event_id is not None:
-        is_travel = con.execute(
-            "SELECT 1 FROM config.events WHERE id = ? AND name LIKE ?",
-            [event_id, f"{SYNTHETIC_EVENT_PREFIX}%"],
-        ).fetchone()
-        if is_travel:
-            row = fetchone_as(
-                SourceMappingRow,
-                con,
-                load_sql("reverse_lookup_travel.sql"),
-                [year, TRAVEL_ENVELOPE, category_id],
-            )
-            return (row.source_type, row.source_envelope) if row else None
-
-    rows = fetchall_as(
-        ReverseMappingRow,
-        con,
-        load_sql("reverse_lookup_5d.sql"),
-        [year, category_id, beneficiary_id, event_id],
-    )
-
-    for r in rows:
-        if r.sphere_of_life_id == sphere_of_life_id:
-            return (r.source_type, r.source_envelope)
-
-    return None

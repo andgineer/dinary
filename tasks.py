@@ -190,10 +190,23 @@ def uv(c: Context):
 
 @task
 def test(c):
-    """Run all tests (Python + JavaScript) with Allure results."""
+    """Run all tests (Python + JavaScript) with Allure results.
+
+    Both suites always run (so npm test is not skipped on a pytest
+    failure), but the task exits non-zero if either failed so CI can
+    distinguish "all green" from "partial green".
+    """
     c.run("rm -rf allure-results")
-    c.run("uv run pytest tests/ -v --alluredir=allure-results", warn=True)
-    c.run("npm test", warn=True)
+    py_result = c.run("uv run pytest tests/ -v --alluredir=allure-results", warn=True)
+    js_result = c.run("npm test", warn=True)
+    failed = []
+    if py_result is not None and py_result.exited != 0:
+        failed.append(f"pytest (exit {py_result.exited})")
+    if js_result is not None and js_result.exited != 0:
+        failed.append(f"npm test (exit {js_result.exited})")
+    if failed:
+        print(f"Test failures: {', '.join(failed)}")
+        sys.exit(1)
 
 
 @task
@@ -358,60 +371,85 @@ def migrate_config(c):
 @task(name="migrate-budget")
 def migrate_budget(c, year):
     """Apply pending migrations to a yearly budget DB on the server."""
-    year = int(year)
+    year_int = _coerce_year(year)
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && "
         f"uv run python -c 'from dinary.services import duckdb_repo; "
-        f"print(duckdb_repo.init_budget_db({year}))'",
+        f"print(duckdb_repo.init_budget_db({year_int}))'",
     )
+
+
+def _require_yes(yes: bool, message: str) -> bool:
+    """Gate destructive tasks behind an explicit `--yes` flag.
+
+    Exits non-zero on the missing-flag path so CI / scripts cannot mistake a
+    skipped destructive action for success. Returns True when allowed to
+    proceed (so the call site reads naturally as `if not _require_yes(...)`).
+    """
+    if yes:
+        return True
+    print(message)
+    print("Re-run with --yes to confirm. Aborting.")
+    sys.exit(1)
+
+
+def _coerce_year(year) -> int:
+    """Validate and coerce a CLI `year` string to int.
+
+    Tasks ssh `f"...({year})..."` into a remote Python invocation, so
+    accepting only digits prevents shell-string injection via `--year=`.
+    """
+    if not year:
+        return _dt.now().year
+    try:
+        return int(year)
+    except (TypeError, ValueError):
+        print(f"--year must be an integer, got {year!r}")
+        sys.exit(1)
+
+
+def _require_year(year) -> int:
+    """Like `_coerce_year` but refuses a blank value.
+
+    Use for destructive tasks (`rebuild-budget`, `rebuild-income`) where
+    silently defaulting to the current year would be a footgun: an
+    operator who forgets `--year=2024` would otherwise wipe the
+    most-active year by accident.
+    """
+    if not year:
+        print(
+            "--year is required for destructive tasks (e.g. --year=2024).\n"
+            "Refusing to default to the current year.",
+        )
+        sys.exit(1)
+    return _coerce_year(year)
 
 
 @task
 def sync(c):
-    """Run sheet sync for all dirty months (on server)."""
+    """Drain sheet_sync_jobs for every yearly DB (on server)."""
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.sync import sync_all_dirty; "
-        'print(f"Synced {sync_all_dirty()} months")\'',
+        "from dinary.services.sync import sync_pending; "
+        "import json; print(json.dumps(sync_pending()))'",
     )
 
 
-@task(name="import-sheet")
-def import_sheet(c, year="", yes=False):
-    """Import a year's data from Google Sheets into DuckDB (on server).
+@task(name="rebuild-catalog")
+def rebuild_catalog(c, yes=False):
+    """DESTRUCTIVE: Wipe config.duckdb and re-seed the 3D classification catalog.
 
-    DESTRUCTIVE: deletes existing sheet_import rows for the year before
-    re-importing. Manual expenses are preserved. Use --yes to skip the
-    confirmation prompt.
+    Bumps `app_metadata.catalog_version` by +1 on every successful run; the
+    PWA picks up the new value via GET /api/categories and POST /api/expenses.
     """
-    if not year:
-        year = str(_dt.now().year)
-    if not yes:
-        print(f"WARNING: This will DELETE all sheet_import expenses for {year}")
-        print("and re-import them from the Google Sheet.")
-        print("Manual expenses will NOT be affected.")
-        answer = input("Type 'yes' to continue: ")
-        if answer.strip().lower() != "yes":
-            print("Aborted.")
-            return
-    _ssh(
-        c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.import_sheet import import_year; "
-        f"import json; print(json.dumps(import_year({year})))'",
-    )
-
-
-@task(name="rebuild-4d-config")
-def rebuild_4d_config(c):
-    """DESTRUCTIVE: Wipe and rebuild config.duckdb under the 4D model from Google Sheets."""
-    print("WARNING: This will DELETE config.duckdb and rebuild it from Google Sheets.")
-    print("Configured sheet_import_sources will be preserved and restored if present.")
-    answer = input("Type 'yes' to continue: ")
-    if answer.strip().lower() != "yes":
-        print("Aborted.")
+    if not _require_yes(
+        yes,
+        "WARNING: rebuild-catalog will DELETE config.duckdb and re-seed it from "
+        "Google Sheets. Configured sheet_import_sources are preserved and restored. "
+        "All clients will be forced to refresh on next /api/categories call.",
+    ):
         return
     _ssh(
         c,
@@ -421,64 +459,70 @@ def rebuild_4d_config(c):
     )
 
 
-@task(name="rebuild-4d-budget")
-def rebuild_4d_budget(c, year=""):
-    """DESTRUCTIVE: Wipe and re-import budget_YYYY.duckdb from Google Sheet."""
-    if not year:
-        year = str(_dt.now().year)
-    print(f"WARNING: This will DELETE ALL expenses for {year} and re-import from Google Sheets.")
-    answer = input("Type 'yes' to continue: ")
-    if answer.strip().lower() != "yes":
-        print("Aborted.")
+@task(name="rebuild-budget")
+def rebuild_budget(c, year="", yes=False):
+    """DESTRUCTIVE: Wipe budget_YYYY.duckdb and re-import from the Google Sheet."""
+    year_int = _require_year(year)
+    if not _require_yes(
+        yes,
+        f"WARNING: rebuild-budget will DELETE every expense in budget_{year_int}.duckdb "
+        "and re-import from the Google Sheet. There is no manual-vs-import distinction "
+        "anymore; nothing in the budget DB is preserved.",
+    ):
         return
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services.import_sheet import import_year; "
-        f"import json; print(json.dumps(import_year({year}, wipe_all=True)))'",
+        f"import json; print(json.dumps(import_year({year_int})))'",
     )
 
 
-@task(name="verify-sheet-equivalence")
-def verify_sheet_equivalence(c, year=""):
-    """Verify that rebuilt DB reproduces the same Google Sheet data (on server)."""
-    if not year:
-        year = str(_dt.now().year)
+@task(name="verify-bootstrap-import")
+def verify_bootstrap_import(c, year=""):
+    """Verify that bootstrap-imported budget DB reproduces sheet aggregates (on server)."""
+    # `_require_year` (not `_coerce_year`) because a blank year would
+    # silently verify against today's year — most likely a runtime DB with
+    # `sheet_category IS NULL` everywhere — which trivially passes (`ok=true`,
+    # zero exit) and gives the operator a false-green for the exact
+    # equivalence step that's supposed to catch silent reset mistakes.
+    year_int = _require_year(year)
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.verify_equivalence import verify_sheet_equivalence; "
-        f"import json; result = verify_sheet_equivalence({year}); "
+        "from dinary.services.verify_equivalence import verify_bootstrap_import; "
+        f"import json; result = verify_bootstrap_import({year_int}); "
         "print(json.dumps(result, indent=2, ensure_ascii=False)); "
         "import sys; sys.exit(0 if result[\"ok\"] else 1)'",
     )
 
 
-@task(name="rebuild-4d-income")
-def rebuild_4d_income(c, year=""):
+@task(name="rebuild-income")
+def rebuild_income(c, year="", yes=False):
     """DESTRUCTIVE: Wipe and re-import income for a single year from Google Sheet."""
-    if not year:
-        year = str(_dt.now().year)
-    print(f"WARNING: This will DELETE imported income for {year} and re-import from Google Sheets.")
-    answer = input("Type 'yes' to continue: ")
-    if answer.strip().lower() != "yes":
-        print("Aborted.")
+    year_int = _require_year(year)
+    if not _require_yes(
+        yes,
+        f"WARNING: rebuild-income will DELETE every income row for {year_int} and re-import "
+        "from Google Sheets.",
+    ):
         return
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services.import_income import import_year_income; "
-        f"import json; print(json.dumps(import_year_income({year})))'",
+        f"import json; print(json.dumps(import_year_income({year_int})))'",
     )
 
 
-@task(name="rebuild-4d-income-all")
-def rebuild_4d_income_all(c):
+@task(name="rebuild-income-all")
+def rebuild_income_all(c, yes=False):
     """DESTRUCTIVE: Re-import income for all years with a registered income worksheet."""
-    print("WARNING: This will re-import income for ALL years with a registered income source.")
-    answer = input("Type 'yes' to continue: ")
-    if answer.strip().lower() != "yes":
-        print("Aborted.")
+    if not _require_yes(
+        yes,
+        "WARNING: rebuild-income-all will re-import income for EVERY year with a "
+        "registered income source. Existing income rows are dropped first.",
+    ):
         return
     _ssh(
         c,
@@ -498,13 +542,16 @@ def rebuild_4d_income_all(c):
 @task(name="verify-income-equivalence")
 def verify_income_equivalence(c, year=""):
     """Verify that imported income matches the source Google Sheet (on server)."""
-    if not year:
-        year = str(_dt.now().year)
+    # Same rationale as `verify-bootstrap-import`: a blank year that
+    # silently coerces to "today" defeats the purpose of an equivalence
+    # check (the operator wants to confirm the year they just rebuilt,
+    # not whatever happens to be the current year).
+    year_int = _require_year(year)
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services.verify_income import verify_income_equivalence; "
-        f"import json; result = verify_income_equivalence({year}); "
+        f"import json; result = verify_income_equivalence({year_int}); "
         "print(json.dumps(result, indent=2, ensure_ascii=False)); "
         "import sys; sys.exit(0 if result[\"ok\"] else 1)'",
     )
