@@ -454,6 +454,62 @@ def verify_sheet_equivalence(c, year=""):
     )
 
 
+@task(name="rebuild-4d-income")
+def rebuild_4d_income(c, year=""):
+    """DESTRUCTIVE: Wipe and re-import income for a single year from Google Sheet."""
+    if not year:
+        year = str(_dt.now().year)
+    print(f"WARNING: This will DELETE imported income for {year} and re-import from Google Sheets.")
+    answer = input("Type 'yes' to continue: ")
+    if answer.strip().lower() != "yes":
+        print("Aborted.")
+        return
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.services.import_income import import_year_income; "
+        f"import json; print(json.dumps(import_year_income({year})))'",
+    )
+
+
+@task(name="rebuild-4d-income-all")
+def rebuild_4d_income_all(c):
+    """DESTRUCTIVE: Re-import income for all years with a registered income worksheet."""
+    print("WARNING: This will re-import income for ALL years with a registered income source.")
+    answer = input("Type 'yes' to continue: ")
+    if answer.strip().lower() != "yes":
+        print("Aborted.")
+        return
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.services import duckdb_repo; "
+        "from dinary.services.import_income import import_year_income; "
+        "import json, duckdb; "
+        "con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True); "
+        "years = [r[0] for r in con.execute("
+        "\"SELECT year FROM sheet_import_sources WHERE income_worksheet_name != \\x27\\x27 ORDER BY year\""
+        ").fetchall()]; "
+        "con.close(); "
+        "[print(json.dumps(import_year_income(y))) for y in years]'",
+    )
+
+
+@task(name="verify-income-equivalence")
+def verify_income_equivalence(c, year=""):
+    """Verify that imported income matches the source Google Sheet (on server)."""
+    if not year:
+        year = str(_dt.now().year)
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.services.verify_income import verify_income_equivalence; "
+        f"import json; result = verify_income_equivalence({year}); "
+        "print(json.dumps(result, indent=2, ensure_ascii=False)); "
+        "import sys; sys.exit(0 if result[\"ok\"] else 1)'",
+    )
+
+
 @task(name="build-static")
 def build_static(c):
     """Replace __VERSION__ in static/ files, write to _static/."""

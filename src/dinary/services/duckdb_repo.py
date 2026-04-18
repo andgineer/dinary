@@ -75,6 +75,8 @@ class ImportSourceRow:
     worksheet_name: str
     layout_key: str
     notes: str | None
+    income_worksheet_name: str = ""
+    income_layout_key: str = ""
 
 
 @dataclasses.dataclass(slots=True)
@@ -195,8 +197,9 @@ def get_import_source(year: int) -> ImportSourceRow | None:
         return fetchone_as(
             ImportSourceRow,
             con,
-            "SELECT year, spreadsheet_id, worksheet_name, layout_key, notes "
-            "FROM sheet_import_sources WHERE year = ?",
+            "SELECT year, spreadsheet_id, worksheet_name, layout_key, notes,"
+            " income_worksheet_name, income_layout_key"
+            " FROM sheet_import_sources WHERE year = ?",
             [year],
         )
     finally:

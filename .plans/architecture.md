@@ -1,5 +1,7 @@
 # Architecture
 
+> **Status note (2026-04):** this document describes the original 5-dimensional design (`category`, `beneficiary`, `event`, `tags[]`, `store`). Phase 1 actually shipped with a **4-dimensional model**: `category`, `beneficiary`, `event`, `sphere_of_life` (сфера жизни). `tags[]` and `store` were dropped. Historical data import (2012-2026) was also pulled into Phase 1. See the "Current state (post-implementation)" section of [phase1.md](phase1.md) for the authoritative delta. Treat the schemas and examples below as the design intent being iterated on, not the current runtime shape.
+
 ### Overview
 
 A personal expense tracking system for a single user living in Serbia.

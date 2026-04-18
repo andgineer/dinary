@@ -10,6 +10,70 @@ Move from Phase 0 (direct Google Sheets writes) to a DuckDB-backed architecture:
 
 This is **replay protection** (retry of the same queued item, timeout retries, same `expense_id` from another device). Semantic dedup (user enters the same purchase twice with different IDs) is out of scope for Phase 1.
 
+## Current state (post-implementation, 2026-04)
+
+Parts of the original Phase 1 design diverged during implementation. This section is the source of truth for the actual system; older sections below describe the design intent and rationale but may differ in details.
+
+### Dimensional model: 4D, not 5D
+
+The implemented model has **four** dimensions instead of the originally planned five:
+
+1. `category` — what was bought (from the fixed taxonomy in [docs/src/ru/taxonomy.md](../docs/src/ru/taxonomy.md))
+2. `beneficiary` — for whom (nullable)
+3. `event` — as part of which event (nullable; auto-created `отпуск-YYYY` / `командировка-YYYY`)
+4. `sphere_of_life` (сфера жизни) — cross-cutting context (nullable; `релокация` / `профессиональное` / `дача`)
+
+Dropped vs. original Phase 1 design:
+
+- `tags` — replaced by the single-valued `sphere_of_life` dimension. The original multi-tag array model was not needed in practice.
+- `store` — dropped entirely. No practical use case emerged; can be reintroduced later if needed.
+
+The taxonomy of 35 categories is declared in `ENTRY_GROUPS` (see [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py)) and enforced by `ensure_category()` — any attempt to create a category outside the frozen taxonomy raises `ValueError`. See [docs/src/ru/taxonomy.md](../docs/src/ru/taxonomy.md) for the full list and boundary rules (insurance, books, toys, командировка vs релокация, etc.).
+
+### Currency model
+
+- All amounts are stored in **EUR** in `expenses.amount`.
+- `amount_original` + `currency_original` preserve the original value for audit.
+- Historical conversion uses the NBS (National Bank of Serbia) middle rate on the 1st of the expense month. The cache lives in `config.duckdb.exchange_rates`.
+- **Frankfurter fallback**: NBS has no RUB rates before Dec 2012. `get_rate` falls back to Frankfurter (ECB historical) for the missing currency, then bridges via NBS `EUR → RSD` to produce a `CURRENCY → RSD` rate. Implemented in [src/dinary/services/nbs.py](../src/dinary/services/nbs.py).
+
+### Historical data import IS in scope
+
+The "Scope boundary" at the bottom of this file was wrong: historical data migration is now implemented and executed. All years 2012–2026 (minus 2020 until it was rediscovered) have been re-imported from their respective Google Sheets into `budget_YYYY.duckdb`.
+
+- `sheet_import_sources` in `config.duckdb` maps each year to its spreadsheet ID, worksheet name, and layout key.
+- `SheetLayout` (in [src/dinary/services/import_sheet.py](../src/dinary/services/import_sheet.py)) describes the column positions for each historical sheet generation: `default`, `rub`, `rub_fallback`, `rub_6col`, `rub_2016`, `rub_2014`, `rub_2012`.
+- `import_year(year, wipe_all=True)` is the destructive re-import entry point used for full rebuilds.
+- The `source_type` and `source_envelope` of every imported row are stored on `expenses` so that round-trip verification (`inv verify-sheet-equivalence`) can aggregate back into the original sheet shape and compare totals cell-by-cell.
+
+As of 2026-04, the DB holds ~3 900 historical expenses across 2012–2026 with **zero diff in totals** vs. the source spreadsheets for every year (`comment_diffs` are informational only — they appear when multiple rows with the same `(type, envelope)` within a month each carry partial comments joined with `;` in the sheet representation).
+
+### Mapping table
+
+The design table `sheet_category_mapping` is implemented as **`source_type_mapping`** in `config.duckdb`. Key differences vs. original design:
+
+- Primary key is `(year, source_type, source_envelope)` — mappings can be year-specific, with `year = 0` acting as a catch-all wildcard. When resolving a mapping for year `Y`, the row with `year = Y` wins over the row with `year = 0`.
+- Columns: `category_id`, `beneficiary_id`, `event_id`, `sphere_of_life_id` (not `tag_ids[]`, not `store_id`).
+- Year-dependent fallback resolution happens at import time (see `_sphere_for_source` / `_event_name_for_source` in [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py)). This is how `командировка`'s sphere and event flip between `профессиональное+event` (≤ 2021) and `релокация+no event` (≥ 2022) without needing a separate mapping row per year.
+
+Automatic category resolution from `(source_type, source_envelope)` is handled by `_canonical_category_for_source()` and a set of envelope-based sub-dispatchers (`_EDA_*`, `_MASHINA_*`, `_DACHA_*`, `_RAZVL_*`, `_COMMUNAL_*`, etc.), plus `_apply_housing_heuristics()` which uses comment keywords (`_TOOL_KEYWORDS`, `_ELECTRONICS_KEYWORDS`, `_MATERIAL_KEYWORDS`) to refine the category for mixed envelopes like `DIY` / `DYI`.
+
+### Operational workflow (verified 2026-04)
+
+1. `inv deploy` — pulls latest code, applies config migrations, restarts service (with a pre-deploy backup of `data/`).
+2. `inv rebuild-4d-config` — destructive wipe + rebuild of `config.duckdb` from Google Sheets. Preserves registered `sheet_import_sources`. Yields `{"categories": 35, "beneficiaries": 3, "spheres_of_life": 3, "mappings_created": ~360, "taxonomy_memberships": 35}`.
+3. `inv rebuild-4d-budget --year=YYYY` — destructive re-import of a single year. Used in a loop for 2012…2026 after any taxonomy/mapping change.
+4. `inv verify-sheet-equivalence --year=YYYY` — aggregates DB back into the spreadsheet shape and diffs totals. `"ok": true` means totals match; `comment_diffs` are informational only.
+5. `inv backup` — rsyncs `data/` from the server to the operator's laptop.
+
+### What still matches the original plan
+
+- `config.duckdb` + `budget_YYYY.duckdb` separation with `ATTACH` for cross-DB lookups.
+- `expenses.id PRIMARY KEY` for idempotent ingestion and 409 on same-ID-different-payload.
+- `sheet_sync_jobs` + `inv sync` / fire-and-forget for forward sync (PWA → DB → Sheets) during live operation.
+- Synthetic `отпуск-YYYY` events auto-created for `путешествия` expenses, plus `командировка-YYYY` (pre-2022 only).
+- `GET /api/categories` reads from `config.duckdb`; the PWA still sends flat `(category, group)` pairs.
+
 ## Target flow
 
 ```mermaid
@@ -652,4 +716,8 @@ to reflect:
 
 ## Scope boundary
 
-After cutover, DuckDB holds only post-cutover expenses. Google Sheets retains all historical data. Everything not described above (historical data migration, receipt parsing, AI classification, etc.) is out of scope -- see [architecture.md](architecture.md).
+Original plan: after cutover DuckDB holds only post-cutover expenses; everything historical stays in Google Sheets.
+
+**Actual outcome (2026-04):** historical data migration was pulled into Phase 1 scope. DuckDB now holds **all** expenses 2012–2026, reimported from their respective spreadsheets with zero-diff verification. See "Current state (post-implementation)" at the top of this document.
+
+Still out of scope: receipt parsing, AI classification, native 4D PWA UI -- see [architecture.md](architecture.md).

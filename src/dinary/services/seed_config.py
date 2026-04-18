@@ -69,6 +69,8 @@ class ImportSourceSeedRow:
     worksheet_name: str
     layout_key: str
     notes: str | None
+    income_worksheet_name: str = ""
+    income_layout_key: str = ""
 
 
 _RUB_2012_LAST_YEAR = 2012
@@ -261,8 +263,9 @@ def _load_existing_import_sources() -> list[ImportSourceSeedRow]:
     try:
         try:
             rows = con.execute(
-                "SELECT year, spreadsheet_id, worksheet_name, layout_key, notes "
-                "FROM sheet_import_sources ORDER BY year",
+                "SELECT year, spreadsheet_id, worksheet_name, layout_key, notes,"
+                " income_worksheet_name, income_layout_key"
+                " FROM sheet_import_sources ORDER BY year",
             ).fetchall()
         except duckdb.Error:
             return []
@@ -276,6 +279,8 @@ def _load_existing_import_sources() -> list[ImportSourceSeedRow]:
             worksheet_name=row[2],
             layout_key=row[3],
             notes=row[4],
+            income_worksheet_name=row[5] or "",
+            income_layout_key=row[6] or "",
         )
         for row in rows
     ]
@@ -291,15 +296,26 @@ def _restore_import_sources(rows: list[ImportSourceSeedRow]) -> None:
             con.execute(
                 """
                 INSERT INTO sheet_import_sources
-                    (year, spreadsheet_id, worksheet_name, layout_key, notes)
-                VALUES (?, ?, ?, ?, ?)
+                    (year, spreadsheet_id, worksheet_name, layout_key, notes,
+                     income_worksheet_name, income_layout_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT DO UPDATE SET
                     spreadsheet_id = EXCLUDED.spreadsheet_id,
                     worksheet_name = EXCLUDED.worksheet_name,
                     layout_key = EXCLUDED.layout_key,
-                    notes = EXCLUDED.notes
+                    notes = EXCLUDED.notes,
+                    income_worksheet_name = EXCLUDED.income_worksheet_name,
+                    income_layout_key = EXCLUDED.income_layout_key
                 """,
-                [row.year, row.spreadsheet_id, row.worksheet_name, row.layout_key, row.notes],
+                [
+                    row.year,
+                    row.spreadsheet_id,
+                    row.worksheet_name,
+                    row.layout_key,
+                    row.notes,
+                    row.income_worksheet_name,
+                    row.income_layout_key,
+                ],
             )
     finally:
         con.close()
