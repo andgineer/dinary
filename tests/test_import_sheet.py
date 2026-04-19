@@ -75,7 +75,7 @@ def _mock_sheet():
     return ss
 
 
-def _mock_prefetch_rates(_year, _layout):
+def _mock_prefetch_rates(_year, _layout, *, config_con=None):
     one_to_one = {"rate_cur": Decimal("1"), "rate_eur": Decimal("1")}
     return {m: one_to_one for m in range(1, 13)}
 

@@ -20,7 +20,12 @@ from collections import defaultdict
 from decimal import Decimal
 
 from dinary.services import duckdb_repo
-from dinary.services.import_sheet import LAYOUTS, parse_display_amount, resolve_currency
+from dinary.services.import_sheet import (
+    LAYOUTS,
+    MONTHS_IN_YEAR,
+    parse_display_amount,
+    resolve_currency,
+)
 from dinary.services.sheets import (
     HEADER_ROWS,
     _cell,
@@ -29,7 +34,6 @@ from dinary.services.sheets import (
 
 logger = logging.getLogger(__name__)
 
-_MONTHS_IN_YEAR = 12
 _DIFF_TOLERANCE = Decimal("0.01")
 
 
@@ -55,7 +59,7 @@ def _read_sheet_aggregates(
         if not month_str or not month_str.isdigit():
             continue
         month = int(month_str)
-        if not 1 <= month <= _MONTHS_IN_YEAR:
+        if not 1 <= month <= MONTHS_IN_YEAR:
             continue
 
         category = _cell(row_display, layout.col_category)

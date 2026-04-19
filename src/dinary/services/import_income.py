@@ -14,12 +14,11 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from dinary.services import duckdb_repo
+from dinary.services.import_sheet import MONTHS_IN_YEAR
 from dinary.services.nbs import get_rate
 from dinary.services.sheets import get_sheet
 
 logger = logging.getLogger(__name__)
-
-_MONTHS_IN_YEAR = 12
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +183,7 @@ def _prefetch_monthly_rates(
     rates: dict[int, dict[str, Decimal | None]] = {}
     config_con = duckdb_repo.get_config_connection(read_only=False)
     try:
-        for month in range(1, _MONTHS_IN_YEAR + 1):
+        for month in range(1, MONTHS_IN_YEAR + 1):
             rate_date = date(year, month, 1)
             month_rates: dict[str, Decimal | None] = {}
             for cur in currencies_to_fetch:
@@ -247,7 +246,7 @@ def aggregate_from_sheet(
         row_year, month = parsed_date
         if row_year != year:
             continue
-        if not 1 <= month <= _MONTHS_IN_YEAR:
+        if not 1 <= month <= MONTHS_IN_YEAR:
             continue
 
         amount = _parse_amount(_cell(row, layout.col_amount))

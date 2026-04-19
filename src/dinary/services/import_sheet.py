@@ -84,12 +84,12 @@ _SHEET_BENEFICIARY_TAG_BY_VALUE: dict[str, str] = {
     "андрей": "Андрей",
 }
 
-_MONTHS_IN_YEAR = 12
+MONTHS_IN_YEAR = 12
 
 _RUB_RSD_TRANSITION_YEAR = 2022
 _RUB_RSD_TRANSITION_MONTH = 4
 _RELOCATION_UTILITIES_THRESHOLD_EUR = 200
-_RUSSIA_TRIP_FIX_YEAR = 2026
+RUSSIA_TRIP_FIX_YEAR = 2026
 
 _REPAIR_KEYWORDS = (
     "ремонт",
@@ -273,17 +273,30 @@ def _stable_id(year: int, month: int, row_idx: int, category: str, group: str) -
     return f"legacy-{year}{month:02d}-{short_hash}"
 
 
-def _prefetch_monthly_rates(year: int, layout: SheetLayout) -> dict[int, dict[str, Decimal]]:
+def _prefetch_monthly_rates(
+    year: int,
+    layout: SheetLayout,
+    *,
+    config_con=None,
+) -> dict[int, dict[str, Decimal]]:
     """Pre-fetch NBS rates for every month in `year`, keyed by month.
 
-    Opens config_con on its own so it does not collide with the budget_con
-    transaction; the budget_con holds an EXCLUSIVE-style lock on the file
-    while the import runs.
+    Under the singleton-engine model in ``duckdb_repo`` (see its
+    module docstring) ``get_config_connection`` returns a cursor of
+    the shared engine, so passing ``config_con`` is purely an
+    optimization: it lets a long-running caller (the 2D-to-3D report)
+    avoid one extra ``cursor()`` + ``USE config`` round-trip per year.
+    When ``config_con`` is ``None`` we cut a fresh cursor of the
+    singleton ourselves; that's the path taken by ``import_year``,
+    which has already closed its own config cursor before reaching
+    here.
     """
-    rates: dict[int, dict[str, Decimal]] = {}
-    config_con = duckdb_repo.get_config_connection(read_only=False)
+    own_con = config_con is None
+    if own_con:
+        config_con = duckdb_repo.get_config_connection(read_only=False)
     try:
-        for month in range(1, _MONTHS_IN_YEAR + 1):
+        rates: dict[int, dict[str, Decimal]] = {}
+        for month in range(1, MONTHS_IN_YEAR + 1):
             currency = resolve_currency(year, month, layout)
             if currency == "EUR":
                 rates[month] = {}
@@ -292,9 +305,10 @@ def _prefetch_monthly_rates(year: int, layout: SheetLayout) -> dict[int, dict[st
             rate_cur = get_rate(config_con, rate_date, currency)
             rate_eur = get_rate(config_con, rate_date, "EUR")
             rates[month] = {"rate_cur": rate_cur, "rate_eur": rate_eur}
+        return rates
     finally:
-        config_con.close()
-    return rates
+        if own_con:
+            config_con.close()
 
 
 def _convert_with_prefetched(
@@ -528,6 +542,224 @@ def _resolve_dimensions(  # noqa: C901, PLR0913, PLR0912
 
 
 # ---------------------------------------------------------------------------
+# Shared row-resolution helper (used by both the importer and the report)
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ResolutionContext:
+    """Per-year event ids needed by ``resolve_row_to_3d``."""
+
+    travel_event_id: int
+    business_trip_event_id: int | None
+    relocation_event_id: int | None
+    russia_trip_event_id: int | None
+
+
+def build_resolution_context(con, year: int) -> ResolutionContext | None:
+    """Look up all per-year event ids needed to resolve sheet rows.
+
+    Returns ``None`` if the synthetic vacation event for *year* is missing,
+    which means the catalog has not been seeded for this year yet.
+
+    Behavioral note: callers that consider a missing seed a fatal error
+    (``import_year``) translate ``None`` into a ``ValueError`` with a
+    "re-run rebuild-catalog" hint. Tolerant callers (the 2D-to-3D
+    report) skip the year and continue.
+    """
+    travel_event_id = _resolve_event_id(con, _synthetic_event_for_year(year))
+    if travel_event_id is None:
+        return None
+    bt_name = _business_trip_event_for_year(year)
+    business_trip_event_id = _resolve_event_id(con, bt_name) if bt_name else None
+    relocation_event_id = _resolve_event_id(con, RELOCATION_EVENT_NAME)
+    russia_trip_event_id = (
+        _resolve_event_id(con, RUSSIA_TRIP_EVENT_NAME) if year == RUSSIA_TRIP_FIX_YEAR else None
+    )
+    return ResolutionContext(
+        travel_event_id=travel_event_id,
+        business_trip_event_id=business_trip_event_id,
+        relocation_event_id=relocation_event_id,
+        russia_trip_event_id=russia_trip_event_id,
+    )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class RowResolution:
+    """Side-effect-free result of resolving a sheet row to 3D dimensions."""
+
+    category_id: int
+    category_name: str
+    event_id: int | None
+    event_name: str | None
+    tag_ids: tuple[int, ...]
+    tag_names: tuple[str, ...]
+    resolution_kind: str
+
+
+def _resolve_tag_names(con, tag_ids: list[int] | tuple[int, ...]) -> tuple[str, ...]:
+    if not tag_ids:
+        return ()
+    placeholders = ",".join("?" * len(tag_ids))
+    rows = con.execute(
+        f"SELECT name FROM config.tags WHERE id IN ({placeholders}) ORDER BY name",  # noqa: S608
+        list(tag_ids),
+    ).fetchall()
+    return tuple(r[0] for r in rows)
+
+
+def _category_name_for_id(con, category_id: int) -> str:
+    row = con.execute(
+        "SELECT name FROM config.categories WHERE id = ?",
+        [category_id],
+    ).fetchone()
+    return row[0] if row else ""
+
+
+def _simulate_post_import_fix(  # noqa: PLR0913
+    con,
+    *,
+    comment: str,
+    year: int,
+    month: int,
+    row_idx: int,
+    sheet_category: str,
+    sheet_group: str,
+    russia_trip_event_id: int | None,
+) -> tuple[int, int | None] | None:
+    """Check whether a post-import fix would override this row.
+
+    Mirrors ``_apply_post_import_fixes_body`` without any DB writes.
+    Returns ``(category_id, event_id_or_None)`` when a fix matches.
+
+    Caveat: the 2018 rent special case keys on the literal expense id
+    "legacy-201806-269ec46a", which was derived from the importer's
+    ``_stable_id`` of one specific row. The report only fires that branch
+    when its own iteration order over the sheet produces the exact same
+    id, so a re-ordered or trimmed sheet can hide this fix from the
+    report even when the importer would still apply it.
+    """
+    comment_lower = comment.lower().strip()
+
+    for fix_comment, category_name in _POST_IMPORT_CATEGORY_FIXES.items():
+        if comment_lower == fix_comment:
+            cat_id = _resolve_category_id(con, category_name)
+            if cat_id is not None:
+                return (cat_id, None)
+
+    if year == 2018:  # noqa: PLR2004
+        expense_id = _stable_id(year, month, row_idx, sheet_category, sheet_group)
+        if expense_id == "legacy-201806-269ec46a" or comment_lower == "покупка валюты":
+            rent_id = _resolve_category_id(con, "аренда")
+            if rent_id is not None:
+                return (rent_id, None)
+
+    if year == RUSSIA_TRIP_FIX_YEAR and comment_lower == "билеты в россию август 2026":
+        transport_id = _resolve_category_id(con, "транспорт")
+        if transport_id is not None and russia_trip_event_id is not None:
+            return (transport_id, russia_trip_event_id)
+
+    return None
+
+
+def resolve_row_to_3d(  # noqa: PLR0913
+    con,
+    *,
+    sheet_category: str,
+    sheet_group: str,
+    comment: str,
+    amount_eur: float,
+    year: int,
+    month: int,
+    row_idx: int,
+    travel_event_id: int,
+    business_trip_event_id: int | None,
+    relocation_event_id: int | None,
+    russia_trip_event_id: int | None = None,
+    beneficiary_raw: str = "",
+) -> RowResolution | None:
+    """Resolve a raw sheet row to 3D dimensions with provenance.
+
+    Side-effect-free: no row inserts, no ID allocation, no writes.
+    Combines ``_resolve_dimensions``, beneficiary tagging, and
+    post-import fix simulation into one call for the 2D-to-3D report.
+    """
+    mapping = duckdb_repo.resolve_mapping_for_year(
+        con,
+        sheet_category,
+        sheet_group,
+        year,
+    )
+    if mapping is not None:
+        pre_heuristic_name = _category_name_for_id(con, mapping.category_id)
+        kind_primary = "mapping"
+    else:
+        try:
+            pre_heuristic_name = canonical_category_for_source(
+                sheet_category,
+                sheet_group,
+            )
+        except ValueError:
+            pre_heuristic_name = None
+        kind_primary = "derivation"
+
+    resolved = _resolve_dimensions(
+        con,
+        source_type=sheet_category,
+        source_envelope=sheet_group,
+        comment=comment,
+        amount_eur=amount_eur,
+        year=year,
+        travel_event_id=travel_event_id,
+        business_trip_event_id=business_trip_event_id,
+        relocation_event_id=relocation_event_id,
+    )
+    if resolved is None:
+        return None
+
+    category_id, event_id, tag_ids = resolved
+    kind_parts: list[str] = [kind_primary]
+
+    category_name = _category_name_for_id(con, category_id)
+    if pre_heuristic_name and category_name != pre_heuristic_name:
+        kind_parts.append("heuristic")
+
+    if beneficiary_raw:
+        who_key = beneficiary_raw.lower().strip()
+        tag_name = _SHEET_BENEFICIARY_TAG_BY_VALUE.get(who_key)
+        if tag_name is not None:
+            extra_ids = _resolve_tag_ids(con, [tag_name])
+            tag_ids = sorted(set(tag_ids) | set(extra_ids))
+
+    postfix = _simulate_post_import_fix(
+        con,
+        comment=comment,
+        year=year,
+        month=month,
+        row_idx=row_idx,
+        sheet_category=sheet_category,
+        sheet_group=sheet_group,
+        russia_trip_event_id=russia_trip_event_id,
+    )
+    if postfix is not None:
+        category_id, fix_event_id = postfix
+        category_name = _category_name_for_id(con, category_id)
+        if fix_event_id is not None:
+            event_id = fix_event_id
+        kind_parts.append("postfix")
+
+    return RowResolution(
+        category_id=category_id,
+        category_name=category_name,
+        event_id=event_id,
+        event_name=_event_name_from_id(con, event_id),
+        tag_ids=tuple(tag_ids),
+        tag_names=_resolve_tag_names(con, tag_ids),
+        resolution_kind="+".join(kind_parts),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Post-import fixes (operate directly on inserted rows by deterministic id /
 # comment match; preserved verbatim from the previous importer)
 # ---------------------------------------------------------------------------
@@ -590,7 +822,7 @@ def _apply_post_import_fixes_body(
             [rent_category_id],
         )
 
-    if year == _RUSSIA_TRIP_FIX_YEAR:
+    if year == RUSSIA_TRIP_FIX_YEAR:
         transport_category_id = _resolve_category_id(con, "транспорт")
         if transport_category_id is not None and russia_trip_event_id is not None:
             con.execute(
@@ -603,6 +835,106 @@ def _apply_post_import_fixes_body(
                 [transport_category_id, russia_trip_event_id],
             )
     logger.info("Applied post-import fixes for %d", year)
+
+
+# ---------------------------------------------------------------------------
+# Public sheet-row iteration helper
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ParsedSheetRow:
+    """A sheet row that has cleared the importer's filtering and parsing."""
+
+    row_idx: int
+    year: int
+    month: int
+    sheet_category: str
+    sheet_group: str
+    comment: str
+    beneficiary_raw: str
+    amount_original: float
+    currency_original: str
+    amount_eur: float
+
+
+def iter_parsed_sheet_rows(year: int, *, config_con=None):
+    """Yield ``ParsedSheetRow`` for every importable row of *year*.
+
+    Reuses the same parsing, month filtering, and FX conversion that
+    ``import_year`` applies, so consumers (e.g. the 2D-to-3D report) get
+    bit-identical inputs to whatever the importer would have processed.
+
+    If *config_con* is provided, ``_prefetch_monthly_rates`` reuses it
+    instead of opening a fresh config cursor.
+    """
+    source = duckdb_repo.get_import_source(year)
+    if source is None:
+        own_con = config_con is None
+        if own_con:
+            config_con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            available = [
+                r[0]
+                for r in config_con.execute(
+                    "SELECT year FROM sheet_import_sources ORDER BY year",
+                ).fetchall()
+            ]
+        finally:
+            if own_con:
+                config_con.close()
+        msg = f"year {year} not in sheet_import_sources. Available years: {available}"
+        raise ValueError(msg)
+    layout = LAYOUTS[source.layout_key]
+    monthly_rates = _prefetch_monthly_rates(year, layout, config_con=config_con)
+
+    ss = get_sheet(source.spreadsheet_id)
+    ws = ss.worksheet(source.worksheet_name) if source.worksheet_name else ss.sheet1
+    all_values = ws.get_all_values()
+
+    for row_idx in range(HEADER_ROWS, len(all_values)):
+        row_display = all_values[row_idx]
+
+        month_str = _cell(row_display, layout.col_month)
+        if not month_str or not month_str.isdigit():
+            continue
+        month = int(month_str)
+        if not 1 <= month <= MONTHS_IN_YEAR:
+            continue
+
+        sheet_category = _cell(row_display, layout.col_category)
+        sheet_group = _cell(row_display, layout.col_group)
+        if not sheet_category:
+            continue
+
+        amounts = _read_amounts_for_row(
+            row_display=row_display,
+            layout=layout,
+            year=year,
+            month=month,
+            monthly_rates=monthly_rates,
+        )
+        if amounts is None:
+            continue
+        amount_original, currency_original, amount_eur = amounts
+
+        comment = _cell(row_display, layout.col_comment)
+        beneficiary_raw = (
+            _cell(row_display, layout.col_beneficiary) if layout.col_beneficiary else ""
+        )
+
+        yield ParsedSheetRow(
+            row_idx=row_idx,
+            year=year,
+            month=month,
+            sheet_category=sheet_category,
+            sheet_group=sheet_group,
+            comment=comment,
+            beneficiary_raw=beneficiary_raw,
+            amount_original=amount_original,
+            currency_original=currency_original,
+            amount_eur=amount_eur,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -619,44 +951,23 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
     """
     duckdb_repo.init_config_db()
 
-    russia_trip_event_id: int | None = None
     config_con = duckdb_repo.get_config_connection(read_only=True)
     try:
-        travel_event_id = _resolve_event_id(config_con, _synthetic_event_for_year(year))
-        if travel_event_id is None:
+        ctx = build_resolution_context(config_con, year)
+        if ctx is None:
             msg = (
                 f"Synthetic vacation event for year {year} is missing from config.events. "
                 "Re-run `inv rebuild-catalog` so seed_config can create it."
             )
             raise ValueError(msg)
-        business_trip_event_name = _business_trip_event_for_year(year)
-        business_trip_event_id = (
-            _resolve_event_id(config_con, business_trip_event_name)
-            if business_trip_event_name
-            else None
-        )
-        relocation_event_id = _resolve_event_id(config_con, RELOCATION_EVENT_NAME)
-        if year == _RUSSIA_TRIP_FIX_YEAR:
-            # Look up only — the event row itself is created by `seed_config`'s
-            # EXPLICIT_EVENTS, so `catalog_version` correctly reflects its
-            # presence and the import path stays read-only against config.duckdb.
-            russia_trip_event_id = _resolve_event_id(config_con, RUSSIA_TRIP_EVENT_NAME)
-            if russia_trip_event_id is None:
-                msg = (
-                    f"Event {RUSSIA_TRIP_EVENT_NAME!r} is missing from config.events. "
-                    "Re-run `inv rebuild-catalog --yes` so seed_config can create it."
-                )
-                raise ValueError(msg)
+        if year == RUSSIA_TRIP_FIX_YEAR and ctx.russia_trip_event_id is None:
+            msg = (
+                f"Event {RUSSIA_TRIP_EVENT_NAME!r} is missing from config.events. "
+                "Re-run `inv rebuild-catalog --yes` so seed_config can create it."
+            )
+            raise ValueError(msg)
     finally:
         config_con.close()
-
-    source = duckdb_repo.get_import_source(year)
-    if source is None:
-        msg = f"sheet_import_sources is missing a row for year {year}"
-        raise ValueError(msg)
-    layout = LAYOUTS[source.layout_key]
-
-    monthly_rates = _prefetch_monthly_rates(year, layout)
 
     # `import_year` is the destructive bootstrap path called only by
     # `inv rebuild-budget --yes`. Unlink the budget DB file before opening
@@ -667,6 +978,12 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
     #      remains as defence-in-depth against partial-state edge cases.
     budget_db_path = duckdb_repo.budget_path(year)
     if budget_db_path.exists():
+        # Release the singleton engine's ATTACH on this year before
+        # deleting the file; otherwise yoyo's separate `duckdb.connect()`
+        # inside `init_budget_db` would clash with the still-attached
+        # handle on the (now-vanished) inode. See
+        # `duckdb_repo.release_budget_attach`.
+        duckdb_repo.release_budget_attach(year)
         budget_db_path.unlink()
 
     con = duckdb_repo.get_budget_connection(year)
@@ -691,53 +1008,22 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
         con.execute("DELETE FROM expense_tags")
         con.execute("DELETE FROM expenses")
 
-        ss = get_sheet(source.spreadsheet_id)
-        ws = ss.worksheet(source.worksheet_name) if source.worksheet_name else ss.sheet1
-        all_values = ws.get_all_values()
-
         created = 0
         errors = 0
         months_seen: set[int] = set()
 
-        for row_idx in range(HEADER_ROWS, len(all_values)):
-            row_display = all_values[row_idx]
-
-            month_str = _cell(row_display, layout.col_month)
-            if not month_str or not month_str.isdigit():
-                continue
-            month = int(month_str)
-            if not 1 <= month <= _MONTHS_IN_YEAR:
-                continue
-
-            sheet_category = _cell(row_display, layout.col_category)
-            sheet_group = _cell(row_display, layout.col_group)
-            if not sheet_category:
-                continue
-
-            amounts = _read_amounts_for_row(
-                row_display=row_display,
-                layout=layout,
-                year=year,
-                month=month,
-                monthly_rates=monthly_rates,
-            )
-            if amounts is None:
-                continue
-            amount_original, currency_original, amount_eur = amounts
-
-            comment = _cell(row_display, layout.col_comment)
-
+        for parsed in iter_parsed_sheet_rows(year):
             try:
                 resolved = _resolve_dimensions(
                     con,
-                    source_type=sheet_category,
-                    source_envelope=sheet_group,
-                    comment=comment,
-                    amount_eur=amount_eur,
+                    source_type=parsed.sheet_category,
+                    source_envelope=parsed.sheet_group,
+                    comment=parsed.comment,
+                    amount_eur=parsed.amount_eur,
                     year=year,
-                    travel_event_id=travel_event_id,
-                    business_trip_event_id=business_trip_event_id,
-                    relocation_event_id=relocation_event_id,
+                    travel_event_id=ctx.travel_event_id,
+                    business_trip_event_id=ctx.business_trip_event_id,
+                    relocation_event_id=ctx.relocation_event_id,
                 )
             except ValueError:
                 # `_resolve_dimensions` raises when a tag is missing from
@@ -745,8 +1031,8 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
                 # rather than tearing down the whole import.
                 logger.exception(
                     "Failed to resolve dimensions for (%r, %r) in year %d",
-                    sheet_category,
-                    sheet_group,
+                    parsed.sheet_category,
+                    parsed.sheet_group,
                     year,
                 )
                 errors += 1
@@ -755,17 +1041,16 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
             if resolved is None:
                 logger.warning(
                     "No mapping for (%r, %r) in year %d; skipping row",
-                    sheet_category,
-                    sheet_group,
+                    parsed.sheet_category,
+                    parsed.sheet_group,
                     year,
                 )
                 errors += 1
                 continue
             category_id, event_id, tag_ids = resolved
 
-            if layout.col_beneficiary is not None:
-                who_raw = _cell(row_display, layout.col_beneficiary)
-                who_key = who_raw.lower().strip()
+            if parsed.beneficiary_raw:
+                who_key = parsed.beneficiary_raw.lower().strip()
                 tag_name = _SHEET_BENEFICIARY_TAG_BY_VALUE.get(who_key)
                 if tag_name is not None:
                     try:
@@ -774,30 +1059,36 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
                         logger.exception(
                             "Failed to resolve beneficiary tag %r for row %d",
                             tag_name,
-                            row_idx,
+                            parsed.row_idx,
                         )
                         errors += 1
                         continue
                     tag_ids = sorted(set(tag_ids) | set(extra_ids))
 
-            months_seen.add(month)
+            months_seen.add(parsed.month)
 
-            expense_id = _stable_id(year, month, row_idx, sheet_category, sheet_group)
-            expense_dt = datetime(year, month, 1, 12, 0, 0)
+            expense_id = _stable_id(
+                year,
+                parsed.month,
+                parsed.row_idx,
+                parsed.sheet_category,
+                parsed.sheet_group,
+            )
+            expense_dt = datetime(year, parsed.month, 1, 12, 0, 0)
 
             try:
                 duckdb_repo.insert_expense(
                     con,
                     expense_id=expense_id,
                     expense_datetime=expense_dt,
-                    amount=amount_eur,
-                    amount_original=amount_original,
-                    currency_original=currency_original,
+                    amount=parsed.amount_eur,
+                    amount_original=parsed.amount_original,
+                    currency_original=parsed.currency_original,
                     category_id=category_id,
                     event_id=event_id,
-                    comment=comment,
-                    sheet_category=sheet_category,
-                    sheet_group=sheet_group,
+                    comment=parsed.comment,
+                    sheet_category=parsed.sheet_category,
+                    sheet_group=parsed.sheet_group,
                     tag_ids=tag_ids,
                     enqueue_sync=False,
                 )
@@ -806,12 +1097,16 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
                 logger.exception(
                     "Failed to insert expense %s for %s/%s",
                     expense_id,
-                    sheet_category,
-                    sheet_group,
+                    parsed.sheet_category,
+                    parsed.sheet_group,
                 )
                 errors += 1
 
-        _apply_post_import_fixes(year, con, russia_trip_event_id=russia_trip_event_id)
+        _apply_post_import_fixes(
+            year,
+            con,
+            russia_trip_event_id=ctx.russia_trip_event_id,
+        )
 
         return {
             "year": year,

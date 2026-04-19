@@ -222,7 +222,13 @@ def _ensure_import_sources(con: duckdb.DuckDBPyConnection, *, default_year: int)
 def _load_existing_import_sources() -> list[ImportSourceSeedRow]:
     if not duckdb_repo.CONFIG_DB.exists():
         return []
-    con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True)
+    # Route through the singleton engine: a bare `duckdb.connect()`
+    # would clash with an already-attached config in the same process
+    # (the BinderException class motivating the singleton-engine
+    # refactor). `get_config_connection` returns a cursor of the
+    # singleton, which both avoids the conflict and shares the
+    # config ATTACH the rest of the process is already using.
+    con = duckdb_repo.get_config_connection(read_only=True)
     try:
         try:
             rows = con.execute(
@@ -1254,6 +1260,13 @@ def rebuild_config_from_sheets() -> dict:
 
     preserved_sources = _load_existing_import_sources()
     if duckdb_repo.CONFIG_DB.exists():
+        # Release the singleton engine's ATTACH on config before
+        # deleting the file. Without this the next ATTACH (lazy, on the
+        # `init_config_db` below) would race with a stale handle to the
+        # deleted inode and the destructive flow would silently degrade
+        # into a half-rebuild. See `duckdb_repo.release_config_attach`
+        # for the full process-wide invariant.
+        duckdb_repo.release_config_attach()
         duckdb_repo.CONFIG_DB.unlink()
 
     duckdb_repo.init_config_db()

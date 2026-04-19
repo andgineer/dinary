@@ -1,10 +1,48 @@
 """DuckDB repository: config.duckdb (catalog) and budget_YYYY.duckdb (ledger).
 
-Uses ATTACH for cross-DB referential integrity validation.
+Process-wide single engine model
+---------------------------------
+DuckDB enforces a per-process invariant that any database file may only
+be opened by ONE engine in that process — opening it a second time (even
+via `ATTACH` from a different `duckdb.connect()` instance) raises
+
+    BinderException: Unique file handle conflict: Cannot attach
+    "config" - the database file ... is already attached by database
+    "config"
+
+We hit this in production right after the 3D rollout: the async
+sheet-sync worker holds a `budget_YYYY` connection (which previously
+ATTACHed config READ_ONLY inside its own engine) for the duration of a
+gspread roundtrip. While that worker was parked on the network, every
+`POST /api/expenses` whose `convert_to_eur` step needed a config RW
+connection turned into a 500.
+
+The fix: keep ONE DuckDB engine for the whole process. `config.duckdb`
+and every needed `budget_YYYY.duckdb` are ATTACHed onto that engine
+exactly once, with the same lifetime as the engine. `get_*_connection`
+returns a fresh `cursor()` of the engine, with `USE config` or
+`USE budget_<year>` set so existing SQL — which assumes the relevant
+DB is the "current" one — keeps working. Cursors share the engine but
+have independent transaction state, so `BEGIN/COMMIT/ROLLBACK` semantics
+in `insert_expense`, `claim_sync_job`, `reserve_expense_id_year`, etc.
+are unchanged.
+
+Migration coordination
+----------------------
+Yoyo runs migrations through its own `duckdb.connect(path)` call —
+which would itself trigger the BinderException if the singleton already
+has the file attached. `init_config_db` / `init_budget_db` therefore
+DETACH the file from the singleton (if attached) before invoking yoyo,
+and the next `get_*_connection` call lazily re-ATTACHes. The same
+contract applies to destructive `unlink()` paths: `release_config_attach`
+and `release_budget_attach` are the public hooks that
+`seed_config.rebuild_config_from_sheets` and `import_sheet.import_year`
+call before deleting a DB file out from under us.
 """
 
 import dataclasses
 import logging
+import threading
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -21,6 +59,120 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path("data")
 
 CONFIG_DB = DATA_DIR / "config.duckdb"
+
+# ---------------------------------------------------------------------------
+# Process-wide DuckDB engine (see module docstring)
+# ---------------------------------------------------------------------------
+
+_engine_lock = threading.Lock()
+
+
+class _EngineState:
+    """Mutable container for the singleton-engine bookkeeping.
+
+    A class instance lets us mutate state inside helper functions
+    without `global` declarations at every call site (pylint PLW0603
+    flags the `global` keyword for good reason — it's the most common
+    source of "why is this changing under me?" bugs). The module-level
+    `_engine_state` instance below is the single source of truth.
+    """
+
+    __slots__ = ("attached_budget_years", "config_attached", "engine")
+
+    def __init__(self) -> None:
+        self.engine: duckdb.DuckDBPyConnection | None = None
+        self.config_attached: bool = False
+        self.attached_budget_years: set[int] = set()
+
+
+_engine_state = _EngineState()
+
+
+def _ensure_engine() -> duckdb.DuckDBPyConnection:
+    """Lazily create the process-wide `:memory:` engine. Caller holds `_engine_lock`."""
+    if _engine_state.engine is None:
+        # The primary DB is `:memory:` so there is no on-disk file to
+        # collide with anything else; config and budget DBs are
+        # exclusively reached through ATTACH on this engine.
+        _engine_state.engine = duckdb.connect(":memory:")
+    return _engine_state.engine
+
+
+def _ensure_config_attached_locked() -> duckdb.DuckDBPyConnection:
+    engine = _ensure_engine()
+    if not _engine_state.config_attached:
+        # ATTACH does not accept the path as a bound parameter; SQL-escape
+        # the single quote for paths that legally contain it (macOS user
+        # dirs, pytest tmp paths under `O'Brien` etc.).
+        config_path_sql = str(CONFIG_DB).replace("'", "''")
+        engine.execute(f"ATTACH '{config_path_sql}' AS config (READ_WRITE)")
+        _engine_state.config_attached = True
+    return engine
+
+
+def _ensure_budget_attached_locked(year: int) -> duckdb.DuckDBPyConnection:
+    engine = _ensure_config_attached_locked()
+    if year not in _engine_state.attached_budget_years:
+        path_sql = str(budget_path(year)).replace("'", "''")
+        engine.execute(f"ATTACH '{path_sql}' AS budget_{year} (READ_WRITE)")
+        _engine_state.attached_budget_years.add(year)
+    return engine
+
+
+def release_config_attach() -> None:
+    """DETACH config from the singleton engine (no-op if not attached).
+
+    Public so destructive paths that `unlink()` `config.duckdb` (the
+    `inv rebuild-catalog` flow inside `seed_config.rebuild_config_from_sheets`)
+    can release the file handle BEFORE the unlink. The next
+    `get_config_connection` call re-ATTACHes lazily against the new
+    file. Without this, a still-attached DuckDB would either prevent
+    the unlink (Windows) or leave a dangling file handle pointing at
+    the deleted inode (POSIX), and the next ATTACH would refuse with
+    BinderException.
+    """
+    with _engine_lock:
+        if _engine_state.engine is None or not _engine_state.config_attached:
+            return
+        # If a budget DB is still attached, it holds an internal
+        # reference to config (DuckDB won't let us DETACH config while
+        # there are queries pending). Detach those first to avoid the
+        # `Cannot detach database "config" because it is referenced`
+        # error class. The next get_budget_connection re-ATTACHes them.
+        for year in list(_engine_state.attached_budget_years):
+            try:
+                _engine_state.engine.execute(f"DETACH budget_{year}")
+            except duckdb.Error:
+                logger.exception(
+                    "Failed to DETACH budget_%d before releasing config",
+                    year,
+                )
+            _engine_state.attached_budget_years.discard(year)
+        try:
+            _engine_state.engine.execute("DETACH config")
+        except duckdb.Error:
+            logger.exception("Failed to DETACH config in release_config_attach")
+        _engine_state.config_attached = False
+
+
+def release_budget_attach(year: int) -> None:
+    """DETACH a budget_YYYY DB from the singleton engine (no-op if not attached).
+
+    Public for the same reason as `release_config_attach`: the
+    `import_sheet.import_year` bootstrap path `unlink()`s the budget DB
+    file before re-creating it under the (possibly new) schema, and the
+    file must be released from the engine first. Symmetric to the
+    config helper; safe to call when nothing is attached.
+    """
+    with _engine_lock:
+        if _engine_state.engine is None or year not in _engine_state.attached_budget_years:
+            return
+        try:
+            _engine_state.engine.execute(f"DETACH budget_{year}")
+        except duckdb.Error:
+            logger.exception("Failed to DETACH budget_%d", year)
+        _engine_state.attached_budget_years.discard(year)
+
 
 # Default time after which an in_progress sheet_sync_jobs claim is considered
 # stale and may be reclaimed by a new worker. Workers should pass an explicit
@@ -140,16 +292,30 @@ def ensure_data_dir() -> None:
 
 
 def init_config_db() -> None:
-    """Create or migrate config.duckdb to the latest schema."""
+    """Create or migrate config.duckdb to the latest schema.
+
+    Releases the singleton's ATTACH on config first: yoyo opens its own
+    `duckdb.connect(CONFIG_DB)` to apply migrations, which would clash
+    with the singleton's still-attached handle (the BinderException
+    that motivated the singleton-engine refactor). The next
+    `get_config_connection` re-ATTACHes lazily.
+    """
     ensure_data_dir()
+    release_config_attach()
     db_migrations.migrate_config_db(CONFIG_DB)
 
 
 def init_budget_db(year: int) -> Path:
-    """Create or migrate a yearly budget DB and return its path."""
+    """Create or migrate a yearly budget DB and return its path.
+
+    Same migration-coordination contract as `init_config_db`: yoyo
+    needs exclusive file access, so we release the singleton's ATTACH
+    on this year first.
+    """
     ensure_data_dir()
     path = budget_path(year)
     created = not path.exists()
+    release_budget_attach(year)
     db_migrations.migrate_budget_db(path)
     if created:
         logger.info("Created %s", path)
@@ -157,29 +323,46 @@ def init_budget_db(year: int) -> Path:
 
 
 def get_budget_connection(year: int) -> duckdb.DuckDBPyConnection:
-    """Open a connection to budget_YYYY.duckdb, creating it if needed.
+    """Return a cursor of the singleton engine pointed at `budget_<year>`.
 
-    The caller is responsible for closing the connection.
-    The connection has config.duckdb ATTACHed as 'config' (READ_ONLY).
+    The cursor has `USE budget_<year>` set so existing SQL — which
+    treats `expenses` / `expense_tags` / `sheet_sync_jobs` as the
+    "current" tables — keeps working. Cross-DB references to config
+    use the `config.X` qualifier and resolve through the same engine,
+    so no ATTACH inside the budget cursor is needed (and that's
+    exactly the ATTACH that produced the BinderException before this
+    refactor).
+
+    The caller is responsible for closing the returned cursor;
+    `cursor.close()` only closes the cursor, leaving the underlying
+    engine and its ATTACHes intact for subsequent callers.
     """
-    path = init_budget_db(year)
-    con = duckdb.connect(str(path))
-    try:
-        # DuckDB's ATTACH does not accept the path as a bound parameter, so
-        # we have to interpolate. SQL-escape the single quote so a path
-        # containing `'` (perfectly legal on macOS user dirs and in tmp
-        # paths used by tests) cannot break out of the string literal.
-        config_path_sql = str(CONFIG_DB).replace("'", "''")
-        con.execute(f"ATTACH '{config_path_sql}' AS config (READ_ONLY)")
-    except Exception:
-        con.close()
-        raise
-    return con
+    init_budget_db(year)
+    with _engine_lock:
+        engine = _ensure_budget_attached_locked(year)
+    cur = engine.cursor()
+    cur.execute(f"USE budget_{year}")
+    return cur
 
 
-def get_config_connection(read_only: bool = True) -> duckdb.DuckDBPyConnection:
-    """Open a connection to config.duckdb."""
-    return duckdb.connect(str(CONFIG_DB), read_only=read_only)
+def get_config_connection(read_only: bool = True) -> duckdb.DuckDBPyConnection:  # noqa: ARG001 — kept for API compatibility
+    """Return a cursor of the singleton engine pointed at `config`.
+
+    The `read_only` parameter is accepted for backward compatibility
+    with the pre-singleton API but is now informational: the
+    singleton always attaches config READ_WRITE so a single engine
+    can serve both API writes (rate cache via `convert_to_eur`,
+    `expense_id_registry` mutation) and async-drain reads without
+    DuckDB's "unique file handle" conflict. Callers that previously
+    relied on DuckDB rejecting writes on a `read_only=True` connection
+    will silently succeed; in practice no production caller does this
+    — the read-only flag was a hint, not a contract.
+    """
+    with _engine_lock:
+        engine = _ensure_config_attached_locked()
+    cur = engine.cursor()
+    cur.execute("USE config")
+    return cur
 
 
 def iter_budget_years() -> list[int]:

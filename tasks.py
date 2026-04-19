@@ -1,5 +1,6 @@
 import base64
 import os
+import shlex
 import shutil
 import sys
 from datetime import datetime as _dt
@@ -706,6 +707,59 @@ def backup(c):
     host = _host()
     c.run(f"scp -r {host}:~/dinary-server/data/ {backup_dir}/")
     print(f"Backed up to {backup_dir}/")
+
+
+@task(name="report-2d-3d")
+def report_2d_3d(c, detail=False, fmt="stdout", output="", year=""):
+    """Generate the 2D->3D resolution report on the server.
+
+    Flags (all optional):
+        --detail        per-row output instead of aggregated summary
+        --fmt FMT       stdout (default) | csv | md
+        --output PATH   override output path on the server (csv/md only;
+                        relative paths are resolved against
+                        ``~/dinary-server``, absolute paths are used as-is)
+        --year YEAR     restrict to a single year
+
+    For ``fmt=csv`` / ``fmt=md`` the report is written under
+    ``~/dinary-server/data/reports/`` on the server (so it is part of
+    ``inv backup``'s scp) and also fetched back to the local
+    ``data/reports/`` directory for convenience. When ``--output`` is
+    provided alongside ``--fmt csv`` / ``--fmt md`` the local copy
+    lands in ``data/reports/`` regardless of the remote name.
+    """
+    if output and fmt not in {"csv", "md"}:
+        print("--output requires --fmt csv or --fmt md (stdout has no file)")
+        sys.exit(1)
+
+    flags: list[str] = []
+    if detail:
+        flags.append("--detail")
+    if fmt != "stdout":
+        flags.extend(["--fmt", shlex.quote(fmt)])
+    if output:
+        flags.extend(["--output", shlex.quote(output)])
+    if year:
+        flags.extend(["--year", str(int(year))])
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && "
+        f"uv run python -m dinary.imports.report_2d_3d {' '.join(flags)}",
+    )
+
+    if fmt in {"csv", "md"}:
+        if output:
+            # Absolute paths are used verbatim; relative paths are
+            # resolved against ``~/dinary-server`` (the cwd of the
+            # remote ``python -m`` call above).
+            remote_path = output if output.startswith("/") else f"~/dinary-server/{output}"
+        else:
+            remote_path = f"~/dinary-server/data/reports/report_2d_3d.{fmt}"
+        local_dir = Path("data") / "reports"
+        local_dir.mkdir(parents=True, exist_ok=True)
+        host = _host()
+        c.run(f"scp {host}:{shlex.quote(remote_path)} {local_dir}/")
+        print(f"Fetched {remote_path} -> {local_dir}/")
 
 
 namespace = Collection.from_module(sys.modules[__name__])
