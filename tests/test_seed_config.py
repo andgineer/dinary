@@ -16,7 +16,6 @@ from dinary.services.seed_config import (
     RUSSIA_TRIP_EVENT_NAME,
     SYNTHETIC_EVENT_PREFIX,
     Category,
-    _rebuild_logging_mapping_from_latest_year,
     rebuild_config_from_sheets,
     seed_from_sheet,
 )
@@ -135,107 +134,26 @@ class TestSeedFromSheet:
             con.close()
         assert count > 0
 
-    def test_logging_mapping_bootstrapped_from_latest_year(self):
-        """``logging_mapping`` is rebuilt from latest_year ``import_mapping``
-        rows (deduped by canonical 3D key), not from the cross-year year=0
-        aggregation. Every active canonical category is guaranteed to have
-        at least one ``(event=NULL, tags=[])`` row so the bare
-        ``POST /api/expenses`` path always finds an exact match."""
-        summary = _patched_seed()
-
-        con = duckdb_repo.get_connection()
-        try:
-            active_categories = con.execute(
-                "SELECT id, name FROM categories WHERE is_active ORDER BY id",
-            ).fetchall()
-
-            logging_rows = con.execute(
-                "SELECT m.category_id, m.event_id, m.sheet_category, m.sheet_group,"
-                " COALESCE("
-                "   (SELECT LIST(mt.tag_id ORDER BY mt.tag_id)"
-                "    FROM logging_mapping_tags mt"
-                "    WHERE mt.mapping_id = m.id),"
-                "   []::INTEGER[]"
-                " )"
-                " FROM logging_mapping m ORDER BY m.id",
-            ).fetchall()
-        finally:
-            con.close()
-
-        assert active_categories, "test setup must seed at least one active category"
-        assert logging_rows, "logging_mapping must not be empty after seed"
-
-        # Dedup invariant: at most one row per canonical 3D key.
-        keys = [(r[0], r[1], tuple(r[4])) for r in logging_rows]
-        assert len(keys) == len(set(keys)), (
-            "logging_mapping must hold at most one row per (category, event, tag_set) key; "
-            f"got duplicates in {keys}"
-        )
-
-        # Canonical-default safety net: every active category has at
-        # least one (event=NULL, tags=[]) row whose sheet_category equals
-        # the canonical category name.
-        rows_by_cat: dict[int, list[tuple]] = {}
-        for cat_id, event_id, sheet_category, sheet_group, tag_ids in logging_rows:
-            rows_by_cat.setdefault(cat_id, []).append(
-                (event_id, sheet_category, sheet_group, tuple(tag_ids))
-            )
-        for cat_id, cat_name in active_categories:
-            cat_rows = rows_by_cat.get(cat_id, [])
-            default_rows = [r for r in cat_rows if r[0] is None and r[3] == ()]
-            assert default_rows, (
-                f"category id={cat_id} ({cat_name!r}) has no (event=NULL, tags=[]) "
-                f"default row in logging_mapping"
-            )
-            canonical_defaults = [r for r in default_rows if r[1] == cat_name and r[2] == ""]
-            assert canonical_defaults, (
-                f"category id={cat_id} ({cat_name!r}): default row exists but "
-                f"sheet_category/sheet_group are not canonical ({cat_name!r}, ''); "
-                f"got {default_rows}"
-            )
-
-        assert summary["logging_mappings_bootstrapped"] == len(logging_rows)
-
-    def test_logging_mapping_canonical_defaults_fallback(self):
-        """Direct coverage of the canonical-defaults-only fallback path
-        taken by ``_rebuild_logging_mapping_from_latest_year`` when
-        ``latest_year <= 0`` (operator edge case: all configured
-        ``import_sources`` entries carry ``year = 0``). The normal
-        ``seed_from_sheet`` path cannot reach ``latest_year = 0`` in
-        practice because it requires ``pairs`` to be non-empty, so we
-        exercise the rebuild directly on a seeded DB.
-        """
+    def test_seed_does_not_populate_runtime_mapping(self):
+        """Runtime 3D->2D routing moved out of seed in Phase 2. Seed now
+        leaves ``runtime_mapping`` empty; it's owned by ``runtime_map.py``
+        and populated from the hand-curated ``map`` worksheet tab."""
         _patched_seed()
 
         con = duckdb_repo.get_connection()
         try:
-            con.execute("DELETE FROM logging_mapping_tags")
-            con.execute("DELETE FROM logging_mapping")
-            active_categories = con.execute(
-                "SELECT id, name FROM categories WHERE is_active ORDER BY id",
-            ).fetchall()
-            cat_id_by_name = {name: int(cid) for cid, name in active_categories}
-
-            written = _rebuild_logging_mapping_from_latest_year(
-                con,
-                latest_year=0,
-                cat_id_by_name=cat_id_by_name,
-            )
-
-            logging_rows = con.execute(
-                "SELECT category_id, event_id, sheet_category, sheet_group"
-                " FROM logging_mapping ORDER BY id",
-            ).fetchall()
+            runtime_count = con.execute(
+                "SELECT COUNT(*) FROM runtime_mapping",
+            ).fetchone()[0]
+            runtime_tags_count = con.execute(
+                "SELECT COUNT(*) FROM runtime_mapping_tags",
+            ).fetchone()[0]
         finally:
             con.close()
+        assert runtime_count == 0
+        assert runtime_tags_count == 0
 
-        assert written == len(active_categories)
-        assert len(logging_rows) == len(active_categories)
-        rows_by_cat = {r[0]: r for r in logging_rows}
-        for cat_id, cat_name in active_categories:
-            assert rows_by_cat[cat_id] == (cat_id, None, cat_name, "")
-
-    def test_logging_mapping_rebuilt_on_reseed(self):
+    def test_reseed_is_idempotent(self):
         _patched_seed()
         _patched_seed()
 
@@ -275,6 +193,22 @@ class TestRebuildConfigFromSheets:
             first = rebuild_config_from_sheets()
         assert first["catalog_version"] == first["previous_catalog_version"] + 1
         assert first["catalog_version"] >= 2
+        assert first["catalog_version_changed"] is True
+
+    def test_idempotent_rebuild_does_not_bump_catalog_version(self):
+        """Second rebuild with the same inputs is a no-op — the catalog
+        hash doesn't change, so catalog_version stays put. Without this
+        guarantee every ``inv import-catalog`` would force the PWA to
+        redownload the full catalog on the next fetch for no reason.
+        """
+        with patch(
+            "dinary.services.seed_config._load_categories_for_sheet",
+            return_value=SAMPLE_CATEGORIES,
+        ):
+            first = rebuild_config_from_sheets()
+            second = rebuild_config_from_sheets()
+        assert second["catalog_version"] == first["catalog_version"]
+        assert second["catalog_version_changed"] is False
 
     def test_preserves_import_sources(self):
         """``rebuild_config_from_sheets`` preserves operator edits to

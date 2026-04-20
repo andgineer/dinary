@@ -498,21 +498,23 @@ def import_catalog(c, yes=False):
     (``expenses``/``expense_tags``/``sheet_logging_jobs``/``income``)
     stay intact; catalog rows are upserted by natural key so existing
     integer ids are preserved. Vocabulary no longer present in the
-    seed files is marked ``is_active=FALSE``. Mapping tables
-    (``import_mapping``/``logging_mapping``) are rebuilt from scratch
-    against the current active taxonomy ids.
+    seed files is marked ``is_active=FALSE``. The ``import_mapping``
+    table is rebuilt from scratch against the current active taxonomy
+    ids; the runtime ``runtime_mapping`` table is owned by the
+    ``map`` worksheet tab and is not touched here.
 
-    Bumps ``app_metadata.catalog_version`` by +1 on every successful
-    run; the PWA picks up the new value via ``GET /api/categories``
-    and ``POST /api/expenses``.
+    Bumps ``app_metadata.catalog_version`` by +1 only when the
+    rebuild observably changed the catalog (hash-gated); the PWA
+    picks up the new value via ``GET /api/catalog`` and
+    ``POST /api/expenses``.
     """
     if not _require_yes(
         yes,
         "WARNING: import-catalog will re-sync the taxonomy from Google Sheets. "
         "Existing ledger data (expenses, tags, sheet logging queue, income) is "
         "preserved. Vocabulary not present in the seed files will be marked "
-        "inactive. Mapping tables will be rebuilt. All PWA clients will be "
-        "forced to refresh on next /api/categories call.",
+        "inactive. The ``import_mapping`` table will be rebuilt. PWA clients "
+        "will be forced to refresh on next /api/catalog call.",
     ):
         return
     _ssh(

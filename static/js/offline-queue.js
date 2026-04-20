@@ -5,7 +5,13 @@
  */
 
 const DB_NAME = "dinary";
-const DB_VERSION = 1;
+// v1 -> v2: Phase 2 3D catalog. Items stored by the v1 PWA carry
+// ``category`` / ``group`` *names* and no ``category_id``; the v2
+// server rejects those with 422. We drop the store's contents on
+// upgrade rather than silently re-queue-then-fail every cycle. For a
+// single-user deployment the worst case is a small number of
+// offline-typed entries needing to be re-entered once.
+const DB_VERSION = 2;
 const STORE_NAME = "pending_expenses";
 
 let _db = null;
@@ -14,11 +20,18 @@ function openDb() {
   if (_db) return Promise.resolve(_db);
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore(STORE_NAME, {
-        keyPath: "id",
-        autoIncrement: true,
-      });
+    req.onupgradeneeded = (evt) => {
+      const db = req.result;
+      if (evt.oldVersion < 1) {
+        db.createObjectStore(STORE_NAME, {
+          keyPath: "id",
+          autoIncrement: true,
+        });
+      }
+      if (evt.oldVersion < 2 && db.objectStoreNames.contains(STORE_NAME)) {
+        const tx = req.transaction;
+        tx.objectStore(STORE_NAME).clear();
+      }
     };
     req.onsuccess = () => {
       _db = req.result;
@@ -30,12 +43,16 @@ function openDb() {
 
 export async function enqueue(expense) {
   const db = await openDb();
-  const expenseId = expense.expense_id || crypto.randomUUID();
+  // The idempotency key is stamped at enqueue time, not at flush time,
+  // so a single user action maps to exactly one ``client_expense_id``
+  // even across flush retries and app restarts. Callers may pre-seed
+  // the id (tests do this); otherwise we mint a fresh UUID here.
+  const clientExpenseId = expense.client_expense_id || crypto.randomUUID();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
     tx.objectStore(STORE_NAME).add({
       ...expense,
-      expense_id: expenseId,
+      client_expense_id: clientExpenseId,
       queued_at: Date.now(),
     });
     tx.oncomplete = () => resolve();

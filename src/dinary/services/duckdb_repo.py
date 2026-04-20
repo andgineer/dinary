@@ -5,6 +5,7 @@ callers via ``get_connection()``. No ATTACH, no per-year files.
 """
 
 import dataclasses
+import fnmatch
 import logging
 import uuid
 from datetime import datetime, timedelta
@@ -193,10 +194,10 @@ class CategoryListRow:
 
 @dataclasses.dataclass(slots=True)
 class LoggingProjectionCandidateRow:
-    id: int
+    row_order: int
+    event_pattern: str
     sheet_category: str
     sheet_group: str
-    event_id: int | None
     tag_ids: list[int]
 
 
@@ -300,17 +301,39 @@ def get_catalog_version(con: duckdb.DuckDBPyConnection) -> int:
     return int(row[0])
 
 
-def _set_catalog_version(con: duckdb.DuckDBPyConnection, value: int) -> None:
+def set_catalog_version(con: duckdb.DuckDBPyConnection, value: int) -> None:
+    """Public write for ``app_metadata.catalog_version``.
+
+    Only two callers are expected: ``seed_config._bump_catalog_version``
+    (the ``inv import-catalog`` path) and ``catalog_writer._commit_with_bump``
+    (the admin-API path). Every other module is expected to go through
+    one of those.
+    """
     con.execute(
         "UPDATE app_metadata SET value = ? WHERE key = 'catalog_version'",
         [str(value)],
     )
 
 
+# Backward-compatible alias (previous name was underscored-private).
+_set_catalog_version = set_catalog_version
+
+
 def get_category_name(con: duckdb.DuckDBPyConnection, category_id: int) -> str | None:
     row = con.execute(
         "SELECT name FROM categories WHERE id = ?",
         [category_id],
+    ).fetchone()
+    return str(row[0]) if row else None
+
+
+def get_event_name(con: duckdb.DuckDBPyConnection, event_id: int | None) -> str | None:
+    """Return the event name for ``event_id`` (or None if id is None / missing)."""
+    if event_id is None:
+        return None
+    row = con.execute(
+        "SELECT name FROM events WHERE id = ?",
+        [event_id],
     ).fetchone()
     return str(row[0]) if row else None
 
@@ -377,19 +400,33 @@ def logging_projection(
     con: duckdb.DuckDBPyConnection,
     *,
     category_id: int,
-    event_id: int | None,
+    event_name: str | None,
     tag_ids: list[int] | set[int] | tuple[int, ...],
 ) -> tuple[str, str] | None:
-    """Resolve ``(category_id, event_id, tag set)`` to ``(sheet_category, sheet_group)``.
+    """Resolve ``(category_id, event_name, tag set)`` to ``(sheet_category, sheet_group)``.
 
-    Returns ``None`` when no ``logging_mapping`` row exists for
-    ``category_id`` at all. The architectural "guaranteed category-name
-    fallback" (see architecture.md §"Logging projection rules") is
-    applied by the caller in ``sheet_logging._drain_one_job``, not here
-    — this function is strictly a mapping-table lookup so callers can
-    tell "no mapping" apart from "explicit mapping resolved".
+    Sources from ``runtime_mapping`` (owned by the ``map`` worksheet tab
+    and ``runtime_map.py``). First-match-wins by ``row_order`` ASC:
+
+    * ``category_id`` must match (SQL ``WHERE``).
+    * ``event_pattern`` is an fnmatch-style glob against
+      ``event_name or ''``. Empty pattern matches any event (including
+      no event).
+    * ``tag_ids`` required by the row must be a subset of the expense's
+      tag set. Extra tags on the expense are ignored; rows with a
+      stricter tag set win first by virtue of lower ``row_order``
+      (the map-tab author orders more-specific rules above generic
+      catch-alls).
+
+    Returns ``None`` when no ``runtime_mapping`` row matches (or the
+    category has no rows at all). The architectural "guaranteed
+    category-name fallback" lives in the caller
+    (``sheet_logging._drain_one_job``), not here — this function is
+    strictly a mapping-table lookup so callers can tell "no mapping"
+    apart from "explicit mapping resolved".
     """
-    expected_tags = sorted(int(t) for t in tag_ids)
+    expense_tag_set = {int(t) for t in tag_ids}
+    event_key = event_name or ""
     candidates = fetchall_as(
         LoggingProjectionCandidateRow,
         con,
@@ -400,12 +437,15 @@ def logging_projection(
         return None
 
     for cand in candidates:
-        cand_tags = sorted(int(t) for t in cand.tag_ids)
-        if cand.event_id == event_id and cand_tags == expected_tags:
-            return (cand.sheet_category, cand.sheet_group)
+        pattern = cand.event_pattern or ""
+        if pattern and not fnmatch.fnmatchcase(event_key, pattern):
+            continue
+        required_tags = {int(t) for t in cand.tag_ids}
+        if not required_tags.issubset(expense_tag_set):
+            continue
+        return (cand.sheet_category, cand.sheet_group)
 
-    first = candidates[0]
-    return (first.sheet_category, first.sheet_group)
+    return None
 
 
 # ---------------------------------------------------------------------------

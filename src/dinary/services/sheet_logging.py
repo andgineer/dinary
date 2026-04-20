@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 import gspread
 
 from dinary.config import settings, spreadsheet_id_from_setting
-from dinary.services import duckdb_repo
+from dinary.services import duckdb_repo, runtime_map
 from dinary.services.nbs import get_rate
 from dinary.services.sheets import (
     append_expense_atomic,
@@ -187,14 +187,18 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
             marker_key = expense.client_expense_id
 
             tag_ids = duckdb_repo.get_expense_tags(con, expense_pk)
+            event_name = duckdb_repo.get_event_name(con, expense.event_id)
 
             projection = duckdb_repo.logging_projection(
                 con,
                 category_id=expense.category_id,
-                event_id=expense.event_id,
+                event_name=event_name,
                 tag_ids=tag_ids,
             )
             if projection is None:
+                # No runtime_mapping rule matched. Fall back to the
+                # guaranteed category-name landing pair so the expense
+                # still goes to a predictable cell in the sheet.
                 cat_name = duckdb_repo.get_category_name(con, expense.category_id)
                 if cat_name is None:
                     logger.error(
@@ -205,7 +209,8 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
                     duckdb_repo.poison_logging_job(
                         con,
                         expense_pk,
-                        f"No logging_mapping for category_id={expense.category_id}",
+                        f"No runtime_mapping fallback possible for "
+                        f"category_id={expense.category_id}",
                     )
                     return DrainResult.POISONED
                 projection = (cat_name, "")
@@ -373,6 +378,11 @@ def drain_pending() -> dict:  # noqa: C901, PLR0912, PLR0915
     if not expense_pks:
         _reset_backoff()
         return summary
+
+    # Lazy runtime-map refresh: cheap modifiedTime check via Drive API;
+    # only reparses the map tab when it actually changed. Failures here
+    # downgrade to a warning and we drain with the cached mapping.
+    runtime_map.ensure_fresh()
 
     attempts = 0
     cap_reached = False

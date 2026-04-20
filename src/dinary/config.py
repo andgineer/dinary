@@ -68,6 +68,26 @@ class Settings(BaseSettings):
     sheet_logging_drain_max_attempts_per_iteration: int = 15
     sheet_logging_drain_inter_row_delay_sec: float = 1.0
 
+    # Name of the worksheet tab on ``sheet_logging_spreadsheet`` that
+    # holds the curated 3D->2D runtime routing table. The drain loop
+    # polls this tab's ``modifiedTime`` via Drive API and only reparses
+    # the contents when the timestamp changes.
+    runtime_map_tab_name: str = "map"
+
+    # Startup preload budget for ``runtime_map.reload_now``. Bounded
+    # so a slow or unreachable Google backend cannot wedge lifespan
+    # startup and starve Railway's health probe. On timeout the drain
+    # loop retries on its own schedule, and the first expense pays
+    # the uncached Drive+Sheets round-trip (~1s). Raise for slow
+    # hosts; set to 0 to skip the warm-up entirely.
+    warm_runtime_map_timeout_sec: float = 10.0
+
+    # Shared secret protecting POST/PATCH endpoints in
+    # ``dinary.api.admin_catalog``. Empty disables the admin API
+    # entirely (all endpoints return 503). The PWA reads this from
+    # localStorage after the user enters it once.
+    admin_api_token: str = ""
+
     host: str = "0.0.0.0"  # noqa: S104
     port: int = 8000
     log_level: str = "info"

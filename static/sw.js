@@ -1,12 +1,17 @@
 const APP_VERSION = "__VERSION__";
 const CACHE_NAME = `dinary-${APP_VERSION}`;
+// Kept in lockstep with the module graph rooted at /js/app.js. If a
+// precached file is deleted the whole ``cache.addAll`` rejects atomically
+// and the new SW never activates — so removing any of these requires a
+// matching prune here in the same commit.
 const ASSETS = [
   "/",
   "/css/style.css",
   "/js/app.js",
   "/js/api.js",
   "/js/offline-queue.js",
-  "/js/categories.js",
+  "/js/catalog.js",
+  "/js/catalog-add.js",
   "/js/qr-scanner.js",
   "/manifest.json",
 ];

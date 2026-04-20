@@ -238,10 +238,16 @@ class TestSheetMapping:
 
 
 @allure.epic("DuckDB")
-@allure.feature("Logging projection")
+@allure.feature("Logging projection (runtime_mapping)")
 class TestLoggingProjection:
     @pytest.fixture
     def logging_setup(self, fresh_db):
+        """Seed one category with three runtime_mapping rows:
+
+        row_order=1: category only + tag ``собака`` required -> ("CatA", "WithTag")
+        row_order=2: category + event pattern "evt" -> ("CatA", "WithEvt")
+        row_order=3: catch-all (empty pattern, no tags) -> ("CatA", "")
+        """
         con = duckdb_repo.get_connection()
         try:
             con.execute(
@@ -256,29 +262,32 @@ class TestLoggingProjection:
                 "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
                 " VALUES (1, 'evt', '2026-01-01', '2026-12-31', TRUE)",
             )
+            # More-specific rules first; row_order is the tiebreaker.
             con.execute(
-                "INSERT INTO logging_mapping (id, category_id, event_id,"
-                " sheet_category, sheet_group) VALUES (1, 1, NULL, 'CatA', '')",
+                "INSERT INTO runtime_mapping (row_order, category_id, event_pattern,"
+                " sheet_category, sheet_group) VALUES (1, 1, '', 'CatA', 'WithTag')",
+            )
+            con.execute("INSERT INTO runtime_mapping_tags VALUES (1, 1)")
+            con.execute(
+                "INSERT INTO runtime_mapping (row_order, category_id, event_pattern,"
+                " sheet_category, sheet_group) VALUES (2, 1, 'evt', 'CatA', 'WithEvt')",
             )
             con.execute(
-                "INSERT INTO logging_mapping (id, category_id, event_id,"
-                " sheet_category, sheet_group) VALUES (2, 1, 1, 'CatA', 'WithEvt')",
+                "INSERT INTO runtime_mapping (row_order, category_id, event_pattern,"
+                " sheet_category, sheet_group) VALUES (3, 1, '', 'CatA', '')",
             )
-            con.execute(
-                "INSERT INTO logging_mapping (id, category_id, event_id,"
-                " sheet_category, sheet_group) VALUES (3, 1, NULL, 'CatA', 'WithTag')",
-            )
-            con.execute("INSERT INTO logging_mapping_tags VALUES (3, 1)")
         finally:
             con.close()
 
     def test_exact_match_with_event(self, logging_setup):
         con = duckdb_repo.get_connection()
         try:
+            # event='evt', no tags: row_order=1 skipped (tag 'tag1' not present),
+            # row_order=2 matches on event pattern.
             result = duckdb_repo.logging_projection(
                 con,
                 category_id=1,
-                event_id=1,
+                event_name="evt",
                 tag_ids=[],
             )
             assert result == ("CatA", "WithEvt")
@@ -288,23 +297,27 @@ class TestLoggingProjection:
     def test_exact_match_with_tags(self, logging_setup):
         con = duckdb_repo.get_connection()
         try:
+            # No event, tag 'tag1' present: row_order=1 matches.
             result = duckdb_repo.logging_projection(
                 con,
                 category_id=1,
-                event_id=None,
+                event_name=None,
                 tag_ids=[1],
             )
             assert result == ("CatA", "WithTag")
         finally:
             con.close()
 
-    def test_category_fallback(self, logging_setup):
+    def test_category_fallback_row(self, logging_setup):
         con = duckdb_repo.get_connection()
         try:
+            # No event, tag 'tag2' (which no rule requires): row_order=1 skipped
+            # (wants tag1), row_order=2 skipped (event pattern), row_order=3
+            # matches as the catch-all.
             result = duckdb_repo.logging_projection(
                 con,
                 category_id=1,
-                event_id=None,
+                event_name=None,
                 tag_ids=[2],
             )
             assert result == ("CatA", "")
@@ -317,43 +330,28 @@ class TestLoggingProjection:
             result = duckdb_repo.logging_projection(
                 con,
                 category_id=999,
-                event_id=None,
+                event_name=None,
                 tag_ids=[],
             )
             assert result is None
         finally:
             con.close()
 
-    def test_null_event_matches_null(self, logging_setup):
+    def test_no_event_matches_catch_all(self, logging_setup):
         con = duckdb_repo.get_connection()
         try:
             result = duckdb_repo.logging_projection(
                 con,
                 category_id=1,
-                event_id=None,
+                event_name=None,
                 tag_ids=[],
             )
             assert result == ("CatA", "")
         finally:
             con.close()
 
-    def test_deterministic_tie_breaking(self, logging_setup):
-        """When several rows match only on the category-fallback level, the
-        lowest id wins (ORDER BY id ASC in the SQL)."""
-        con = duckdb_repo.get_connection()
-        try:
-            result = duckdb_repo.logging_projection(
-                con,
-                category_id=1,
-                event_id=None,
-                tag_ids=[2],
-            )
-            assert result == ("CatA", "")
-        finally:
-            con.close()
-
-    def test_uses_logging_mapping_not_import_mapping(self, fresh_db):
-        """``logging_projection`` reads ``logging_mapping`` only."""
+    def test_glob_pattern(self, fresh_db):
+        """fnmatch-style glob in ``event_pattern`` matches event name prefixes."""
         con = duckdb_repo.get_connection()
         try:
             con.execute(
@@ -363,26 +361,27 @@ class TestLoggingProjection:
                 "INSERT INTO categories (id, name, group_id) VALUES (1, 'еда', 1)",
             )
             con.execute(
-                "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
-                " category_id, event_id) VALUES (1, 2025, 'Food-2025', '', 1, NULL)",
+                "INSERT INTO runtime_mapping (row_order, category_id, event_pattern,"
+                " sheet_category, sheet_group) VALUES (1, 1, 'отпуск-*', 'Trips', '')",
             )
             con.execute(
-                "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
-                " category_id, event_id) VALUES (2, 2026, 'Food-2026', '', 1, NULL)",
+                "INSERT INTO runtime_mapping (row_order, category_id, event_pattern,"
+                " sheet_category, sheet_group) VALUES (2, 1, '', 'Default', '')",
             )
-            con.execute(
-                "INSERT INTO logging_mapping (id, category_id, event_id,"
-                " sheet_category, sheet_group) VALUES (1, 1, NULL, 'Food-Logging', '')",
-            )
-            result = duckdb_repo.logging_projection(
+            assert duckdb_repo.logging_projection(
                 con,
                 category_id=1,
-                event_id=None,
+                event_name="отпуск-2026",
                 tag_ids=[],
-            )
+            ) == ("Trips", "")
+            assert duckdb_repo.logging_projection(
+                con,
+                category_id=1,
+                event_name="командировка-2019",
+                tag_ids=[],
+            ) == ("Default", "")
         finally:
             con.close()
-        assert result == ("Food-Logging", "")
 
 
 @allure.epic("DuckDB")

@@ -2,8 +2,8 @@
 
 This file is the authoritative source of truth for the catalog tables
 (``category_groups``, ``categories``, ``events``, ``tags``, and the
-derived ``import_mapping`` / ``logging_mapping`` tables). When this file
-disagrees with ``docs/src/ru/taxonomy.md``, the code wins.
+derived ``import_mapping`` table). When this file disagrees with
+``docs/src/ru/taxonomy.md``, the code wins.
 
 Phase 1 PWA hardcodes the same tag dictionary defined here. There is no
 ``/api/tags`` endpoint.
@@ -28,10 +28,11 @@ The sync algorithm:
 3. Upsert groups / categories / events / tags by ``name`` (the natural
    key). Pre-existing rows keep their integer ``id``; new rows get a
    fresh ``id = max(id)+1``.
-4. Rebuild the ``import_mapping(_tags)`` + ``logging_mapping(_tags)``
-   tables from scratch by DELETE + INSERT. These are catalog-side
-   derived state; no ledger table FKs into them, so wholesale rebuild
-   is safe and keeps rename/retire semantics consistent.
+4. Rebuild the ``import_mapping(_tags)`` table from scratch by
+   DELETE + INSERT. Runtime 3D->2D routing for sheet logging now lives
+   in the separate ``runtime_mapping`` table, populated exclusively
+   from the hand-curated ``map`` tab in the logging spreadsheet (see
+   ``runtime_map.py``); this seed pipeline no longer writes to it.
 5. Bump ``app_metadata.catalog_version``.
 """
 
@@ -43,7 +44,7 @@ from datetime import date
 import duckdb
 
 from dinary.config import settings
-from dinary.services import duckdb_repo
+from dinary.services import catalog_writer, duckdb_repo, runtime_map
 from dinary.services.sheets import HEADER_ROWS, _cell, get_sheet
 from dinary.services.sql_loader import fetchall_as, load_sql
 
@@ -967,8 +968,7 @@ def _purge_mapping_tables(con: duckdb.DuckDBPyConnection) -> None:
     """
     con.execute("DELETE FROM import_mapping_tags")
     con.execute("DELETE FROM import_mapping")
-    con.execute("DELETE FROM logging_mapping_tags")
-    con.execute("DELETE FROM logging_mapping")
+    # runtime_mapping(_tags) are owned by runtime_map.py; seed never touches them.
 
 
 def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
@@ -1193,11 +1193,11 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
                 continue
             insert_mapping(latest_year, cat_name, "", cat_name, (), None)
 
-    logging_bootstrapped = _rebuild_logging_mapping_from_latest_year(
-        con,
-        latest_year=latest_year,
-        cat_id_by_name=cat_id_by_name,
-    )
+    # Runtime 3D->2D mapping used to be rebuilt here from the latest-year
+    # import_mapping rows. Phase 2 replaced that with ``runtime_mapping``,
+    # owned exclusively by ``runtime_map.py`` and sourced from a
+    # hand-curated ``map`` worksheet tab. Seed never writes to it — the
+    # drain loop pulls a fresh copy on its own schedule.
 
     return {
         "category_groups": len(group_id_by_title),
@@ -1205,137 +1205,27 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
         "events": len(event_id_by_name),
         "tags": len(tag_id_by_name),
         "mappings_created": mapping_count,
-        "logging_mappings_bootstrapped": logging_bootstrapped,
     }
 
 
+# Deprecated: kept as a public no-op shim for back-compat with old
+# callers / tests that still import the symbol. Runtime 3D->2D mapping
+# moved to ``runtime_map.py`` (``runtime_mapping`` table, hand-curated
+# ``map`` worksheet). This function intentionally does nothing and
+# returns zero so any accidental call site fails loudly in review
+# rather than silently diverging from the new source of truth.
 def _rebuild_logging_mapping_from_latest_year(
-    con: duckdb.DuckDBPyConnection,
+    con: duckdb.DuckDBPyConnection,  # noqa: ARG001
     *,
-    latest_year: int,
-    cat_id_by_name: dict[str, int],
+    latest_year: int,  # noqa: ARG001
+    cat_id_by_name: dict[str, int],  # noqa: ARG001
 ) -> int:
-    """Rebuild ``logging_mapping`` from latest_year ``import_mapping`` rows only.
-
-    Runtime sheet logging targets a single live spreadsheet whose
-    layout reflects the user's *current* conventions, not the union
-    of every historical sheet ever imported. Sourcing
-    ``logging_mapping`` from year=0 (the union of all historical
-    pairs) used to flood the table with stale capitalisations and
-    cross-category aliases — e.g. category ``гаджеты`` had seven
-    historical rows including ``("Машина", "Gadgets")``, and the
-    projection's "first row by id" tie-breaker would pick the
-    historical alias instead of the canonical ``("гаджеты", "")``.
-    Sourcing from ``latest_year`` (the most recently configured
-    ``import_sources`` row) keeps the table small, predictable, and
-    in sync with the taxonomy step 8 of ``seed_classification_catalog``
-    has already filled in for missing canonical categories.
-
-    Dedup invariant: for each canonical key
-    ``(category_id, event_id, sorted(tag_ids))`` the rebuilt
-    ``logging_mapping`` holds at most one row. ``import_mapping``
-    can legitimately carry multiple ``(sheet_category, sheet_group)``
-    pairs that resolve to the same 3D key (step 7 emits one row per
-    distinct legacy pair sharing an event); for runtime *output* we
-    only need one. The first one seen by ``id ASC`` wins and the
-    rest are dropped.
-
-    Canonical-default safety net: every active canonical category
-    must have a ``(event=NULL, tags=[])`` row so the bare API path
-    (``POST /api/expenses`` with only ``category``) always finds an
-    exact-match row. Step 8 already guarantees a default
-    ``(cat_name, "")`` import_mapping row for any category that
-    would otherwise have none in ``latest_year``; this rebuild
-    additionally synthesises the canonical row for any category
-    whose ``latest_year`` rows happen to all carry an event or tag
-    set, so the bare API path can never fall through to the
-    "first row by id" branch.
-
-    Called after ``seed_classification_catalog`` step 8 populates
-    ``import_mapping`` for ``latest_year``. The caller has already
-    wiped ``logging_mapping(_tags)`` in step 0 so we start empty.
-    """
-    if latest_year <= 0:
-        # No historical sheets configured — synthesise canonical
-        # defaults for every active category so the API path still
-        # has somewhere to land.
-        return _seed_canonical_defaults_only(con, cat_id_by_name)
-
-    rows = con.execute(
-        "SELECT id, category_id, event_id, sheet_category, sheet_group"
-        " FROM import_mapping WHERE year = ? ORDER BY id",
-        [latest_year],
-    ).fetchall()
-    tag_rows = con.execute(
-        "SELECT mapping_id, tag_id FROM import_mapping_tags"
-        " WHERE mapping_id IN (SELECT id FROM import_mapping WHERE year = ?)",
-        [latest_year],
-    ).fetchall()
-    tags_by_mapping: dict[int, list[int]] = {}
-    for mapping_id, tag_id in tag_rows:
-        tags_by_mapping.setdefault(int(mapping_id), []).append(int(tag_id))
-
-    seen_keys: set[tuple[int, int | None, tuple[int, ...]]] = set()
-    selected: list[tuple[int, int | None, str, str, tuple[int, ...]]] = []
-    for old_id, category_id, event_id, sheet_category, sheet_group in rows:
-        tag_set = tuple(sorted(tags_by_mapping.get(int(old_id), [])))
-        key = (int(category_id), event_id, tag_set)
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
-        selected.append((int(category_id), event_id, sheet_category, sheet_group, tag_set))
-
-    # Synthesise canonical defaults for any category not already
-    # covered by an exact (event=NULL, tags=[]) row. Step 8 covers
-    # most categories; this catches the corner case where the only
-    # latest_year rows for a category carry an event or tag set.
-    for cat_name, cat_id in cat_id_by_name.items():
-        key = (int(cat_id), None, ())
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
-        selected.append((int(cat_id), None, cat_name, "", ()))
-
-    next_id = 1
-    for category_id, event_id, sheet_category, sheet_group, tag_set in selected:
-        con.execute(
-            "INSERT INTO logging_mapping"
-            " (id, category_id, event_id, sheet_category, sheet_group)"
-            " VALUES (?, ?, ?, ?, ?)",
-            [next_id, category_id, event_id, sheet_category, sheet_group],
-        )
-        for tag_id in tag_set:
-            con.execute(
-                "INSERT INTO logging_mapping_tags (mapping_id, tag_id) VALUES (?, ?)",
-                [next_id, tag_id],
-            )
-        next_id += 1
-
-    return len(selected)
-
-
-def _seed_canonical_defaults_only(
-    con: duckdb.DuckDBPyConnection,
-    cat_id_by_name: dict[str, int],
-) -> int:
-    """Fallback path for fresh installs without any configured ``import_sources``.
-
-    Without a latest_year to copy from, every category gets a single
-    canonical default row ``(sheet_category=name, sheet_group='',
-    event=NULL, tags=[])``. The result is the same shape as a
-    ``latest_year`` rebuild whose source was empty — guaranteed to
-    keep the API path functional.
-    """
-    next_id = 1
-    for cat_name, cat_id in cat_id_by_name.items():
-        con.execute(
-            "INSERT INTO logging_mapping"
-            " (id, category_id, event_id, sheet_category, sheet_group)"
-            " VALUES (?, ?, NULL, ?, ?)",
-            [next_id, int(cat_id), cat_name, ""],
-        )
-        next_id += 1
-    return len(cat_id_by_name)
+    """Deprecated no-op shim. See module docstring."""
+    logger.warning(
+        "_rebuild_logging_mapping_from_latest_year is a no-op in Phase 2; "
+        "runtime 3D->2D routing is owned by runtime_map.py (runtime_mapping table).",
+    )
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -1351,7 +1241,7 @@ def _validate_latest_import_source(con: duckdb.DuckDBPyConnection) -> int:
     layout_key from KNOWN_LAYOUT_KEYS). Runtime sheet logging is no
     longer involved here — it has its own separate spreadsheet config
     (DINARY_SHEET_LOGGING_SPREADSHEET) and its own table
-    (logging_mapping).
+    (runtime_mapping, owned by runtime_map.py).
     """
     row = con.execute(
         "SELECT MAX(year) FROM import_sources WHERE year > 0",
@@ -1390,8 +1280,8 @@ def _validate_import_coverage(con: duckdb.DuckDBPyConnection, latest_year: int) 
 
     This protects the bootstrap import pipeline (which needs year-scoped
     import_mapping coverage). Runtime sheet logging uses the separate
-    ``logging_mapping`` table with a guaranteed category-name fallback,
-    so a gap here does not break runtime logging.
+    ``runtime_mapping`` table driven by the hand-curated ``map`` worksheet
+    (see ``runtime_map.py``), so a gap here does not break runtime logging.
     """
     rows = con.execute(
         "SELECT c.name FROM categories c"
@@ -1412,9 +1302,16 @@ def _validate_import_coverage(con: duckdb.DuckDBPyConnection, latest_year: int) 
 
 
 def _bump_catalog_version(con: duckdb.DuckDBPyConnection, *, previous: int) -> int:
-    """Set catalog_version to previous+1 (called only by `import-catalog`)."""
+    """Increment ``catalog_version`` on the seed path (``inv import-catalog``).
+
+    One of the two write paths that touch ``catalog_version`` — the
+    other is ``catalog_writer._commit_with_bump`` on the admin-API
+    path. Both funnel through ``duckdb_repo.set_catalog_version`` so
+    future auditing hooks can intercept writes uniformly. See
+    ``.plans/architecture.md`` §Catalog versioning.
+    """
     new_version = previous + 1
-    duckdb_repo._set_catalog_version(con, new_version)  # noqa: SLF001
+    duckdb_repo.set_catalog_version(con, new_version)
     return new_version
 
 
@@ -1508,6 +1405,65 @@ def seed_from_sheet(year: int | None = None) -> dict:
         con.close()
 
 
+def _finalize_rebuild_transaction(
+    *,
+    preserved_sources: list,
+    previous_version: int,
+    before_hash: str,
+) -> dict:
+    """Run the post-``seed_from_sheet`` transaction: restore sources,
+    validate, and hash-gate the ``catalog_version`` bump.
+
+    Split out of ``rebuild_config_from_sheets`` to keep that function
+    under the ruff PLR0915 "too many statements" ceiling. Returns the
+    summary fragment merged into the outer summary dict:
+
+    * ``catalog_version`` — the post-bump (or unchanged) version.
+    * ``previous_catalog_version`` — the max of the caller's snapshot
+      and the pre-transaction DB value (handles the rare case where
+      the caller couldn't read it at the top of the outer function).
+    * ``latest_import_year`` — validated latest year from
+      ``import_sources``.
+    * ``catalog_version_changed`` — ``True`` if the hash differed and
+      the bump actually happened.
+    """
+    con = duckdb_repo.get_connection()
+    try:
+        con.execute("BEGIN")
+        try:
+            _restore_import_sources(con, preserved_sources)
+            latest_year = _validate_latest_import_source(con)
+            _validate_import_coverage(con, latest_year)
+            effective_previous = max(previous_version, duckdb_repo.get_catalog_version(con))
+            after_hash = catalog_writer.hash_catalog_state(con)
+            if before_hash == after_hash:
+                # No observable catalog change — skip the bump. The
+                # PWA's cached snapshot is still valid; 304s on the
+                # next ``GET /api/catalog`` save bandwidth and keep
+                # the operator's offline queue unblocked.
+                new_version = effective_previous
+                logger.info(
+                    "rebuild_config_from_sheets: catalog hash unchanged; "
+                    "keeping catalog_version=%d",
+                    new_version,
+                )
+            else:
+                new_version = _bump_catalog_version(con, previous=effective_previous)
+            con.execute("COMMIT")
+        except Exception:
+            duckdb_repo.best_effort_rollback(con, context="rebuild_config_from_sheets commit")
+            raise
+    finally:
+        con.close()
+
+    return {
+        "catalog_version": new_version,
+        "previous_catalog_version": effective_previous,
+        "latest_import_year": latest_year,
+        "catalog_version_changed": before_hash != after_hash,
+    }
+
+
 def rebuild_config_from_sheets() -> dict:
     """FK-safe in-place catalog sync from the configured sheets.
 
@@ -1556,32 +1512,39 @@ def rebuild_config_from_sheets() -> dict:
     con = duckdb_repo.get_connection()
     try:
         preserved_sources = _load_existing_import_sources(con)
+        # Snapshot the catalog hash BEFORE ``seed_from_sheet`` mutates
+        # (and commits) the catalog tables. We use the same canonical
+        # state that ``catalog_writer._commit_with_bump`` hashes, so
+        # the two write paths share a single definition of "observable
+        # catalog change". If a rebuild from the sheet is a genuine
+        # no-op (same hardcoded groups, same remote mappings), the
+        # hash survives unchanged and we skip the bump — this keeps
+        # PWA clients' ETag-validated ``GET /api/catalog`` returning
+        # 304 Not Modified across idempotent reseeds.
+        before_hash = catalog_writer.hash_catalog_state(con)
     finally:
         con.close()
 
     summary = seed_from_sheet()
     summary["preserved_import_sources"] = len(preserved_sources)
 
-    effective_previous: int
-    new_version: int
-    latest_year: int
-    con = duckdb_repo.get_connection()
-    try:
-        con.execute("BEGIN")
-        try:
-            _restore_import_sources(con, preserved_sources)
-            latest_year = _validate_latest_import_source(con)
-            _validate_import_coverage(con, latest_year)
-            effective_previous = max(previous_version, duckdb_repo.get_catalog_version(con))
-            new_version = _bump_catalog_version(con, previous=effective_previous)
-            con.execute("COMMIT")
-        except Exception:
-            duckdb_repo.best_effort_rollback(con, context="rebuild_config_from_sheets commit")
-            raise
-    finally:
-        con.close()
+    bump = _finalize_rebuild_transaction(
+        preserved_sources=preserved_sources,
+        previous_version=previous_version,
+        before_hash=before_hash,
+    )
+    summary.update(bump)
 
-    summary["catalog_version"] = new_version
-    summary["previous_catalog_version"] = effective_previous
-    summary["latest_import_year"] = latest_year
+    # Phase 2: make sure the ``map`` worksheet tab exists with a
+    # default-identity layout (one row per active category mapping
+    # name->name). Idempotent; safe on every reseed. Network failure
+    # here downgrades to a log warning — the catalog side is
+    # already committed and the operator can re-run reload-map later.
+    try:
+        runtime_map.ensure_default_map_tab()
+    except Exception:
+        logger.exception(
+            "ensure_default_map_tab failed; runtime 3D->2D mapping "
+            "may be empty until the operator creates the map tab manually",
+        )
     return summary

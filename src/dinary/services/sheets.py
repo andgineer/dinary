@@ -28,9 +28,12 @@ year (e.g. a single-year diagnostic).
 """
 
 import logging
+import threading
 from datetime import date, timedelta
 
+import google.auth.transport.requests as _google_requests
 import gspread
+import httpx
 from google.oauth2.service_account import Credentials
 from gspread.utils import ValueInputOption, ValueRenderOption
 
@@ -39,6 +42,10 @@ from dinary.config import settings
 logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+# Drive metadata access goes through the dedicated ``_drive_credentials()``
+# path below, with its own ``_DRIVE_SCOPES`` constant. Keeping the
+# gspread client's scope list minimal means a leaked gspread token
+# cannot read file listings elsewhere in the service account's Drive.
 
 # 1-indexed column numbers matching the actual Google Sheet layout:
 #   A=Date  B=AppCurrency(formula)  C=EUR(formula)  D=Category  E=Group
@@ -64,20 +71,109 @@ HEADER_ROWS = 1
 
 _gc: gspread.Client | None = None
 
+# Guards lazy init of ``_gc`` and ``_drive_creds`` against concurrent
+# first-touch from worker threads. FastAPI offloads blocking I/O
+# (``asyncio.to_thread``) and the drain loop can overlap with an admin
+# ``POST /api/admin/reload-map`` call; without the lock two threads can
+# both find the singleton ``None`` and both run
+# ``Credentials.from_service_account_file`` (which hits disk and parses
+# JSON). The result is still correct (last write wins, both objects are
+# equivalent), but the wasted work is easy to avoid.
+_client_lock = threading.Lock()
+
 
 def _get_client() -> gspread.Client:
     global _gc  # noqa: PLW0603
-    if _gc is None:
-        creds = Credentials.from_service_account_file(
-            str(settings.google_sheets_credentials_path),
-            scopes=SCOPES,
-        )
-        _gc = gspread.authorize(creds)
+    if _gc is not None:
+        return _gc
+    with _client_lock:
+        if _gc is None:
+            creds = Credentials.from_service_account_file(
+                str(settings.google_sheets_credentials_path),
+                scopes=SCOPES,
+            )
+            _gc = gspread.authorize(creds)
     return _gc
 
 
 def get_sheet(spreadsheet_id: str) -> gspread.Spreadsheet:
     return _get_client().open_by_key(spreadsheet_id)
+
+
+_DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
+
+# Process-wide cache for the Drive-only credentials object. The
+# service-account JSON is read from disk exactly once; subsequent
+# calls reuse the in-memory ``Credentials`` and let the google-auth
+# library refresh the OAuth access token on demand (it handles
+# expiry tracking internally).
+_drive_creds: Credentials | None = None
+_drive_creds_lock = threading.Lock()
+
+
+def _drive_credentials() -> Credentials:
+    """Return service-account credentials scoped for Drive metadata reads only.
+
+    Cached after the first call so ``ensure_fresh()`` does not re-read
+    the service-account JSON and force a token refresh on every drain
+    sweep. The google-auth ``Credentials`` object tracks its own
+    access-token expiry; calling ``refresh`` only when ``expired`` is
+    True keeps the hot path at one Drive metadata request with no
+    token-exchange round-trip in steady state.
+
+    Kept separate from ``_get_client()``'s credentials because a
+    token refresh only delivers the scopes the credentials object was
+    created with. Keeping a dedicated Drive-only credential makes the
+    principle of least privilege visible at the call site.
+
+    Thread-safety: lazy init is serialised via ``_drive_creds_lock`` so
+    two worker threads racing the first call do not both read the
+    service-account JSON. ``refresh()`` is *not* inside the lock —
+    google-auth's ``Credentials`` documents concurrent ``refresh`` as
+    safe, and holding the lock across a network round-trip would
+    serialise every drain sweep behind every admin call.
+    """
+    global _drive_creds  # noqa: PLW0603
+    if _drive_creds is None:
+        with _drive_creds_lock:
+            if _drive_creds is None:
+                _drive_creds = Credentials.from_service_account_file(
+                    str(settings.google_sheets_credentials_path),
+                    scopes=_DRIVE_SCOPES,
+                )
+    if not _drive_creds.valid:
+        _drive_creds.refresh(_google_requests.Request())
+    return _drive_creds
+
+
+def drive_get_modified_time(spreadsheet_id: str) -> str:
+    """Return the spreadsheet's ``modifiedTime`` as an RFC3339 UTC string.
+
+    Used by ``runtime_map.ensure_fresh()`` as a cheap staleness check:
+    the drain loop calls this before every batch of sheet-logging
+    jobs, and only re-parses the ``map`` tab when the returned
+    timestamp differs from the one cached from the previous parse.
+    This turns the hot path's Drive cost into a single metadata
+    fetch (sub-second, no row data) instead of a full worksheet
+    pull.
+
+    Raises ``httpx.HTTPStatusError`` on non-2xx responses so the
+    caller can decide whether to bail and keep the cached map or
+    reload eagerly.
+    """
+    creds = _drive_credentials()
+    url = f"https://www.googleapis.com/drive/v3/files/{spreadsheet_id}"
+    headers = {"Authorization": f"Bearer {creds.token}"}
+    params = {"fields": "modifiedTime", "supportsAllDrives": "true"}
+    with httpx.Client(timeout=10.0) as client:
+        resp = client.get(url, headers=headers, params=params)
+    resp.raise_for_status()
+    body = resp.json()
+    modified_time = body.get("modifiedTime")
+    if not isinstance(modified_time, str):
+        msg = f"Drive API returned no modifiedTime for {spreadsheet_id!r}: {body!r}"
+        raise TypeError(msg)
+    return modified_time
 
 
 def _cell(row: list[str], col_1indexed: int) -> str:

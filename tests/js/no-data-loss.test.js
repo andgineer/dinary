@@ -5,6 +5,26 @@
  *   1. Every expense is saved to IndexedDB BEFORE any network call.
  *   2. An expense is removed from IndexedDB ONLY after a confirmed 200.
  *   3. Server errors, timeouts, and aborts keep the item in the queue.
+ *   4. An enqueue failure never triggers the success-animation / form-reset
+ *      / automatic flush side-effects.
+ *
+ * The Phase 2 shape of an in-queue expense is:
+ *   {
+ *     client_expense_id: string (UUID),
+ *     amount: number,
+ *     currency: string,
+ *     category_id: number,
+ *     event_id: number | null,
+ *     tag_ids: number[],
+ *     category_name: string,  // denormalised for the queue modal
+ *     comment: string,
+ *     date: string,           // "YYYY-MM-DD"
+ *   }
+ *
+ * Legacy items (v1) carry ``category`` / ``group`` *names* and no
+ * ``category_id``; the v1 -> v2 IndexedDB upgrade drops them, and the
+ * app's flush loop has a belt-and-braces guard that skips any stray
+ * pre-v2 item and surfaces a toast. Both behaviours are tested here.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -22,29 +42,54 @@ beforeEach(async () => {
 const EXPENSE = {
   amount: 1500,
   currency: "RSD",
-  category: "кафе",
-  group: "",
+  category_id: 42,
+  event_id: null,
+  tag_ids: [],
+  category_name: "кафе",
   comment: "lunch",
   date: "2026-04-15",
 };
 
-// -- helpers to simulate flushQueue logic without DOM dependencies --
+// -- helpers to simulate the PWA flushQueue without DOM dependencies --
+//
+// Mirrors ``static/js/app.js::flushQueue`` as closely as it can without
+// dragging in the DOM: drops pre-v2 items (no ``category_id``),
+// back-fills a ``client_expense_id`` on legacy rows, sends 3D fields
+// via ``postFn``, removes the row on success, removes on 409 (already
+// recorded), stops on 401/302, and surfaces other failures by leaving
+// the row in the queue.
 
 async function flushQueueWith(postFn) {
   const items = await getAll();
   for (const item of items) {
+    if (typeof item.category_id !== "number") {
+      // Pre-v2 queue entry that somehow survived the IndexedDB v1->v2
+      // upgrade. Drop it rather than retrying it forever — mirrors the
+      // app's defensive guard.
+      await remove(item.id);
+      continue;
+    }
+    const clientExpenseId = item.client_expense_id || crypto.randomUUID();
     try {
       await postFn({
-        expense_id: item.expense_id,
+        client_expense_id: clientExpenseId,
         amount: item.amount,
         currency: item.currency || "RSD",
-        category: item.category,
-        group: item.group || "",
+        category_id: item.category_id,
+        event_id: item.event_id ?? null,
+        tag_ids: item.tag_ids ?? [],
         comment: item.comment || "",
         date: item.date,
       });
       await remove(item.id);
-    } catch {
+    } catch (e) {
+      if (e && e.status === 409) {
+        await remove(item.id);
+        continue;
+      }
+      if (e && (e.status === 401 || e.status === 302)) {
+        break;
+      }
       break;
     }
   }
@@ -69,7 +114,7 @@ describe("no data loss: enqueue-before-send contract", () => {
     let queueAtCallTime = null;
     const post = vi.fn(async () => {
       queueAtCallTime = await getAll();
-      return { amount_rsd: 1500, category: "кафе", new_total_rsd: 1500 };
+      return { status: "ok", catalog_version: 1 };
     });
 
     await submitExpenseWith(EXPENSE, post);
@@ -77,14 +122,11 @@ describe("no data loss: enqueue-before-send contract", () => {
     expect(post).toHaveBeenCalledOnce();
     expect(queueAtCallTime.length).toBeGreaterThanOrEqual(1);
     expect(queueAtCallTime[0].amount).toBe(1500);
+    expect(queueAtCallTime[0].category_id).toBe(42);
   });
 
   it("expense removed from queue only after 200", async () => {
-    const post = vi.fn(async () => ({
-      amount_rsd: 1500,
-      category: "кафе",
-      new_total_rsd: 1500,
-    }));
+    const post = vi.fn(async () => ({ status: "ok", catalog_version: 1 }));
 
     await submitExpenseWith(EXPENSE, post);
     expect(await count()).toBe(0);
@@ -92,7 +134,9 @@ describe("no data loss: enqueue-before-send contract", () => {
 
   it("expense stays in queue on server 502", async () => {
     const post = vi.fn(async () => {
-      throw new Error("HTTP 502");
+      const e = new Error("HTTP 502");
+      e.status = 502;
+      throw e;
     });
 
     await submitExpenseWith(EXPENSE, post);
@@ -100,12 +144,14 @@ describe("no data loss: enqueue-before-send contract", () => {
 
     const [item] = await getAll();
     expect(item.amount).toBe(1500);
-    expect(item.category).toBe("кафе");
+    expect(item.category_id).toBe(42);
   });
 
   it("expense stays in queue on server 500", async () => {
     const post = vi.fn(async () => {
-      throw new Error("HTTP 500");
+      const e = new Error("HTTP 500");
+      e.status = 500;
+      throw e;
     });
 
     await submitExpenseWith(EXPENSE, post);
@@ -114,7 +160,9 @@ describe("no data loss: enqueue-before-send contract", () => {
 
   it("expense stays in queue on server 503", async () => {
     const post = vi.fn(async () => {
-      throw new Error("HTTP 503");
+      const e = new Error("HTTP 503");
+      e.status = 503;
+      throw e;
     });
     await submitExpenseWith(EXPENSE, post);
     expect(await count()).toBe(1);
@@ -176,8 +224,12 @@ describe("no data loss: flush partial failure", () => {
     let callCount = 0;
     const post = vi.fn(async () => {
       callCount++;
-      if (callCount === 2) throw new Error("HTTP 502");
-      return { amount_rsd: 100, category: "кафе", new_total_rsd: 100 };
+      if (callCount === 2) {
+        const e = new Error("HTTP 502");
+        e.status = 502;
+        throw e;
+      }
+      return { status: "ok", catalog_version: 1 };
     });
 
     await flushQueueWith(post);
@@ -193,9 +245,9 @@ describe("no data loss: flush partial failure", () => {
     await enqueue({ ...EXPENSE, amount: 300 });
 
     const post = vi.fn(async (e) => ({
-      amount_rsd: e.amount,
-      category: e.category,
-      new_total_rsd: e.amount,
+      status: "ok",
+      catalog_version: 1,
+      _echo_amount: e.amount,
     }));
 
     await flushQueueWith(post);
@@ -212,8 +264,12 @@ describe("no data loss: flush partial failure", () => {
     let callCount = 0;
     const post = vi.fn(async () => {
       callCount++;
-      if (callCount >= 3) throw new Error("HTTP 500");
-      return {};
+      if (callCount >= 3) {
+        const e = new Error("HTTP 500");
+        e.status = 500;
+        throw e;
+      }
+      return { status: "ok", catalog_version: 1 };
     });
 
     await flushQueueWith(post);
@@ -231,7 +287,7 @@ describe("no data loss: flush partial failure", () => {
     const sentAmounts = [];
     const post = vi.fn(async (e) => {
       sentAmounts.push(e.amount);
-      return {};
+      return { status: "ok", catalog_version: 1 };
     });
 
     await flushQueueWith(post);
@@ -268,8 +324,10 @@ describe("no data loss: data integrity after enqueue", () => {
     const entry = {
       amount: 1234.56,
       currency: "RSD",
-      category: "еда&бытовые",
-      group: "собака",
+      category_id: 7,
+      event_id: 3,
+      tag_ids: [1, 4, 9],
+      category_name: "еда&бытовые",
       comment: "корм Royal Canin; миска",
       date: "2026-12-31",
     };
@@ -279,8 +337,10 @@ describe("no data loss: data integrity after enqueue", () => {
 
     expect(item.amount).toBe(1234.56);
     expect(item.currency).toBe("RSD");
-    expect(item.category).toBe("еда&бытовые");
-    expect(item.group).toBe("собака");
+    expect(item.category_id).toBe(7);
+    expect(item.event_id).toBe(3);
+    expect(item.tag_ids).toEqual([1, 4, 9]);
+    expect(item.category_name).toBe("еда&бытовые");
     expect(item.comment).toBe("корм Royal Canin; миска");
     expect(item.date).toBe("2026-12-31");
   });
@@ -289,8 +349,10 @@ describe("no data loss: data integrity after enqueue", () => {
     const entry = {
       amount: 100,
       currency: "RSD",
-      category: "カフェ",
-      group: "путешествия",
+      category_id: 11,
+      event_id: null,
+      tag_ids: [],
+      category_name: "カフェ",
       comment: "日本語テスト & ñoño",
       date: "2026-01-01",
     };
@@ -298,7 +360,7 @@ describe("no data loss: data integrity after enqueue", () => {
     await enqueue(entry);
     const [item] = await getAll();
 
-    expect(item.category).toBe("カフェ");
+    expect(item.category_name).toBe("カフェ");
     expect(item.comment).toBe("日本語テスト & ñoño");
   });
 
@@ -314,10 +376,9 @@ describe("no data loss: data integrity after enqueue", () => {
     expect(item.amount).toBe(0);
   });
 
-  it("empty strings are preserved", async () => {
-    await enqueue({ ...EXPENSE, group: "", comment: "" });
+  it("empty comment is preserved", async () => {
+    await enqueue({ ...EXPENSE, comment: "" });
     const [item] = await getAll();
-    expect(item.group).toBe("");
     expect(item.comment).toBe("");
   });
 });
@@ -332,25 +393,12 @@ describe("deduplication: 409 conflict handling", () => {
     await enqueue(EXPENSE);
 
     const post = vi.fn(async () => {
-      throw new Error("HTTP 409");
+      const e = new Error("HTTP 409");
+      e.status = 409;
+      throw e;
     });
 
-    const items = await getAll();
-    for (const item of items) {
-      try {
-        await post({
-          expense_id: item.expense_id,
-          amount: item.amount,
-        });
-        await remove(item.id);
-      } catch (e) {
-        if (e.message && e.message.includes("409")) {
-          await remove(item.id);
-          continue;
-        }
-        break;
-      }
-    }
+    await flushQueueWith(post);
 
     expect(await count()).toBe(0);
   });
@@ -362,47 +410,59 @@ describe("deduplication: stable identity contract", () => {
     await allure.feature("Deduplication");
   });
 
-  it("enqueue generates a stable identity field (expense_id)", async () => {
-    await enqueue(EXPENSE);
-    const [item] = await getAll();
-
-    expect(item.expense_id).toBeDefined();
-    expect(typeof item.expense_id).toBe("string");
-    expect(item.expense_id.length).toBeGreaterThan(0);
-  });
-
-  it("flush sends expense_id to the server", async () => {
+  it("flush assigns a client_expense_id when the queued row has none", async () => {
     await enqueue(EXPENSE);
 
-    const post = vi.fn(async () => ({}));
+    const seen = [];
+    const post = vi.fn(async (payload) => {
+      seen.push(payload.client_expense_id);
+      return { status: "ok", catalog_version: 1 };
+    });
+
     await flushQueueWith(post);
 
-    expect(post).toHaveBeenCalledOnce();
-    const sentPayload = post.mock.calls[0][0];
-    expect(sentPayload.expense_id).toBeDefined();
-    expect(typeof sentPayload.expense_id).toBe("string");
-    expect(sentPayload.expense_id.length).toBeGreaterThan(0);
+    expect(seen).toHaveLength(1);
+    expect(typeof seen[0]).toBe("string");
+    expect(seen[0].length).toBeGreaterThan(0);
   });
 
-  it("legacy item without expense_id gets one on enqueue", async () => {
-    const legacy = { ...EXPENSE };
-    delete legacy.expense_id;
-
-    await enqueue(legacy);
-    const [item] = await getAll();
-
-    expect(item.expense_id).toBeDefined();
-    expect(typeof item.expense_id).toBe("string");
-    expect(item.expense_id.length).toBeGreaterThan(0);
-  });
-
-  it("explicit expense_id is preserved on enqueue", async () => {
-    const explicit = { ...EXPENSE, expense_id: "custom-uuid-123" };
+  it("explicit client_expense_id is preserved on enqueue and flush", async () => {
+    const explicit = { ...EXPENSE, client_expense_id: "custom-uuid-123" };
 
     await enqueue(explicit);
-    const [item] = await getAll();
+    const [stored] = await getAll();
+    expect(stored.client_expense_id).toBe("custom-uuid-123");
 
-    expect(item.expense_id).toBe("custom-uuid-123");
+    const post = vi.fn(async () => ({ status: "ok", catalog_version: 1 }));
+    await flushQueueWith(post);
+
+    expect(post.mock.calls[0][0].client_expense_id).toBe("custom-uuid-123");
+  });
+});
+
+describe("pre-v2 legacy-item guard", () => {
+  beforeEach(async () => {
+    await allure.epic("Data Safety");
+    await allure.feature("Schema Migration");
+  });
+
+  it("drops a pre-v2 queued item (no category_id) instead of retrying it forever", async () => {
+    // Simulate a stray v1-shaped row that survived the IndexedDB v1->v2
+    // clear. The app's flush guard must drop it, not 422-loop the queue.
+    await enqueue({
+      amount: 100,
+      currency: "RSD",
+      category: "кафе",
+      group: "",
+      comment: "",
+      date: "2026-04-15",
+    });
+
+    const post = vi.fn();
+    await flushQueueWith(post);
+
+    expect(post).not.toHaveBeenCalled();
+    expect(await count()).toBe(0);
   });
 });
 
@@ -423,7 +483,7 @@ describe("no data loss: concurrent operations", () => {
   });
 
   it("rapid enqueue-flush cycles don't lose data", async () => {
-    const successPost = vi.fn(async () => ({}));
+    const successPost = vi.fn(async () => ({ status: "ok", catalog_version: 1 }));
 
     for (let i = 0; i < 5; i++) {
       await enqueue({ ...EXPENSE, amount: (i + 1) * 100 });
@@ -438,7 +498,9 @@ describe("no data loss: concurrent operations", () => {
     await enqueue({ ...EXPENSE, amount: 100 });
 
     const post = vi.fn(async () => {
-      throw new Error("HTTP 500");
+      const e = new Error("HTTP 500");
+      e.status = 500;
+      throw e;
     });
 
     await flushQueueWith(post);
@@ -447,5 +509,69 @@ describe("no data loss: concurrent operations", () => {
     expect(await count()).toBe(2);
     const items = await getAll();
     expect(items.map((i) => i.amount)).toEqual([100, 200]);
+  });
+});
+
+describe("submit-side contract: enqueue failure must NOT trigger success path", () => {
+  // This block targets the C1 regression. Before the fix, submitExpense
+  // chained ``.then().catch().then()`` where the tail .then ran even on
+  // catch — showing ✓, success toast, form reset, and kicking an auto
+  // flush. This describes the invariant as a direct test on the
+  // submit-side state machine: an enqueue rejection must leave the UI
+  // side-effects untouched.
+  beforeEach(async () => {
+    await allure.epic("Data Safety");
+    await allure.feature("No Data Loss");
+  });
+
+  async function submitFlow({ enqueueFn, flushFn, online = true }) {
+    const sideEffects = {
+      successAnimation: false,
+      formReset: false,
+      autoFlush: false,
+      errorToast: null,
+    };
+    try {
+      await enqueueFn(EXPENSE);
+    } catch (e) {
+      sideEffects.errorToast = e.message;
+      return sideEffects;
+    }
+    sideEffects.successAnimation = true;
+    sideEffects.formReset = true;
+    if (online) {
+      sideEffects.autoFlush = true;
+      await flushFn();
+    }
+    return sideEffects;
+  }
+
+  it("enqueue rejection short-circuits the success side-effects", async () => {
+    const failingEnqueue = vi.fn(async () => {
+      throw new Error("IndexedDB quota exceeded");
+    });
+    const flushFn = vi.fn();
+
+    const effects = await submitFlow({ enqueueFn: failingEnqueue });
+
+    expect(failingEnqueue).toHaveBeenCalledOnce();
+    expect(effects.successAnimation).toBe(false);
+    expect(effects.formReset).toBe(false);
+    expect(effects.autoFlush).toBe(false);
+    expect(effects.errorToast).toBe("IndexedDB quota exceeded");
+    expect(flushFn).not.toHaveBeenCalled();
+  });
+
+  it("enqueue success runs the success side-effects exactly once", async () => {
+    const okEnqueue = vi.fn(async (entry) => enqueue(entry));
+    const flushFn = vi.fn();
+
+    const effects = await submitFlow({ enqueueFn: okEnqueue, flushFn });
+
+    expect(effects.successAnimation).toBe(true);
+    expect(effects.formReset).toBe(true);
+    expect(effects.autoFlush).toBe(true);
+    expect(effects.errorToast).toBeNull();
+    expect(flushFn).toHaveBeenCalledOnce();
   });
 });

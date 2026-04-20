@@ -1,4 +1,4 @@
-"""API tests against the unified dinary.duckdb (GET /api/categories, POST /api/expenses)."""
+"""API tests against the unified dinary.duckdb (GET /api/catalog, POST /api/expenses)."""
 
 import asyncio
 import contextlib
@@ -85,6 +85,13 @@ def _tmp_duckdb(tmp_path, monkeypatch):
             "INSERT INTO categories (id, name, group_id, is_active)"
             " VALUES (3, 'ретро-категория', 1, FALSE)",
         )
+        con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'собака', TRUE)")
+        con.execute("INSERT INTO tags (id, name, is_active) VALUES (2, 'аня', TRUE)")
+        con.execute(
+            "INSERT INTO events (id, name, date_from, date_to,"
+            " auto_attach_enabled, is_active)"
+            " VALUES (1, 'evt-2026', '2026-01-01', '2026-12-31', TRUE, TRUE)",
+        )
     finally:
         con.close()
 
@@ -103,32 +110,6 @@ def test_health(client):
 
 
 @allure.epic("API")
-@allure.feature("Categories (3D)")
-class TestCategories:
-    def test_returns_catalog_version_and_categories(self, client):
-        resp = client.get("/api/categories")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["catalog_version"] == 1
-        names = {c["name"] for c in data["categories"]}
-        assert {"еда", "транспорт"}.issubset(names)
-        # Inactive categories must not leak through.
-        assert "ретро-категория" not in names
-        for cat in data["categories"]:
-            assert cat["group"] in {"Food", "Transport"}
-
-    def test_db_failure_returns_500(self, client, monkeypatch):
-        def bad_connection(**_kwargs):
-            raise RuntimeError("DB corrupted")
-
-        monkeypatch.setattr(duckdb_repo, "get_connection", bad_connection)
-        resp = client.get("/api/categories")
-        # 500 (not 502): the DuckDB file is in-process, so a read
-        # failure is an internal server error, not an upstream one.
-        assert resp.status_code == 500
-
-
-@allure.epic("API")
 @allure.feature("Expenses (3D)")
 class TestPostExpense:
     @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
@@ -139,7 +120,7 @@ class TestPostExpense:
                 "client_expense_id": "e1",
                 "amount": 50.0,
                 "currency": "RSD",
-                "category": "еда",
+                "category_id": 1,
                 "comment": "lunch",
                 "date": "2026-04-15",
             },
@@ -148,7 +129,7 @@ class TestPostExpense:
         data = resp.json()
         assert data["status"] == "ok"
         assert data["month"] == "2026-04"
-        assert data["category"] == "еда"
+        assert data["category_id"] == 1
         assert Decimal(data["amount_original"]) == Decimal("50.0")
         assert data["currency_original"] == "RSD"
         assert data["catalog_version"] == 1
@@ -172,7 +153,7 @@ class TestPostExpense:
                 "client_expense_id": "e_no_log",
                 "amount": 50.0,
                 "currency": "RSD",
-                "category": "еда",
+                "category_id": 1,
                 "comment": "lunch",
                 "date": "2026-04-15",
             },
@@ -205,7 +186,7 @@ class TestPostExpense:
                 "client_expense_id": "e_log",
                 "amount": 50.0,
                 "currency": "RSD",
-                "category": "еда",
+                "category_id": 1,
                 "comment": "lunch",
                 "date": "2026-04-15",
             },
@@ -230,7 +211,7 @@ class TestPostExpense:
             "client_expense_id": "e2",
             "amount": 50.0,
             "currency": "RSD",
-            "category": "еда",
+            "category_id": 1,
             "comment": "",
             "date": "2026-04-15",
         }
@@ -258,7 +239,7 @@ class TestPostExpense:
             "client_expense_id": "e3",
             "amount": 50.0,
             "currency": "RSD",
-            "category": "еда",
+            "category_id": 1,
             "comment": "",
             "date": "2026-04-15",
         }
@@ -277,7 +258,7 @@ class TestPostExpense:
             "client_expense_id": "shared",
             "amount": 1.0,
             "currency": "RSD",
-            "category": "еда",
+            "category_id": 1,
             "comment": "",
             "date": "2026-01-15",
         }
@@ -294,8 +275,62 @@ class TestPostExpense:
                 "client_expense_id": "e4",
                 "amount": 1.0,
                 "currency": "RSD",
-                "category": "missing-category",
+                "category_id": 999,
                 "comment": "",
+                "date": "2026-04-15",
+            },
+        )
+        assert resp.status_code == 422
+
+    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    def test_event_and_tags_are_stored(self, _mock_convert_fn, client):
+        resp = client.post(
+            "/api/expenses",
+            json={
+                "client_expense_id": "e_evt",
+                "amount": 10.0,
+                "currency": "RSD",
+                "category_id": 1,
+                "event_id": 1,
+                "tag_ids": [1, 2],
+                "comment": "",
+                "date": "2026-04-15",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        con = duckdb_repo.get_connection()
+        try:
+            row = con.execute(
+                "SELECT id, event_id FROM expenses WHERE client_expense_id = 'e_evt'",
+            ).fetchone()
+            assert row is not None
+            assert int(row[1]) == 1
+            tags = sorted(duckdb_repo.get_expense_tags(con, int(row[0])))
+        finally:
+            con.close()
+        assert tags == [1, 2]
+
+    def test_unknown_event_id_returns_422(self, client):
+        resp = client.post(
+            "/api/expenses",
+            json={
+                "client_expense_id": "e_bad_evt",
+                "amount": 1.0,
+                "category_id": 1,
+                "event_id": 999,
+                "date": "2026-04-15",
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_unknown_tag_returns_422(self, client):
+        resp = client.post(
+            "/api/expenses",
+            json={
+                "client_expense_id": "e_bad_tag",
+                "amount": 1.0,
+                "category_id": 1,
+                "tag_ids": [999],
                 "date": "2026-04-15",
             },
         )
@@ -310,7 +345,7 @@ class TestPostExpense:
                 "client_expense_id": "e_inactive",
                 "amount": 1.0,
                 "currency": "RSD",
-                "category": "ретро-категория",
+                "category_id": 3,
                 "comment": "",
                 "date": "2026-04-15",
             },
@@ -341,7 +376,7 @@ class TestPostExpense:
             "client_expense_id": "e_pin_1",
             "amount": 10.0,
             "currency": "RSD",
-            "category": "еда",
+            "category_id": 1,
             "comment": "",
             "date": "2026-04-15",
         }
@@ -389,6 +424,97 @@ class TestPostExpense:
         )
         assert mismatch.status_code == 409
 
+    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    def test_inactive_tag_replay_carveout(
+        self,
+        _mock_convert_fn,
+        client,
+    ):
+        """The tag validator's replay carve-out mirrors the category one:
+
+        1. Post an expense pinned to an active tag.
+        2. Retire the tag (admin PATCH or reseed).
+        3. Replaying the same POST must still succeed because the
+           stored ``expense_tags`` row proves the tag was live when
+           the original request hit the wire.
+        4. A truly-new POST using the retired tag must 422.
+        """
+        post_body = {
+            "client_expense_id": "e_tag_pin",
+            "amount": 5.0,
+            "currency": "RSD",
+            "category_id": 1,
+            "tag_ids": [1],
+            "comment": "",
+            "date": "2026-04-15",
+        }
+        resp = client.post("/api/expenses", json=post_body)
+        assert resp.status_code == 200, resp.text
+
+        con = duckdb_repo.get_connection()
+        try:
+            con.execute("UPDATE tags SET is_active = FALSE WHERE id = 1")
+        finally:
+            con.close()
+
+        # Truly-new POST against the retired tag -> 422.
+        new = client.post(
+            "/api/expenses",
+            json={**post_body, "client_expense_id": "e_tag_new"},
+        )
+        assert new.status_code == 422
+        assert "Inactive tag_ids" in new.json()["detail"]
+
+        # Replay of the original -> 200 duplicate.
+        replay = client.post("/api/expenses", json=post_body)
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["status"] == "duplicate"
+
+    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    def test_inactive_tag_replay_with_mismatched_body_returns_409(
+        self,
+        _mock_convert_fn,
+        client,
+    ):
+        """Replay path using an inactive tag but a *different* body
+        must return 409, not 422.
+
+        Before the M5 refactor, the tag validator raised a blanket
+        422 as soon as any tag in the payload was inactive — even
+        for a replay whose stored row was a real conflict (amount /
+        date / tag-set differs). That masked the true
+        duplicate-vs-conflict decision, which belongs to
+        ``insert_expense``'s ON CONFLICT compare path. With the
+        validator deferring on replay, the compare runs and surfaces
+        the real 409.
+        """
+        post_body = {
+            "client_expense_id": "e_tag_mismatch",
+            "amount": 5.0,
+            "currency": "RSD",
+            "category_id": 1,
+            "tag_ids": [1],
+            "comment": "",
+            "date": "2026-04-15",
+        }
+        resp = client.post("/api/expenses", json=post_body)
+        assert resp.status_code == 200, resp.text
+
+        con = duckdb_repo.get_connection()
+        try:
+            con.execute("UPDATE tags SET is_active = FALSE WHERE id = 1")
+        finally:
+            con.close()
+
+        # Same client_expense_id, inactive tag, but *different amount*:
+        # this is a genuine conflict, so the compare path should surface
+        # 409 — the inactive-tag validator must not hide it behind 422.
+        resp = client.post(
+            "/api/expenses",
+            json={**post_body, "amount": 99.0},
+        )
+        assert resp.status_code == 409
+
     def test_unknown_category_does_not_insert_row(self, client):
         """The unknown-category 422 path bails out before
         ``insert_expense``, so no ledger row is created and a corrected
@@ -397,7 +523,7 @@ class TestPostExpense:
             "client_expense_id": "e_leak",
             "amount": 1.0,
             "currency": "RSD",
-            "category": "missing-category",
+            "category_id": 999,
             "comment": "",
             "date": "2026-04-15",
         }
@@ -405,7 +531,7 @@ class TestPostExpense:
         assert resp.status_code == 422
         assert duckdb_repo.lookup_existing_expense("e_leak") is None
 
-        good = {**bad, "category": "еда"}
+        good = {**bad, "category_id": 1}
         resp = client.post("/api/expenses", json=good)
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
@@ -427,7 +553,7 @@ class TestPostExpense:
                 "client_expense_id": "e_eur",
                 "amount": 12.5,
                 "currency": "EUR",
-                "category": "еда",
+                "category_id": 1,
                 "comment": "",
                 "date": "2026-04-15",
             },
@@ -452,7 +578,7 @@ class TestPostExpense:
             json={
                 "client_expense_id": "e_no_ccy",
                 "amount": 10.0,
-                "category": "еда",
+                "category_id": 1,
                 "comment": "",
                 "date": "2026-04-15",
             },
@@ -478,7 +604,7 @@ class TestPostExpense:
                     "client_expense_id": "e_fx",
                     "amount": 10.0,
                     "currency": "EUR",
-                    "category": "еда",
+                    "category_id": 1,
                     "comment": "",
                     "date": "2026-04-15",
                 },
@@ -517,13 +643,13 @@ class TestPostExpense:
             "client_expense_id": "e_cat_change",
             "amount": 50.0,
             "currency": "RSD",
-            "category": "еда",
+            "category_id": 1,
             "comment": "",
             "date": "2026-04-15",
         }
         assert client.post("/api/expenses", json=base).status_code == 200
 
-        modified = {**base, "category": "транспорт"}
+        modified = {**base, "category_id": 2}
         resp = client.post("/api/expenses", json=modified)
         assert resp.status_code == 409
 
@@ -542,7 +668,7 @@ class TestPostExpense:
             "client_expense_id": "e_race",
             "amount": 50.0,
             "currency": "RSD",
-            "category": "еда",
+            "category_id": 1,
             "comment": "",
             "date": "2026-04-15",
         }
@@ -576,7 +702,7 @@ class TestPostExpense:
                     "client_expense_id": "e_boom",
                     "amount": 50.0,
                     "currency": "RSD",
-                    "category": "еда",
+                    "category_id": 1,
                     "comment": "",
                     "date": "2026-04-15",
                 },
@@ -619,7 +745,7 @@ class TestPostExpense:
             "client_expense_id": "e_concurrent",
             "amount": 42.0,
             "currency": "RSD",
-            "category": "еда",
+            "category_id": 1,
             "comment": "",
             "date": "2026-04-15",
         }
@@ -706,7 +832,7 @@ class TestPostExpense:
         base_body = {
             "client_expense_id": "e_concurrent_mixed",
             "currency": "RSD",
-            "category": "еда",
+            "category_id": 1,
             "comment": "",
             "date": "2026-04-15",
         }
@@ -814,7 +940,7 @@ class TestPostExpense:
                     "client_expense_id": "e_ghost",
                     "amount": 50.0,
                     "currency": "RSD",
-                    "category": "еда",
+                    "category_id": 1,
                     "comment": "",
                     "date": "2026-04-15",
                 },

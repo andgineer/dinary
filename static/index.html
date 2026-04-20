@@ -34,17 +34,38 @@
     </div>
 
     <div class="form-group">
-      <label for="group">Envelope</label>
+      <label for="group">Envelope
+        <button id="add-group-btn" class="btn-inline" type="button" title="Новая группа">+ Новый</button>
+      </label>
       <select id="group">
         <option value="">— loading —</option>
       </select>
     </div>
 
     <div class="form-group">
-      <label for="category">Category</label>
+      <label for="category">Category
+        <button id="add-category-btn" class="btn-inline" type="button" title="Новая категория">+ Новый</button>
+      </label>
       <select id="category">
         <option value="">— select group first —</option>
       </select>
+      <div id="add-category-hint" class="form-hint" hidden>Сначала выберите группу</div>
+    </div>
+
+    <div class="form-group">
+      <label for="event">Event
+        <button id="add-event-btn" class="btn-inline" type="button" title="Новое событие">+ Новый</button>
+      </label>
+      <select id="event">
+        <option value="">— без события —</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Tags
+        <button id="add-tag-btn" class="btn-inline" type="button" title="Новый тэг">+ Новый</button>
+      </label>
+      <div id="tags" class="tags-list"></div>
     </div>
 
     <div class="form-group">

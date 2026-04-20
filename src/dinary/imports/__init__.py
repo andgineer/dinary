@@ -6,6 +6,8 @@ year-aware and use ``import_mapping`` for 2D→3D resolution.
 
 Runtime sheet logging (the append-only path triggered by
 ``POST /api/expenses``) lives in ``dinary.services.sheet_logging`` and uses the
-separate ``logging_mapping`` table. The two mapping tables are
-independent: changes to one do not automatically propagate to the other.
+separate ``runtime_mapping`` table, populated exclusively from the
+hand-curated ``map`` worksheet tab (see ``runtime_map.py``). The two
+mapping tables are independent: changes to one do not automatically
+propagate to the other.
 """
