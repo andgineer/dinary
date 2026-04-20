@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for src/dinary/services/seed_config.py: 78%</title>
+    <title>Coverage for src/dinary/services/seed_config.py: 79%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>src&#8201;/&#8201;dinary&#8201;/&#8201;services&#8201;/&#8201;seed_config.py</b>:
-            <span class="pc_cov">78%</span>
+            <span class="pc_cov">79%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">496 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">387<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">109<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">393<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">103<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_649185c7b8dec303_sheet_logging_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-20 16:29 +0000
+            created at 2026-04-20 16:35 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -1341,7 +1341,7 @@
     <p class="pln"><span class="n"><a id="t1259" href="#t1259">1259</a></span><span class="t">        <span class="com"># No historical sheets configured &#8212; synthesise canonical</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1260" href="#t1260">1260</a></span><span class="t">        <span class="com"># defaults for every active category so the API path still</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1261" href="#t1261">1261</a></span><span class="t">        <span class="com"># has somewhere to land.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1262" href="#t1262">1262</a></span><span class="t">        <span class="key">return</span> <span class="nam">_seed_canonical_defaults_only</span><span class="op">(</span><span class="nam">con</span><span class="op">,</span> <span class="nam">cat_id_by_name</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1262" href="#t1262">1262</a></span><span class="t">        <span class="key">return</span> <span class="nam">_seed_canonical_defaults_only</span><span class="op">(</span><span class="nam">con</span><span class="op">,</span> <span class="nam">cat_id_by_name</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1263" href="#t1263">1263</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1264" href="#t1264">1264</a></span><span class="t">    <span class="nam">rows</span> <span class="op">=</span> <span class="nam">con</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t1265" href="#t1265">1265</a></span><span class="t">        <span class="str">"SELECT id, category_id, event_id, sheet_category, sheet_group"</span>&nbsp;</span><span class="r"></span></p>
@@ -1408,16 +1408,16 @@
     <p class="pln"><span class="n"><a id="t1326" href="#t1326">1326</a></span><span class="t"><span class="str">    ``latest_year`` rebuild whose source was empty &#8212; guaranteed to</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1327" href="#t1327">1327</a></span><span class="t"><span class="str">    keep the API path functional.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1328" href="#t1328">1328</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1329" href="#t1329">1329</a></span><span class="t">    <span class="nam">next_id</span> <span class="op">=</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1330" href="#t1330">1330</a></span><span class="t">    <span class="key">for</span> <span class="nam">cat_name</span><span class="op">,</span> <span class="nam">cat_id</span> <span class="key">in</span> <span class="nam">cat_id_by_name</span><span class="op">.</span><span class="nam">items</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1331" href="#t1331">1331</a></span><span class="t">        <span class="nam">con</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t1332" href="#t1332">1332</a></span><span class="t">            <span class="str">"INSERT INTO logging_mapping"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t1333" href="#t1333">1333</a></span><span class="t">            <span class="str">" (id, category_id, event_id, sheet_category, sheet_group)"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t1334" href="#t1334">1334</a></span><span class="t">            <span class="str">" VALUES (?, ?, NULL, ?, ?)"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t1335" href="#t1335">1335</a></span><span class="t">            <span class="op">[</span><span class="nam">next_id</span><span class="op">,</span> <span class="nam">int</span><span class="op">(</span><span class="nam">cat_id</span><span class="op">)</span><span class="op">,</span> <span class="nam">cat_name</span><span class="op">,</span> <span class="str">""</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t1336" href="#t1336">1336</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1337" href="#t1337">1337</a></span><span class="t">        <span class="nam">next_id</span> <span class="op">+=</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1338" href="#t1338">1338</a></span><span class="t">    <span class="key">return</span> <span class="nam">len</span><span class="op">(</span><span class="nam">cat_id_by_name</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1329" href="#t1329">1329</a></span><span class="t">    <span class="nam">next_id</span> <span class="op">=</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1330" href="#t1330">1330</a></span><span class="t">    <span class="key">for</span> <span class="nam">cat_name</span><span class="op">,</span> <span class="nam">cat_id</span> <span class="key">in</span> <span class="nam">cat_id_by_name</span><span class="op">.</span><span class="nam">items</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1331" href="#t1331">1331</a></span><span class="t">        <span class="nam">con</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1332" href="#t1332">1332</a></span><span class="t">            <span class="str">"INSERT INTO logging_mapping"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1333" href="#t1333">1333</a></span><span class="t">            <span class="str">" (id, category_id, event_id, sheet_category, sheet_group)"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1334" href="#t1334">1334</a></span><span class="t">            <span class="str">" VALUES (?, ?, NULL, ?, ?)"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1335" href="#t1335">1335</a></span><span class="t">            <span class="op">[</span><span class="nam">next_id</span><span class="op">,</span> <span class="nam">int</span><span class="op">(</span><span class="nam">cat_id</span><span class="op">)</span><span class="op">,</span> <span class="nam">cat_name</span><span class="op">,</span> <span class="str">""</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t1336" href="#t1336">1336</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1337" href="#t1337">1337</a></span><span class="t">        <span class="nam">next_id</span> <span class="op">+=</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t1338" href="#t1338">1338</a></span><span class="t">    <span class="key">return</span> <span class="nam">len</span><span class="op">(</span><span class="nam">cat_id_by_name</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1339" href="#t1339">1339</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1340" href="#t1340">1340</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1341" href="#t1341">1341</a></span><span class="t"><span class="com"># ---------------------------------------------------------------------------</span>&nbsp;</span><span class="r"></span></p>
@@ -1676,7 +1676,7 @@
             <a class="nav" href="z_649185c7b8dec303_sheet_logging_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-20 16:29 +0000
+            created at 2026-04-20 16:35 +0000
         </p>
     </div>
 </footer>
