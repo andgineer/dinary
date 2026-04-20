@@ -2,30 +2,29 @@
 
 [Full report](https://htmlpreview.github.io/?https://github.com/andgineer/dinary-server/blob/python-coverage-comment-action-data/htmlcov/index.html)
 
-| Name                                       |    Stmts |     Miss |   Cover |   Missing |
-|------------------------------------------- | -------: | -------: | ------: | --------: |
-| src/dinary/\_\_about\_\_.py                |        1 |        0 |    100% |           |
-| src/dinary/api/categories.py               |       21 |        0 |    100% |           |
-| src/dinary/api/expenses.py                 |       67 |        4 |     94% |178-179, 201-202 |
-| src/dinary/api/qr.py                       |       17 |        6 |     65% |     26-32 |
-| src/dinary/config.py                       |       20 |        1 |     95% |        15 |
-| src/dinary/imports/report\_2d\_3d.py       |      183 |       46 |     75% |161-164, 225-234, 270, 384-385, 410, 431-473, 477-509, 513 |
-| src/dinary/main.py                         |       57 |        7 |     88% |27-29, 74, 80, 96, 106 |
-| src/dinary/services/category\_store.py     |       27 |        0 |    100% |           |
-| src/dinary/services/db\_migrations.py      |       54 |        2 |     96% |    49, 52 |
-| src/dinary/services/duckdb\_repo.py        |      289 |       35 |     88% |145-146, 153-154, 172-173, 197-198, 370-379, 396-397, 574-578, 583-589, 672, 678, 798, 838-839, 866-873, 954 |
-| src/dinary/services/exchange\_rate.py      |       16 |        9 |     44% |     19-28 |
-| src/dinary/services/import\_income.py      |      134 |      134 |      0% |     9-353 |
-| src/dinary/services/import\_sheet.py       |      370 |      105 |     72% |242, 247-248, 262, 264, 266, 294-311, 320, 345, 349, 378-384, 387, 394, 396, 398-405, 427, 432-433, 457, 501-505, 523-526, 651-655, 658-660, 748, 785-790, 803, 815, 828, 873-887, 900, 903, 908, 918, 958-962, 964-968, 1042-1049, 1053-1066, 1096-1103 |
-| src/dinary/services/nbs.py                 |      100 |       44 |     56% |30, 35, 46-55, 69-78, 103, 107-108, 112-114, 118, 121-122, 126-133, 151-156 |
-| src/dinary/services/qr\_parser.py          |       16 |        1 |     94% |        31 |
-| src/dinary/services/seed\_config.py        |      438 |       98 |     78% |155, 157, 159, 161, 163, 182-192, 202, 239-240, 538, 543-545, 547-553, 555, 561, 563, 565, 568, 571-573, 575-582, 586, 613, 615, 617, 619, 624, 630, 649, 728-741, 788-789, 815, 916-917, 922-923, 926-927, 951-958, 972-977, 999-1005, 1079-1080, 1089-1090, 1093-1094, 1096-1097, 1099-1103, 1119-1124, 1180-1188, 1201, 1222-1224, 1247-1259 |
-| src/dinary/services/sheets.py              |      165 |       15 |     91% |38-44, 48-49, 81, 101-104, 109-111, 261 |
-| src/dinary/services/sql\_loader.py         |       33 |        0 |    100% |           |
-| src/dinary/services/sync.py                |      200 |       33 |     84% |172-176, 324, 359-365, 448-451, 472-477, 481, 546, 560-561, 579-586, 592 |
-| src/dinary/services/verify\_equivalence.py |       91 |       91 |      0% |    18-205 |
-| src/dinary/services/verify\_income.py      |       36 |       36 |      0% |      7-81 |
-| **TOTAL**                                  | **2335** |  **667** | **71%** |           |
+| Name                                      |    Stmts |     Miss |   Cover |   Missing |
+|------------------------------------------ | -------: | -------: | ------: | --------: |
+| src/dinary/\_\_about\_\_.py               |        1 |        0 |    100% |           |
+| src/dinary/api/categories.py              |       21 |        0 |    100% |           |
+| src/dinary/api/expenses.py                |       67 |        4 |     94% |182-183, 205-206 |
+| src/dinary/api/qr.py                      |       17 |        6 |     65% |     26-32 |
+| src/dinary/config.py                      |       37 |        2 |     95% |    19, 29 |
+| src/dinary/imports/expense\_import.py     |      370 |      105 |     72% |242, 247-248, 262, 264, 266, 294-311, 320, 345, 349, 378-384, 387, 394, 396, 398-405, 427, 432-433, 457, 500-504, 522-525, 650-654, 657-659, 747, 781-786, 799, 811, 824, 869-883, 896, 899, 904, 914, 955-959, 961-965, 1011-1018, 1022-1035, 1065-1072 |
+| src/dinary/imports/income\_import.py      |      134 |      134 |      0% |    10-282 |
+| src/dinary/imports/report\_2d\_3d.py      |      183 |       46 |     75% |161-164, 225-234, 270, 384-385, 410, 431-473, 477-509, 513 |
+| src/dinary/imports/verify\_equivalence.py |       91 |       91 |      0% |    20-207 |
+| src/dinary/imports/verify\_income.py      |       36 |       36 |      0% |      7-81 |
+| src/dinary/main.py                        |       57 |        7 |     88% |27-29, 74, 80, 96, 106 |
+| src/dinary/services/db\_migrations.py     |       54 |        2 |     96% |    49, 52 |
+| src/dinary/services/duckdb\_repo.py       |      292 |       35 |     88% |146-147, 154-155, 173-174, 198-199, 379-388, 405-406, 599-603, 608-614, 697, 703, 823, 865-866, 893-900, 981 |
+| src/dinary/services/exchange\_rate.py     |       16 |        9 |     44% |     19-28 |
+| src/dinary/services/nbs.py                |      100 |       44 |     56% |30, 35, 46-55, 69-78, 103, 107-108, 112-114, 118, 121-122, 126-133, 151-156 |
+| src/dinary/services/qr\_parser.py         |       16 |        1 |     94% |        31 |
+| src/dinary/services/seed\_config.py       |      457 |       97 |     79% |163, 165, 167, 169, 171, 190, 200, 237-238, 536, 541-543, 545-551, 553, 559, 561, 563, 566, 569-571, 573-580, 584, 611, 613, 615, 617, 622, 628, 647, 726-739, 770-771, 797, 898-899, 904-905, 908-909, 933-940, 954-959, 981-987, 1081, 1129-1130, 1138-1139, 1142-1143, 1145-1146, 1148-1152, 1174-1179, 1235-1243, 1256, 1277-1279, 1302-1314 |
+| src/dinary/services/sheet\_logging.py     |      166 |       27 |     84% |141, 213, 253-259, 342-345, 524, 530-531, 544-551, 558-561 |
+| src/dinary/services/sheets.py             |      205 |       42 |     80% |64, 72-78, 82, 143-144, 150, 204, 243, 384, 513, 525-528, 533, 575-580, 609-641 |
+| src/dinary/services/sql\_loader.py        |       33 |        0 |    100% |           |
+| **TOTAL**                                 | **2353** |  **688** | **71%** |           |
 
 
 ## Setup coverage badge

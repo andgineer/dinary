@@ -60,12 +60,12 @@
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
-            <a id="prevFileLink" class="nav" href="z_5296b11a043bfcc6_config_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a id="prevFileLink" class="nav" href="z_b89151b672fa910f_income_import_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a id="nextFileLink" class="nav" href="z_5296b11a043bfcc6_main_py.html">&#xbb; next</a>
+            <a id="nextFileLink" class="nav" href="z_b89151b672fa910f_verify_equivalence_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-19 08:22 +0000
+            created at 2026-04-20 05:55 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -103,12 +103,12 @@
     <p class="run"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t"><span class="key">from</span> <span class="nam">decimal</span> <span class="key">import</span> <span class="nam">Decimal</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t"><span class="key">from</span> <span class="nam">pathlib</span> <span class="key">import</span> <span class="nam">Path</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">services</span> <span class="key">import</span> <span class="nam">duckdb_repo</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">services</span><span class="op">.</span><span class="nam">import_sheet</span> <span class="key">import</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t">    <span class="nam">build_resolution_context</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t">    <span class="nam">iter_parsed_sheet_rows</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t">    <span class="nam">resolve_row_to_3d</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">imports</span><span class="op">.</span><span class="nam">expense_import</span> <span class="key">import</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t">    <span class="nam">build_resolution_context</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t">    <span class="nam">iter_parsed_sheet_rows</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t">    <span class="nam">resolve_row_to_3d</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">services</span> <span class="key">import</span> <span class="nam">duckdb_repo</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t"><span class="nam">logger</span> <span class="op">=</span> <span class="nam">logging</span><span class="op">.</span><span class="nam">getLogger</span><span class="op">(</span><span class="nam">__name__</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -241,7 +241,7 @@
     <p class="pln"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t"><span class="key">def</span> <span class="nam">_get_import_years</span><span class="op">(</span><span class="nam">con</span><span class="op">)</span> <span class="op">-></span> <span class="nam">list</span><span class="op">[</span><span class="nam">int</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t">    <span class="nam">rows</span> <span class="op">=</span> <span class="nam">con</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t">        <span class="str">"SELECT year FROM sheet_import_sources ORDER BY year"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t">        <span class="str">"SELECT year FROM import_sources ORDER BY year"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis mis2 show_mis"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t">    <span class="op">)</span><span class="op">.</span><span class="nam">fetchall</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t">    <span class="key">return</span> <span class="op">[</span><span class="nam">r</span><span class="op">[</span><span class="num">0</span><span class="op">]</span> <span class="key">for</span> <span class="nam">r</span> <span class="key">in</span> <span class="nam">rows</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -278,7 +278,7 @@
     <p class="pln"><span class="n"><a id="t196" href="#t196">196</a></span><span class="t">        <span class="com"># iter_parsed_sheet_rows can fail in many distinct ways (gspread</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t197" href="#t197">197</a></span><span class="t">        <span class="com"># APIError on quota / network / auth, malformed sheet structure,</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t198" href="#t198">198</a></span><span class="t">        <span class="com"># an unexpected currency in the layout, ValueError when this</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t199" href="#t199">199</a></span><span class="t">        <span class="com"># year row is missing from sheet_import_sources, &#8230;). The report</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t199" href="#t199">199</a></span><span class="t">        <span class="com"># year row is missing from import_sources, &#8230;). The report</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t200" href="#t200">200</a></span><span class="t">        <span class="com"># is a multi-year diagnostic: a single bad year must not abort</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t201" href="#t201">201</a></span><span class="t">        <span class="com"># the run, so we widen the catch deliberately, log with full</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t202" href="#t202">202</a></span><span class="t">        <span class="com"># traceback, and bump the year-level counter so callers can</span>&nbsp;</span><span class="r"></span></p>
@@ -489,7 +489,7 @@
     <p class="pln"><span class="n"><a id="t407" href="#t407">407</a></span><span class="t"><span class="str">    ``duckdb_repo.DATA_DIR`` (per-test ``tmp_path``) takes effect</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t408" href="#t408">408</a></span><span class="t"><span class="str">    without having to also patch a module-level cached constant.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t409" href="#t409">409</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t410" href="#t410">410</a></span><span class="t">    <span class="key">return</span> <span class="nam">duckdb_repo</span><span class="op">.</span><span class="nam">DATA_DIR</span> <span class="op">/</span> <span class="str">"reports"</span> <span class="op">/</span> <span class="fst">f"</span><span class="fst">report_2d_3d.</span><span class="op">{</span><span class="nam">output_format</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t410" href="#t410">410</a></span><span class="t">    <span class="key">return</span> <span class="nam">duckdb_repo</span><span class="op">.</span><span class="nam">DATA_DIR</span> <span class="op">/</span> <span class="str">"reports"</span> <span class="op">/</span> <span class="fst">f"</span><span class="fst">import_report_2d_3d.</span><span class="op">{</span><span class="nam">output_format</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t411" href="#t411">411</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t412" href="#t412">412</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t413" href="#t413">413</a></span><span class="t"><span class="key">def</span> <span class="nam">generate_report</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -502,7 +502,7 @@
     <p class="pln"><span class="n"><a id="t420" href="#t420">420</a></span><span class="t">    <span class="str">"""Generate and render the 2D-to-3D resolution report.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t421" href="#t421">421</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t422" href="#t422">422</a></span><span class="t"><span class="str">    Strictly read-only: assumes ``config.duckdb`` already exists</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t423" href="#t423">423</a></span><span class="t"><span class="str">    (rebuilt by ``inv rebuild-catalog``). Raises ``FileNotFoundError``</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t423" href="#t423">423</a></span><span class="t"><span class="str">    (rebuilt by ``inv import-catalog``). Raises ``FileNotFoundError``</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t424" href="#t424">424</a></span><span class="t"><span class="str">    if it doesn't, instead of silently creating an empty config.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t425" href="#t425">425</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t426" href="#t426">426</a></span><span class="t"><span class="str">    ``output_path`` is only honored for file-emitting formats</span>&nbsp;</span><span class="r"></span></p>
@@ -511,7 +511,7 @@
     <p class="pln"><span class="n"><a id="t429" href="#t429">429</a></span><span class="t"><span class="str">    discard the requested file.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t430" href="#t430">430</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t431" href="#t431">431</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">duckdb_repo</span><span class="op">.</span><span class="nam">CONFIG_DB</span><span class="op">.</span><span class="nam">exists</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t432" href="#t432">432</a></span><span class="t">        <span class="nam">msg</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">config DB not found at </span><span class="op">{</span><span class="nam">duckdb_repo</span><span class="op">.</span><span class="nam">CONFIG_DB</span><span class="op">}</span><span class="fst">. Run `inv rebuild-catalog` first.</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t432" href="#t432">432</a></span><span class="t">        <span class="nam">msg</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">config DB not found at </span><span class="op">{</span><span class="nam">duckdb_repo</span><span class="op">.</span><span class="nam">CONFIG_DB</span><span class="op">}</span><span class="fst">. Run `inv import-catalog` first.</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t433" href="#t433">433</a></span><span class="t">        <span class="key">raise</span> <span class="nam">FileNotFoundError</span><span class="op">(</span><span class="nam">msg</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t434" href="#t434">434</a></span><span class="t">    <span class="key">if</span> <span class="nam">output_path</span> <span class="key">and</span> <span class="nam">output_format</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">_FILE_FORMATS</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t435" href="#t435">435</a></span><span class="t">        <span class="nam">msg</span> <span class="op">=</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -597,12 +597,12 @@
 <footer>
     <div class="content">
         <p>
-            <a class="nav" href="z_5296b11a043bfcc6_config_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a class="nav" href="z_b89151b672fa910f_income_import_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a class="nav" href="z_5296b11a043bfcc6_main_py.html">&#xbb; next</a>
+            <a class="nav" href="z_b89151b672fa910f_verify_equivalence_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-19 08:22 +0000
+            created at 2026-04-20 05:55 +0000
         </p>
     </div>
 </footer>
