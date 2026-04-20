@@ -7,11 +7,11 @@ same layout logic as import_income, and compares against the DB.
 import logging
 from decimal import Decimal
 
-from dinary.services import duckdb_repo
-from dinary.services.import_income import (
+from dinary.imports.income_import import (
     INCOME_LAYOUTS,
     aggregate_from_sheet,
 )
+from dinary.services import duckdb_repo
 
 logger = logging.getLogger(__name__)
 

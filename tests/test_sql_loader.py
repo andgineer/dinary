@@ -9,11 +9,11 @@ import pytest
 from dinary.services.sql_loader import _cache, fetchall_as, fetchone_as, load_sql
 
 ALL_SQL_FILES = [
-    "forward_projection.sql",
     "get_existing_expense.sql",
     "get_month_expenses.sql",
     "insert_expense.sql",
     "list_categories.sql",
+    "logging_projection.sql",
     "resolve_mapping.sql",
     "resolve_mapping_for_year.sql",
     "seed_load_categories.sql",

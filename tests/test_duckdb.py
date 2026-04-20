@@ -34,18 +34,18 @@ def populated_config(config_db):
         con.execute("INSERT INTO tags VALUES (1, 'собака')")
         con.execute("INSERT INTO tags VALUES (2, 'релокация')")
         con.execute(
-            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
             " category_id, event_id) VALUES (1, 0, 'еда', 'собака', 1, NULL)",
         )
         con.execute(
-            "INSERT INTO sheet_mapping_tags (mapping_id, tag_id) VALUES (1, 1)",
+            "INSERT INTO import_mapping_tags (mapping_id, tag_id) VALUES (1, 1)",
         )
         con.execute(
-            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
             " category_id, event_id) VALUES (2, 0, 'кафе', 'путешествия', 2, 10)",
         )
         con.execute(
-            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
             " category_id, event_id) VALUES (3, 2026, 'еда', 'собака', 2, 10)",
         )
     finally:
@@ -120,10 +120,10 @@ class TestSheetMapping:
 
 
 @allure.epic("DuckDB")
-@allure.feature("Forward projection")
-class TestForwardProjection:
+@allure.feature("Logging projection")
+class TestLoggingProjection:
     @pytest.fixture
-    def projection_setup(self, config_db):
+    def logging_setup(self, config_db):
         con = duckdb_repo.get_config_connection(read_only=False)
         try:
             con.execute("INSERT INTO category_groups VALUES (1, 'g', 1)")
@@ -135,75 +135,163 @@ class TestForwardProjection:
                 " VALUES (1, 'evt', '2026-01-01', '2026-12-31', true)",
             )
             con.execute(
-                "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
-                " category_id, event_id) VALUES (1, 2026, 'CatA', '', 1, NULL)",
+                "INSERT INTO logging_mapping (id, category_id, event_id,"
+                " sheet_category, sheet_group) VALUES (1, 1, NULL, 'CatA', '')",
             )
             con.execute(
-                "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
-                " category_id, event_id) VALUES (2, 2026, 'CatA', 'WithEvt', 1, 1)",
+                "INSERT INTO logging_mapping (id, category_id, event_id,"
+                " sheet_category, sheet_group) VALUES (2, 1, 1, 'CatA', 'WithEvt')",
             )
             con.execute(
-                "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
-                " category_id, event_id) VALUES (3, 2026, 'CatA', 'WithTag', 1, NULL)",
+                "INSERT INTO logging_mapping (id, category_id, event_id,"
+                " sheet_category, sheet_group) VALUES (3, 1, NULL, 'CatA', 'WithTag')",
             )
-            con.execute("INSERT INTO sheet_mapping_tags VALUES (3, 1)")
+            con.execute("INSERT INTO logging_mapping_tags VALUES (3, 1)")
         finally:
             con.close()
 
-    def test_exact_match_with_event(self, projection_setup):
+    def test_exact_match_with_event(self, logging_setup):
         con = duckdb_repo.get_config_connection(read_only=True)
         try:
-            target = duckdb_repo.forward_projection(
+            result = duckdb_repo.logging_projection(
                 con,
-                latest_sheet_year=2026,
                 category_id=1,
                 event_id=1,
                 tag_ids=[],
             )
-            assert target == ("CatA", "WithEvt")
+            assert result == ("CatA", "WithEvt")
         finally:
             con.close()
 
-    def test_exact_match_with_tags(self, projection_setup):
+    def test_exact_match_with_tags(self, logging_setup):
         con = duckdb_repo.get_config_connection(read_only=True)
         try:
-            target = duckdb_repo.forward_projection(
+            result = duckdb_repo.logging_projection(
                 con,
-                latest_sheet_year=2026,
                 category_id=1,
                 event_id=None,
                 tag_ids=[1],
             )
-            assert target == ("CatA", "WithTag")
+            assert result == ("CatA", "WithTag")
         finally:
             con.close()
 
-    def test_category_only_fallback(self, projection_setup):
+    def test_category_fallback(self, logging_setup):
         con = duckdb_repo.get_config_connection(read_only=True)
         try:
-            target = duckdb_repo.forward_projection(
+            result = duckdb_repo.logging_projection(
                 con,
-                latest_sheet_year=2026,
                 category_id=1,
                 event_id=None,
                 tag_ids=[2],
             )
-            # First-by-id fallback wins: row id=1.
-            assert target == ("CatA", "")
+            assert result == ("CatA", "")
         finally:
             con.close()
 
-    def test_unknown_category_returns_none(self, projection_setup):
+    def test_unknown_category_returns_none(self, logging_setup):
         con = duckdb_repo.get_config_connection(read_only=True)
         try:
-            target = duckdb_repo.forward_projection(
+            result = duckdb_repo.logging_projection(
                 con,
-                latest_sheet_year=2026,
                 category_id=999,
                 event_id=None,
                 tag_ids=[],
             )
-            assert target is None
+            assert result is None
+        finally:
+            con.close()
+
+    def test_null_event_matches_null(self, logging_setup):
+        """NULL event_id in DB matches None in the call."""
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            result = duckdb_repo.logging_projection(
+                con,
+                category_id=1,
+                event_id=None,
+                tag_ids=[],
+            )
+            assert result == ("CatA", "")
+        finally:
+            con.close()
+
+    def test_year_agnostic_ignores_import_mapping_years(self, config_db):
+        """logging_projection must read ``logging_mapping`` only, never
+        the year-keyed ``import_mapping``. We seed two distinct
+        per-year ``import_mapping`` rows that would *both* be wrong
+        answers if the projection ever fell back to import data, plus
+        a single canonical ``logging_mapping`` row that should win."""
+        con = duckdb_repo.get_config_connection(read_only=False)
+        try:
+            con.execute("INSERT INTO category_groups VALUES (1, 'g', 1)")
+            con.execute("INSERT INTO categories VALUES (1, 'еда', 1)")
+            con.execute(
+                "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
+                " category_id, event_id) VALUES (1, 2025, 'Food-2025', '', 1, NULL)",
+            )
+            con.execute(
+                "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
+                " category_id, event_id) VALUES (2, 2026, 'Food-2026', '', 1, NULL)",
+            )
+            con.execute(
+                "INSERT INTO logging_mapping (id, category_id, event_id,"
+                " sheet_category, sheet_group) VALUES (1, 1, NULL, 'Food-Logging', '')",
+            )
+        finally:
+            con.close()
+
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            result = duckdb_repo.logging_projection(
+                con,
+                category_id=1,
+                event_id=None,
+                tag_ids=[],
+            )
+            assert result == ("Food-Logging", ""), (
+                "logging_projection must use logging_mapping, not import_mapping"
+            )
+        finally:
+            con.close()
+
+    def test_deterministic_tie_breaking(self, logging_setup):
+        """When multiple rows match at the fallback level, the row with the
+        lowest id wins (ORDER BY id ASC)."""
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            result = duckdb_repo.logging_projection(
+                con,
+                category_id=1,
+                event_id=None,
+                tag_ids=[2],
+            )
+            assert result == ("CatA", ""), "fallback must return the first-by-id row"
+        finally:
+            con.close()
+
+
+@allure.epic("DuckDB")
+@allure.feature("get_category_name")
+class TestGetCategoryName:
+    def test_existing(self, config_db):
+        con = duckdb_repo.get_config_connection(read_only=False)
+        try:
+            con.execute("INSERT INTO category_groups VALUES (1, 'g', 1)")
+            con.execute("INSERT INTO categories VALUES (1, 'еда', 1)")
+        finally:
+            con.close()
+
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            assert duckdb_repo.get_category_name(con, 1) == "еда"
+        finally:
+            con.close()
+
+    def test_missing(self, config_db):
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            assert duckdb_repo.get_category_name(con, 999) is None
         finally:
             con.close()
 
@@ -310,7 +398,7 @@ class TestInsertExpense:
                 sheet_category=None,
                 sheet_group=None,
                 tag_ids=[1],
-                enqueue_sync=False,
+                enqueue_logging=False,
             )
             r2 = duckdb_repo.insert_expense(
                 con,
@@ -325,7 +413,7 @@ class TestInsertExpense:
                 sheet_category=None,
                 sheet_group=None,
                 tag_ids=[1],
-                enqueue_sync=False,
+                enqueue_logging=False,
             )
             assert r1 == "created"
             assert r2 == "duplicate"
@@ -348,7 +436,7 @@ class TestInsertExpense:
                 sheet_category=None,
                 sheet_group=None,
                 tag_ids=[],
-                enqueue_sync=False,
+                enqueue_logging=False,
             )
             r = duckdb_repo.insert_expense(
                 con,
@@ -363,7 +451,7 @@ class TestInsertExpense:
                 sheet_category=None,
                 sheet_group=None,
                 tag_ids=[],
-                enqueue_sync=False,
+                enqueue_logging=False,
             )
             assert r == "conflict"
         finally:
@@ -411,7 +499,7 @@ class TestInsertExpense:
         finally:
             con.close()
 
-    def test_enqueue_sync_creates_pending_row(self, populated_config):
+    def test_enqueue_logging_creates_pending_row(self, populated_config):
         con = self._seed_basic(populated_config)
         try:
             duckdb_repo.insert_expense(
@@ -427,16 +515,16 @@ class TestInsertExpense:
                 sheet_category=None,
                 sheet_group=None,
                 tag_ids=[],
-                enqueue_sync=True,
+                enqueue_logging=True,
             )
-            assert duckdb_repo.list_sync_jobs(con) == ["x5"]
+            assert duckdb_repo.list_logging_jobs(con) == ["x5"]
         finally:
             con.close()
 
 
 @allure.epic("DuckDB")
-@allure.feature("sheet_sync_jobs queue")
-class TestSyncQueue:
+@allure.feature("sheet_logging_jobs queue")
+class TestLoggingQueue:
     def _setup_one_job(self, populated_config):
         con = duckdb_repo.get_budget_connection(2026)
         duckdb_repo.insert_expense(
@@ -452,35 +540,35 @@ class TestSyncQueue:
             sheet_category=None,
             sheet_group=None,
             tag_ids=[],
-            enqueue_sync=True,
+            enqueue_logging=True,
         )
         return con
 
     def test_claim_then_clear(self, populated_config):
         con = self._setup_one_job(populated_config)
         try:
-            token = duckdb_repo.claim_sync_job(con, "job1")
+            token = duckdb_repo.claim_logging_job(con, "job1")
             assert token is not None
-            assert duckdb_repo.clear_sync_job(con, "job1", token) is True
-            assert duckdb_repo.list_sync_jobs(con) == []
+            assert duckdb_repo.clear_logging_job(con, "job1", token) is True
+            assert duckdb_repo.list_logging_jobs(con) == []
         finally:
             con.close()
 
     def test_clear_with_wrong_token_returns_false(self, populated_config):
         con = self._setup_one_job(populated_config)
         try:
-            duckdb_repo.claim_sync_job(con, "job1")
-            assert duckdb_repo.clear_sync_job(con, "job1", "wrongtoken") is False
+            duckdb_repo.claim_logging_job(con, "job1")
+            assert duckdb_repo.clear_logging_job(con, "job1", "wrongtoken") is False
         finally:
             con.close()
 
     def test_release_returns_to_pending(self, populated_config):
         con = self._setup_one_job(populated_config)
         try:
-            token = duckdb_repo.claim_sync_job(con, "job1")
-            assert duckdb_repo.release_sync_claim(con, "job1", token) is True
+            token = duckdb_repo.claim_logging_job(con, "job1")
+            assert duckdb_repo.release_logging_claim(con, "job1", token) is True
             row = con.execute(
-                "SELECT status, claim_token FROM sheet_sync_jobs WHERE expense_id = ?",
+                "SELECT status, claim_token FROM sheet_logging_jobs WHERE expense_id = ?",
                 ["job1"],
             ).fetchone()
             assert row[0] == "pending"
@@ -491,8 +579,8 @@ class TestSyncQueue:
     def test_double_claim_blocked(self, populated_config):
         con = self._setup_one_job(populated_config)
         try:
-            t1 = duckdb_repo.claim_sync_job(con, "job1")
-            t2 = duckdb_repo.claim_sync_job(con, "job1")
+            t1 = duckdb_repo.claim_logging_job(con, "job1")
+            t2 = duckdb_repo.claim_logging_job(con, "job1")
             assert t1 is not None
             assert t2 is None
         finally:
@@ -502,11 +590,11 @@ class TestSyncQueue:
         con = self._setup_one_job(populated_config)
         try:
             now = datetime(2026, 1, 1, 12)
-            t1 = duckdb_repo.claim_sync_job(con, "job1", now=now)
+            t1 = duckdb_repo.claim_logging_job(con, "job1", now=now)
             assert t1 is not None
             # Pretend the prior claim is older than the stale window.
             future = now + timedelta(hours=1)
-            t2 = duckdb_repo.claim_sync_job(
+            t2 = duckdb_repo.claim_logging_job(
                 con,
                 "job1",
                 now=future,

@@ -8,11 +8,12 @@ The simplest way to run dinary-server locally is with Docker:
 git clone https://github.com/andgineer/dinary-server.git
 cd dinary-server
 
-# Place your Google service account key (see Google Sheets Setup)
-cp /path/to/your-key.json credentials.json
+# Place your Google service account key where docker-compose.yml expects it
+mkdir -p ~/.config/gspread
+cp /path/to/your-key.json ~/.config/gspread/service_account.json
 
 cp .env.example .env
-# Edit .env: set GOOGLE_SHEETS_SPREADSHEET_ID
+# Edit .env if needed (sheet logging, credentials path, etc.)
 docker compose up -d
 ```
 

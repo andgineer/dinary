@@ -8,13 +8,13 @@ import pytest
 
 from dinary.config import settings
 from dinary.services import duckdb_repo
-from dinary.services.category_store import Category
 from dinary.services.seed_config import (
     ENTRY_GROUPS,
     EXPLICIT_EVENTS,
     PHASE1_TAGS,
     RUSSIA_TRIP_EVENT_NAME,
     SYNTHETIC_EVENT_PREFIX,
+    Category,
     rebuild_config_from_sheets,
     seed_from_sheet,
 )
@@ -40,10 +40,10 @@ def _tmp_data_dir(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _stub_settings(monkeypatch):
     """Bootstrap a single import source so seed_from_sheet has something to read."""
-    monkeypatch.setattr(settings, "google_sheets_spreadsheet_id", "")
+    monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "")
     monkeypatch.setattr(
         settings,
-        "sheet_import_sources_json",
+        "import_sources_json",
         json.dumps(
             [
                 {
@@ -116,12 +116,65 @@ class TestSeedFromSheet:
         finally:
             con.close()
 
-    def test_creates_sheet_mappings(self):
+    def test_creates_import_mappings(self):
         _patched_seed()
         con = duckdb_repo.get_config_connection(read_only=True)
         try:
-            count = con.execute("SELECT COUNT(*) FROM sheet_mapping").fetchone()[0]
+            count = con.execute("SELECT COUNT(*) FROM import_mapping").fetchone()[0]
             assert count > 0
+        finally:
+            con.close()
+
+    def test_logging_mapping_bootstrapped_from_year_zero(self):
+        """On a fresh install, import-config must mirror year=0 import_mapping
+        rows into logging_mapping so runtime sheet logging works without an
+        extra manual step."""
+        summary = _patched_seed()
+
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            year_zero = con.execute(
+                "SELECT id, category_id, event_id, sheet_category, sheet_group"
+                " FROM import_mapping WHERE year = 0 ORDER BY id",
+            ).fetchall()
+            assert year_zero, "test setup must yield year=0 import_mapping rows"
+
+            logging_rows = con.execute(
+                "SELECT category_id, event_id, sheet_category, sheet_group"
+                " FROM logging_mapping ORDER BY id",
+            ).fetchall()
+            expected = [(r[1], r[2], r[3], r[4]) for r in year_zero]
+            assert logging_rows == expected
+            assert summary["logging_mappings_bootstrapped"] == len(year_zero)
+        finally:
+            con.close()
+
+    def test_logging_mapping_preserved_on_reseed(self):
+        """A second import-config run must not clobber operator edits to
+        logging_mapping (idempotency policy: fill only when empty)."""
+        _patched_seed()
+
+        con = duckdb_repo.get_config_connection(read_only=False)
+        try:
+            con.execute("DELETE FROM logging_mapping_tags")
+            con.execute("DELETE FROM logging_mapping")
+            con.execute(
+                "INSERT INTO logging_mapping"
+                " (id, category_id, event_id, sheet_category, sheet_group)"
+                " SELECT 999, id, NULL, 'OperatorOverride', '' FROM categories LIMIT 1",
+            )
+        finally:
+            con.close()
+
+        summary = _patched_seed()
+
+        con = duckdb_repo.get_config_connection(read_only=True)
+        try:
+            rows = con.execute(
+                "SELECT id, sheet_category FROM logging_mapping ORDER BY id",
+            ).fetchall()
+            assert rows == [(999, "OperatorOverride")]
+            assert summary["logging_mappings_bootstrapped"] == 0
         finally:
             con.close()
 
@@ -132,7 +185,7 @@ class TestSeedFromSheet:
 
     def test_seeds_explicit_events(self):
         # Bug regression: russia-trip event was being created lazily in
-        # `import_sheet` without a `catalog_version` bump. It now lives in
+        # `imports/expense_import.py` without a `catalog_version` bump. It now lives in
         # `EXPLICIT_EVENTS` and must show up after a single seed pass.
         _patched_seed()
         con = duckdb_repo.get_config_connection(read_only=True)

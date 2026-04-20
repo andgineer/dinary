@@ -8,11 +8,12 @@
 git clone https://github.com/andgineer/dinary-server.git
 cd dinary-server
 
-# Поместите ключ сервисного аккаунта Google (см. Настройка Google Sheets)
-cp /path/to/your-key.json credentials.json
+# Поместите ключ сервисного аккаунта Google туда, где его ждёт docker-compose.yml
+mkdir -p ~/.config/gspread
+cp /path/to/your-key.json ~/.config/gspread/service_account.json
 
 cp .env.example .env
-# Отредактируйте .env: укажите GOOGLE_SHEETS_SPREADSHEET_ID
+# Отредактируйте .env при необходимости (логгинг в таблицу, путь к credentials и т.д.)
 docker compose up -d
 ```
 

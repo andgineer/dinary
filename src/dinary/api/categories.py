@@ -21,7 +21,7 @@ class CategoryItem(BaseModel):
 class CategoriesResponse(BaseModel):
     """Top-level response: catalog + monotonically increasing version.
 
-    `catalog_version` is the number bumped by `inv rebuild-catalog`. Clients
+    `catalog_version` is the number bumped by `inv import-catalog`. Clients
     cache it together with `categories` and refresh both atomically when the
     server reports a higher value (echoed by `POST /api/expenses` too).
     """

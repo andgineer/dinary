@@ -21,12 +21,12 @@ from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
 
-from dinary.services import duckdb_repo
-from dinary.services.import_sheet import (
+from dinary.imports.expense_import import (
     build_resolution_context,
     iter_parsed_sheet_rows,
     resolve_row_to_3d,
 )
+from dinary.services import duckdb_repo
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ def render_comments(comments: list[str]) -> str:
 
 def _get_import_years(con) -> list[int]:
     rows = con.execute(
-        "SELECT year FROM sheet_import_sources ORDER BY year",
+        "SELECT year FROM import_sources ORDER BY year",
     ).fetchall()
     return [r[0] for r in rows]
 
@@ -196,7 +196,7 @@ def _collect_year(con, year: int, stats: CollectStats) -> list[DetailRow]:
         # iter_parsed_sheet_rows can fail in many distinct ways (gspread
         # APIError on quota / network / auth, malformed sheet structure,
         # an unexpected currency in the layout, ValueError when this
-        # year row is missing from sheet_import_sources, …). The report
+        # year row is missing from import_sources, …). The report
         # is a multi-year diagnostic: a single bad year must not abort
         # the run, so we widen the catch deliberately, log with full
         # traceback, and bump the year-level counter so callers can
@@ -407,7 +407,7 @@ def _default_output_path(output_format: str) -> Path:
     ``duckdb_repo.DATA_DIR`` (per-test ``tmp_path``) takes effect
     without having to also patch a module-level cached constant.
     """
-    return duckdb_repo.DATA_DIR / "reports" / f"report_2d_3d.{output_format}"
+    return duckdb_repo.DATA_DIR / "reports" / f"import_report_2d_3d.{output_format}"
 
 
 def generate_report(
@@ -420,7 +420,7 @@ def generate_report(
     """Generate and render the 2D-to-3D resolution report.
 
     Strictly read-only: assumes ``config.duckdb`` already exists
-    (rebuilt by ``inv rebuild-catalog``). Raises ``FileNotFoundError``
+    (rebuilt by ``inv import-catalog``). Raises ``FileNotFoundError``
     if it doesn't, instead of silently creating an empty config.
 
     ``output_path`` is only honored for file-emitting formats
@@ -429,7 +429,7 @@ def generate_report(
     discard the requested file.
     """
     if not duckdb_repo.CONFIG_DB.exists():
-        msg = f"config DB not found at {duckdb_repo.CONFIG_DB}. Run `inv rebuild-catalog` first."
+        msg = f"config DB not found at {duckdb_repo.CONFIG_DB}. Run `inv import-catalog` first."
         raise FileNotFoundError(msg)
     if output_path and output_format not in _FILE_FORMATS:
         msg = (

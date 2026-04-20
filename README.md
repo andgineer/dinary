@@ -17,8 +17,8 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
 ```bash
 uv sync
 
-# Create .env with your spreadsheet ID (one-time, .env is gitignored)
-echo 'DINARY_GOOGLE_SHEETS_SPREADSHEET_ID=<your-spreadsheet-id>' > .env
+# Create .env from the example (one-time, .env is gitignored)
+cp .env.example .env
 
 uv run dinary
 ```

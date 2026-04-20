@@ -5,47 +5,6 @@ from unittest.mock import MagicMock, patch
 import allure
 import pytest
 
-from dinary.services.category_store import Category, CategoryStore
-
-
-@allure.epic("Services")
-@allure.feature("Category Store")
-class TestCategoryStore:
-    def test_load_and_lookup(self):
-        store = CategoryStore()
-        store.load(
-            [
-                Category(name="Food", group="Essentials"),
-                Category(name="Cinema", group="Entertainment"),
-            ]
-        )
-        assert store.group_for("Food") == "Essentials"
-        assert store.group_for("Cinema") == "Entertainment"
-        assert store.group_for("Unknown") is None
-        assert len(store.categories) == 2
-
-    def test_has_category(self):
-        store = CategoryStore()
-        store.load(
-            [
-                Category(name="Food", group="Essentials"),
-                Category(name="Food", group="Travel"),
-            ]
-        )
-        assert store.has_category("Food", "Essentials")
-        assert store.has_category("Food", "Travel")
-        assert not store.has_category("Food", "Other")
-        assert not store.has_category("Unknown", "")
-
-    def test_expired_on_creation(self):
-        store = CategoryStore()
-        assert store.expired
-
-    def test_not_expired_after_load(self):
-        store = CategoryStore()
-        store.load([Category(name="X", group="Y")])
-        assert not store.expired
-
 
 @allure.epic("Services")
 @allure.feature("NBS Exchange Rate")

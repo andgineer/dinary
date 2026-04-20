@@ -21,14 +21,16 @@ CREATE TABLE expense_tags (
 );
 
 -- sheet_sync_jobs: durable queue for "this expense still needs to be appended to Google Sheets".
+-- Renamed to sheet_logging_jobs in migration 0002 (see 0002_rename_sheet_sync_jobs.sql).
+-- This file keeps the original name so historical migration replays stay deterministic.
 -- Producer: POST /api/expenses (inserts the queue row in the same DuckDB transaction as expenses).
--- Consumers (both run the same _sync_single_row code path):
+-- Consumers (both run the same _drain_one_job code path):
 --   1) async worker started by asyncio.create_task right before the API returns -- opportunistic fast path;
---   2) `inv sync` CLI -- retries anything the async worker did not finish (process crash, network, etc.).
+--   2) `inv drain-logging` CLI -- retries anything the async worker did not finish (process crash, network, etc.).
 -- A row is deleted as soon as its single-row append succeeds; no full-month rebuild exists.
 -- `claimed_at` implements lease-style crash recovery: a later worker may reclaim an
 -- `in_progress` row once the claim is older than the configured timeout.
--- rebuild-budget does NOT populate this table: historical rows live in Sheets already.
+-- import-budget does NOT populate this table: historical rows live in Sheets already.
 CREATE TABLE sheet_sync_jobs (
     expense_id TEXT PRIMARY KEY REFERENCES expenses(id),
     status     TEXT NOT NULL DEFAULT 'pending',

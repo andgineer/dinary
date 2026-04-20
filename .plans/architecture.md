@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status note (2026-04):** Phase 1 shipped, then was reset to a **3-dimensional model**: `category`, `event`, `tags[]`. The earlier 5D (with `beneficiary`, `sphere_of_life`, `store`) and the intermediate 4D (`beneficiary` + `sphere_of_life`) are gone. `beneficiary` and `sphere_of_life` collapsed into the flat tag dictionary; `store` was dropped entirely. Google Sheets is **export-only from Phase 1 onward** — historical sheet import is bootstrap-only and runs through the destructive `inv rebuild-budget` path; new manual writes never read from Sheets. The authoritative source for concrete category/group/tag/event values is [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py); when this document disagrees with the seed code, the code wins.
+> **Status note (2026-04):** Phase 1 shipped, then was reset to a **3-dimensional model**: `category`, `event`, `tags[]`. The earlier 5D (with `beneficiary`, `sphere_of_life`, `store`) and the intermediate 4D (`beneficiary` + `sphere_of_life`) are gone. `beneficiary` and `sphere_of_life` collapsed into the flat tag dictionary; `store` was dropped entirely. Google Sheets are **never the source of truth at runtime**: DuckDB is. Historical sheet import is bootstrap-only and runs through the destructive `inv import-budget` path. Optional **sheet logging** (off by default; enabled via `DINARY_SHEET_LOGGING_SPREADSHEET`) appends each new expense to a separate spreadsheet so the operator can build pivot tables in Google Sheets alongside Dinary's analytics. The authoritative source for concrete category/group/tag/event values is [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py); when this document disagrees with the seed code, the code wins.
 
 ### Overview
 
@@ -47,7 +47,7 @@ Implications:
 - Do not require Docker in production on the 1 GB instance.
 - Do not run AI/LLM workloads, heavy batch classification, or other memory-hungry jobs on the server. Those stay on the laptop-side `dinary` agent.
 - Keep background work serialized and bounded: no fan-out workers, no parallel sync pipelines, no large in-memory queues.
-- Google Sheets sync is **single-row append per `expense_id`** via the `sheet_sync_jobs` queue; never a full-sheet or full-month recomputation.
+- Optional sheet logging is **single-row append per `expense_id`** via the `sheet_logging_jobs` queue; never a full-sheet or full-month recomputation. Disabled (no queue rows are even created) when `DINARY_SHEET_LOGGING_SPREADSHEET` is unset.
 - Caches must stay small and optional. Correctness must not depend on large resident in-memory datasets.
 
 ### Partitioning Strategy
@@ -58,14 +58,14 @@ One DuckDB file per year:
 data/
 ├── budget_2025.duckdb
 ├── budget_2026.duckdb
-├── config.duckdb          # categories, groups, events, tags, sheet_mapping, exchange rates, app_metadata
+├── config.duckdb          # categories, groups, events, tags, import_mapping, exchange rates, app_metadata
 └── archive/
     └── budget_2024.duckdb
 ```
 
-**Yearly files** contain transactional data: `expenses`, `expense_tags`, `sheet_sync_jobs`, `income`.
+**Yearly files** contain transactional data: `expenses`, `expense_tags`, `sheet_logging_jobs`, `income`.
 
-**config.duckdb** contains classification metadata (`category_groups`, `categories`, `events`, `tags`, `sheet_mapping`, `sheet_mapping_tags`), the global `expense_id_registry`, sheet import sources, exchange rates, and the singleton `app_metadata` row that holds `catalog_version`.
+**config.duckdb** contains classification metadata (`category_groups`, `categories`, `events`, `tags`, `import_mapping`, `import_mapping_tags`, `logging_mapping`, `logging_mapping_tags`), the global `expense_id_registry`, import sources, exchange rates, and the singleton `app_metadata` row that holds `catalog_version`.
 
 Archiving a year = moving the file to `archive/`. Cross-year queries use ATTACH:
 
@@ -118,11 +118,10 @@ CREATE TABLE tags (
 );
 
 -- Maps legacy Google Sheets `(sheet_category, sheet_group)` rows to the 3D
--- model. Used in two roles:
---  - bootstrap historical import (year=Y or year=0 fallback);
---  - runtime forward projection: route a new manual expense to the best
---    matching row in the latest configured sheet year.
-CREATE TABLE sheet_mapping (
+-- model. Used exclusively for bootstrap historical import (year=Y or
+-- year=0 fallback). Runtime sheet logging uses the separate, year-agnostic
+-- `logging_mapping` table.
+CREATE TABLE import_mapping (
     id             INTEGER PRIMARY KEY,
     year           INTEGER NOT NULL DEFAULT 0,
     sheet_category TEXT NOT NULL,
@@ -132,8 +131,8 @@ CREATE TABLE sheet_mapping (
     UNIQUE (year, sheet_category, sheet_group)
 );
 
-CREATE TABLE sheet_mapping_tags (
-    mapping_id INTEGER NOT NULL REFERENCES sheet_mapping(id),
+CREATE TABLE import_mapping_tags (
+    mapping_id INTEGER NOT NULL REFERENCES import_mapping(id),
     tag_id     INTEGER NOT NULL REFERENCES tags(id),
     PRIMARY KEY (mapping_id, tag_id)
 );
@@ -145,7 +144,7 @@ CREATE TABLE expense_id_registry (
     year       INTEGER NOT NULL
 );
 
-CREATE TABLE sheet_import_sources (
+CREATE TABLE import_sources (
     year                  INTEGER PRIMARY KEY,
     spreadsheet_id        TEXT NOT NULL,
     worksheet_name        TEXT NOT NULL DEFAULT '',
@@ -163,7 +162,7 @@ CREATE TABLE exchange_rates (
 );
 
 -- Singleton row carrying the monotonic `catalog_version`. Bumped only by
--- `inv rebuild-catalog` (previous + 1). Echoed by `GET /api/categories` and
+-- `inv import-catalog` (previous + 1). Echoed by `GET /api/categories` and
 -- `POST /api/expenses` so the PWA can opportunistically invalidate caches.
 CREATE TABLE app_metadata (
     id              INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
@@ -205,14 +204,15 @@ CREATE TABLE expense_tags (
 -- Producer: POST /api/expenses (inserts the queue row in the same DuckDB
 -- transaction as the expenses row).
 -- Consumers: an asyncio task spawned by the API handler (opportunistic fast
--- path) and `inv sync` (durable retry). Both run the same single-row append.
+-- path) and `inv drain-logging` (durable retry). Both run the same
+-- single-row append.
 -- A row is deleted on success; failure leaves it as `pending` for retry.
 -- `claim_token` + `claimed_at` implement lease-style atomic claim with stale
 -- recovery: a later worker may reclaim an `in_progress` row once `claimed_at`
 -- is older than the configured timeout.
--- `inv rebuild-budget` does NOT populate this table (historical rows already
+-- `inv import-budget` does NOT populate this table (historical rows already
 -- live in Sheets and are not projected back).
-CREATE TABLE sheet_sync_jobs (
+CREATE TABLE sheet_logging_jobs (
     expense_id  TEXT PRIMARY KEY REFERENCES expenses(id),
     status      TEXT NOT NULL DEFAULT 'pending',
     claim_token TEXT,
@@ -265,7 +265,7 @@ Examples:
 - `event` is an optional single-valued dimension for trips, camps, business trips, relocation, and other bounded contexts.
 - Each event has `date_from`, `date_to`, and `auto_attach_enabled`.
 - **Attachment is decided before insert; stored rows are never auto-re-attached.** `expenses` is the committed ledger, not a staging area.
-- In Phase 1 the only path that originates `event_id` is the historical sheet import (via `sheet_mapping`). The PWA does not know about events — `POST /api/expenses` always stores `event_id=NULL`. The async sheet-append worker reads `event_id` for forward projection but never originates it.
+- In Phase 1 the only path that originates `event_id` is the historical sheet import (via `import_mapping`). The PWA does not know about events — `POST /api/expenses` always stores `event_id=NULL`. The optional sheet-logging worker may read `event_id` when looking up `logging_mapping`, but never originates it.
 - Future receipt-processing pipeline (out of scope for Phase 1) will use `auto_attach_enabled` and overlap rules:
   - exactly one auto-attach-enabled event covers the date → suggest/attach;
   - more than one covers the date → user or rule must pick;
@@ -275,7 +275,7 @@ Examples:
 ### Tag Semantics
 
 - Tags are flat labels, many-to-many with expenses, and replace both the former `beneficiary` and `sphere_of_life` axes.
-- Phase 1 tag set = the distinct labels referenced by `sheet_mapping_tags` plus the hardcoded `PHASE1_TAGS` list in `seed_config.py`. The PWA hardcodes the same list — there is no `GET /api/tags`, no `POST /api/tags`, no `GET /api/events`, no `POST /api/category-groups`.
+- Phase 1 tag set = the distinct labels referenced by `import_mapping_tags` plus the hardcoded `PHASE1_TAGS` list in `seed_config.py`. The PWA hardcodes the same list — there is no `GET /api/tags`, no `POST /api/tags`, no `GET /api/events`, no `POST /api/category-groups`.
 - `POST /api/expenses` validates `tag_ids[]` against the seed tag table; unknown ids are rejected with 4xx.
 - No `tag_type`, no hierarchy, no namespaces, no user-extensible creation in Phase 1.
 
@@ -293,7 +293,7 @@ Examples:
 
 ### Catalog versioning
 
-`config.duckdb.app_metadata.catalog_version` is a monotonic integer. The only Phase-1 bump path is `inv rebuild-catalog`: it preserves the previous value before wipe, runs the migration (`INSERT OR IGNORE` seeds the singleton with `1` on a fresh DB), runs `seed_classification_catalog`, then writes `previous + 1`. `previous = 0` on first-ever run, so the post-seed value is `1`.
+`config.duckdb.app_metadata.catalog_version` is a monotonic integer. The only Phase-1 bump path is `inv import-catalog`: it preserves the previous value before wipe, runs the migration (`INSERT OR IGNORE` seeds the singleton with `1` on a fresh DB), runs `seed_classification_catalog`, then writes `previous + 1`. `previous = 0` on first-ever run, so the post-seed value is `1`.
 
 `GET /api/categories` and `POST /api/expenses` echo the current `catalog_version` (no bump). The PWA uses it to opportunistically invalidate the cached category list. Phase 2 will reintroduce non-destructive bumps (tag admin, receipt pipeline, etc.).
 
@@ -303,7 +303,7 @@ Examples:
 - DuckDB does not enforce these cross-DB FKs; application code (API validation + ingestion) and verification tasks enforce them.
 - `expenses` is partitioned by year in `budget_YYYY.duckdb`, so any lookup keyed by `expense_id` must be interpreted together with the target year/file.
 - `expense_id_registry` (in `config.duckdb`) is the global source of truth for cross-year ownership: `POST /api/expenses` reserves `(expense_id → year)` on first insert, allows replay only when the registry already points to the same year, and rejects cross-year reuse with 4xx.
-- The registry tracks **runtime** inserts only. `inv rebuild-budget --year=YYYY` truncates `budget_YYYY.duckdb.expenses` and re-imports the historical sheet, but it deliberately does **not** touch `expense_id_registry`: legacy `legacy-YYYYMM-...` ids are not registered (they are deterministic and never collide with the UUIDs the PWA generates), and the runtime-inserted ids that survive in the registry are the correct authoritative mapping — the next runtime POST for one of them will simply re-create the lost row as `created` and the registry stays consistent. Only `inv rebuild-catalog` wipes the registry (it `unlink`s `config.duckdb` wholesale).
+- The registry tracks **runtime** inserts only. `inv import-budget --year=YYYY` truncates `budget_YYYY.duckdb.expenses` and re-imports the historical sheet, but it deliberately does **not** touch `expense_id_registry`: legacy `legacy-YYYYMM-...` ids are not registered (they are deterministic and never collide with the UUIDs the PWA generates), and the runtime-inserted ids that survive in the registry are the correct authoritative mapping — the next runtime POST for one of them will simply re-create the lost row as `created` and the registry stays consistent. Only `inv import-catalog` wipes the registry (it `unlink`s `config.duckdb` wholesale).
 - Destructive wipe + full re-import may reassign integer IDs. That is acceptable for the one-time Phase-1 bootstrap/reset workflow because the operator is explicitly warned by `--yes`.
 
 ---
@@ -507,12 +507,12 @@ From Phase 1 onward Google Sheets are **export-only** — the historical sheets 
 
 ### Queue model
 
-`sheet_sync_jobs` (in `budget_YYYY.duckdb`) is the durable queue: one row per `expense_id` that still needs to be appended to Sheets. The in-process async task spawned by the API handler is just an opportunistic fast path over that queue; the DB queue is the source of truth.
+`sheet_logging_jobs` (in `budget_YYYY.duckdb`) is the durable queue: one row per `expense_id` that still needs to be appended to Sheets. The in-process async task spawned by the API handler is just an opportunistic fast path over that queue; the DB queue is the source of truth.
 
-Producer: `POST /api/expenses` inserts the queue row in the *same* DuckDB transaction as the `expenses` row. Consumers (both run the same `_sync_single_row` code path):
+Producer: `POST /api/expenses` inserts the queue row in the *same* DuckDB transaction as the `expenses` row. Consumers both run the same single-row drain path centered on `_drain_one_job` (which in turn uses `_append_row_to_sheet`):
 
 1. **Async worker** — `asyncio.create_task` spawned by the API handler right before returning the response, only on the fresh-insert path that also created the queue row. Never spawned on idempotent replay.
-2. **`inv sync`** — iterates every `sheet_sync_jobs` row across all `budget_*.duckdb` files and re-runs the same single-row append. Used after process crashes, transient Google API failures, network outages, etc.
+2. **`inv drain-logging`** — iterates every `sheet_logging_jobs` row across all `budget_*.duckdb` files and re-runs the same single-row append. Used after process crashes, transient Google API failures, network outages, etc.
 
 A row is deleted as soon as its single-row append succeeds. On failure (after a successful claim) the row's claim is released back to `pending` so the next sweep retries it.
 
@@ -522,21 +522,50 @@ Workers must atomically claim a row before appending. Claim transitions the row 
 
 There is no in-process state that needs to survive a process restart, so no task-registry or GC mitigation is required.
 
-### Forward-projection rules
+### Sheet logging configuration
 
-The async worker maps `(expense.category_id, expense.event_id, expense tag set)` to a target `(sheet_category, sheet_group)` row in the latest configured sheet year:
+Sheet logging is **optional**. It is enabled by setting the `DINARY_SHEET_LOGGING_SPREADSHEET` environment variable to a Google Sheets spreadsheet ID or a full browser URL. When unset or empty, `schedule_logging` is a no-op and no Google Sheets calls are made.
 
-- **Runtime export always targets the latest configured sheet year**, not `YEAR(expense.datetime)`. The latest configured sheet year is the maximum positive `year` in `sheet_import_sources`. Older positive years remain in config only for bootstrap import; runtime export never appends into older yearly sheets.
-- **Hard invariants** (seed/verification fail loudly otherwise):
-  - `sheet_import_sources` has at least one positive year;
-  - the latest-year `sheet_import_sources` row is a valid expense-append target (`spreadsheet_id`, `worksheet_name`, supported `layout_key`);
-  - the latest year has a `sheet_mapping` row for every category exposed by `GET /api/categories`.
-- **Lookup order** inside the latest configured year:
+The target spreadsheet is **independent of `import_sources`** — import sources configure the historical bootstrap import pipeline, while `DINARY_SHEET_LOGGING_SPREADSHEET` configures the optional runtime append-only logging. The logging worker always writes to the **first visible worksheet** of the configured spreadsheet.
+
+### Logging projection rules
+
+The async worker maps `(expense.category_id, expense.event_id, expense tag set)` to a target `(sheet_category, sheet_group)` using the dedicated `logging_mapping` table (year-agnostic):
+
+- **Lookup order**:
   1. exact match on same `category_id`, same `event_id` (NULL matches NULL), same tag-id set;
-  2. fallback: first `sheet_mapping` row with the same `category_id` (tag set and `event_id` ignored).
-- Ties inside the same preference bucket are resolved deterministically by `sheet_mapping.id ASC`.
+  2. category-only fallback: first `logging_mapping` row with the same `category_id` (tag set and `event_id` ignored).
+- Ties inside the same preference bucket are resolved deterministically by `logging_mapping.id ASC`.
+- **Guaranteed fallback**: if no `logging_mapping` row exists for a category at all, the category name itself is used as `sheet_category` with an empty `sheet_group`. Every expense can be logged.
 - For Phase-1 manual rows `event_id` is always NULL, so the effective path is "exact match on `(category_id, tag set)`" then category-only fallback. The `event_id`-aware branch is kept for the future receipt-processing pipeline.
-- This is **best-effort placement into existing latest-year rows, not a round-trip guarantee**. Tags whose combination does not match an exact mapping row use the best available latest-year fallback. Re-importing such rows later would only recover an approximation of the original 3D tuple. That trade-off is accepted because post-bootstrap reverse import is not an operational goal.
+- This is **best-effort placement, not a round-trip guarantee**. Tags whose combination does not match an exact mapping row use the best available fallback.
+
+### Sheet layout contract
+
+The sheet logging worker writes to a flat-table layout (one tab holds **every year** of expenses):
+
+| Column | Content |
+| --- | --- |
+| A | First day of the expense's month, written as `YYYY-MM-DD` with `USER_ENTERED` so Google stores a date serial. Google **displays** it as `"Apr-1"` etc. (year is dropped from the formatted view but kept in the underlying value). |
+| B | Sum-formula in RSD — extended in place by `append_expense_atomic` (`=460+373+...`). |
+| C | EUR conversion formula `=IF(H{r}="","",B{r}/H{r})`. |
+| D, E | `sheet_category`, `sheet_group` from `logging_mapping`. |
+| F | Free-text comment, semicolon-separated when multiple expenses share a row. |
+| G | Month number 1..12 (literal, no formula). Used for fast month-block scans. |
+| H | Manual EUR↔RSD rate cell. The worker only writes here when it's empty (set-if-missing). |
+| J | Opaque idempotency-marker trail of `[exp:<expense_id>]` strings, one per appended expense. Read before each append to detect timeout-after-success retries. |
+
+### Year-aware matching
+
+Column G holds the month number only, so a naive month-only scan would collapse e.g. January 2026 and January 2027 into the same block — a 2027 expense would land on a 2026 row. The worker mitigates this with a separate `batch_get` of column A using `ValueRenderOption.UNFORMATTED_VALUE`: that returns the underlying date serial (or the original string for text-typed cells), which is decoded into a per-row year list (`years_by_row`). All matching helpers (`find_category_row`, `find_month_range`, `get_month_rate`, `_find_insertion_row`) accept this list together with `target_year` and constrain candidate rows by year.
+
+When `ensure_category_row` inserts a new row, the worker splices the new year into `years_by_row` at the insert index so the post-insert helpers stay aligned with the refreshed grid. Without this splice, the rate-write step can either silently skip or land on another year's rate cell.
+
+Cost: one extra `batch_get` of column A per drained expense on top of `get_all_values`. Sheets' default 60 reads/min quota stays comfortable since `inv drain-logging` is a low-frequency catch-up sweep and the inline `schedule_logging` path runs once per `POST /api/expenses`.
+
+### Idempotency marker (column J)
+
+The append path is **at-least-once**: a Sheets API call may succeed on the server even if we never see the response (network timeout). On retry the queue row is still `pending`, so the next worker would otherwise add the same amount a second time. To close that hole, `append_expense_atomic` reads column J first and skips the entire write if `[exp:<expense_id>]` is already present. The formula extension, the comment append, and the marker write all go in a single `batch_update` so the only two observable post-states are "all three updated" and "none updated" — which the next attempt handles correctly. The drain reports a successful skip as `DrainResult.ALREADY_LOGGED` so the operational `appended` counter only reflects real new sheet writes.
 
 ### POST /api/expenses (consolidated contract)
 
@@ -548,15 +577,15 @@ Request shape:
 - `datetime`, `amount`, `amount_original`, `currency_original`, `comment` — as before.
 - `event_id` — **rejected with 4xx** if the client sends it (Phase-1 invariant: events stay out of the PWA contract).
 
-The server routes the write to `budget_YYYY.duckdb` by `datetime.year`, enforces cross-year ownership via `expense_id_registry`, inserts with `event_id=NULL`, `sheet_category=NULL`, `sheet_group=NULL`, and enqueues `sheet_sync_jobs(expense_id)` in the same transaction.
+The server routes the write to `budget_YYYY.duckdb` by `datetime.year`, enforces cross-year ownership via `expense_id_registry`, inserts with `event_id=NULL`, `sheet_category=NULL`, `sheet_group=NULL`, and enqueues `sheet_logging_jobs(expense_id)` in the same transaction **only when sheet logging is enabled**. When `DINARY_SHEET_LOGGING_SPREADSHEET` is unset, the expense is still stored in DuckDB but no queue row is created.
 
 Idempotency: same `expense_id` routed to the same `datetime.year` → `200` with the stored row, no rewrite, no new enqueue, no new async scheduling. A WARNING is logged if the replay payload differs from the stored row. Same `expense_id` with a different `datetime.year` → 4xx.
 
-The handler never calls Google API. After building the response, `schedule_sync(expense_id)` spawns an `asyncio.create_task` only on the fresh-insert path. The response includes `catalog_version` (echo only, no bump).
+The handler never calls Google API. After building the response, `schedule_logging(expense_id, year)` spawns an `asyncio.create_task` only on the fresh-insert path. `year` is required so the background drain opens the correct `budget_<year>.duckdb` without re-deriving it from the expense row. The response includes `catalog_version` (echo only, no bump).
 
 ### Historical bootstrap import
 
-Bootstrap historical import is a separate, destructive code path used only by `inv rebuild-budget`. It does **not** populate `sheet_sync_jobs`: historical rows already live in Sheets and are not projected back. Imported rows populate `sheet_category` / `sheet_group` together as audit provenance (with `sheet_group=''` for no-envelope rows).
+Bootstrap historical import is a separate, destructive code path used only by `inv import-budget`. It does **not** populate `sheet_logging_jobs`: historical rows already live in Sheets and are not projected back. Imported rows populate `sheet_category` / `sheet_group` together as audit provenance (with `sheet_group=''` for no-envelope rows).
 
 ---
 
@@ -763,13 +792,13 @@ No new database, no line-item parsing — just a mobile frontend that writes dir
 Detailed plan: [phase1.md](phase1.md)
 
 - DuckDB with the **3D classification schema** (`category`, `event`, `tags[]`) from day one.
-- `sheet_mapping` + `sheet_mapping_tags` decompose legacy Google Sheets `(sheet_category, sheet_group)` pairs into 3D assignments. Used both for one-time bootstrap import and for runtime forward projection into the latest configured sheet year only.
+- `import_mapping` + `import_mapping_tags` decompose legacy Google Sheets `(sheet_category, sheet_group)` pairs into 3D assignments for one-time bootstrap import. Runtime sheet logging uses the separate `logging_mapping` table for 3D → 2D projection.
 - **PWA contract**: sends `expense_id` (UUID) + `category_id` + optional `tag_ids[]`. Events stay out of the PWA contract; `event_id` from the client is rejected.
 - DuckDB-backed expense ingestion with idempotent dedup via `expenses.id PRIMARY KEY` plus year-scoped `expense_id_registry` for cross-year ownership.
-- Historical data import (2012–present) imported via destructive `inv rebuild-budget` and verified via `inv verify-bootstrap-import`. Bootstrap-imported rows populate `sheet_category` / `sheet_group` as audit provenance.
-- Google Sheets is **export-only**: a persistent `sheet_sync_jobs` queue plus an `asyncio` worker performs single-row appends to the latest configured sheet year. `inv sync` is the durable retry path. No full-month rebuild, no DB-to-sheet reconciliation.
-- Monotonic `catalog_version` (singleton in `app_metadata`) bumped only by `inv rebuild-catalog`; echoed by `GET /api/categories` and `POST /api/expenses`.
-- Destructive operator commands (`rebuild-catalog`, `rebuild-budget`, `rebuild-income-all`) print loud warnings and require `--yes`. The coordinated reset flow is: stop server → deploy code/assets → `rebuild-catalog --yes` → `rebuild-budget --yes` for every year → `rebuild-income-all --yes` → multi-year `verify-bootstrap-import` and income verification → start server. The legacy standalone `inv import-sheet` operator workflow is retired (Phase 1 has no partial re-import semantics).
+- Historical data import (2012–present) imported via destructive `inv import-budget` / `inv import-budget-all` and verified via `inv verify-bootstrap-import` / `inv verify-bootstrap-import-all`. Bootstrap-imported rows populate `sheet_category` / `sheet_group` as audit provenance.
+- Google Sheets is **export-only**: a persistent `sheet_logging_jobs` queue plus an `asyncio` worker performs single-row appends. `inv drain-logging` is the durable retry path. No full-month rebuild, no DB-to-sheet reconciliation.
+- Monotonic `catalog_version` (singleton in `app_metadata`) bumped only by `inv import-catalog`; echoed by `GET /api/categories` and `POST /api/expenses`.
+- Destructive operator commands (`import-catalog`, `import-budget`, `import-budget-all`, `import-income`, `import-income-all`) print loud warnings and require `--yes`. The coordinated reset flow is: stop server → deploy code/assets → `import-catalog --yes` → `import-budget-all --yes` → `import-income-all --yes` → `verify-bootstrap-import-all` → `verify-income-equivalence-all` → start server. The legacy standalone `inv import-sheet` operator workflow is retired (Phase 1 has no partial re-import semantics).
 
 ### Phase 2: Receipt Parser
 - Integrate or adapt sr-invoice-parser for fetching and parsing Serbian fiscal receipts from SUF PURS URLs.

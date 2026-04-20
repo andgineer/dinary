@@ -19,7 +19,7 @@ Dinary хранит данные о ежемесячном доходе семь
 ### Импорт дохода за один год
 
 ```bash
-inv rebuild-income --year=2024 --yes
+inv import-income --year=2024 --yes
 ```
 
 Полностью перезаписывает таблицу `income` в `budget_2024.duckdb` данными из Google Sheets. Команда деструктивная и требует явного `--yes`.
@@ -27,10 +27,10 @@ inv rebuild-income --year=2024 --yes
 ### Импорт всех лет
 
 ```bash
-inv rebuild-income-all --yes
+inv import-income-all --yes
 ```
 
-Запускает импорт для каждого года, у которого зарегистрирован источник дохода. Используется как часть скоординированного reset-флоу (`rebuild-catalog` → `rebuild-budget` → `rebuild-income-all` → verify) при остановленном сервере.
+Запускает импорт для каждого года, у которого зарегистрирован источник дохода. Используется как часть скоординированного reset-флоу (`import-catalog` → `import-budget-all` → `import-income-all` → `verify-bootstrap-import-all` → `verify-income-equivalence-all`) при остановленном сервере.
 
 ### Проверка корректности
 
@@ -46,4 +46,4 @@ inv verify-income-equivalence --year=2024
 
 ## Начиная с 2026
 
-Текущий доход по-прежнему вводится в существующих листах Google Sheets и подтягивается в БД через `inv rebuild-income`. Phase 1 PWA не предоставляет ввод дохода (это запланировано для будущих фаз).
+Текущий доход по-прежнему вводится в существующих листах Google Sheets и подтягивается в БД через `inv import-income`. Phase 1 PWA не предоставляет ввод дохода (это запланировано для будущих фаз).

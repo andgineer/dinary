@@ -22,7 +22,7 @@ from dinary.imports.report_2d_3d import (
     render_years,
 )
 from dinary.services import duckdb_repo
-from dinary.services.import_sheet import (
+from dinary.imports.expense_import import (
     ParsedSheetRow,
     resolve_row_to_3d,
 )
@@ -40,7 +40,7 @@ def _seed_config():
     con = duckdb_repo.get_config_connection(read_only=False)
     try:
         con.execute(
-            "INSERT INTO sheet_import_sources"
+            "INSERT INTO import_sources"
             " (year, spreadsheet_id, worksheet_name, layout_key, notes)"
             " VALUES (2024, 'sid', '', 'default', NULL)",
         )
@@ -68,25 +68,25 @@ def _seed_config():
             "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
             " VALUES (2, 'релокация-в-Сербию', '2022-04-01', '2030-12-31', false)",
         )
-        # sheet_mapping rows
+        # import_mapping rows
         con.execute(
-            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
             " category_id, event_id) VALUES (1, 0, 'еда', 'собака', 1, NULL)",
         )
-        con.execute("INSERT INTO sheet_mapping_tags VALUES (1, 1)")
+        con.execute("INSERT INTO import_mapping_tags VALUES (1, 1)")
         con.execute(
-            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
             " category_id, event_id) VALUES (2, 0, 'мобильник', '', 2, NULL)",
         )
         con.execute(
-            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
             " category_id, event_id) VALUES (3, 0, 'кафе', 'путешествия', 3, 1)",
         )
         con.execute(
-            "INSERT INTO sheet_mapping (id, year, sheet_category, sheet_group,"
+            "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
             " category_id, event_id) VALUES (4, 0, 'аренда', 'релокация', 4, NULL)",
         )
-        con.execute("INSERT INTO sheet_mapping_tags VALUES (4, 3)")
+        con.execute("INSERT INTO import_mapping_tags VALUES (4, 3)")
     finally:
         con.close()
 
@@ -242,7 +242,7 @@ class TestResolveRowTo3d:
 
 # ---------------------------------------------------------------------------
 # Post-import fix simulation (covered end-to-end via resolve_row_to_3d so
-# the report doesn't have to import private helpers from import_sheet)
+# the report doesn't have to import private helpers from expense_import)
 # ---------------------------------------------------------------------------
 
 

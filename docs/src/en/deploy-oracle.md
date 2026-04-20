@@ -18,7 +18,7 @@ Oracle Cloud Always Free tier provides permanent VMs — enough to run dinary-se
     **ARM Ampere A1** (`VM.Standard.A1.Flex`, up to 24 GB RAM) is more powerful but often unavailable ("Out of host capacity"). If you get one — great, otherwise use AMD Micro.
 
 !!! warning
-    Oracle may reclaim idle Always Free instances. Running a lightweight server like dinary keeps the instance active. If reclaimed, you can recreate it — your data lives in Google Sheets, not on the VM.
+    Oracle may reclaim idle Always Free instances. Running a lightweight server like dinary keeps the instance active. If reclaimed, you can recreate the VM, but the runtime source of truth is `data/*.duckdb` on disk, not Google Sheets. Back up `~/dinary-server/data/` before destructive work and do not treat the sheet-logging spreadsheet as a full restore source.
 
 ## Prerequisites
 
@@ -90,10 +90,17 @@ cp .env.example .env
 Edit `.env`:
 
 ```
-DINARY_GOOGLE_SHEETS_SPREADSHEET_ID=your-spreadsheet-id
 DINARY_DEPLOY_HOST=ubuntu@<PUBLIC_IP>
 # DINARY_TUNNEL=tailscale  # tailscale (default) | cloudflare | none
+# DINARY_IMPORT_SOURCES_JSON=[{"year":2026,"spreadsheet_id":"YOUR_IMPORT_SPREADSHEET_ID","worksheet_name":"Sheet1","layout_key":"default"}]
+# DINARY_SHEET_LOGGING_SPREADSHEET=https://docs.google.com/spreadsheets/d/YOUR_ID/edit
 ```
+
+`inv setup` now syncs your local `.env` to the VM and runs `inv import-config` on
+the server. That means a working `DINARY_IMPORT_SOURCES_JSON` (and Sheets shared
+with the service account) is required on first setup; otherwise the VM bootstrap
+finishes the system packages / systemd work but fails when seeding
+`config.duckdb`.
 
 Verify SSH access:
 
@@ -114,8 +121,10 @@ This single command performs everything on the VM via SSH:
 - Installs system packages (python3, git)
 - Installs uv (Python package manager)
 - Clones the repo and installs dependencies
+- Syncs your local `.env` to the VM
 - Uploads `~/.config/gspread/service_account.json` to the VM
 - Creates and starts a `dinary` systemd service
+- Seeds `config.duckdb` from the configured import-source spreadsheets
 - Sets up the tunnel (Tailscale by default, or Cloudflare — depending on `DINARY_TUNNEL`)
 
 ### Tailscale (default)

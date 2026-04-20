@@ -10,8 +10,9 @@ CREATE TABLE categories (
     group_id INTEGER NOT NULL REFERENCES category_groups(id)
 );
 
--- `name` is UNIQUE because seed_classification_catalog and import_sheet
--- both look events up by name, and `INSERT ... ON CONFLICT DO NOTHING`
+-- `name` is UNIQUE because seed_classification_catalog and
+-- imports/expense_import.py both look events up by name, and
+-- `INSERT ... ON CONFLICT DO NOTHING`
 -- in the seed path needs the unique constraint to dedupe re-runs (the PK
 -- on id only catches collisions when the deterministic id assignment
 -- happens to align, which is fragile).

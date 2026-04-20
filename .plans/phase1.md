@@ -1,6 +1,22 @@
 # Phase 1: DuckDB Foundation, Idempotent Ingestion, Export-Only Sheets ✓ IMPLEMENTED (3D reset, 2026-04)
 
-> **Status note:** Phase 1 was reset from the originally-shipped 4D model (`category`, `beneficiary`, `event`, `sphere_of_life`) to the **3D model** (`category`, `event`, `tag_ids[]`) plus an export-only Google Sheets contract. The "Current state" section below is the source of truth. Older sections below preserve the original design rationale but contradict the current schema and contract — treat them as historical reference, not as documentation.
+> **Superseded:** This document is a historical plan, frozen as of the
+> Phase 1 3D reset. It still uses the pre-rename names
+> (`sheet_sync_jobs`, `inv sync`, `schedule_sync`,
+> `sheet_import_sources`, `sheet_mapping`, `sheet_mapping_tags`,
+> `import_sheet`). For the current architecture and current names see
+> [`.plans/architecture.md`](architecture.md). Do not edit names here
+> in-place — they document the as-shipped state at the time of the
+> reset.
+>
+> **Operational warning:** The command names in this file are also frozen.
+> In the current codebase there is no `inv sync` alias; use
+> `inv drain-logging` instead. Likewise, the runtime queue is now
+> `sheet_logging_jobs`, and the current implementation is append-only
+> single-row logging — not the older full-month rebuild model described
+> below.
+>
+> **Status note:** Phase 1 was reset from the originally-shipped 4D model (`category`, `beneficiary`, `event`, `sphere_of_life`) to the **3D model** (`category`, `event`, `tag_ids[]`) plus an export-only Google Sheets contract. The "Current state" section below captures the post-reset design as it stood when this document was frozen, but it still uses the original pre-rename terminology. Treat the entire file as historical reference, not as current documentation.
 
 ## Goal
 
@@ -12,7 +28,13 @@ Move from Phase 0 (direct Google Sheets writes) to a DuckDB-backed architecture:
 
 This is replay protection (retry of the same queued item, timeout retries, same `expense_id` from another device). Semantic dedup (user enters the same purchase twice with different IDs) is out of scope for Phase 1.
 
-## Current state (post-3D-reset, 2026-04)
+## Frozen snapshot (post-3D-reset, 2026-04)
+
+> Historical snapshot only: the sections below preserve the design as this
+> document described it at the time it was frozen, including obsolete command
+> names like `inv sync` / `sheet_sync_jobs`. Do not execute commands from this
+> section. For the runnable operator workflow use [`.plans/architecture.md`](architecture.md)
+> and `tasks.py`.
 
 ### Dimensional model: 3D
 
@@ -31,7 +53,7 @@ The PWA contract is intentionally narrow: `expense_id` (UUID), `category_id`, op
 
 ### Catalog versioning
 
-`config.duckdb.app_metadata.catalog_version` is monotonic. The only Phase-1 bump path is `inv rebuild-catalog` (previous + 1 after wipe + reseed). `GET /api/categories` and `POST /api/expenses` echo the current value so the PWA can opportunistically invalidate the cached category list.
+`config.duckdb.app_metadata.catalog_version` is monotonic. The only Phase-1 bump path is `inv import-catalog` (previous + 1 after wipe + reseed). `GET /api/categories` and `POST /api/expenses` echo the current value so the PWA can opportunistically invalidate the cached category list.
 
 ### Currency model
 
@@ -42,10 +64,10 @@ The PWA contract is intentionally narrow: `expense_id` (UUID), `category_id`, op
 
 ### Historical data import (bootstrap-only)
 
-Historical data migration is **bootstrap-only and operator-driven**. The `import_sheet.py` codepath is reused exclusively by `inv rebuild-budget`; the standalone `inv import-sheet` operator workflow has been retired.
+Historical data migration is **bootstrap-only and operator-driven**. The `import_sheet.py` codepath is reused exclusively by `inv import-budget`; the standalone `inv import-sheet` operator workflow has been retired.
 
 - `sheet_import_sources` (in `config.duckdb`) maps each year to its spreadsheet ID, worksheet name, and layout key.
-- `SheetLayout` (in [src/dinary/services/import_sheet.py](../src/dinary/services/import_sheet.py)) describes column positions for each historical sheet generation (`default`, `rub`, `rub_fallback`, `rub_6col`, `rub_2016`, `rub_2014`, `rub_2012`).
+- `SheetLayout` (in [src/dinary/imports/expense_import.py](../src/dinary/imports/expense_import.py); the module was named `src/dinary/services/import_sheet.py` when this doc was written) describes column positions for each historical sheet generation (`default`, `rub`, `rub_fallback`, `rub_6col`, `rub_2016`, `rub_2014`, `rub_2012`).
 - Bootstrap import resolves each legacy `(year, sheet_category, sheet_group)` row through `sheet_mapping` (exact-year row first, then year=0 fallback), pulls `category_id`, `event_id`, and the tag set from `sheet_mapping_tags`, generates a fresh UUID4 per row, and writes both `expenses` and `expense_tags`. Imported rows populate `sheet_category` / `sheet_group` together as audit provenance (with `sheet_group=''` when the legacy row had no envelope); runtime rows leave both NULL.
 - `inv verify-bootstrap-import --year=YYYY` validates that DB rows match the resolved 3D mapping for the bootstrap-imported set. The coordinated reset flow loops verification across every rebuilt year.
 
@@ -75,23 +97,29 @@ This is best-effort placement into existing latest-year rows, not a round-trip g
 
 ### Operational workflow
 
+> Historical workflow only: the commands quoted in this section are preserved
+> verbatim for context. In the current codebase use `inv import-catalog`,
+> `inv import-budget-all`, `inv import-income-all`,
+> `inv verify-bootstrap-import-all`, `inv verify-income-equivalence-all`, and
+> `inv drain-logging`.
+
 1. `inv backup` — rsyncs `data/` from the server to the operator's laptop.
 2. **Coordinated full reset (destructive, requires `--yes`)** — keep the server stopped for the entire flow:
    1. deploy code/assets via the no-restart deploy path;
-   2. `inv rebuild-catalog --yes` (preserves and bumps `catalog_version` to `previous + 1`);
-   3. `inv rebuild-budget --yes` for every historical year (also wipes any `sheet_sync_jobs` rows in those files);
-   4. `inv rebuild-income-all --yes`;
-   5. `inv verify-bootstrap-import` and income verification across **every** rebuilt year (multi-year, not current-year only);
+   2. `inv import-catalog --yes` (preserves and bumps `catalog_version` to `previous + 1`);
+   3. `inv import-budget-all --yes` (also wipes any `sheet_sync_jobs` rows in those files);
+   4. `inv import-income-all --yes`;
+   5. `inv verify-bootstrap-import-all` and `inv verify-income-equivalence-all`;
    6. start server.
 3. `inv sync` — re-runs the single-row append for every `sheet_sync_jobs` row across all `budget_*.duckdb` files. Used after process crashes, transient Google API failures, or manual recovery.
 
-The destructive commands print loud warnings and do nothing without `--yes`. Running `inv rebuild-catalog` alone leaves existing `budget_YYYY.duckdb` files temporarily inconsistent with the reseeded catalog until `rebuild-budget` is rerun for all years; the operator workflow only supports the full coordinated reset (or a fresh empty setup).
+The destructive commands print loud warnings and do nothing without `--yes`. Running `inv import-catalog` alone leaves existing `budget_YYYY.duckdb` files temporarily inconsistent with the reseeded catalog until `import-budget-all` is rerun; the operator workflow only supports the full coordinated reset (or a fresh empty setup).
 
 ---
 
 # Historical design intent (pre-3D-reset)
 
-The sections below preserve the original 5D / 4D Phase-1 design rationale for context. They contradict the current schema, mapping table, API contract, and sync model in many places. Where they disagree with the "Current state" section above or with the code in [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py), the current code wins.
+The sections below preserve the original 5D / 4D Phase-1 design rationale for context. They contradict the current schema, mapping table, API contract, and sync model in many places. Where they disagree with [`.plans/architecture.md`](architecture.md) or with the code in [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py), the current code wins.
 
 ## Target flow
 

@@ -5,6 +5,7 @@ from unittest.mock import patch
 import allure
 import pytest
 
+from dinary.config import settings
 from dinary.services import duckdb_repo
 
 
@@ -64,7 +65,7 @@ class TestCategories:
 @allure.feature("Expenses (3D)")
 class TestPostExpense:
     @patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
-    @patch("dinary.api.expenses.schedule_sync")
+    @patch("dinary.api.expenses.schedule_logging")
     def test_create_expense(self, mock_schedule, _mock_convert, client):
         resp = client.post(
             "/api/expenses",
@@ -85,7 +86,30 @@ class TestPostExpense:
         mock_schedule.assert_called_once_with("e1", 2026)
 
     @patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
-    @patch("dinary.api.expenses.schedule_sync")
+    def test_disabled_sheet_logging_does_not_enqueue_jobs(self, _mock_convert, client, monkeypatch):
+        monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "")
+
+        resp = client.post(
+            "/api/expenses",
+            json={
+                "expense_id": "e_no_log",
+                "amount": 50.0,
+                "currency": "RSD",
+                "category": "еда",
+                "comment": "lunch",
+                "date": "2026-04-15",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        con = duckdb_repo.get_budget_connection(2026)
+        try:
+            assert duckdb_repo.list_logging_jobs(con) == []
+        finally:
+            con.close()
+
+    @patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
+    @patch("dinary.api.expenses.schedule_logging")
     def test_replay_returns_duplicate(self, mock_schedule, _mock_convert, client):
         body = {
             "expense_id": "e2",
@@ -100,11 +124,11 @@ class TestPostExpense:
         second = client.post("/api/expenses", json=body)
         assert second.status_code == 200
         assert second.json()["status"] == "duplicate"
-        # schedule_sync called once on first insert; idempotent replay does not re-queue.
+        # schedule_logging called once on first insert; idempotent replay does not re-queue.
         assert mock_schedule.call_count == 1
 
     @patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
-    @patch("dinary.api.expenses.schedule_sync")
+    @patch("dinary.api.expenses.schedule_logging")
     def test_conflict_on_modified_amount(self, _sched, _conv, client):
         base = {
             "expense_id": "e3",
@@ -120,7 +144,7 @@ class TestPostExpense:
         assert resp.status_code == 409
 
     @patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
-    @patch("dinary.api.expenses.schedule_sync")
+    @patch("dinary.api.expenses.schedule_logging")
     def test_cross_year_reuse_rejected(self, _sched, _conv, client):
         client.post(
             "/api/expenses",
@@ -147,7 +171,7 @@ class TestPostExpense:
         assert resp.status_code == 409
 
     @patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
-    @patch("dinary.api.expenses.schedule_sync")
+    @patch("dinary.api.expenses.schedule_logging")
     def test_cross_year_reuse_caught_by_post_reserve_check(
         self,
         _sched,
@@ -248,7 +272,7 @@ class TestPostExpense:
         assert duckdb_repo.get_registered_expense_year("e_leak") == 2026
 
     @patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
-    @patch("dinary.api.expenses.schedule_sync")
+    @patch("dinary.api.expenses.schedule_logging")
     def test_insert_failure_releases_registry_reservation(
         self,
         _sched,
@@ -301,14 +325,14 @@ class TestPostExpense:
         assert duckdb_repo.get_registered_expense_year("e_blip") == 2026
 
     @patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
-    @patch("dinary.api.expenses.schedule_sync")
+    @patch("dinary.api.expenses.schedule_logging")
     def test_conflict_after_registry_wipe_keeps_cross_year_protection(
         self,
         _sched,
         _conv,
         client,
     ):
-        """Bug regression: after `inv rebuild-catalog` wipes config.duckdb
+        """Bug regression: after `inv import-catalog` wipes config.duckdb
         (registry included) but leaves budget DBs intact, a conflicting POST
         used to release the freshly-inserted registry row, opening a
         cross-year reuse hole.
@@ -328,7 +352,7 @@ class TestPostExpense:
         first = client.post("/api/expenses", json=base)
         assert first.status_code == 200
 
-        # Simulate the rebuild-catalog wipe (registry only; budget DB stays).
+        # Simulate the import-catalog wipe (registry only; budget DB stays).
         wipe_con = duckdb_repo.get_config_connection(read_only=False)
         try:
             wipe_con.execute("DELETE FROM expense_id_registry")
@@ -348,7 +372,7 @@ class TestPostExpense:
         assert resp.status_code == 409
 
     @patch("dinary.api.expenses.convert_to_eur", side_effect=_mock_convert_to_eur)
-    @patch("dinary.api.expenses.schedule_sync")
+    @patch("dinary.api.expenses.schedule_logging")
     def test_response_echoes_original_amount_and_currency(
         self,
         _sched,

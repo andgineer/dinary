@@ -14,12 +14,12 @@ CREATE TABLE income (
 );
 ```
 
-Defined inline in `src/dinary/migrations/budget/0001_initial_schema.sql` (the legacy `0002_income.sql` migration was deleted in the 3D reset). The `origin` column was dropped because `income` is single-source per year (always sheet-imported via `inv rebuild-income-all`).
+Defined inline in `src/dinary/migrations/budget/0001_initial_schema.sql` (the legacy `0002_income.sql` migration was deleted in the 3D reset). The `origin` column was dropped because `income` is single-source per year (always sheet-imported via `inv import-income-all`).
 
-### `config.duckdb` — `sheet_import_sources`
+### `config.duckdb` — `import_sources`
 
 ```sql
-CREATE TABLE sheet_import_sources (
+CREATE TABLE import_sources (
     year                  INTEGER PRIMARY KEY,
     spreadsheet_id        TEXT NOT NULL,
     worksheet_name        TEXT NOT NULL DEFAULT '',
@@ -30,11 +30,11 @@ CREATE TABLE sheet_import_sources (
 );
 ```
 
-Defined inline in `src/dinary/migrations/config/0001_initial_schema.sql` (the legacy `0002_income_sources.sql` ALTER migration was folded into the initial schema in the 3D reset).
+Created as `sheet_import_sources` in `src/dinary/migrations/config/0001_initial_schema.sql` and renamed to `import_sources` in `src/dinary/migrations/config/0002_logging_and_import_rename.sql` (the legacy `0002_income_sources.sql` ALTER migration was folded into the initial schema in the 3D reset).
 
 ## Layouts
 
-`IncomeLayout` dataclass in `src/dinary/services/import_income.py` maps sheet columns:
+`IncomeLayout` dataclass in `src/dinary/imports/income_import.py` maps sheet columns:
 
 | Layout key | col_date | col_amount | currency | transition |
 |------------|----------|------------|----------|------------|
@@ -51,7 +51,7 @@ The same column contains amounts in both currencies; the month determines which 
 
 ## Year → source mapping
 
-Registered in `sheet_import_sources`:
+Registered in `import_sources`:
 
 | Year | Worksheet | Layout |
 |------|-----------|--------|
@@ -68,7 +68,7 @@ Years 2012–2018 have no income source — no structured income data in those s
 
 ## Import flow (`import_year_income`)
 
-1. Read `sheet_import_sources` for the year → get spreadsheet ID, worksheet, layout key.
+1. Read `import_sources` for the year → get spreadsheet ID, worksheet, layout key.
 2. Open the Google Sheet via `gspread`, read all rows from the income worksheet.
 3. For each row after `header_rows`:
    - Parse date → extract `(year, month)`. Skip rows where year ≠ target.
@@ -86,8 +86,8 @@ Re-reads the sheet, re-aggregates, and compares month-by-month against DB with �
 
 All destructive income-import tasks require explicit `--yes` confirmation:
 
-- `inv rebuild-income --year=YYYY --yes` — destructive re-import of one year.
-- `inv rebuild-income-all --yes` — destructive re-import of every registered year (run as part of the coordinated reset flow).
+- `inv import-income --year=YYYY --yes` — destructive re-import of one year.
+- `inv import-income-all --yes` — destructive re-import of every registered year (run as part of the coordinated reset flow).
 - `inv verify-income-equivalence --year=YYYY` — verify one year against the source sheet (no `--yes` needed; read-only).
 
 ## Import results (2026-04)

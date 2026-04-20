@@ -2,7 +2,7 @@
 
 This file is the authoritative source of truth for `config.duckdb` contents:
 category groups, categories, events (synthetic + relocation), tags, and the
-legacy `sheet_mapping` rows used by the bootstrap historical import. When this
+legacy `import_mapping` rows used by the bootstrap historical import. When this
 file disagrees with `docs/src/ru/taxonomy.md`, the code wins.
 
 Phase 1 PWA hardcodes the same tag dictionary defined here. There is no
@@ -18,11 +18,18 @@ import duckdb
 
 from dinary.config import settings
 from dinary.services import duckdb_repo
-from dinary.services.category_store import Category
 from dinary.services.sheets import HEADER_ROWS, _cell, get_sheet
 from dinary.services.sql_loader import fetchall_as, load_sql
 
 logger = logging.getLogger(__name__)
+
+
+@dataclasses.dataclass
+class Category:
+    """Lightweight (category, group) value object used by the seed pipeline."""
+
+    name: str
+    group: str
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +103,7 @@ class ExplicitEvent:
     """One-off event row that the bootstrap importer references by name.
 
     Lives in the catalog (config.duckdb) so `catalog_version` reflects its
-    presence; `import_sheet.py` looks events up by name and never mutates
+    presence; `imports/expense_import.py` looks events up by name and never mutates
     config.duckdb directly.
     """
 
@@ -106,13 +113,14 @@ class ExplicitEvent:
     auto_attach_enabled: bool = False
 
 
-#: Name of the one-off "Russia trip" event. Re-exported so `import_sheet`
-#: can look it up by name without redefining the literal.
+#: Name of the one-off "Russia trip" event. Re-exported so
+#: `imports/expense_import.py` can look it up by name without redefining
+#: the literal.
 RUSSIA_TRIP_EVENT_NAME = "поездка в Россию"
 
 #: Events that don't fit the per-year vacation/business-trip pattern but are
 #: still needed by the historical importer. Add new one-off events here so
-#: `rebuild-catalog` (and only `rebuild-catalog`) creates them.
+#: `import-catalog` (and only `import-catalog`) creates them.
 EXPLICIT_EVENTS: list[ExplicitEvent] = [
     ExplicitEvent(
         name=RUSSIA_TRIP_EVENT_NAME,
@@ -164,9 +172,9 @@ def _default_layout_for_year(year: int) -> str:
     return "default"
 
 
-def _bootstrap_import_sources(default_year: int) -> list[ImportSourceSeedRow]:
-    if settings.sheet_import_sources_json:
-        payload = json.loads(settings.sheet_import_sources_json)
+def _bootstrap_import_sources() -> list[ImportSourceSeedRow]:
+    if settings.import_sources_json:
+        payload = json.loads(settings.import_sources_json)
         return [
             ImportSourceSeedRow(
                 year=int(row["year"]),
@@ -179,30 +187,20 @@ def _bootstrap_import_sources(default_year: int) -> list[ImportSourceSeedRow]:
             )
             for row in payload
         ]
-    if settings.google_sheets_spreadsheet_id:
-        return [
-            ImportSourceSeedRow(
-                year=default_year,
-                spreadsheet_id=settings.google_sheets_spreadsheet_id,
-                worksheet_name="",
-                layout_key=_default_layout_for_year(default_year),
-                notes="Bootstrapped from DINARY_GOOGLE_SHEETS_SPREADSHEET_ID",
-            ),
-        ]
     return []
 
 
-def _ensure_import_sources(con: duckdb.DuckDBPyConnection, *, default_year: int) -> int:
-    """Insert bootstrap rows only if `sheet_import_sources` is empty."""
-    count_row = con.execute("SELECT COUNT(*) FROM sheet_import_sources").fetchone()
+def _ensure_import_sources(con: duckdb.DuckDBPyConnection) -> int:
+    """Insert bootstrap rows only if `import_sources` is empty."""
+    count_row = con.execute("SELECT COUNT(*) FROM import_sources").fetchone()
     if count_row and count_row[0]:
         return 0
-    rows = _bootstrap_import_sources(default_year)
+    rows = _bootstrap_import_sources()
     if not rows:
         return 0
     for row in rows:
         con.execute(
-            "INSERT INTO sheet_import_sources"
+            "INSERT INTO import_sources"
             " (year, spreadsheet_id, worksheet_name, layout_key, notes,"
             "  income_worksheet_name, income_layout_key)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -234,7 +232,7 @@ def _load_existing_import_sources() -> list[ImportSourceSeedRow]:
             rows = con.execute(
                 "SELECT year, spreadsheet_id, worksheet_name, layout_key, notes,"
                 " income_worksheet_name, income_layout_key"
-                " FROM sheet_import_sources ORDER BY year",
+                " FROM import_sources ORDER BY year",
             ).fetchall()
         except duckdb.Error:
             return []
@@ -261,7 +259,7 @@ def _restore_import_sources(rows: list[ImportSourceSeedRow]) -> None:
     try:
         for row in rows:
             con.execute(
-                "INSERT INTO sheet_import_sources"
+                "INSERT INTO import_sources"
                 " (year, spreadsheet_id, worksheet_name, layout_key, notes,"
                 "  income_worksheet_name, income_layout_key)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?)"
@@ -292,8 +290,8 @@ def _restore_import_sources(rows: list[ImportSourceSeedRow]) -> None:
 # These rules used to live in seed/import code split between beneficiary,
 # sphere, and event helpers. In the 3D model they collapse into a single
 # (category_name, tag_set, event_name) tuple per legacy pair, and the result
-# is pre-baked into `sheet_mapping` + `sheet_mapping_tags` rows during seed.
-# `import_sheet.py` only does table lookups at import time.
+# is pre-baked into `import_mapping` + `import_mapping_tags` rows during seed.
+# `imports/expense_import.py` only does table lookups at import time.
 # ---------------------------------------------------------------------------
 
 LEGACY_FOOD_CATEGORY = "еда&бытовые"
@@ -526,7 +524,7 @@ def canonical_category_for_source(  # noqa: C901, PLR0911, PLR0912
 ) -> str:
     """Map a legacy `(source_type, source_envelope)` to a canonical category name.
 
-    Public because `import_sheet` reads the same legacy
+    Public because `imports/expense_import.py` reads the same legacy
     `(source_type, source_envelope)` cells and must apply the same mapping
     rules at import time. Keeping a private alias would silently drift if
     one caller's signature changes without the other's.
@@ -600,7 +598,7 @@ def tags_for_source(  # noqa: C901
 
     Combines beneficiary + sphere-of-life axes from the old 4D model into
     one tag set. Year-aware rules (e.g. "командировка" relocation tag from
-    2022 onward) are resolved here so per-year `sheet_mapping` rows can
+    2022 onward) are resolved here so per-year `import_mapping` rows can
     carry the right tags.
     """
     tags: set[str] = set()
@@ -637,7 +635,7 @@ def tags_for_source(  # noqa: C901
 def event_name_for_source(source_type: str, source_envelope: str, year: int) -> str | None:
     """Return the synthetic event name (if any) for a legacy `(source, envelope)` pair.
 
-    Public because `import_sheet` must derive the same per-year event
+    Public because `imports/expense_import.py` must derive the same per-year event
     name when promoting historical rows that lack an explicit mapping.
     Returns None when the pair has no event association (the common
     case — only vacations and pre-cutover business trips synthesize an
@@ -742,28 +740,12 @@ def _load_categories_for_sheet(
 
 
 def _collect_categories(con: duckdb.DuckDBPyConnection) -> list[Category]:
-    """Collect (category, group) pairs across every registered import source.
-
-    The legacy `get_categories()` call (which read from the env-configured
-    default spreadsheet) was dropped: in every realistic config the default
-    spreadsheet is already one of the registered `sheet_import_sources`
-    rows, and when it isn't, the implicit dependency on
-    `settings.google_sheets_spreadsheet_id` produced a confusing source of
-    rows that wasn't visible in the catalog table.
-
-    BEHAVIOR CHANGE — operator note: deployments where
-    `DINARY_GOOGLE_SHEETS_SPREADSHEET_ID` points at a spreadsheet that is
-    NOT registered in `sheet_import_sources` will lose those categories
-    on the next `seed-config` / `rebuild-catalog`. The fix is to register
-    the env-configured spreadsheet as a `sheet_import_sources` row (or
-    accept the drop). The previous implicit fallback hid this misconfig
-    by silently merging two unrelated category sets.
-    """
+    """Collect (category, group) pairs across every registered import source."""
     seen: set[tuple[str, str]] = set()
     categories: list[Category] = []
 
     sources = con.execute(
-        "SELECT spreadsheet_id, worksheet_name, layout_key FROM sheet_import_sources ORDER BY year",
+        "SELECT spreadsheet_id, worksheet_name, layout_key FROM import_sources ORDER BY year",
     ).fetchall()
     for spreadsheet_id, worksheet_name, layout_key in sources:
         for row in _load_categories_for_sheet(spreadsheet_id, worksheet_name, layout_key):
@@ -802,10 +784,10 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
     year: int | None = None,
     discovered_pairs: list[Category] | None = None,
 ) -> dict:
-    """Seed the 3D taxonomy + legacy `sheet_mapping` rows into config.duckdb.
+    """Seed the 3D taxonomy + legacy `import_mapping` rows into config.duckdb.
 
     Seeding order: category_groups -> categories -> events -> tags ->
-    sheet_mapping -> sheet_mapping_tags. All ids are resolved to integers
+    import_mapping -> import_mapping_tags. All ids are resolved to integers
     before insert; FKs are honored.
 
     `discovered_pairs` is the union of legacy `(sheet_category, sheet_group)`
@@ -894,9 +876,9 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
     for rid, rname in rows:
         tag_id_by_name[rname] = rid
 
-    # 5. sheet_mapping (year=0 generic rows from discovered pairs)
+    # 5. import_mapping (year=0 generic rows from discovered pairs)
     mapping_count = 0
-    next_mapping_id_row = con.execute("SELECT COALESCE(MAX(id), 0) FROM sheet_mapping").fetchone()
+    next_mapping_id_row = con.execute("SELECT COALESCE(MAX(id), 0) FROM import_mapping").fetchone()
     next_mapping_id = (next_mapping_id_row[0] if next_mapping_id_row else 0) + 1
 
     pairs = discovered_pairs or []
@@ -927,7 +909,7 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
                 raise ValueError(msg)
 
         existing = con.execute(
-            "SELECT id, category_id, event_id FROM sheet_mapping"
+            "SELECT id, category_id, event_id FROM import_mapping"
             " WHERE year = ? AND sheet_category = ? AND sheet_group = ?",
             [seed_year, sheet_category, sheet_group],
         ).fetchone()
@@ -946,20 +928,20 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
             # them because DuckDB FK enforcement on UPDATE/DELETE+INSERT in the
             # same transaction is unreliable when child rows exist. If the
             # caller really needs to change the mapping target, they must run
-            # `inv rebuild-catalog` which wipes the DB first.
+            # `inv import-catalog` which wipes the DB first.
             if existing_category_id != category_id or existing_event_id != event_id:
                 msg = (
                     f"Mapping ({seed_year}, {sheet_category!r}, {sheet_group!r}) "
                     f"already exists with category_id={existing_category_id}, "
                     f"event_id={existing_event_id}; refusing to mutate to "
                     f"category_id={category_id}, event_id={event_id}. "
-                    "Run `inv rebuild-catalog` to wipe and re-seed."
+                    "Run `inv import-catalog` to wipe and re-seed."
                 )
                 raise ValueError(msg)
             existing_tag_ids = sorted(
                 int(r[0])
                 for r in con.execute(
-                    "SELECT tag_id FROM sheet_mapping_tags WHERE mapping_id = ?",
+                    "SELECT tag_id FROM import_mapping_tags WHERE mapping_id = ?",
                     [mapping_id],
                 ).fetchall()
             )
@@ -972,14 +954,14 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
                 msg = (
                     f"Mapping ({seed_year}, {sheet_category!r}, {sheet_group!r}) already "
                     f"exists with tag_ids={existing_tag_ids}; refusing to mutate to "
-                    f"tag_ids={new_tag_ids}. Run `inv rebuild-catalog` to wipe and re-seed."
+                    f"tag_ids={new_tag_ids}. Run `inv import-catalog` to wipe and re-seed."
                 )
                 raise ValueError(msg)
             return
         mapping_id = next_mapping_id
         next_mapping_id += 1
         con.execute(
-            "INSERT INTO sheet_mapping"
+            "INSERT INTO import_mapping"
             " (id, year, sheet_category, sheet_group, category_id, event_id)"
             " VALUES (?, ?, ?, ?, ?, ?)",
             [mapping_id, seed_year, sheet_category, sheet_group, category_id, event_id],
@@ -987,7 +969,7 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
         mapping_count += 1
         for tag_id in new_tag_ids:
             con.execute(
-                "INSERT INTO sheet_mapping_tags (mapping_id, tag_id) VALUES (?, ?)",
+                "INSERT INTO import_mapping_tags (mapping_id, tag_id) VALUES (?, ?)",
                 [mapping_id, tag_id],
             )
 
@@ -1006,7 +988,7 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
         tag_names = tags_for_source(sheet_category, sheet_group, 0)
         upsert_mapping(0, sheet_category, sheet_group, category_name, tag_names, None)
 
-    # 6. sheet_mapping (per-year explicit overrides)
+    # 6. import_mapping (per-year explicit overrides)
     for row in EXPLICIT_MAPPING_OVERRIDES:
         upsert_mapping(
             row.year,
@@ -1039,18 +1021,20 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
     # resolve a sheet target. Emit a default-landing mapping
     # (sheet_category=<category_name>, sheet_group="") for the latest year.
     latest_row = con.execute(
-        "SELECT MAX(year) FROM sheet_import_sources WHERE year > 0",
+        "SELECT MAX(year) FROM import_sources WHERE year > 0",
     ).fetchone()
     latest_year = int(latest_row[0]) if latest_row and latest_row[0] is not None else 0
     if latest_year:
         for cat_name, cat_id in cat_id_by_name.items():
             existing = con.execute(
-                "SELECT 1 FROM sheet_mapping WHERE year = ? AND category_id = ? LIMIT 1",
+                "SELECT 1 FROM import_mapping WHERE year = ? AND category_id = ? LIMIT 1",
                 [latest_year, cat_id],
             ).fetchone()
             if existing:
                 continue
             upsert_mapping(latest_year, cat_name, "", cat_name, (), None)
+
+    logging_bootstrapped = _sync_logging_mapping_from_year_zero(con)
 
     return {
         "category_groups": len(group_id_by_title),
@@ -1058,7 +1042,69 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
         "events": len(event_id_by_name),
         "tags": len(tag_id_by_name),
         "mappings_created": mapping_count,
+        "logging_mappings_bootstrapped": logging_bootstrapped,
     }
+
+
+def _sync_logging_mapping_from_year_zero(con: duckdb.DuckDBPyConnection) -> int:
+    """Mirror year=0 import_mapping into logging_mapping when empty.
+
+    Idempotent: runs only when ``logging_mapping`` is empty. This protects
+    operator edits to logging_mapping (the whole reason it exists as a
+    separate table) from being clobbered by every ``inv import-config`` run.
+
+    Returns the number of rows inserted (0 when logging_mapping was
+    already populated).
+
+    Bootstrap split:
+      * Existing-DB upgrades: migration 0002 already pre-fills from
+        year=0, so ``logging_mapping`` is non-empty here -> no-op.
+      * Fresh installs: migration 0002 ran against an empty
+        ``import_mapping`` (the rename happened before any seed insert),
+        so ``logging_mapping`` is empty here. The year=0 rows we just
+        inserted into ``import_mapping`` are mirrored over.
+    """
+    existing = con.execute("SELECT COUNT(*) FROM logging_mapping").fetchone()
+    if existing and existing[0]:
+        return 0
+
+    next_id_row = con.execute(
+        "SELECT COALESCE(MAX(id), 0) FROM logging_mapping",
+    ).fetchone()
+    next_id = (next_id_row[0] if next_id_row else 0) + 1
+
+    rows = con.execute(
+        "SELECT id, category_id, event_id, sheet_category, sheet_group"
+        " FROM import_mapping WHERE year = 0 ORDER BY id",
+    ).fetchall()
+    if not rows:
+        return 0
+
+    old_to_new: dict[int, int] = {}
+    for old_id, category_id, event_id, sheet_category, sheet_group in rows:
+        con.execute(
+            "INSERT INTO logging_mapping"
+            " (id, category_id, event_id, sheet_category, sheet_group)"
+            " VALUES (?, ?, ?, ?, ?)",
+            [next_id, category_id, event_id, sheet_category, sheet_group],
+        )
+        old_to_new[int(old_id)] = next_id
+        next_id += 1
+
+    if old_to_new:
+        tag_rows = con.execute(
+            "SELECT mapping_id, tag_id FROM import_mapping_tags"
+            " WHERE mapping_id IN ("
+            "   SELECT id FROM import_mapping WHERE year = 0"
+            " )",
+        ).fetchall()
+        for mapping_id, tag_id in tag_rows:
+            con.execute(
+                "INSERT INTO logging_mapping_tags (mapping_id, tag_id) VALUES (?, ?)",
+                [old_to_new[int(mapping_id)], int(tag_id)],
+            )
+
+    return len(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -1066,38 +1112,41 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
 # ---------------------------------------------------------------------------
 
 
-def _validate_runtime_export_target(con: duckdb.DuckDBPyConnection) -> int:
-    """Ensure the latest configured sheet year is a valid append target.
+def _validate_latest_import_source(con: duckdb.DuckDBPyConnection) -> int:
+    """Validate the latest configured import_sources row.
 
-    Returns the latest positive year. Raises if not configured properly per
-    the rules in `architecture.md` ("Forward-projection rules").
+    Returns the latest positive year. Raises if the row is missing fields
+    the import pipeline relies on (spreadsheet_id, worksheet_name,
+    layout_key from KNOWN_LAYOUT_KEYS). Runtime sheet logging is no
+    longer involved here — it has its own separate spreadsheet config
+    (DINARY_SHEET_LOGGING_SPREADSHEET) and its own table
+    (logging_mapping).
     """
     row = con.execute(
-        "SELECT MAX(year) FROM sheet_import_sources WHERE year > 0",
+        "SELECT MAX(year) FROM import_sources WHERE year > 0",
     ).fetchone()
     if not row or row[0] is None:
-        msg = "sheet_import_sources has no positive year; runtime export target is undefined"
+        msg = "import_sources has no positive year; nothing to import"
         raise ValueError(msg)
     latest = int(row[0])
 
     src = con.execute(
-        "SELECT spreadsheet_id, worksheet_name, layout_key"
-        " FROM sheet_import_sources WHERE year = ?",
+        "SELECT spreadsheet_id, worksheet_name, layout_key FROM import_sources WHERE year = ?",
         [latest],
     ).fetchone()
     if src is None:
-        msg = f"sheet_import_sources row missing for runtime export year {latest}"
+        msg = f"import_sources row missing for latest year {latest}"
         raise ValueError(msg)
     spreadsheet_id, worksheet_name, layout_key = src
     if not spreadsheet_id:
-        msg = f"runtime export year {latest} has empty spreadsheet_id"
+        msg = f"import_sources year {latest} has empty spreadsheet_id"
         raise ValueError(msg)
     if not worksheet_name:
-        msg = f"runtime export year {latest} has empty worksheet_name"
+        msg = f"import_sources year {latest} has empty worksheet_name"
         raise ValueError(msg)
     if not layout_key or layout_key not in KNOWN_LAYOUT_KEYS:
         msg = (
-            f"runtime export year {latest} has unsupported layout_key {layout_key!r}; "
+            f"import_sources year {latest} has unsupported layout_key {layout_key!r}; "
             f"known: {sorted(KNOWN_LAYOUT_KEYS)}"
         )
         raise ValueError(msg)
@@ -1105,12 +1154,18 @@ def _validate_runtime_export_target(con: duckdb.DuckDBPyConnection) -> int:
     return latest
 
 
-def _validate_export_coverage(con: duckdb.DuckDBPyConnection, latest_year: int) -> None:
-    """Every category in the catalog must have at least one mapping in the latest year."""
+def _validate_import_coverage(con: duckdb.DuckDBPyConnection, latest_year: int) -> None:
+    """Every category must have at least one import_mapping row in the latest year.
+
+    This protects the bootstrap import pipeline (which needs year-scoped
+    import_mapping coverage). Runtime sheet logging uses the separate
+    ``logging_mapping`` table with a guaranteed category-name fallback,
+    so a gap here does not break runtime logging.
+    """
     rows = con.execute(
         "SELECT c.name FROM categories c"
         " WHERE NOT EXISTS ("
-        "   SELECT 1 FROM sheet_mapping m"
+        "   SELECT 1 FROM import_mapping m"
         "   WHERE m.year = ? AND m.category_id = c.id"
         " )",
         [latest_year],
@@ -1118,14 +1173,14 @@ def _validate_export_coverage(con: duckdb.DuckDBPyConnection, latest_year: int) 
     if rows:
         missing = [r[0] for r in rows]
         msg = (
-            f"Runtime export coverage gap: latest sheet year {latest_year} has no "
-            f"sheet_mapping row for categories {missing}; forward projection would miss."
+            f"Import coverage gap: latest sheet year {latest_year} has no "
+            f"import_mapping row for categories {missing}."
         )
         raise ValueError(msg)
 
 
 def _bump_catalog_version(con: duckdb.DuckDBPyConnection, *, previous: int) -> int:
-    """Set catalog_version to previous+1 (called only by `rebuild-catalog`)."""
+    """Set catalog_version to previous+1 (called only by `import-catalog`)."""
     new_version = previous + 1
     duckdb_repo._set_catalog_version(con, new_version)  # noqa: SLF001
     return new_version
@@ -1143,11 +1198,11 @@ def seed_from_sheet(year: int | None = None) -> dict:
     fresh-bootstrap path and for incremental seeding during dev.
 
     NOTE: this path does NOT bump `app_metadata.catalog_version`. By design
-    only `inv rebuild-catalog` touches the version (so PWA clients don't get
-    invalidated by every routine `seed-config` run). When this function adds
+    only `inv import-catalog` touches the version (so PWA clients don't get
+    invalidated by every routine `import-config` run). When this function adds
     new mappings on top of an existing catalog, it logs a warning so the
     operator knows the PWA caches will not refresh until the next
-    `inv rebuild-catalog`.
+    `inv import-catalog`.
 
     CONCURRENCY: the function uses three sequential connections (write
     sources -> read sources + Sheets HTTP -> write catalog) instead of
@@ -1156,7 +1211,7 @@ def seed_from_sheet(year: int | None = None) -> dict:
     (which would block `POST /api/expenses` on the rate-cache miss
     path). Callers MUST NOT run two `seed_from_sheet` invocations
     concurrently — the split allows a second invocation to mutate
-    `sheet_import_sources` between Steps 1 and 3, producing a Step-3
+    `import_sources` between Steps 1 and 3, producing a Step-3
     catalog derived from a stale source list. Phase 1 deployment runs
     `inv` tasks one at a time, so this is operationally safe; if that
     ever changes, take a coarse-grained lock around the whole function.
@@ -1175,7 +1230,7 @@ def seed_from_sheet(year: int | None = None) -> dict:
     try:
         con.execute("BEGIN")
         try:
-            bootstrapped_sources = _ensure_import_sources(con, default_year=year)
+            bootstrapped_sources = _ensure_import_sources(con)
             con.execute("COMMIT")
         except Exception:
             # Symmetric with Step 3: explicit ROLLBACK so the writer slot
@@ -1198,7 +1253,7 @@ def seed_from_sheet(year: int | None = None) -> dict:
     finally:
         read_con.close()
     if not pairs:
-        raise ValueError("No categories discovered from sheet_import_sources")
+        raise ValueError("No categories discovered from import_sources")
 
     # Step 3: now that the slow Sheets I/O is done, take the writer slot
     # again and apply the catalog rows in one transaction.
@@ -1213,8 +1268,8 @@ def seed_from_sheet(year: int | None = None) -> dict:
 
         if summary.get("mappings_created", 0) > 0:
             logger.warning(
-                "seed-config inserted %d new sheet_mapping row(s) without "
-                "bumping catalog_version; run `inv rebuild-catalog` to force "
+                "import-config inserted %d new import_mapping row(s) without "
+                "bumping catalog_version; run `inv import-catalog` to force "
                 "PWA clients to refresh the catalog.",
                 summary["mappings_created"],
             )
@@ -1229,7 +1284,7 @@ def seed_from_sheet(year: int | None = None) -> dict:
 def rebuild_config_from_sheets() -> dict:
     """Wipe `config.duckdb`, restore preserved import sources, then re-seed.
 
-    Destructive `rebuild-catalog` codepath. Always bumps `catalog_version`
+    Destructive `import-catalog` codepath. Always bumps `catalog_version`
     monotonically:
       * first ever run on an empty data dir: 1 (post-init floor) -> 2;
       * subsequent runs: max(prior_value, post-init=1) -> +1.
@@ -1280,8 +1335,8 @@ def rebuild_config_from_sheets() -> dict:
     latest_year: int
     con = duckdb_repo.get_config_connection(read_only=False)
     try:
-        latest_year = _validate_runtime_export_target(con)
-        _validate_export_coverage(con, latest_year)
+        latest_year = _validate_latest_import_source(con)
+        _validate_import_coverage(con, latest_year)
         # If the DB was wiped, the freshly-initialized version (1) is the
         # floor for "previous": that's what a client would have observed if
         # it queried right after the wipe.
@@ -1292,5 +1347,5 @@ def rebuild_config_from_sheets() -> dict:
 
     summary["catalog_version"] = new_version
     summary["previous_catalog_version"] = effective_previous
-    summary["latest_export_year"] = latest_year
+    summary["latest_import_year"] = latest_year
     return summary

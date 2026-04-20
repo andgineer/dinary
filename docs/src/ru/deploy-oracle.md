@@ -18,7 +18,7 @@ Oracle Cloud Always Free предоставляет бессрочные VM — 
     **ARM Ampere A1** (`VM.Standard.A1.Flex`, до 24 ГБ RAM) — мощнее, но часто недоступен ("Out of host capacity"). Если удалось создать — отлично, если нет — берите AMD Micro.
 
 !!! warning
-    Oracle может отключить неактивные Always Free инстансы. Работающий сервер dinary поддерживает инстанс активным. Если инстанс отключён — его можно пересоздать, данные хранятся в Google Sheets, а не на VM.
+    Oracle может отключить неактивные Always Free инстансы. Работающий сервер dinary поддерживает инстанс активным. Если инстанс отключён, VM можно пересоздать, но runtime source of truth лежит в `data/*.duckdb` на диске, а не в Google Sheets. Перед деструктивными операциями делайте backup `~/dinary-server/data/` и не считайте sheet logging таблицу полноценным источником восстановления.
 
 ## Требования
 
@@ -90,10 +90,17 @@ cp .env.example .env
 Отредактируйте `.env`:
 
 ```
-DINARY_GOOGLE_SHEETS_SPREADSHEET_ID=ваш-spreadsheet-id
 DINARY_DEPLOY_HOST=ubuntu@<PUBLIC_IP>
 # DINARY_TUNNEL=tailscale  # tailscale (по умолч.) | cloudflare | none
+# DINARY_IMPORT_SOURCES_JSON=[{"year":2026,"spreadsheet_id":"YOUR_IMPORT_SPREADSHEET_ID","worksheet_name":"Sheet1","layout_key":"default"}]
+# DINARY_SHEET_LOGGING_SPREADSHEET=https://docs.google.com/spreadsheets/d/YOUR_ID/edit
 ```
+
+`inv setup` теперь синхронизирует ваш локальный `.env` на VM и запускает
+`inv import-config` на сервере. Поэтому для первого запуска нужен рабочий
+`DINARY_IMPORT_SOURCES_JSON` (и таблицы, расшаренные на сервисный аккаунт),
+иначе bootstrap VM завершит системную настройку, но упадёт на seeding
+`config.duckdb`.
 
 Проверьте SSH-доступ:
 
@@ -114,8 +121,10 @@ inv setup
 - Устанавливает системные пакеты (python3, git)
 - Устанавливает uv (менеджер пакетов Python)
 - Клонирует репозиторий и устанавливает зависимости
+- Синхронизирует ваш локальный `.env` на VM
 - Загружает `~/.config/gspread/service_account.json` на VM
 - Создаёт и запускает systemd-сервис `dinary`
+- Заполняет `config.duckdb` из настроенных import-source таблиц
 - Настраивает туннель (Tailscale по умолчанию, или Cloudflare — в зависимости от `DINARY_TUNNEL`)
 
 ### Tailscale (по умолчанию)

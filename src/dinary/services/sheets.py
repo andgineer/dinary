@@ -1,16 +1,40 @@
-"""Google Sheets read/write via gspread."""
+"""Google Sheets read/write via gspread.
+
+Shared between historical import (read-only) and optional runtime sheet
+logging (append-only). The sheet logging path uses ``ensure_category_row``
+to insert rows on demand — no month-copying. Import uses layout-aware
+readers in ``dinary.imports``.
+
+Year-aware matching
+-------------------
+The optional sheet-logging spreadsheet holds expenses for *all* years.
+Column G stores the month number 1..12 only, so any helper that filters
+rows by month would otherwise collapse e.g. January 2026 and January
+2027 into one match — appending a 2027 expense onto a 2026 row.
+
+The fix is keyed on column A: ``insert_logging_row`` writes
+``YYYY-MM-DD`` there with ``USER_ENTERED``, so Google Sheets stores it
+as a date serial. ``ws.get_all_values()`` returns the *formatted*
+display string (``"Apr-1"`` etc.), which doesn't carry the year, so we
+fetch column A separately with ``UNFORMATTED_VALUE`` via
+``fetch_row_years`` and pass the resulting per-row year list as
+``years_by_row`` into the matching helpers.
+
+When ``years_by_row`` (and ``target_year``) is omitted, the helpers
+fall back to legacy month-only matching — that path stays alive for
+unit tests that mock ``ws.get_all_values()`` only and never need a
+multi-year sheet, and for any caller that genuinely doesn't care about
+year (e.g. a single-year diagnostic).
+"""
 
 import logging
-from datetime import date
-from decimal import Decimal
+from datetime import date, timedelta
 
 import gspread
 from google.oauth2.service_account import Credentials
 from gspread.utils import ValueInputOption, ValueRenderOption
 
 from dinary.config import settings
-from dinary.services.category_store import Category, CategoryStore
-from dinary.services.exchange_rate import fetch_eur_rsd_rate
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +42,11 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 # 1-indexed column numbers matching the actual Google Sheet layout:
 #   A=Date  B=RSD(formula)  C=EUR(formula)  D=Category  E=Group
-#   F=Comment  G=Month(formula)  H=Rate
+#   F=Comment  G=Month(formula)  H=Rate  J=ExpenseIds
+# Column I is intentionally skipped to leave the human-visible block (A..H)
+# untouched. J holds an opaque audit trail of "[exp:<expense_id>]" markers,
+# one per appended expense, used by sheet logging to detect a
+# timeout-after-success retry and skip the second write.
 COL_DATE = 1
 COL_AMOUNT_RSD = 2
 COL_CATEGORY = 4
@@ -26,11 +54,17 @@ COL_GROUP = 5
 COL_COMMENT = 6
 COL_MONTH = 7
 COL_RATE_EUR = 8
+COL_EXPENSE_IDS = 10
 
 HEADER_ROWS = 1
 
+
+def expense_id_marker(expense_id: str) -> str:
+    """Stable ``[exp:<expense_id>]`` marker stored in ``COL_EXPENSE_IDS``."""
+    return f"[exp:{expense_id}]"
+
+
 _gc: gspread.Client | None = None
-_category_store = CategoryStore()
 
 
 def _get_client() -> gspread.Client:
@@ -44,9 +78,8 @@ def _get_client() -> gspread.Client:
     return _gc
 
 
-def get_sheet(spreadsheet_id: str = "") -> gspread.Spreadsheet:
-    key = spreadsheet_id or settings.google_sheets_spreadsheet_id
-    return _get_client().open_by_key(key)
+def get_sheet(spreadsheet_id: str) -> gspread.Spreadsheet:
+    return _get_client().open_by_key(spreadsheet_id)
 
 
 def _cell(row: list[str], col_1indexed: int) -> str:
@@ -71,66 +104,197 @@ def fmt_amount(amount: float) -> str:
     return str(int(amount)) if amount == int(amount) else f"{amount:.2f}"
 
 
-def load_categories(ws: gspread.Worksheet | None = None) -> list[Category]:
-    """Read unique (category, group) pairs from the sheet.
+# Google Sheets stores dates as the number of days since 1899-12-30
+# (the "1900 date system" inherited from Excel, with the Lotus 1-2-3
+# leap-year quirk built into the epoch shift).
+_SHEETS_EPOCH = date(1899, 12, 30)
 
-    Scans every data row (skipping the header) and deduplicates by
-    (category, group), preserving first-seen order.
+
+def _year_from_a_value(value: object) -> int | None:  # noqa: PLR0911
+    """Extract the year from a column-A cell read with ``UNFORMATTED_VALUE``.
+
+    ``insert_logging_row`` writes the first day of the month with
+    ``USER_ENTERED``, so Google parses it into a date serial. Older /
+    legacy rows entered as plain text may show up as ``YYYY-MM-DD``
+    strings instead. Anything else (the displayed ``"Apr-1"`` form, an
+    empty cell, an unrecognised string) returns ``None`` and is treated
+    as "year unknown" by the matching helpers — those rows still match
+    on (month, cat, grp) only, preserving backwards compatibility.
+
+    The PLR0911 suppression is intentional: the function is a flat
+    type-dispatch table — one ``return`` per observable input class
+    (``None``/empty, bool, valid date serial, NaN/inf serial, ISO
+    string, malformed string, unknown type). Folding the returns into
+    a single chained expression would obscure the decision table
+    without removing any logic.
     """
-    if ws is None:
-        ws = get_sheet().sheet1
-
-    all_values = ws.get_all_values()
-    seen: set[tuple[str, str]] = set()
-    categories: list[Category] = []
-
-    for row in all_values[HEADER_ROWS:]:
-        cat_name = _cell(row, COL_CATEGORY)
-        group_name = _cell(row, COL_GROUP)
-        if cat_name and (cat_name, group_name) not in seen:
-            seen.add((cat_name, group_name))
-            categories.append(Category(name=cat_name, group=group_name))
-
-    _category_store.load(categories)
-    logger.info("Loaded %d categories from sheet", len(categories))
-    return categories
-
-
-def get_categories() -> list[Category]:
-    """Return cached categories, refreshing if cache has expired."""
-    if _category_store.expired or not _category_store.categories:
-        ws = get_sheet().sheet1
-        load_categories(ws)
-    return _category_store.categories
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        # ``bool`` is a subclass of ``int`` — guard explicitly so a
+        # stray TRUE/FALSE doesn't get interpreted as a date serial.
+        return None
+    if isinstance(value, int | float):
+        # ``int(value)`` can raise ``ValueError`` on NaN, ``OverflowError``
+        # on +/-inf, and ``TypeError`` on rare numeric subclasses with
+        # broken ``__int__``. None of those are valid date serials.
+        try:
+            return (_SHEETS_EPOCH + timedelta(days=int(value))).year
+        except (OverflowError, ValueError, TypeError):
+            return None
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10]).year
+        except ValueError:
+            return None
+    return None
 
 
-def validate_category(category_name: str, group: str) -> bool:
-    """Check whether (category, group) exists in the sheet."""
-    if _category_store.expired or not _category_store.categories:
-        get_categories()
-    return _category_store.has_category(category_name, group)
+def fetch_row_years(ws: gspread.Worksheet, n_rows: int) -> list[int | None]:
+    """Read column A unformatted and return ``years_by_row[i-1]`` for row ``i``.
+
+    A separate ``batch_get`` is required because ``ws.get_all_values()``
+    returns the *displayed* (formatted) text — Google shows column A as
+    ``"Apr-1"`` etc., dropping the year. The unformatted read returns
+    the underlying date serial (or the original string for text-typed
+    cells), which ``_year_from_a_value`` decodes.
+
+    Header rows are read too so the returned list aligns 1:1 with
+    ``ws.get_all_values()``.
+
+    Caller contract: pass ``n_rows = len(ws.get_all_values())`` from the
+    same logical fetch. The result is always exactly ``n_rows`` long —
+    Sheets API trims trailing empty rows out of ``batch_get`` so we pad
+    with ``None`` to restore the 1:1 alignment that ``_row_year_matches``
+    and ``_find_insertion_row`` index into. ``None`` entries are treated
+    as "year unknown" and wildcard-match — the right behavior for
+    pre-year-aware sheets and blank/text column-A cells.
+    """
+    if n_rows < 1:
+        return []
+    fetched = ws.batch_get(
+        [f"A1:A{n_rows}"],
+        value_render_option=ValueRenderOption.unformatted,
+    )
+    cells = fetched[0] if fetched else []
+    years: list[int | None] = []
+    for cell_row in cells:
+        val = cell_row[0] if cell_row else None
+        years.append(_year_from_a_value(val))
+    while len(years) < n_rows:
+        years.append(None)
+    return years
 
 
-def find_category_row(
+def _check_year_args_paired(
+    target_year: int | None,
+    years_by_row: list[int | None] | None,
+) -> None:
+    """Reject callers that opt into year-aware mode only halfway.
+
+    ``target_year`` and ``years_by_row`` are a single contract: either
+    both present (year-aware matching is on) or both absent (legacy
+    month-only matching). Passing one without the other previously
+    yielded silent wildcard matches that *looked* year-aware to the
+    caller — exactly the failure mode behind the rate-corruption bug
+    we just fixed in ``_append_row_to_sheet``. Failing loudly here
+    surfaces the caller bug instead of laundering it.
+    """
+    if (target_year is None) != (years_by_row is None):
+        raise ValueError(
+            "target_year and years_by_row must be provided together "
+            "(or both omitted); got "
+            f"target_year={target_year!r}, "
+            f"years_by_row={'list' if years_by_row is not None else None}",
+        )
+
+
+def _row_year_matches(
+    row_index_1based: int,
+    target_year: int | None,
+    years_by_row: list[int | None] | None,
+) -> bool:
+    """Year-aware acceptance check shared by the matching helpers.
+
+    Returns ``True`` when:
+
+    * year-aware mode is off (no ``target_year`` and no
+      ``years_by_row`` — already validated by
+      ``_check_year_args_paired``);
+    * the row's parsed year matches ``target_year``;
+    * the row's year is ``None`` — happens for header rows, blank
+      column-A cells, and legacy/test rows whose A is formatted text
+      like ``"Apr-1"``. Treating these as wildcards keeps the existing
+      single-year and unit-test paths working unchanged.
+
+    Out-of-bounds ``row_index_1based`` (years_by_row shorter than
+    all_values) also wildcards — see ``fetch_row_years`` padding logic.
+    Callers in production should keep both lists aligned; the
+    out-of-bounds path is a safety net, not a contract.
+    """
+    # ``_check_year_args_paired`` (called by every public matcher above
+    # before reaching here) guarantees ``target_year is None ↔ years_by_row
+    # is None``, so testing one suffices for the legacy-mode short-circuit.
+    if target_year is None:
+        return True
+    assert years_by_row is not None  # noqa: S101  -- enforced by caller pairing check
+    idx = row_index_1based - 1
+    if idx < 0 or idx >= len(years_by_row):
+        return True
+    row_year = years_by_row[idx]
+    return row_year is None or row_year == target_year
+
+
+def find_category_row(  # noqa: PLR0913
     all_values: list[list[str]],
     target_month: int,
     category: str,
     group: str,
+    *,
+    target_year: int | None = None,
+    years_by_row: list[int | None] | None = None,
 ) -> int | None:
-    """Find the 1-indexed row for a (month, category, group) triple."""
+    """Find the 1-indexed row for a (year?, month, category, group) tuple.
+
+    When ``target_year`` and ``years_by_row`` are both provided, only a
+    row whose column-A year matches ``target_year`` (or is unknown) can
+    be selected. This is what lets the sheet-logging path target the
+    correct yearly block in a multi-year spreadsheet.
+    """
+    _check_year_args_paired(target_year, years_by_row)
     for i, row in enumerate(all_values[HEADER_ROWS:], start=HEADER_ROWS + 1):
         month_val = _cell(row, COL_MONTH)
         cat_val = _cell(row, COL_CATEGORY)
         grp_val = _cell(row, COL_GROUP)
-        if month_val == str(target_month) and cat_val == category and grp_val == group:
+        if (
+            month_val == str(target_month)
+            and cat_val == category
+            and grp_val == group
+            and _row_year_matches(i, target_year, years_by_row)
+        ):
             return i
     return None
 
 
-def get_month_rate(all_values: list[list[str]], target_month: int) -> str | None:
-    """Return the first non-empty EUR rate found for *target_month*."""
-    for row in all_values[HEADER_ROWS:]:
-        if _cell(row, COL_MONTH) == str(target_month):
+def get_month_rate(
+    all_values: list[list[str]],
+    target_month: int,
+    *,
+    target_year: int | None = None,
+    years_by_row: list[int | None] | None = None,
+) -> str | None:
+    """Return the first non-empty EUR rate found for *target_month*.
+
+    With year-aware arguments, only rates from rows of the correct year
+    (or year-unknown rows) are considered.
+    """
+    _check_year_args_paired(target_year, years_by_row)
+    for i, row in enumerate(all_values[HEADER_ROWS:], start=HEADER_ROWS + 1):
+        if _cell(row, COL_MONTH) == str(target_month) and _row_year_matches(
+            i,
+            target_year,
+            years_by_row,
+        ):
             rate_val = _cell(row, COL_RATE_EUR)
             if rate_val and _is_numeric(rate_val):
                 return rate_val
@@ -140,12 +304,24 @@ def get_month_rate(all_values: list[list[str]], target_month: int) -> str | None
 def find_month_range(
     all_values: list[list[str]],
     month: int,
+    *,
+    target_year: int | None = None,
+    years_by_row: list[int | None] | None = None,
 ) -> tuple[int, int] | None:
-    """Return (first_row, last_row) 1-indexed for a contiguous month block."""
+    """Return (first_row, last_row) 1-indexed for a contiguous month block.
+
+    With year-aware arguments, the block is constrained to rows whose
+    column-A year matches ``target_year`` (or is unknown).
+    """
+    _check_year_args_paired(target_year, years_by_row)
     first: int | None = None
     last: int | None = None
     for i, row in enumerate(all_values[HEADER_ROWS:], start=HEADER_ROWS + 1):
-        if _cell(row, COL_MONTH) == str(month):
+        if _cell(row, COL_MONTH) == str(month) and _row_year_matches(
+            i,
+            target_year,
+            years_by_row,
+        ):
             if first is None:
                 first = i
             last = i
@@ -154,146 +330,220 @@ def find_month_range(
     return (first, last)
 
 
-def create_month_rows(
-    ws: gspread.Worksheet,
+def _find_insertion_row(  # noqa: PLR0913
     all_values: list[list[str]],
-    target: date,
-) -> None:
-    """Create rows for a new month by inserting after the header.
+    target_month: int,
+    category: str,
+    group: str,
+    *,
+    target_year: int | None = None,
+    years_by_row: list[int | None] | None = None,
+) -> int:
+    """Return the 1-indexed row where a new ``(year?, month, cat, grp)`` row should go.
 
-    1. Find the previous month's rows as a template.
-    2. Insert blank rows right after the header (row 2).
-    3. CopyPaste the template into the new rows (source indices are
-       shifted down by num_rows because of the insert).
-    4. Clear amounts (B), comments (F), rate (H) and set the new date (A).
+    Within an existing matching block (same year + month, or just same
+    month in legacy mode), the new row is placed to maintain ascending
+    ``(category, group)`` order.
+
+    Year-aware mode (``target_year`` + ``years_by_row``):
+        when no block exists yet for ``(target_year, target_month)`` we
+        walk top-to-bottom and stop at the first existing row whose
+        ``(year, month)`` is **strictly older** than the target. This
+        keeps the file's "newer years/months on top" convention. If
+        nothing older is found, the row goes at the bottom — which is
+        what we want when the new entry is the oldest.
+
+    Legacy mode (no year info):
+        unchanged — new month blocks land right after the header.
     """
-    target_month = target.month
-    prev_month = target_month - 1 if target_month > 1 else 12
+    _check_year_args_paired(target_year, years_by_row)
+    month_range = find_month_range(
+        all_values,
+        target_month,
+        target_year=target_year,
+        years_by_row=years_by_row,
+    )
+    if month_range is not None:
+        first, last = month_range
+        for i in range(first, last + 1):
+            row = all_values[i - 1]
+            row_cat = _cell(row, COL_CATEGORY)
+            row_grp = _cell(row, COL_GROUP)
+            if (row_cat, row_grp) > (category, group):
+                return i
+        return last + 1
 
-    src = find_month_range(all_values, prev_month)
-    if src is None:
-        raise ValueError(f"No rows found for month {prev_month} to copy from")
+    if target_year is not None and years_by_row is not None:
+        # ``years_by_row`` is sized off ``len(all_values)`` by
+        # ``fetch_row_years``, so indices ``HEADER_ROWS..len(all_values)``
+        # are always in bounds.
+        for i, row in enumerate(all_values[HEADER_ROWS:], start=HEADER_ROWS + 1):
+            row_year = years_by_row[i - 1]
+            month_str = _cell(row, COL_MONTH)
+            if row_year is None or not month_str.isdigit():
+                continue
+            row_month = int(month_str)
+            if (row_year, row_month) < (target_year, target_month):
+                return i
+        return len(all_values) + 1
 
-    src_start, src_end = src
-    num_rows = src_end - src_start + 1
-    dest_start = HEADER_ROWS + 1  # row 2 (right after header)
+    return HEADER_ROWS + 1
 
-    sheet_id = ws.id
-    num_cols = len(all_values[0]) if all_values else COL_RATE_EUR
 
-    # After insertDimension the source rows shift down by num_rows
-    shifted_src_start = src_start + num_rows
+def insert_logging_row(  # noqa: PLR0913
+    ws: gspread.Worksheet,
+    insert_at: int,
+    expense_date: date,
+    month: int,
+    category: str,
+    group: str,
+) -> None:
+    """Insert a single blank row at *insert_at* and populate its cells.
 
-    ws.spreadsheet.batch_update(
-        {
-            "requests": [
-                {
-                    "insertDimension": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "dimension": "ROWS",
-                            "startIndex": HEADER_ROWS,
-                            "endIndex": HEADER_ROWS + num_rows,
-                        },
-                        "inheritFromBefore": False,
-                    },
-                },
-                {
-                    "copyPaste": {
-                        "source": {
-                            "sheetId": sheet_id,
-                            "startRowIndex": shifted_src_start - 1,
-                            "endRowIndex": shifted_src_start - 1 + num_rows,
-                            "startColumnIndex": 0,
-                            "endColumnIndex": num_cols,
-                        },
-                        "destination": {
-                            "sheetId": sheet_id,
-                            "startRowIndex": dest_start - 1,
-                            "endRowIndex": dest_start - 1 + num_rows,
-                            "startColumnIndex": 0,
-                            "endColumnIndex": num_cols,
-                        },
-                        "pasteType": "PASTE_NORMAL",
-                    },
-                },
-            ],
-        },
+    Cell values written:
+      * A — first day of month (``YYYY-MM-DD``)
+      * B — empty (filled later by ``append_expense_atomic``)
+      * C — EUR conversion formula ``=IF(H{r}="","",B{r}/H{r})``
+      * D — *category*
+      * E — *group*
+      * F — empty (comment, filled by ``append_expense_atomic``)
+      * G — *month* number
+      * H — empty (rate, filled later by the user / a separate workflow)
+      * J — empty (idempotency markers, filled by ``append_expense_atomic``)
+    """
+    ws.insert_rows([[]], row=insert_at)
+
+    date_str = expense_date.replace(day=1).strftime("%Y-%m-%d")
+    r = insert_at
+    ws.batch_update(
+        [
+            {"range": f"A{r}", "values": [[date_str]]},
+            {"range": f"B{r}", "values": [[""]]},
+            {"range": f"C{r}", "values": [[f'=IF(H{r}="","",B{r}/H{r})']]},
+            {"range": f"D{r}", "values": [[category]]},
+            {"range": f"E{r}", "values": [[group]]},
+            {"range": f"F{r}", "values": [[""]]},
+            {"range": f"G{r}", "values": [[str(month)]]},
+            {"range": f"H{r}", "values": [[""]]},
+            {"range": f"J{r}", "values": [[""]]},
+        ],
+        value_input_option=ValueInputOption.user_entered,
+    )
+    logger.info(
+        "Inserted logging row at %d for month %d (%s/%s)",
+        r,
+        month,
+        category,
+        group,
     )
 
-    date_str = target.replace(day=1).strftime("%Y-%m-%d")
-    batch: list[dict] = []
-    for i in range(num_rows):
-        row = dest_start + i
-        batch.extend(
-            [
-                {"range": f"A{row}", "values": [[date_str]]},
-                {"range": f"B{row}", "values": [[""]]},
-                {"range": f"F{row}", "values": [[""]]},
-                {"range": f"H{row}", "values": [[""]]},
-            ],
-        )
-    ws.batch_update(batch, value_input_option=ValueInputOption.user_entered)
 
-    logger.info("Created %d rows for month %d at top", num_rows, target_month)
-
-
-def _resolve_row(  # noqa: PLR0913
+def ensure_category_row(  # noqa: PLR0913
     ws: gspread.Worksheet,
     all_values: list[list[str]],
     target_month: int,
     category: str,
     group: str,
     expense_date: date,
-) -> int:
-    """Return the 1-indexed row for (month, category, group), creating the month if needed."""
-    target_row = find_category_row(all_values, target_month, category, group)
+    *,
+    years_by_row: list[int | None] | None = None,
+) -> tuple[int, list[list[str]]]:
+    """Return ``(row_index, refreshed_values)`` for ``(year?, month, cat, grp)``.
+
+    If the row already exists, return it and the unchanged grid.
+    Otherwise insert a single new row at the position that maintains
+    ``(year, month, category, group)`` sort order, and return the
+    refreshed grid.
+
+    When ``years_by_row`` is provided, ``expense_date.year`` is the
+    target year; otherwise the helper falls back to month-only matching
+    so existing single-year tests and callers keep working.
+    """
+    target_year = expense_date.year if years_by_row is not None else None
+
+    target_row = find_category_row(
+        all_values,
+        target_month,
+        category,
+        group,
+        target_year=target_year,
+        years_by_row=years_by_row,
+    )
     if target_row is not None:
-        return target_row
+        return target_row, all_values
 
-    create_month_rows(ws, all_values, expense_date)
+    insert_at = _find_insertion_row(
+        all_values,
+        target_month,
+        category,
+        group,
+        target_year=target_year,
+        years_by_row=years_by_row,
+    )
+    insert_logging_row(ws, insert_at, expense_date, target_month, category, group)
     refreshed = ws.get_all_values()
-    target_row = find_category_row(refreshed, target_month, category, group)
-    if target_row is None:
-        raise ValueError(
-            f"Category '{category}' (group '{group}') not found for month {target_month}",
-        )
-    return target_row
+    return insert_at, refreshed
 
 
-async def _ensure_rate(
-    ws: gspread.Worksheet,
-    all_values: list[list[str]],
-    target_month: int,
-    expense_date: date,
-) -> Decimal:
-    """Return the EUR/RSD rate for the month, fetching and storing it if absent."""
-    rate_str = get_month_rate(all_values, target_month)
-    if rate_str:
-        return Decimal(rate_str.replace(",", "."))
+def extend_rsd_formula(existing: str, amount_rsd: float) -> str:
+    """Pure function — return the new B-cell formula after appending *amount_rsd*.
 
-    rate = await fetch_eur_rsd_rate(expense_date.replace(day=1))
-    month_range = find_month_range(all_values, target_month)
-    rate_row = month_range[0] if month_range else HEADER_ROWS + 1
-    ws.update_cell(rate_row, COL_RATE_EUR, str(rate))
-    logger.info("Wrote EUR/RSD rate %s for month %d at row %d", rate, target_month, rate_row)
-    return rate
+    Inputs the live string in column B as rendered with
+    ``ValueRenderOption.formula`` (so a formula cell looks like
+    ``"=460+373"`` and a literal-number cell looks like ``"460"`` or
+    ``"460.5"``). Empty / non-numeric / unrecognised values restart the
+    formula from scratch.
+    """
+    amount_str = fmt_amount(amount_rsd)
+    if existing.startswith("="):
+        return f"{existing}+{amount_str}"
+    if existing and _is_numeric(existing):
+        return f"={existing}+{amount_str}"
+    return f"={amount_str}"
+
+
+def extend_comment(existing: str, new_comment: str) -> str:
+    """Pure function — return the new F-cell value after appending *new_comment*.
+
+    ``new_comment`` is appended verbatim with a ``"; "`` separator if
+    *existing* is non-empty, or stored alone otherwise. An empty
+    *new_comment* leaves *existing* unchanged.
+    """
+    if not new_comment:
+        return existing
+    separator = "; " if existing else ""
+    return f"{existing}{separator}{new_comment}"
+
+
+def extend_expense_id_marker(existing_markers: str, expense_id: str) -> str:
+    """Pure function — append ``[exp:<expense_id>]`` to the J-cell value.
+
+    Markers are space-separated. ``contains_expense_id_marker`` reads the
+    same string back; the storage format is opaque to the rest of the
+    system.
+    """
+    marker = expense_id_marker(expense_id)
+    if not existing_markers:
+        return marker
+    return f"{existing_markers} {marker}"
+
+
+def contains_expense_id_marker(markers: str, expense_id: str) -> bool:
+    """Return True iff *markers* already records an append for *expense_id*."""
+    return expense_id_marker(expense_id) in markers
 
 
 def append_to_rsd_formula(ws: gspread.Worksheet, row: int, amount_rsd: float) -> None:
-    """Append +amount to the formula in column B (e.g. =460+373 → =460+373+1500)."""
+    """Append +amount to the formula in column B (e.g. =460+373 → =460+373+1500).
+
+    Non-atomic, single-cell helper. Sheet logging uses
+    ``append_expense_atomic`` instead so the formula and the
+    idempotency marker are written together.
+    """
     rsd_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_RSD)
     raw = ws.acell(rsd_addr, value_render_option=ValueRenderOption.formula).value
     existing = str(raw) if raw is not None else ""
-
-    amount_str = fmt_amount(amount_rsd)
-    if existing.startswith("="):
-        formula = f"{existing}+{amount_str}"
-    elif existing and _is_numeric(existing):
-        formula = f"={existing}+{amount_str}"
-    else:
-        formula = f"={amount_str}"
-
+    formula = extend_rsd_formula(existing, amount_rsd)
     ws.update(
         range_name=rsd_addr,
         values=[[formula]],
@@ -302,57 +552,90 @@ def append_to_rsd_formula(ws: gspread.Worksheet, row: int, amount_rsd: float) ->
 
 
 def append_comment(ws: gspread.Worksheet, row: int, row_data: list[str], comment: str) -> None:
-    """Append a comment to column F, semicolon-separated."""
-    existing = _cell(row_data, COL_COMMENT)
-    separator = "; " if existing else ""
-    ws.update_cell(row, COL_COMMENT, f"{existing}{separator}{comment}")
+    """Append a comment to column F, semicolon-separated.
 
-
-async def write_expense(
-    amount_rsd: float,
-    category: str,
-    group: str,
-    comment: str,
-    expense_date: date,
-) -> dict:
-    """Append an expense to the Google Sheet.
-
-    Appends +amount to the formula in column B (RSD).
-    Columns C (EUR) and G (month) are formula-driven and left untouched.
+    Non-atomic, single-cell helper. Sheet logging uses
+    ``append_expense_atomic`` instead so the comment, the formula, and
+    the idempotency marker are written together.
     """
-    ws = get_sheet().sheet1
-    all_values = ws.get_all_values()
-    target_month = expense_date.month
+    existing = _cell(row_data, COL_COMMENT)
+    new_value = extend_comment(existing, comment)
+    if new_value != existing:
+        ws.update_cell(row, COL_COMMENT, new_value)
 
-    target_row = _resolve_row(ws, all_values, target_month, category, group, expense_date)
 
-    all_values = ws.get_all_values()
-    row_data = all_values[target_row - 1]
+def _first_cell(batch_get_result: list[list[str]]) -> str:
+    """Pull a single cell value out of a ``ws.batch_get`` per-range result.
 
-    rate = await _ensure_rate(ws, all_values, target_month, expense_date)
-    append_to_rsd_formula(ws, target_row, amount_rsd)
+    ``ws.batch_get`` returns ``[]`` for an empty cell, ``[[value]]`` for
+    a single non-empty cell, and similarly nested lists for larger
+    ranges. We only ever ask for single cells here, so flatten and
+    default to ``""``.
+    """
+    if not batch_get_result:
+        return ""
+    first_row = batch_get_result[0]
+    if not first_row:
+        return ""
+    return str(first_row[0]) if first_row[0] is not None else ""
 
-    if comment:
-        append_comment(ws, target_row, row_data, comment)
 
-    existing_rsd = _cell(row_data, COL_AMOUNT_RSD)
-    prev_total = float(existing_rsd.replace(",", ".")) if _is_numeric(existing_rsd) else 0.0
-    eur_amount = float(Decimal(str(amount_rsd)) / rate)
-    month_label = expense_date.strftime("%Y-%m")
+def append_expense_atomic(  # noqa: PLR0913
+    ws: gspread.Worksheet,
+    row: int,
+    *,
+    expense_id: str,
+    amount_rsd: float,
+    comment: str,
+) -> bool:
+    """Idempotently record one expense at *row*.
 
-    logger.info(
-        "Wrote expense: %s RSD (%.2f EUR) to %s/%s in %s",
-        amount_rsd,
-        eur_amount,
-        category,
-        group,
-        month_label,
+    Reads the live B (formula) / F (comment) / J (markers) cells in a
+    single ``batch_get`` call, then either:
+
+    * returns ``False`` immediately when J already contains
+      ``[exp:<expense_id>]`` — the previous attempt for this expense
+      reached the server even if we never saw the response;
+    * issues a single ``batch_update`` writing the new B, F (only when
+      *comment* is non-empty), and J in one HTTP request, and returns
+      ``True``.
+
+    Combining the writes into one request is what closes the
+    timeout-after-success duplicate hole: the marker is written together
+    with the formula it accounts for, so the only two observable states
+    are "all three updated" and "none updated", both of which the next
+    attempt handles correctly.
+    """
+    formula_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_RSD)
+    comment_addr = gspread.utils.rowcol_to_a1(row, COL_COMMENT)
+    markers_addr = gspread.utils.rowcol_to_a1(row, COL_EXPENSE_IDS)
+
+    fetched = ws.batch_get(
+        [formula_addr, comment_addr, markers_addr],
+        value_render_option=ValueRenderOption.formula,
     )
+    existing_formula = _first_cell(fetched[0])
+    existing_comment = _first_cell(fetched[1])
+    existing_markers = _first_cell(fetched[2])
 
-    return {
-        "month": month_label,
-        "category": category,
-        "amount_rsd": amount_rsd,
-        "amount_eur": round(eur_amount, 2),
-        "new_total_rsd": round(prev_total + amount_rsd, 2),
-    }
+    if contains_expense_id_marker(existing_markers, expense_id):
+        logger.info(
+            "Expense %s already recorded at row %d (marker present); skipping",
+            expense_id,
+            row,
+        )
+        return False
+
+    new_formula = extend_rsd_formula(existing_formula, amount_rsd)
+    new_markers = extend_expense_id_marker(existing_markers, expense_id)
+
+    updates = [
+        {"range": formula_addr, "values": [[new_formula]]},
+        {"range": markers_addr, "values": [[new_markers]]},
+    ]
+    if comment:
+        new_comment = extend_comment(existing_comment, comment)
+        updates.append({"range": comment_addr, "values": [[new_comment]]})
+
+    ws.batch_update(updates, value_input_option=ValueInputOption.user_entered)
+    return True

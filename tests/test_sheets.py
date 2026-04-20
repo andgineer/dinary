@@ -1,13 +1,9 @@
 """Tests for sheets.py — flat-table layout with formula columns."""
 
 from datetime import date
-from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import allure
-import pytest
-
-from dinary.services.category_store import Category
 
 # Matches the actual sheet layout:
 #   A=Date  B=RSD(formula)  C=EUR(formula)  D=Category  E=Group
@@ -36,31 +32,6 @@ def _make_worksheet(all_values):
 
 @allure.epic("Google Sheets")
 @allure.feature("Read Categories")
-class TestLoadCategories:
-    @patch("dinary.services.sheets.get_sheet")
-    def test_loads_unique_pairs(self, mock_get_sheet):
-        from dinary.services.sheets import load_categories
-
-        ws = _make_worksheet(list(SAMPLE_SHEET))
-        cats = load_categories(ws)
-
-        assert len(cats) == 4
-        assert Category(name="Food", group="Essentials") in cats
-        assert Category(name="Food", group="Travel") in cats
-        assert Category(name="Transport", group="Essentials") in cats
-        assert Category(name="Cinema", group="Entertainment") in cats
-
-    @patch("dinary.services.sheets.get_sheet")
-    def test_empty_sheet(self, mock_get_sheet):
-        from dinary.services.sheets import load_categories
-
-        ws = _make_worksheet([HEADER])
-        cats = load_categories(ws)
-        assert cats == []
-
-
-@allure.epic("Google Sheets")
-@allure.feature("Read Categories")
 class TestFindCategoryRow:
     def test_finds_row(self):
         from dinary.services.sheets import find_category_row
@@ -85,201 +56,6 @@ class TestFindCategoryRow:
 
         row = find_category_row(SAMPLE_SHEET, 5, "Food", "Essentials")
         assert row is None
-
-
-@allure.epic("Google Sheets")
-@allure.feature("Write Expense")
-class TestWriteExpense:
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets.get_sheet")
-    async def test_appends_to_formula(self, mock_get_sheet, mock_rate):
-        from dinary.services.sheets import write_expense
-
-        mock_rate.return_value = Decimal("117.32")
-
-        ws = MagicMock()
-        mock_get_sheet.return_value.sheet1 = ws
-        ws.get_all_values.return_value = list(SAMPLE_SHEET)
-
-        mock_cell = MagicMock()
-        mock_cell.value = "=300+200"
-        ws.acell.return_value = mock_cell
-
-        result = await write_expense(
-            amount_rsd=500.0,
-            category="Food",
-            group="Essentials",
-            comment="test",
-            expense_date=date(2026, 4, 14),
-        )
-
-        assert result["category"] == "Food"
-        assert result["amount_rsd"] == 500.0
-
-        ws.update.assert_called_once()
-        call_kwargs = ws.update.call_args.kwargs
-        assert call_kwargs["values"] == [["=300+200+500"]]
-        assert call_kwargs["value_input_option"] == "USER_ENTERED"
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets.get_sheet")
-    async def test_creates_formula_from_empty(self, mock_get_sheet, mock_rate):
-        from dinary.services.sheets import write_expense
-
-        mock_rate.return_value = Decimal("117.32")
-
-        ws = MagicMock()
-        mock_get_sheet.return_value.sheet1 = ws
-        ws.get_all_values.return_value = list(SAMPLE_SHEET)
-
-        mock_cell = MagicMock()
-        mock_cell.value = ""
-        ws.acell.return_value = mock_cell
-
-        await write_expense(
-            amount_rsd=1500.0,
-            category="Food",
-            group="Essentials",
-            comment="",
-            expense_date=date(2026, 4, 14),
-        )
-
-        call_kwargs = ws.update.call_args.kwargs
-        assert call_kwargs["values"] == [["=1500"]]
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets.get_sheet")
-    async def test_appends_to_plain_number(self, mock_get_sheet, mock_rate):
-        """Cell with a plain number (not formula) should become =number+amount."""
-        from dinary.services.sheets import write_expense
-
-        mock_rate.return_value = Decimal("117.32")
-
-        ws = MagicMock()
-        mock_get_sheet.return_value.sheet1 = ws
-        ws.get_all_values.return_value = list(SAMPLE_SHEET)
-
-        mock_cell = MagicMock()
-        mock_cell.value = 500
-        ws.acell.return_value = mock_cell
-
-        await write_expense(
-            amount_rsd=300.0,
-            category="Food",
-            group="Essentials",
-            comment="",
-            expense_date=date(2026, 4, 14),
-        )
-
-        call_kwargs = ws.update.call_args.kwargs
-        assert call_kwargs["values"] == [["=500+300"]]
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets.get_sheet")
-    async def test_uses_existing_rate(self, mock_get_sheet, mock_rate):
-        from dinary.services.sheets import write_expense
-
-        ws = MagicMock()
-        mock_get_sheet.return_value.sheet1 = ws
-
-        sheet = [row[:] for row in SAMPLE_SHEET]
-        sheet[1][7] = "117.50"
-        ws.get_all_values.return_value = sheet
-
-        mock_cell = MagicMock()
-        mock_cell.value = ""
-        ws.acell.return_value = mock_cell
-
-        await write_expense(
-            amount_rsd=1000.0,
-            category="Food",
-            group="Essentials",
-            comment="",
-            expense_date=date(2026, 4, 14),
-        )
-
-        mock_rate.assert_not_called()
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets.get_sheet")
-    async def test_rate_written_to_first_row_of_month(self, mock_get_sheet, mock_rate):
-        """EUR rate should be written to the first row of the month, not the expense row."""
-        from dinary.services.sheets import write_expense
-
-        mock_rate.return_value = Decimal("117.32")
-
-        ws = MagicMock()
-        mock_get_sheet.return_value.sheet1 = ws
-        ws.get_all_values.return_value = list(SAMPLE_SHEET)
-
-        mock_cell = MagicMock()
-        mock_cell.value = ""
-        ws.acell.return_value = mock_cell
-
-        await write_expense(
-            amount_rsd=500.0,
-            category="Cinema",
-            group="Entertainment",
-            comment="",
-            expense_date=date(2026, 4, 14),
-        )
-
-        rate_calls = [c for c in ws.update_cell.call_args_list if c[0][1] == 8]
-        assert len(rate_calls) == 1
-        assert rate_calls[0][0][0] == 2, "Rate should be at row 2 (first Apr row)"
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets.get_sheet")
-    async def test_does_not_write_eur_or_month(self, mock_get_sheet, mock_rate):
-        """Columns C (EUR) and G (month) are formula-driven — never written."""
-        from dinary.services.sheets import write_expense
-
-        mock_rate.return_value = Decimal("117.32")
-
-        ws = MagicMock()
-        mock_get_sheet.return_value.sheet1 = ws
-        ws.get_all_values.return_value = list(SAMPLE_SHEET)
-
-        mock_cell = MagicMock()
-        mock_cell.value = ""
-        ws.acell.return_value = mock_cell
-
-        await write_expense(
-            amount_rsd=500.0,
-            category="Cinema",
-            group="Entertainment",
-            comment="",
-            expense_date=date(2026, 4, 14),
-        )
-
-        for call in ws.update_cell.call_args_list:
-            col = call[0][1]
-            assert col not in (3, 7), f"Should not write to column {col}"
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets.get_sheet")
-    async def test_unknown_category_raises(self, mock_get_sheet, mock_rate):
-        from dinary.services.sheets import write_expense
-
-        ws = MagicMock()
-        mock_get_sheet.return_value.sheet1 = ws
-        ws.get_all_values.return_value = list(SAMPLE_SHEET)
-
-        with pytest.raises(ValueError, match="Category 'Unknown'"):
-            await write_expense(
-                amount_rsd=100.0,
-                category="Unknown",
-                group="",
-                comment="",
-                expense_date=date(2026, 4, 14),
-            )
 
 
 @allure.epic("Data Safety")
@@ -436,275 +212,200 @@ class TestAppendComment:
         ws.update_cell.assert_called_once_with(2, 6, "a; b; c; d")
 
 
-@allure.epic("Data Safety")
-@allure.feature("Column Protection")
-class TestWriteExpenseNeverCorrupts:
-    """write_expense must NEVER overwrite columns C (EUR) or G (Month)."""
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets.get_sheet")
-    async def test_never_writes_to_eur_column(self, mock_get_sheet, mock_rate):
-        from dinary.services.sheets import write_expense
-
-        mock_rate.return_value = Decimal("117.32")
-
-        ws = MagicMock()
-        mock_get_sheet.return_value.sheet1 = ws
-        ws.get_all_values.return_value = [row[:] for row in SAMPLE_SHEET]
-
-        mock_cell = MagicMock()
-        mock_cell.value = "=300"
-        ws.acell.return_value = mock_cell
-
-        await write_expense(500.0, "Food", "Essentials", "test", date(2026, 4, 14))
-
-        for call in ws.update_cell.call_args_list:
-            assert call[0][1] != 3, "Must not write to column C (EUR)"
-
-        for call in ws.update.call_args_list:
-            range_name = call.kwargs.get("range_name", "")
-            assert not range_name.startswith("C"), "Must not write to column C (EUR)"
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets.get_sheet")
-    async def test_never_writes_to_month_column(self, mock_get_sheet, mock_rate):
-        from dinary.services.sheets import write_expense
-
-        mock_rate.return_value = Decimal("117.32")
-
-        ws = MagicMock()
-        mock_get_sheet.return_value.sheet1 = ws
-        ws.get_all_values.return_value = [row[:] for row in SAMPLE_SHEET]
-
-        mock_cell = MagicMock()
-        mock_cell.value = "=300"
-        ws.acell.return_value = mock_cell
-
-        await write_expense(500.0, "Food", "Essentials", "", date(2026, 4, 14))
-
-        for call in ws.update_cell.call_args_list:
-            assert call[0][1] != 7, "Must not write to column G (Month)"
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets.get_sheet")
-    async def test_never_writes_to_date_column(self, mock_get_sheet, mock_rate):
-        from dinary.services.sheets import write_expense
-
-        mock_rate.return_value = Decimal("117.32")
-
-        ws = MagicMock()
-        mock_get_sheet.return_value.sheet1 = ws
-        ws.get_all_values.return_value = [row[:] for row in SAMPLE_SHEET]
-
-        mock_cell = MagicMock()
-        mock_cell.value = "=300"
-        ws.acell.return_value = mock_cell
-
-        await write_expense(500.0, "Food", "Essentials", "", date(2026, 4, 14))
-
-        for call in ws.update_cell.call_args_list:
-            assert call[0][1] != 1, "Must not write to column A (Date)"
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets.get_sheet")
-    async def test_never_writes_to_category_or_group(self, mock_get_sheet, mock_rate):
-        from dinary.services.sheets import write_expense
-
-        mock_rate.return_value = Decimal("117.32")
-
-        ws = MagicMock()
-        mock_get_sheet.return_value.sheet1 = ws
-        ws.get_all_values.return_value = [row[:] for row in SAMPLE_SHEET]
-
-        mock_cell = MagicMock()
-        mock_cell.value = ""
-        ws.acell.return_value = mock_cell
-
-        await write_expense(500.0, "Cinema", "Entertainment", "", date(2026, 4, 14))
-
-        for call in ws.update_cell.call_args_list:
-            col = call[0][1]
-            assert col not in (4, 5), f"Must not write to column {col} (Category/Group)"
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    @patch("dinary.services.sheets.get_sheet")
-    async def test_only_writes_to_rsd_comment_rate_columns(self, mock_get_sheet, mock_rate):
-        """write_expense may only modify columns B (RSD), F (Comment), H (Rate)."""
-        from dinary.services.sheets import write_expense
-
-        mock_rate.return_value = Decimal("117.32")
-
-        ws = MagicMock()
-        mock_get_sheet.return_value.sheet1 = ws
-        ws.get_all_values.return_value = [row[:] for row in SAMPLE_SHEET]
-
-        mock_cell = MagicMock()
-        mock_cell.value = "=100"
-        ws.acell.return_value = mock_cell
-
-        await write_expense(500.0, "Food", "Essentials", "test comment", date(2026, 4, 14))
-
-        allowed_cols = {2, 6, 8}  # B=RSD, F=Comment, H=Rate
-        for call in ws.update_cell.call_args_list:
-            col = call[0][1]
-            assert col in allowed_cols, f"Wrote to unexpected column {col}"
-
-        for call in ws.update.call_args_list:
-            range_name = call.kwargs.get("range_name", "")
-            if range_name:
-                col_letter = range_name[0]
-                assert col_letter in ("B",), f"update() wrote to unexpected column {col_letter}"
-
-
 @allure.epic("Google Sheets")
-@allure.feature("Exchange Rate")
-class TestEnsureRate:
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    async def test_does_not_fetch_when_rate_exists(self, mock_rate):
-        from dinary.services.sheets import _ensure_rate
-
-        ws = MagicMock()
-        sheet = [row[:] for row in SAMPLE_SHEET]
-        sheet[1][7] = "117.50"
-
-        rate = await _ensure_rate(ws, sheet, 4, date(2026, 4, 1))
-
-        mock_rate.assert_not_called()
-        assert rate == Decimal("117.50")
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    async def test_writes_rate_to_first_row_of_month(self, mock_rate):
-        from dinary.services.sheets import _ensure_rate
-
-        mock_rate.return_value = Decimal("117.32")
-
-        ws = MagicMock()
-        sheet = [row[:] for row in SAMPLE_SHEET]
-
-        await _ensure_rate(ws, sheet, 4, date(2026, 4, 1))
-
-        ws.update_cell.assert_called_once()
-        row, col, val = ws.update_cell.call_args[0]
-        assert row == 2, "Rate must go in first row of the month"
-        assert col == 8, "Rate must go in column H"
-
-    @pytest.mark.anyio
-    @patch("dinary.services.sheets.fetch_eur_rsd_rate", new_callable=AsyncMock)
-    async def test_rate_not_written_to_expense_row(self, mock_rate):
-        """If expense is on row 4, rate must still go to row 2 (first row of month)."""
-        from dinary.services.sheets import _ensure_rate
-
-        mock_rate.return_value = Decimal("117.32")
-
-        ws = MagicMock()
-        sheet = [row[:] for row in SAMPLE_SHEET]
-
-        await _ensure_rate(ws, sheet, 4, date(2026, 4, 14))
-
-        row = ws.update_cell.call_args[0][0]
-        assert row == 2, f"Rate written to row {row} instead of first month row (2)"
-
-
-@allure.epic("Google Sheets")
-@allure.feature("Month Creation")
-class TestCreateMonthRows:
-    @patch("dinary.services.sheets.get_sheet")
-    def test_inserts_at_top_with_copy_paste(self, mock_get_sheet):
-        from dinary.services.sheets import create_month_rows
+@allure.feature("Row Insertion")
+class TestEnsureCategoryRow:
+    def test_existing_row_returned_as_is(self):
+        from dinary.services.sheets import ensure_category_row
 
         ws = _make_worksheet([row[:] for row in SAMPLE_SHEET])
 
-        create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 1))
+        row, refreshed = ensure_category_row(
+            ws,
+            list(SAMPLE_SHEET),
+            4,
+            "Food",
+            "Essentials",
+            date(2026, 4, 1),
+        )
 
-        ws.spreadsheet.batch_update.assert_called_once()
-        requests = ws.spreadsheet.batch_update.call_args[0][0]["requests"]
-        assert len(requests) == 2
+        assert row == 2
+        ws.insert_rows.assert_not_called()
 
-        insert = requests[0]["insertDimension"]["range"]
-        assert insert["startIndex"] == 1  # after header
-        assert insert["endIndex"] == 5  # 4 Apr rows
+    def test_new_row_inserted_in_existing_month(self):
+        from dinary.services.sheets import ensure_category_row
 
-        cp = requests[1]["copyPaste"]
-        # Source shifted down by 4 (num_rows): Apr was rows 2-5, now 6-9
-        assert cp["source"]["startRowIndex"] == 5  # row 6, 0-indexed
-        assert cp["source"]["endRowIndex"] == 9
-        # Destination is right after header
-        assert cp["destination"]["startRowIndex"] == 1
-        assert cp["destination"]["endRowIndex"] == 5
+        sheet = [row[:] for row in SAMPLE_SHEET]
+        ws = _make_worksheet(sheet)
+        # After insert_rows, ws.get_all_values returns the new grid
+        inserted_row = ["2026-04-01", "", "", "Clothes", "", "", "4", ""]
+        ws.get_all_values.return_value = sheet[:2] + [inserted_row] + sheet[2:]
 
+        row, _ = ensure_category_row(
+            ws,
+            list(SAMPLE_SHEET),
+            4,
+            "Clothes",
+            "",
+            date(2026, 4, 1),
+        )
+
+        ws.insert_rows.assert_called_once()
         ws.batch_update.assert_called_once()
+        # "Clothes" < "Food" alphabetically, so it goes before "Food" (row 2)
+        assert row == 2
+
+    def test_new_row_appended_after_month_block(self):
+        from dinary.services.sheets import ensure_category_row
+
+        sheet = [row[:] for row in SAMPLE_SHEET]
+        ws = _make_worksheet(sheet)
+        inserted_row = ["2026-04-01", "", "", "Utilities", "Electric", "", "4", ""]
+        ws.get_all_values.return_value = sheet[:5] + [inserted_row] + sheet[5:]
+
+        row, _ = ensure_category_row(
+            ws,
+            list(SAMPLE_SHEET),
+            4,
+            "Utilities",
+            "Electric",
+            date(2026, 4, 1),
+        )
+
+        ws.insert_rows.assert_called_once()
+        # "Utilities" > "Transport" > "Food" > "Cinema", so after row 5
+        assert row == 6
+
+    def test_new_month_inserted_after_header(self):
+        from dinary.services.sheets import ensure_category_row
+
+        sheet = [row[:] for row in SAMPLE_SHEET]
+        ws = _make_worksheet(sheet)
+        inserted_row = ["2026-05-01", "", "", "Food", "Essentials", "", "5", ""]
+        ws.get_all_values.return_value = [sheet[0], inserted_row] + sheet[1:]
+
+        row, _ = ensure_category_row(
+            ws,
+            list(SAMPLE_SHEET),
+            5,
+            "Food",
+            "Essentials",
+            date(2026, 5, 1),
+        )
+
+        ws.insert_rows.assert_called_once()
+        assert row == 2
+
+    def test_insert_sets_all_cells(self):
+        """New row must populate A (date), C (EUR formula), D, E, G (month)."""
+        from dinary.services.sheets import ensure_category_row
+
+        sheet = [row[:] for row in SAMPLE_SHEET]
+        ws = _make_worksheet(sheet)
+        ws.get_all_values.return_value = sheet
+
+        ensure_category_row(
+            ws,
+            list(SAMPLE_SHEET),
+            5,
+            "Food",
+            "Essentials",
+            date(2026, 5, 15),
+        )
+
         batch_data = ws.batch_update.call_args[0][0]
-        a_updates = [d for d in batch_data if d["range"].startswith("A")]
-        assert len(a_updates) == 4
-        assert a_updates[0]["values"] == [["2026-05-01"]]
-        # New rows start at row 2
-        assert a_updates[0]["range"] == "A2"
+        by_col = {item["range"][0]: item["values"][0][0] for item in batch_data}
 
-    @patch("dinary.services.sheets.get_sheet")
-    def test_no_previous_month_raises(self, mock_get_sheet):
-        from dinary.services.sheets import create_month_rows
+        assert by_col["A"] == "2026-05-01"
+        assert by_col["D"] == "Food"
+        assert by_col["E"] == "Essentials"
+        assert by_col["G"] == "5"
+        assert by_col["B"] == ""
+        assert by_col["F"] == ""
+        assert by_col["H"] == ""
+        assert "IF" in by_col["C"]
 
-        ws = _make_worksheet([HEADER])
 
-        with pytest.raises(ValueError, match="No rows found"):
-            create_month_rows(ws, [HEADER], date(2026, 5, 1))
+@allure.epic("Google Sheets")
+@allure.feature("Row Insertion (legacy compat)")
+class TestEnsureCategoryRowLegacySheet:
+    """ensure_category_row must work against existing sheets with
+    legacy-style copied month blocks (many categories per month,
+    possibly different from the target category)."""
 
-    @patch("dinary.services.sheets.get_sheet")
-    def test_clears_amounts_comments_rate_only(self, mock_get_sheet):
-        """New month rows must clear B (amounts), F (comments), H (rate) but not D, E, G."""
-        from dinary.services.sheets import create_month_rows
+    LEGACY_SHEET = [
+        HEADER,
+        # April block (4 rows — old copy-paste style)
+        ["Apr-1", "5000", "43", "Food", "Essentials", "", "4", "117.00"],
+        ["Apr-1", "3000", "26", "Transport", "Essentials", "", "4", ""],
+        ["Apr-1", "", "0", "Cinema", "Entertainment", "", "4", ""],
+        ["Apr-1", "500", "4", "Food", "Travel", "", "4", ""],
+        # March block (3 rows)
+        ["Mar-1", "5000", "43", "Food", "Essentials", "prev", "3", "117.00"],
+        ["Mar-1", "2000", "17", "Transport", "Essentials", "", "3", ""],
+        ["Mar-1", "", "0", "Cinema", "Entertainment", "", "3", ""],
+    ]
 
-        ws = _make_worksheet([row[:] for row in SAMPLE_SHEET])
+    def test_existing_category_found_in_legacy_block(self):
+        from dinary.services.sheets import ensure_category_row
 
-        create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 1))
+        sheet = [row[:] for row in self.LEGACY_SHEET]
+        ws = _make_worksheet(sheet)
 
-        batch_data = ws.batch_update.call_args[0][0]
-        cleared_cols = set()
-        for item in batch_data:
-            col_letter = item["range"][0]
-            cleared_cols.add(col_letter)
+        row, refreshed = ensure_category_row(
+            ws,
+            list(self.LEGACY_SHEET),
+            4,
+            "Food",
+            "Essentials",
+            date(2026, 4, 1),
+        )
 
-        assert "A" in cleared_cols, "Should set new date"
-        assert "B" in cleared_cols, "Should clear amounts"
-        assert "F" in cleared_cols, "Should clear comments"
-        assert "H" in cleared_cols, "Should clear rate"
-        assert "C" not in cleared_cols, "Must not touch EUR column"
-        assert "D" not in cleared_cols, "Must not touch Category column"
-        assert "E" not in cleared_cols, "Must not touch Group column"
-        assert "G" not in cleared_cols, "Must not touch Month column"
+        assert row == 2
+        ws.insert_rows.assert_not_called()
 
-    @patch("dinary.services.sheets.get_sheet")
-    def test_copies_all_rows_from_previous_month(self, mock_get_sheet):
-        from dinary.services.sheets import create_month_rows
+    def test_new_category_in_legacy_month_block(self):
+        """A new category in a legacy block with many existing rows."""
+        from dinary.services.sheets import ensure_category_row
 
-        ws = _make_worksheet([row[:] for row in SAMPLE_SHEET])
+        sheet = [row[:] for row in self.LEGACY_SHEET]
+        ws = _make_worksheet(sheet)
+        inserted_row = ["2026-04-01", "", "", "Pharmacy", "", "", "4", ""]
+        ws.get_all_values.return_value = sheet[:2] + [inserted_row] + sheet[2:]
 
-        create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 1))
+        row, _ = ensure_category_row(
+            ws,
+            list(self.LEGACY_SHEET),
+            4,
+            "Pharmacy",
+            "",
+            date(2026, 4, 1),
+        )
 
-        requests = ws.spreadsheet.batch_update.call_args[0][0]["requests"]
-        insert = requests[0]["insertDimension"]["range"]
-        num_inserted = insert["endIndex"] - insert["startIndex"]
-        assert num_inserted == 4, "April has 4 rows, all should be copied"
+        ws.insert_rows.assert_called_once()
+        # ("Pharmacy","") > ("Food","Essentials") but < ("Transport","Essentials")
+        assert row == 3
 
-    @patch("dinary.services.sheets.get_sheet")
-    def test_new_rows_get_correct_date(self, mock_get_sheet):
-        from dinary.services.sheets import create_month_rows
+    def test_new_month_in_legacy_sheet(self):
+        """Adding a new month to a legacy sheet that has old-style blocks."""
+        from dinary.services.sheets import ensure_category_row
 
-        ws = _make_worksheet([row[:] for row in SAMPLE_SHEET])
+        sheet = [row[:] for row in self.LEGACY_SHEET]
+        ws = _make_worksheet(sheet)
+        inserted_row = ["2026-05-01", "", "", "Food", "Essentials", "", "5", ""]
+        ws.get_all_values.return_value = [sheet[0], inserted_row] + sheet[1:]
 
-        create_month_rows(ws, list(SAMPLE_SHEET), date(2026, 5, 15))
+        row, _ = ensure_category_row(
+            ws,
+            list(self.LEGACY_SHEET),
+            5,
+            "Food",
+            "Essentials",
+            date(2026, 5, 1),
+        )
 
-        batch_data = ws.batch_update.call_args[0][0]
-        date_updates = [d for d in batch_data if d["range"].startswith("A")]
-        for d in date_updates:
-            assert d["values"] == [["2026-05-01"]], "Date should be first of month"
+        ws.insert_rows.assert_called_once()
+        assert row == 2
 
 
 @allure.epic("Google Sheets")
@@ -726,6 +427,261 @@ class TestFindMonthRange:
         from dinary.services.sheets import find_month_range
 
         assert find_month_range(SAMPLE_SHEET, 12) is None
+
+
+@allure.epic("Google Sheets")
+@allure.feature("Year-aware matching (multi-year sheet)")
+class TestYearAwareMatching:
+    """The optional logging spreadsheet keeps every year in one tab.
+
+    Column G stores month 1..12 only; the year lives in column A as a
+    Google Sheets date serial that displays as e.g. ``"Apr-1"``. A
+    separate unformatted read decodes the year per row, and the helpers
+    must use it so that logging an expense for a different year doesn't
+    smear onto an existing year's rows.
+    """
+
+    HEADER = ["Date", "", "Sum", "Category", "Group", "Comment", "Month", "Euro"]
+
+    # Two same-month blocks (Apr) for two different years, plus a Mar
+    # 2027 block. Year column shows the formatted "Apr-1" (no year) but
+    # we pass an aligned years_by_row that mirrors a real unformatted
+    # column-A read.
+    MULTIYEAR_SHEET = [
+        HEADER,
+        # Apr 2027
+        ["Apr-1", "1000", "9", "Food", "Essentials", "", "4", "117.00"],
+        ["Apr-1", "500", "4", "Cinema", "Entertainment", "", "4", ""],
+        # Mar 2027
+        ["Mar-1", "2000", "17", "Food", "Essentials", "", "3", "120.00"],
+        # Apr 2026
+        ["Apr-1", "5000", "43", "Food", "Essentials", "old", "4", "115.00"],
+        ["Apr-1", "3000", "26", "Transport", "Essentials", "", "4", ""],
+    ]
+    YEARS_BY_ROW = [None, 2027, 2027, 2027, 2026, 2026]
+
+    def test_find_category_row_picks_target_year(self):
+        from dinary.services.sheets import find_category_row
+
+        row_2027 = find_category_row(
+            self.MULTIYEAR_SHEET,
+            4,
+            "Food",
+            "Essentials",
+            target_year=2027,
+            years_by_row=self.YEARS_BY_ROW,
+        )
+        row_2026 = find_category_row(
+            self.MULTIYEAR_SHEET,
+            4,
+            "Food",
+            "Essentials",
+            target_year=2026,
+            years_by_row=self.YEARS_BY_ROW,
+        )
+        assert row_2027 == 2
+        assert row_2026 == 5
+
+    def test_find_category_row_misses_when_year_absent(self):
+        from dinary.services.sheets import find_category_row
+
+        row = find_category_row(
+            self.MULTIYEAR_SHEET,
+            4,
+            "Transport",
+            "Essentials",
+            target_year=2027,
+            years_by_row=self.YEARS_BY_ROW,
+        )
+        # Transport/Essentials only exists in the 2026 block.
+        assert row is None
+
+    def test_find_month_range_constrained_by_year(self):
+        from dinary.services.sheets import find_month_range
+
+        block_2027 = find_month_range(
+            self.MULTIYEAR_SHEET,
+            4,
+            target_year=2027,
+            years_by_row=self.YEARS_BY_ROW,
+        )
+        block_2026 = find_month_range(
+            self.MULTIYEAR_SHEET,
+            4,
+            target_year=2026,
+            years_by_row=self.YEARS_BY_ROW,
+        )
+        assert block_2027 == (2, 3)
+        assert block_2026 == (5, 6)
+
+    def test_get_month_rate_picks_target_year(self):
+        from dinary.services.sheets import get_month_rate
+
+        rate_2027 = get_month_rate(
+            self.MULTIYEAR_SHEET,
+            4,
+            target_year=2027,
+            years_by_row=self.YEARS_BY_ROW,
+        )
+        rate_2026 = get_month_rate(
+            self.MULTIYEAR_SHEET,
+            4,
+            target_year=2026,
+            years_by_row=self.YEARS_BY_ROW,
+        )
+        assert rate_2027 == "117.00"
+        assert rate_2026 == "115.00"
+
+    def test_ensure_category_row_creates_new_year_block(self):
+        """Logging Apr 2028 must NOT collide with Apr 2027/2026 rows."""
+        from dinary.services.sheets import ensure_category_row
+
+        sheet = [row[:] for row in self.MULTIYEAR_SHEET]
+        ws = _make_worksheet(sheet)
+        # Refreshed grid after insert — placed at the very top because
+        # 2028-04 is newer than every existing block.
+        inserted = ["2028-04-01", "", "", "Food", "Essentials", "", "4", ""]
+        ws.get_all_values.return_value = [sheet[0], inserted] + sheet[1:]
+
+        row, _ = ensure_category_row(
+            ws,
+            list(self.MULTIYEAR_SHEET),
+            4,
+            "Food",
+            "Essentials",
+            date(2028, 4, 1),
+            years_by_row=self.YEARS_BY_ROW,
+        )
+
+        ws.insert_rows.assert_called_once()
+        assert row == 2
+
+    def test_ensure_category_row_inserts_between_year_blocks(self):
+        """The most common production case: a brand-new (year, month)
+        block must land between two existing year blocks, not at the
+        top or bottom. Walking newest→oldest, we stop at the first
+        strictly-older row.
+
+        Layout: Apr 2027 (2..3), Mar 2027 (4), Apr 2026 (5..6).
+        Logging Feb 2027 → must land at row 5 (after Mar 2027,
+        before Apr 2026)."""
+        from dinary.services.sheets import ensure_category_row
+
+        sheet = [row[:] for row in self.MULTIYEAR_SHEET]
+        ws = _make_worksheet(sheet)
+        inserted = ["2027-02-01", "", "", "Food", "Essentials", "", "2", ""]
+        ws.get_all_values.return_value = sheet[:4] + [inserted] + sheet[4:]
+
+        row, _ = ensure_category_row(
+            ws,
+            list(self.MULTIYEAR_SHEET),
+            2,
+            "Food",
+            "Essentials",
+            date(2027, 2, 1),
+            years_by_row=self.YEARS_BY_ROW,
+        )
+
+        ws.insert_rows.assert_called_once()
+        assert row == 5
+
+    def test_ensure_category_row_inserts_oldest_year_at_bottom(self):
+        from dinary.services.sheets import ensure_category_row
+
+        sheet = [row[:] for row in self.MULTIYEAR_SHEET]
+        ws = _make_worksheet(sheet)
+        inserted = ["2025-12-01", "", "", "Food", "Essentials", "", "12", ""]
+        ws.get_all_values.return_value = sheet + [inserted]
+
+        row, _ = ensure_category_row(
+            ws,
+            list(self.MULTIYEAR_SHEET),
+            12,
+            "Food",
+            "Essentials",
+            date(2025, 12, 1),
+            years_by_row=self.YEARS_BY_ROW,
+        )
+
+        ws.insert_rows.assert_called_once()
+        # Older than every existing (year, month) pair → bottom.
+        assert row == len(self.MULTIYEAR_SHEET) + 1
+
+    def test_ensure_category_row_finds_existing_year_match(self):
+        """The original bug: must NOT silently insert when the row exists in target year."""
+        from dinary.services.sheets import ensure_category_row
+
+        sheet = [row[:] for row in self.MULTIYEAR_SHEET]
+        ws = _make_worksheet(sheet)
+
+        row, _ = ensure_category_row(
+            ws,
+            list(self.MULTIYEAR_SHEET),
+            4,
+            "Food",
+            "Essentials",
+            date(2026, 4, 1),
+            years_by_row=self.YEARS_BY_ROW,
+        )
+
+        ws.insert_rows.assert_not_called()
+        assert row == 5
+
+    def test_ensure_category_row_inserts_when_only_other_year_exists(self):
+        """Apr 2027 has Food/Essentials; logging Food/Essentials for Apr 2026
+        must still hit the 2026 block (different row), not the 2027 row."""
+        from dinary.services.sheets import ensure_category_row
+
+        sheet = [row[:] for row in self.MULTIYEAR_SHEET]
+        ws = _make_worksheet(sheet)
+
+        # Both years already have Food/Essentials, so no insert at all.
+        row, _ = ensure_category_row(
+            ws,
+            list(self.MULTIYEAR_SHEET),
+            4,
+            "Food",
+            "Essentials",
+            date(2027, 4, 1),
+            years_by_row=self.YEARS_BY_ROW,
+        )
+
+        ws.insert_rows.assert_not_called()
+        assert row == 2  # 2027 row, not the 2026 row at index 5
+
+    def test_year_from_a_value_handles_serial_and_iso(self):
+        from dinary.services.sheets import _year_from_a_value
+
+        # 2026-04-01 as a Google Sheets serial.
+        assert _year_from_a_value(46113) == 2026
+        assert _year_from_a_value(46113.5) == 2026
+        assert _year_from_a_value("2027-04-01") == 2027
+        assert _year_from_a_value("Apr-1") is None
+        assert _year_from_a_value("") is None
+        assert _year_from_a_value(None) is None
+        assert _year_from_a_value(True) is None
+
+    def test_fetch_row_years_uses_unformatted_render(self):
+        from gspread.utils import ValueRenderOption
+
+        from dinary.services.sheets import fetch_row_years
+
+        ws = MagicMock()
+        ws.batch_get.return_value = [[["Date"], [46113], [46113], [], ["2026-04-01"], [None]]]
+
+        years = fetch_row_years(ws, 6)
+
+        ws.batch_get.assert_called_once()
+        call_kwargs = ws.batch_get.call_args.kwargs
+        assert call_kwargs.get("value_render_option") == ValueRenderOption.unformatted
+        assert years == [None, 2026, 2026, None, 2026, None]
+
+    def test_fetch_row_years_returns_empty_for_zero_rows(self):
+        from dinary.services.sheets import fetch_row_years
+
+        ws = MagicMock()
+        assert fetch_row_years(ws, 0) == []
+        ws.batch_get.assert_not_called()
 
 
 @allure.epic("Google Sheets")

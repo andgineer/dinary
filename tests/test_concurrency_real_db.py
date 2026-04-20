@@ -1,10 +1,10 @@
 """Real-fake-DB integration tests for the 3D refactor.
 
 Unlike `tests/test_api.py`, which patches `convert_to_eur` and
-`schedule_sync` to keep the surface mock-heavy and fast, the tests in this
-module run the *full* `POST /api/expenses` codepath against a real
+`schedule_logging` to keep the surface mock-heavy and fast, the tests in
+this module run the *full* `POST /api/expenses` codepath against a real
 `config.duckdb` + `budget_YYYY.duckdb` pair seeded with realistic data
-(categories, exchange_rates, sheet_import_sources). Only the gspread
+(categories, exchange_rates, import_sources). Only the gspread
 layer is stubbed, because we cannot talk to Google from CI. Every
 DuckDB interaction goes through real connections.
 
@@ -16,7 +16,7 @@ misses:
     "config"`
 
 This regression hit production right after the 3D rollout: the async
-sheet-sync worker holds a `budget_YYYY.duckdb` connection (which
+sheet-logging worker holds a `budget_YYYY.duckdb` connection (which
 internally `ATTACH`es `config.duckdb` READ_ONLY) for the full duration
 of a Sheets append. While that connection is alive, every subsequent
 `POST /api/expenses` that needs to open `config.duckdb` in READ_WRITE
@@ -35,7 +35,7 @@ The tests below pin down the contract:
      work while a budget connection is alive.
   3. `POST /api/expenses` (happy path AND idempotent replay) MUST return
      200 while a budget connection is alive — i.e. the API is robust
-     against an in-flight async sheet-sync worker.
+     against an in-flight async sheet-logging worker.
 """
 
 from datetime import date
@@ -45,6 +45,7 @@ import allure
 import pytest
 from fastapi.testclient import TestClient
 
+from dinary.config import settings
 from dinary.main import create_app
 from dinary.services import duckdb_repo
 
@@ -58,6 +59,7 @@ def real_db(tmp_path, monkeypatch):
     """
     monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
     monkeypatch.setattr(duckdb_repo, "CONFIG_DB", tmp_path / "config.duckdb")
+    monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "fake-sheet")
     duckdb_repo.init_config_db()
 
     con = duckdb_repo.get_config_connection(read_only=False)
@@ -65,7 +67,7 @@ def real_db(tmp_path, monkeypatch):
         con.execute("INSERT INTO category_groups VALUES (1, 'Food', 1)")
         con.execute("INSERT INTO categories VALUES (1, 'еда', 1)")
         con.execute(
-            "INSERT INTO sheet_import_sources(year, spreadsheet_id, worksheet_name,"
+            "INSERT INTO import_sources(year, spreadsheet_id, worksheet_name,"
             " layout_key) VALUES (2026, 'fake-sheet', '2026', 'default')",
         )
         # Seed exchange_rates so `convert_to_eur` never hits the network.
@@ -150,7 +152,7 @@ class TestConfigBudgetConnectionCoexistence:
     def test_budget_open_after_config_rw_open(self, real_db):  # noqa: ARG002
         """Reverse open order: API handler grabs config RW first (e.g.
         for rate-cache write inside `convert_to_eur`), THEN a peer task
-        opens a budget conn (e.g. an `inv sync` sweep starts).
+        opens a budget conn (e.g. an `inv drain-logging` sweep starts).
         Symmetrical to the production scenario; must not raise either
         way.
         """
@@ -171,7 +173,7 @@ class TestConfigBudgetConnectionCoexistence:
 
     def test_two_budget_conns_then_config_rw(self, real_db):  # noqa: ARG002
         """Multi-year case: two budget DBs alive simultaneously plus a
-        config RW connection. Mirrors `inv sync` (which iterates years)
+        config RW connection. Mirrors `inv drain-logging` (which iterates years)
         running concurrently with a `POST /api/expenses` request.
         """
         b1 = duckdb_repo.get_budget_connection(2025)
@@ -192,7 +194,7 @@ class TestConfigBudgetConnectionCoexistence:
     def test_reserve_expense_id_year_while_budget_open(self, real_db):  # noqa: ARG002
         """Public helper that opens config RW internally must work while
         a budget conn is alive. The API handler calls this AFTER opening
-        a budget conn would be premature, but `inv sync` (or another
+        a budget conn would be premature, but `inv drain-logging` (or another
         async drain) routinely holds budget conns at the moment a fresh
         POST tries to reserve an id.
         """
@@ -227,8 +229,8 @@ class TestConfigBudgetConnectionCoexistence:
 # ---------------------------------------------------------------------------
 
 
-def _stub_schedule_sync(monkeypatch):
-    """Replace `schedule_sync` with a no-op for tests that focus on
+def _stub_schedule_logging(monkeypatch):
+    """Replace `schedule_logging` with a no-op for tests that focus on
     connection-coexistence rather than the actual async drain.
 
     The async drain exists in tests above as a *manual* `budget_con`
@@ -240,7 +242,7 @@ def _stub_schedule_sync(monkeypatch):
 
     monkeypatch.setattr(
         expenses_module,
-        "schedule_sync",
+        "schedule_logging",
         lambda *_a, **_kw: None,
     )
 
@@ -265,7 +267,7 @@ class TestPostExpenseWithLiveBudgetConnection:
         real_client,
         monkeypatch,
     ):
-        _stub_schedule_sync(monkeypatch)
+        _stub_schedule_logging(monkeypatch)
         # Hold a budget conn open for the whole request: this is exactly
         # what `_drain_one_job` does while it talks to Google Sheets.
         budget_con = duckdb_repo.get_budget_connection(2026)
@@ -300,7 +302,7 @@ class TestPostExpenseWithLiveBudgetConnection:
         the async drain still in flight, the second `get_config_connection
         (read_only=False)` used to crash.
         """
-        _stub_schedule_sync(monkeypatch)
+        _stub_schedule_logging(monkeypatch)
         body = {
             "expense_id": "live-budget-conn-replay",
             "amount": 234.0,
@@ -335,7 +337,7 @@ class TestPostExpenseWithLiveBudgetConnection:
         config.duckdb (RO probe → RW for `convert_to_eur` → registry
         reserve → budget insert → RO for catalog_version).
         """
-        _stub_schedule_sync(monkeypatch)
+        _stub_schedule_logging(monkeypatch)
         budget_con = duckdb_repo.get_budget_connection(2026)
         try:
             resp = real_client.post(
@@ -366,7 +368,7 @@ class TestPostExpenseWithLiveBudgetConnection:
         cleanly (422, not 500) when a budget conn is alive — confirms
         we haven't accidentally widened the conflict surface.
         """
-        _stub_schedule_sync(monkeypatch)
+        _stub_schedule_logging(monkeypatch)
         budget_con = duckdb_repo.get_budget_connection(2026)
         try:
             resp = real_client.post(
@@ -393,9 +395,9 @@ class TestPostExpenseWithLiveBudgetConnection:
 @allure.epic("Concurrency")
 @allure.feature("Async drain race with subsequent POST")
 class TestAsyncDrainRaceWithPost:
-    """The most realistic scenario: let the real `schedule_sync` fire a
-    background drain task, slow the gspread step deliberately, and fire
-    a SECOND POST while the drain still holds the budget conn. The
+    """The most realistic scenario: let the real `schedule_logging` fire
+    a background drain task, slow the gspread step deliberately, and
+    fire a SECOND POST while the drain still holds the budget conn. The
     second POST must not 500.
 
     We stub only `_append_row_to_sheet` (the actual gspread call) and
@@ -410,7 +412,7 @@ class TestAsyncDrainRaceWithPost:
     ):
         import threading
 
-        from dinary.services import sync as sync_module
+        from dinary.services import sheet_logging as logging_module
 
         # Block the gspread call until the test releases it. While the
         # background task is parked on this event, it's holding a
@@ -428,26 +430,23 @@ class TestAsyncDrainRaceWithPost:
         # Patch the rate fetch too, so the slow path never goes through
         # an outbound HTTP request (we don't have a fake NBS in-process).
         monkeypatch.setattr(
-            sync_module,
+            logging_module,
             "_fetch_rate_blocking",
             lambda _d: None,
         )
         monkeypatch.setattr(
-            sync_module,
+            logging_module,
             "_append_row_to_sheet",
             slow_sheet_append,
         )
 
-        # Patch forward_projection so the drain doesn't try to look up a
-        # mapping we haven't seeded — return a dummy projection so the
-        # code reaches the (now-stubbed) sheet append.
         monkeypatch.setattr(
             duckdb_repo,
-            "forward_projection",
+            "logging_projection",
             lambda *_a, **_kw: ("еда", "Food"),
         )
 
-        # Fire the first POST: this enqueues a sheet_sync_jobs row AND
+        # Fire the first POST: this enqueues a sheet_logging_jobs row AND
         # schedules the background drain. The drain blocks on
         # `slow_sheet_append`, holding budget_2026 open the whole time.
         first = real_client.post(
@@ -467,7 +466,8 @@ class TestAsyncDrainRaceWithPost:
         # the simulated sheet append. If we don't wait, the second POST
         # might race the drain's claim and the test becomes flaky.
         assert sheet_call_started.wait(timeout=5), (
-            "Background drain never reached the sheet-append step; schedule_sync may not have fired"
+            "Background drain never reached the sheet-append step;"
+            " schedule_logging may not have fired"
         )
 
         # Second POST while the drain is parked. Before the fix this
@@ -564,7 +564,7 @@ def test_eur_short_circuit_never_calls_gspread(real_client, monkeypatch):
     config RW), POSTs with `currency=EUR` would also start hitting the
     BinderException, broadening the blast radius.
     """
-    _stub_schedule_sync(monkeypatch)
+    _stub_schedule_logging(monkeypatch)
     with patch("dinary.services.sheets.get_sheet") as mock_get_sheet:
         resp = real_client.post(
             "/api/expenses",
@@ -578,5 +578,5 @@ def test_eur_short_circuit_never_calls_gspread(real_client, monkeypatch):
             },
         )
         assert resp.status_code == 200, resp.text
-        # gspread MUST NOT be reached because schedule_sync is stubbed.
+        # gspread MUST NOT be reached because schedule_logging is stubbed.
         mock_get_sheet.assert_not_called()

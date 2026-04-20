@@ -1,24 +1,24 @@
 """Bootstrap historical Google Sheets import (one-time, destructive).
 
 This is the only path that reads from sheets and writes expenses. Once the
-sheet has been imported into `budget_YYYY.duckdb`, runtime traffic
-(`POST /api/expenses` plus the async sheet-append worker) takes over and the
-sheet becomes append-only.
+sheet has been imported into ``budget_YYYY.duckdb``, runtime traffic
+(``POST /api/expenses`` plus the async sheet-append worker) takes over and
+the sheet becomes append-only.
 
 The importer:
 
-  * resolves `(sheet_category, sheet_group, year)` against `sheet_mapping`
-    (year-scoped first, year=0 fallback) — the catalog is pre-baked by
-    `seed_config.seed_classification_catalog`;
+  * resolves ``(sheet_category, sheet_group, year)`` against
+    ``import_mapping`` (year-scoped first, year=0 fallback) — the catalog
+    is pre-baked by ``seed_config.seed_classification_catalog``;
   * applies a small set of per-row heuristics that depend on data only
     available at import time (housing keywords, DIY routing, RUB→EUR
     fallback, "kto" beneficiary column);
   * inserts one expense row + tags + provenance pair into
-    `budget_YYYY.duckdb` with `enqueue_sync=False` (rows are already in the
-    sheet — re-uploading them is a bug).
+    ``budget_YYYY.duckdb`` with ``enqueue_logging=False`` (rows are already
+    in the sheet — re-uploading them is a bug).
 
-It does not touch the runtime queue (`sheet_sync_jobs`) and does not bump
-`catalog_version`.
+It does not touch the runtime queue (``sheet_logging_jobs``) and does not
+bump ``catalog_version``.
 """
 
 import dataclasses
@@ -234,7 +234,7 @@ _POST_IMPORT_CATEGORY_FIXES = {
 def parse_display_amount(display: str) -> float | None:
     """Parse a sheet's "display" amount cell into a positive float (or None).
 
-    Public because `verify_equivalence` reads the same display-formatted
+    Public because ``verify_equivalence`` reads the same display-formatted
     cells and must apply the exact same parsing rules — keeping two copies
     in lockstep was a foot-gun.
     """
@@ -249,9 +249,9 @@ def parse_display_amount(display: str) -> float | None:
 
 
 def resolve_currency(year: int, month: int, layout: SheetLayout) -> str:
-    """Return the operative currency for a sheet cell at `(year, month)`.
+    """Return the operative currency for a sheet cell at ``(year, month)``.
 
-    Public because `verify_equivalence` must reproduce the same RUB/RSD
+    Public because ``verify_equivalence`` must reproduce the same RUB/RSD
     cutover logic when re-aggregating the source sheet for the
     bootstrap-import equivalence check. The April 2022 cutover is the
     point where the historical sheets switched from quoting amounts in
@@ -279,7 +279,7 @@ def _prefetch_monthly_rates(
     *,
     config_con=None,
 ) -> dict[int, dict[str, Decimal]]:
-    """Pre-fetch NBS rates for every month in `year`, keyed by month.
+    """Pre-fetch NBS rates for every month in ``year``, keyed by month.
 
     Under the singleton-engine model in ``duckdb_repo`` (see its
     module docstring) ``get_config_connection`` returns a cursor of
@@ -474,12 +474,13 @@ def _resolve_dimensions(  # noqa: C901, PLR0913, PLR0912
     business_trip_event_id: int | None,
     relocation_event_id: int | None,
 ) -> tuple[int, int | None, list[int]] | None:
-    """Resolve `(sheet_category, sheet_group)` to `(category_id, event_id, tag_ids)`.
+    """Resolve ``(sheet_category, sheet_group)`` to ``(category_id, event_id, tag_ids)``.
 
-    Always consults `sheet_mapping` first (year-scoped, then year=0 fallback).
-    Then refines `category_id` by per-row heuristics that pre-baked seed rows
-    cannot encode (housing keyword routing, DIY classification, RUB fallback).
-    Returns None when no mapping exists at all (caller logs+skips).
+    Always consults ``import_mapping`` first (year-scoped, then year=0
+    fallback). Then refines ``category_id`` by per-row heuristics that
+    pre-baked seed rows cannot encode (housing keyword routing, DIY
+    classification, RUB fallback). Returns None when no mapping exists at
+    all (caller logs+skips).
     """
     mapping = duckdb_repo.resolve_mapping_for_year(con, source_type, source_envelope, year)
     if mapping is not None:
@@ -492,8 +493,6 @@ def _resolve_dimensions(  # noqa: C901, PLR0913, PLR0912
         ).fetchone()
         canonical_default = canonical_default_name[0] if canonical_default_name else None
     else:
-        # Mapping missing — fall back to derivation rules. Should be rare
-        # because seed_config bakes a row for every discovered legacy pair.
         try:
             canonical_default = canonical_category_for_source(source_type, source_envelope)
         except ValueError:
@@ -564,7 +563,7 @@ def build_resolution_context(con, year: int) -> ResolutionContext | None:
 
     Behavioral note: callers that consider a missing seed a fatal error
     (``import_year``) translate ``None`` into a ``ValueError`` with a
-    "re-run rebuild-catalog" hint. Tolerant callers (the 2D-to-3D
+    "re-run import-catalog" hint. Tolerant callers (the 2D-to-3D
     report) skip the year and continue.
     """
     travel_event_id = _resolve_event_id(con, _synthetic_event_for_year(year))
@@ -771,9 +770,6 @@ def _apply_post_import_fixes(
     *,
     russia_trip_event_id: int | None = None,
 ) -> None:
-    # All post-import re-categorizations run in one transaction so a failure
-    # in the rent or russia-trip block doesn't leave the budget DB with only
-    # the comment-keyed UPDATEs applied.
     con.execute("BEGIN")
     try:
         _apply_post_import_fixes_body(
@@ -877,13 +873,13 @@ def iter_parsed_sheet_rows(year: int, *, config_con=None):
             available = [
                 r[0]
                 for r in config_con.execute(
-                    "SELECT year FROM sheet_import_sources ORDER BY year",
+                    "SELECT year FROM import_sources ORDER BY year",
                 ).fetchall()
             ]
         finally:
             if own_con:
                 config_con.close()
-        msg = f"year {year} not in sheet_import_sources. Available years: {available}"
+        msg = f"year {year} not in import_sources. Available years: {available}"
         raise ValueError(msg)
     layout = LAYOUTS[source.layout_key]
     monthly_rates = _prefetch_monthly_rates(year, layout, config_con=config_con)
@@ -945,9 +941,10 @@ def iter_parsed_sheet_rows(year: int, *, config_con=None):
 def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
     """Import all months for *year* from the configured sheet into DuckDB.
 
-    Always destructive within `budget_YYYY.duckdb` (TRUNCATE expenses/tags);
-    safe to re-run without producing duplicates because a deterministic id
-    and the truncate-then-insert pattern recreate identical rows.
+    Always destructive within ``budget_YYYY.duckdb`` (TRUNCATE
+    expenses/tags); safe to re-run without producing duplicates because a
+    deterministic id and the truncate-then-insert pattern recreate
+    identical rows.
     """
     duckdb_repo.init_config_db()
 
@@ -957,54 +954,29 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
         if ctx is None:
             msg = (
                 f"Synthetic vacation event for year {year} is missing from config.events. "
-                "Re-run `inv rebuild-catalog` so seed_config can create it."
+                "Re-run `inv import-catalog` so seed_config can create it."
             )
             raise ValueError(msg)
         if year == RUSSIA_TRIP_FIX_YEAR and ctx.russia_trip_event_id is None:
             msg = (
                 f"Event {RUSSIA_TRIP_EVENT_NAME!r} is missing from config.events. "
-                "Re-run `inv rebuild-catalog --yes` so seed_config can create it."
+                "Re-run `inv import-catalog --yes` so seed_config can create it."
             )
             raise ValueError(msg)
     finally:
         config_con.close()
 
-    # `import_year` is the destructive bootstrap path called only by
-    # `inv rebuild-budget --yes`. Unlink the budget DB file before opening
-    # so that:
-    #   1. Schema migrations from a prior incompatible model (e.g. 4D vs 3D)
-    #      cannot leak through yoyo's "already applied" tracking.
-    #   2. The DELETE-based wipe below is unnecessary on a fresh DB but
-    #      remains as defence-in-depth against partial-state edge cases.
     budget_db_path = duckdb_repo.budget_path(year)
     if budget_db_path.exists():
-        # Release the singleton engine's ATTACH on this year before
-        # deleting the file; otherwise yoyo's separate `duckdb.connect()`
-        # inside `init_budget_db` would clash with the still-attached
-        # handle on the (now-vanished) inode. See
-        # `duckdb_repo.release_budget_attach`.
         duckdb_repo.release_budget_attach(year)
         budget_db_path.unlink()
 
     con = duckdb_repo.get_budget_connection(year)
     try:
-        # Wipe order matters: sheet_sync_jobs -> expense_tags -> expenses.
-        # Both child tables FK into expenses; DuckDB has no ON DELETE CASCADE
-        # in our schema, so a stray pending sync row from a prior runtime
-        # session would block the parent DELETE without the explicit wipe.
-        #
-        # NOTE: we intentionally do NOT wrap these three DELETEs in a single
-        # transaction. DuckDB's FK enforcement does not let you delete a
-        # parent row in the same transaction that deletes the children
-        # (see DuckDB's documented foreign-key limitations: child-row
-        # tombstones are not visible to a later parent DELETE inside the
-        # same txn, so `DELETE FROM expenses` raises ConstraintException
-        # even though the in-txn `DELETE FROM expense_tags` already ran).
-        # The three statements therefore run in autocommit. The realistic
-        # failure modes here are disk full / process kill mid-wipe; in
-        # those scenarios the operator re-runs `inv rebuild-budget --yes`
-        # and the wipe is fully idempotent.
-        con.execute("DELETE FROM sheet_sync_jobs")
+        # Wipe order matters: sheet_logging_jobs -> expense_tags -> expenses.
+        # DuckDB has no ON DELETE CASCADE; child tables FK into expenses.
+        # See commit history for the rationale behind autocommit DELETEs.
+        con.execute("DELETE FROM sheet_logging_jobs")
         con.execute("DELETE FROM expense_tags")
         con.execute("DELETE FROM expenses")
 
@@ -1026,9 +998,6 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
                     relocation_event_id=ctx.relocation_event_id,
                 )
             except ValueError:
-                # `_resolve_dimensions` raises when a tag is missing from
-                # `config.tags`; treat it like any other per-row failure
-                # rather than tearing down the whole import.
                 logger.exception(
                     "Failed to resolve dimensions for (%r, %r) in year %d",
                     parsed.sheet_category,
@@ -1090,7 +1059,7 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
                     sheet_category=parsed.sheet_category,
                     sheet_group=parsed.sheet_group,
                     tag_ids=tag_ids,
-                    enqueue_sync=False,
+                    enqueue_logging=False,
                 )
                 created += 1
             except Exception:

@@ -1,31 +1,33 @@
 """Verify a bootstrap-imported `budget_YYYY.duckdb` matches the source sheet.
 
-Run after `inv rebuild-budget --year=YYYY`. Aggregates by
+Run after `inv import-budget --year=YYYY`. Aggregates by
 `(sheet_category, sheet_group)` per month on both sides:
 
   * sheet side — re-reads the historical worksheet exactly as
-    `import_sheet` does (same layout, same RUB/RSD currency rules);
+    `imports/expense_import.py` does (same layout, same RUB/RSD
+    currency rules);
   * DB side — sums `amount_original` on every row of `budget_YYYY.duckdb`
     grouped by the `(sheet_category, sheet_group)` provenance pair that
-    `import_sheet` baked in.
+    `imports/expense_import.py` baked in.
 
 Equivalence is on `amount_original` (the raw value as it appears in the
 sheet). Any diff means the rebuild changed observable behavior. Runtime
 expenses (`sheet_category IS NULL`) are intentionally not part of this
-check — they are produced by the runtime export path, not by import.
+check — they are produced by the runtime sheet logging path
+(`services/sheet_logging.py`), not by import.
 """
 
 import logging
 from collections import defaultdict
 from decimal import Decimal
 
-from dinary.services import duckdb_repo
-from dinary.services.import_sheet import (
+from dinary.imports.expense_import import (
     LAYOUTS,
     MONTHS_IN_YEAR,
     parse_display_amount,
     resolve_currency,
 )
+from dinary.services import duckdb_repo
 from dinary.services.sheets import (
     HEADER_ROWS,
     _cell,
@@ -42,7 +44,7 @@ def _read_sheet_aggregates(
 ) -> dict[int, dict[tuple[str, str], dict]]:
     source = duckdb_repo.get_import_source(year)
     if source is None:
-        msg = f"sheet_import_sources is missing a row for year {year}"
+        msg = f"import_sources is missing a row for year {year}"
         raise ValueError(msg)
     layout = LAYOUTS[source.layout_key]
 

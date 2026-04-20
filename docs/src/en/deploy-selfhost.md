@@ -13,7 +13,8 @@ Run dinary-server on your Mac or PC and expose it to the internet via a tunnel. 
 
 ## Prerequisites
 
-- A Google service account JSON key and spreadsheet ID — see [Google Sheets Setup](google-sheets-setup.md).
+- A Google service account JSON key — see [Google Sheets Setup](google-sheets-setup.md).
+- A populated `.env` with `DINARY_IMPORT_SOURCES_JSON` if you want bootstrap import / `import-config` / import flows. `DINARY_SHEET_LOGGING_SPREADSHEET` is separate and optional.
 - dinary-server running locally (see [README](https://github.com/andgineer/dinary-server#local-development)).
 
 ## Option A: Tailscale Funnel
@@ -39,7 +40,9 @@ In the [Tailscale admin console](https://login.tailscale.com/admin/dns):
 
 ```bash
 cd dinary-server
-export DINARY_GOOGLE_SHEETS_SPREADSHEET_ID="your-spreadsheet-id"
+cp .env.example .env
+# Edit .env if needed (`DINARY_IMPORT_SOURCES_JSON` for bootstrap import,
+# optional `DINARY_SHEET_LOGGING_SPREADSHEET` for sheet logging, credentials path, etc.)
 uv run uvicorn dinary.main:app --host 127.0.0.1 --port 8000
 ```
 

@@ -11,7 +11,7 @@ via `ATTACH` from a different `duckdb.connect()` instance) raises
     "config"
 
 We hit this in production right after the 3D rollout: the async
-sheet-sync worker holds a `budget_YYYY` connection (which previously
+sheet-logging worker holds a `budget_YYYY` connection (which previously
 ATTACHed config READ_ONLY inside its own engine) for the duration of a
 gspread roundtrip. While that worker was parked on the network, every
 `POST /api/expenses` whose `convert_to_eur` step needed a config RW
@@ -24,7 +24,7 @@ returns a fresh `cursor()` of the engine, with `USE config` or
 `USE budget_<year>` set so existing SQL — which assumes the relevant
 DB is the "current" one — keeps working. Cursors share the engine but
 have independent transaction state, so `BEGIN/COMMIT/ROLLBACK` semantics
-in `insert_expense`, `claim_sync_job`, `reserve_expense_id_year`, etc.
+in `insert_expense`, `claim_logging_job`, `reserve_expense_id_year`, etc.
 are unchanged.
 
 Migration coordination
@@ -36,8 +36,9 @@ DETACH the file from the singleton (if attached) before invoking yoyo,
 and the next `get_*_connection` call lazily re-ATTACHes. The same
 contract applies to destructive `unlink()` paths: `release_config_attach`
 and `release_budget_attach` are the public hooks that
-`seed_config.rebuild_config_from_sheets` and `import_sheet.import_year`
-call before deleting a DB file out from under us.
+`seed_config.rebuild_config_from_sheets` and
+`dinary.imports.expense_import.import_year` call before deleting a DB
+file out from under us.
 """
 
 import dataclasses
@@ -123,7 +124,7 @@ def release_config_attach() -> None:
     """DETACH config from the singleton engine (no-op if not attached).
 
     Public so destructive paths that `unlink()` `config.duckdb` (the
-    `inv rebuild-catalog` flow inside `seed_config.rebuild_config_from_sheets`)
+    `inv import-catalog` flow inside `seed_config.rebuild_config_from_sheets`)
     can release the file handle BEFORE the unlink. The next
     `get_config_connection` call re-ATTACHes lazily against the new
     file. Without this, a still-attached DuckDB would either prevent
@@ -159,7 +160,7 @@ def release_budget_attach(year: int) -> None:
     """DETACH a budget_YYYY DB from the singleton engine (no-op if not attached).
 
     Public for the same reason as `release_config_attach`: the
-    `import_sheet.import_year` bootstrap path `unlink()`s the budget DB
+    `dinary.imports.expense_import.import_year` `unlink()`s the budget DB
     file before re-creating it under the (possibly new) schema, and the
     file must be released from the engine first. Symmetric to the
     config helper; safe to call when nothing is attached.
@@ -174,7 +175,7 @@ def release_budget_attach(year: int) -> None:
         _engine_state.attached_budget_years.discard(year)
 
 
-# Default time after which an in_progress sheet_sync_jobs claim is considered
+# Default time after which an in_progress sheet_logging_jobs claim is considered
 # stale and may be reclaimed by a new worker. Workers should pass an explicit
 # `stale_before` (now - timeout); this constant is the canonical timeout used
 # by callers that don't override it.
@@ -264,7 +265,15 @@ class CategoryListRow:
 
 
 @dataclasses.dataclass(slots=True)
-class ForwardProjectionCandidateRow:
+class LoggingProjectionCandidateRow:
+    """One ``logging_mapping`` row plus its decoded tag-id set.
+
+    Used by ``logging_projection`` to score candidates: an exact-match
+    candidate has the same ``event_id`` and the same tag set as the
+    expense; the category-only fallback returns the first row by
+    ``id ASC``.
+    """
+
     id: int
     sheet_category: str
     sheet_group: str
@@ -280,7 +289,7 @@ class ForwardProjectionCandidateRow:
 def budget_path(year: int) -> Path:
     """Return the absolute path of `budget_YYYY.duckdb`.
 
-    Public so callers like `import_sheet.import_year` can unlink the file
+    Public so callers like `dinary.imports.expense_import.import_year` can unlink the file
     before re-creating it under a new schema (yoyo otherwise treats the
     pre-existing migration row as already applied).
     """
@@ -326,7 +335,7 @@ def get_budget_connection(year: int) -> duckdb.DuckDBPyConnection:
     """Return a cursor of the singleton engine pointed at `budget_<year>`.
 
     The cursor has `USE budget_<year>` set so existing SQL — which
-    treats `expenses` / `expense_tags` / `sheet_sync_jobs` as the
+    treats `expenses` / `expense_tags` / `sheet_logging_jobs` as the
     "current" tables — keeps working. Cross-DB references to config
     use the `config.X` qualifier and resolve through the same engine,
     so no ATTACH inside the budget cursor is needed (and that's
@@ -399,8 +408,17 @@ def get_catalog_version(con: duckdb.DuckDBPyConnection) -> int:
 
 
 def _set_catalog_version(con: duckdb.DuckDBPyConnection, value: int) -> None:
-    """Module-internal: only `rebuild-catalog` flow should call this (via tasks.py)."""
+    """Module-internal: only `import-catalog` flow should call this (via tasks.py)."""
     con.execute("UPDATE app_metadata SET catalog_version = ? WHERE id = 1", [value])
+
+
+def get_category_name(con: duckdb.DuckDBPyConnection, category_id: int) -> str | None:
+    """Return the category name for *category_id*, or None if missing."""
+    row = con.execute(
+        "SELECT name FROM config.categories WHERE id = ?",
+        [category_id],
+    ).fetchone()
+    return str(row[0]) if row else None
 
 
 def get_import_source(year: int) -> ImportSourceRow | None:
@@ -412,7 +430,7 @@ def get_import_source(year: int) -> ImportSourceRow | None:
             con,
             "SELECT year, spreadsheet_id, worksheet_name, layout_key, notes,"
             " income_worksheet_name, income_layout_key"
-            " FROM sheet_import_sources WHERE year = ?",
+            " FROM import_sources WHERE year = ?",
             [year],
         )
     finally:
@@ -429,7 +447,7 @@ def resolve_mapping(
     category: str,
     group: str,
 ) -> MappingRow | None:
-    """Look up (sheet_category, sheet_group) in sheet_mapping via ATTACHed config (year=0)."""
+    """Look up (sheet_category, sheet_group) in import_mapping via ATTACHed config (year=0)."""
     return fetchone_as(MappingRow, con, load_sql("resolve_mapping.sql"), [category, group])
 
 
@@ -455,45 +473,52 @@ def get_mapping_tag_ids(
     con: duckdb.DuckDBPyConnection,
     mapping_id: int,
 ) -> list[int]:
-    """Return tag_ids attached to a given sheet_mapping row, ordered by tag_id."""
+    """Return tag_ids attached to a given import_mapping row, ordered by tag_id."""
     rows = con.execute(
-        "SELECT tag_id FROM config.sheet_mapping_tags WHERE mapping_id = ? ORDER BY tag_id",
+        "SELECT tag_id FROM config.import_mapping_tags WHERE mapping_id = ? ORDER BY tag_id",
         [mapping_id],
     ).fetchall()
     return [int(r[0]) for r in rows]
 
 
 # ---------------------------------------------------------------------------
-# Forward projection: pick (sheet_category, sheet_group) for a new expense.
-# Used by the async sheet-append worker. Always targets the latest configured
-# sheet year, never `expense.datetime.year`.
+# Logging projection: year-agnostic 3D→2D for optional sheet logging.
+# Uses the dedicated `logging_mapping` table instead of `import_mapping`.
 # ---------------------------------------------------------------------------
 
 
-def forward_projection(
+def logging_projection(
     con: duckdb.DuckDBPyConnection,
     *,
-    latest_sheet_year: int,
     category_id: int,
     event_id: int | None,
     tag_ids: list[int] | set[int] | tuple[int, ...],
 ) -> tuple[str, str] | None:
-    """Resolve `(category_id, event_id, tag set)` to `(sheet_category, sheet_group)`.
+    """Resolve ``(category_id, event_id, tag set)`` to ``(sheet_category, sheet_group)``.
 
-    Lookup order against `sheet_mapping` + `sheet_mapping_tags` inside
-    `latest_sheet_year`:
-      1. exact match: same `category_id`, same `event_id` (NULL matches NULL),
-         and same tag-id set as the expense;
-      2. fallback: first `sheet_mapping` row with the same `category_id`,
-         ignoring `event_id` and tags.
-    Ties inside the same preference bucket are broken by `sheet_mapping.id ASC`.
+    Year-agnostic 3D→2D projection for the sheet logging path. Reads
+    ``logging_mapping`` + ``logging_mapping_tags`` (created by
+    migration 0002). Historical 2D→3D import has its own year-aware
+    ``import_mapping`` resolution; the two pipelines no longer share
+    code so the projection logic stays single-purpose.
+
+    Lookup order:
+      1. exact match: same ``category_id``, same ``event_id`` (NULL ↔ NULL),
+         and same tag-id set;
+      2. category-level fallback: first ``logging_mapping`` row with the
+         same ``category_id``, ignoring ``event_id`` and tags.
+    Ties are broken by ``logging_mapping.id ASC``.
+
+    Returns ``None`` only when no ``logging_mapping`` row exists for this
+    ``category_id`` at all. The caller is expected to apply a default
+    fallback (``category.name``, empty group) in that case.
     """
     expected_tags = sorted(int(t) for t in tag_ids)
     candidates = fetchall_as(
-        ForwardProjectionCandidateRow,
+        LoggingProjectionCandidateRow,
         con,
-        load_sql("forward_projection.sql"),
-        [latest_sheet_year, category_id],
+        load_sql("logging_projection.sql"),
+        [category_id],
     )
     if not candidates:
         return None
@@ -635,7 +660,7 @@ def insert_expense(  # noqa: PLR0913, C901
     sheet_category: str | None = None,
     sheet_group: str | None = None,
     tag_ids: list[int] | None = None,
-    enqueue_sync: bool = True,
+    enqueue_logging: bool = True,
 ) -> InsertExpenseResult:
     """Insert an expense + tags + queue row in one transaction.
 
@@ -700,9 +725,9 @@ def insert_expense(  # noqa: PLR0913, C901
                     " ON CONFLICT DO NOTHING",
                     [expense_id, tid],
                 )
-            if enqueue_sync:
+            if enqueue_logging:
                 con.execute(
-                    "INSERT INTO sheet_sync_jobs (expense_id, status) VALUES (?, 'pending')"
+                    "INSERT INTO sheet_logging_jobs (expense_id, status) VALUES (?, 'pending')"
                     " ON CONFLICT DO NOTHING",
                     [expense_id],
                 )
@@ -789,26 +814,28 @@ def get_expense_by_id(con: duckdb.DuckDBPyConnection, expense_id: str) -> Existi
 
 
 # ---------------------------------------------------------------------------
-# sheet_sync_jobs queue helpers (keyed by expense_id, with atomic claim/release)
+# sheet_logging_jobs queue helpers (keyed by expense_id, with atomic claim/release)
 # ---------------------------------------------------------------------------
 
 
-def enqueue_sync_job(con: duckdb.DuckDBPyConnection, expense_id: str) -> None:
+def enqueue_logging_job(con: duckdb.DuckDBPyConnection, expense_id: str) -> None:
     """Insert a `pending` row for `expense_id` (no-op if it already exists)."""
     con.execute(
-        "INSERT INTO sheet_sync_jobs (expense_id, status) VALUES (?, 'pending')"
+        "INSERT INTO sheet_logging_jobs (expense_id, status) VALUES (?, 'pending')"
         " ON CONFLICT DO NOTHING",
         [expense_id],
     )
 
 
-def list_sync_jobs(con: duckdb.DuckDBPyConnection) -> list[str]:
-    """Return all expense_ids currently waiting in sheet_sync_jobs (any status)."""
-    rows = con.execute("SELECT expense_id FROM sheet_sync_jobs ORDER BY expense_id").fetchall()
+def list_logging_jobs(con: duckdb.DuckDBPyConnection) -> list[str]:
+    """Return all expense_ids currently waiting in sheet_logging_jobs (any status)."""
+    rows = con.execute(
+        "SELECT expense_id FROM sheet_logging_jobs ORDER BY expense_id",
+    ).fetchall()
     return [str(r[0]) for r in rows]
 
 
-def claim_sync_job(
+def claim_logging_job(
     con: duckdb.DuckDBPyConnection,
     expense_id: str,
     *,
@@ -831,7 +858,7 @@ def claim_sync_job(
     con.execute("BEGIN")
     try:
         row = con.execute(
-            "SELECT status, claim_token, claimed_at FROM sheet_sync_jobs WHERE expense_id = ?",
+            "SELECT status, claim_token, claimed_at FROM sheet_logging_jobs WHERE expense_id = ?",
             [expense_id],
         ).fetchone()
         if row is None:
@@ -846,7 +873,7 @@ def claim_sync_job(
             return None
 
         con.execute(
-            "UPDATE sheet_sync_jobs SET status = 'in_progress',"
+            "UPDATE sheet_logging_jobs SET status = 'in_progress',"
             " claim_token = ?, claimed_at = ? WHERE expense_id = ?",
             [claim_token, now, expense_id],
         )
@@ -860,7 +887,7 @@ def claim_sync_job(
         # sweep (or the in-flight worker) will own it. Returning None
         # avoids blowing up the sweep with a noisy exception that the
         # caller would have to translate back to "skip this row" anyway.
-        best_effort_rollback(con, context=f"claim_sync_job({expense_id}) txn conflict")
+        best_effort_rollback(con, context=f"claim_logging_job({expense_id}) txn conflict")
         logger.debug("Transaction conflict claiming %s; another worker won", expense_id)
         return None
     except Exception:
@@ -869,11 +896,11 @@ def claim_sync_job(
         # log and re-raise the *original* exception, not the secondary
         # one, so the caller's traceback points at the real cause
         # instead of a confusing rollback failure that masks it.
-        best_effort_rollback(con, context=f"claim_sync_job({expense_id}) generic error")
+        best_effort_rollback(con, context=f"claim_logging_job({expense_id}) generic error")
         raise
 
 
-def release_sync_claim(
+def release_logging_claim(
     con: duckdb.DuckDBPyConnection,
     expense_id: str,
     claim_token: str,
@@ -884,57 +911,57 @@ def release_sync_claim(
     has taken over, or the row no longer exists).
     """
     rows = con.execute(
-        "UPDATE sheet_sync_jobs SET status = 'pending', claim_token = NULL, claimed_at = NULL"
+        "UPDATE sheet_logging_jobs SET status = 'pending', claim_token = NULL, claimed_at = NULL"
         " WHERE expense_id = ? AND claim_token = ? RETURNING expense_id",
         [expense_id, claim_token],
     ).fetchall()
     return len(rows) > 0
 
 
-def _delete_sync_job(
+def _delete_logging_job(
     con: duckdb.DuckDBPyConnection,
     expense_id: str,
     *,
     claim_token: str | None,
 ) -> bool:
-    """Single source of truth for deleting a `sheet_sync_jobs` row.
+    """Single source of truth for deleting a `sheet_logging_jobs` row.
 
     `claim_token=None` skips the token check (force-delete by expense_id
-    only). Factored out so a future column change to `sheet_sync_jobs`
+    only). Factored out so a future column change to `sheet_logging_jobs`
     only updates one DELETE statement instead of two divergent ones; the
-    public `clear_sync_job` and `force_clear_sync_job` are thin wrappers
-    that document the two distinct legitimate use cases.
+    public `clear_logging_job` and `force_clear_logging_job` are thin
+    wrappers that document the two distinct legitimate use cases.
     """
     if claim_token is None:
         rows = con.execute(
-            "DELETE FROM sheet_sync_jobs WHERE expense_id = ? RETURNING expense_id",
+            "DELETE FROM sheet_logging_jobs WHERE expense_id = ? RETURNING expense_id",
             [expense_id],
         ).fetchall()
     else:
         rows = con.execute(
-            "DELETE FROM sheet_sync_jobs WHERE expense_id = ? AND claim_token = ?"
+            "DELETE FROM sheet_logging_jobs WHERE expense_id = ? AND claim_token = ?"
             " RETURNING expense_id",
             [expense_id, claim_token],
         ).fetchall()
     return len(rows) > 0
 
 
-def clear_sync_job(
+def clear_logging_job(
     con: duckdb.DuckDBPyConnection,
     expense_id: str,
     claim_token: str,
 ) -> bool:
     """Delete the queue row after a successful append. Requires matching claim_token."""
-    return _delete_sync_job(con, expense_id, claim_token=claim_token)
+    return _delete_logging_job(con, expense_id, claim_token=claim_token)
 
 
-def force_clear_sync_job(con: duckdb.DuckDBPyConnection, expense_id: str) -> bool:
+def force_clear_logging_job(con: duckdb.DuckDBPyConnection, expense_id: str) -> bool:
     """Delete the queue row by expense_id, ignoring claim_token.
 
     Use ONLY when the caller has definitively succeeded at the side-effect
     that the queue row was tracking (e.g. the Sheets append already
-    happened) and a normal claim-token-protected `clear_sync_job` failed
-    because the claim was stolen by a stale-claim sweep. Deleting
+    happened) and a normal claim-token-protected `clear_logging_job`
+    failed because the claim was stolen by a stale-claim sweep. Deleting
     unconditionally here prevents a *third* sheet append: the thief who
     stole the claim will (or already did) cause the second append, and
     leaving the row in place would cause the next sweep to claim and
@@ -942,7 +969,7 @@ def force_clear_sync_job(con: duckdb.DuckDBPyConnection, expense_id: str) -> boo
 
     Returns True if a row was deleted.
     """
-    return _delete_sync_job(con, expense_id, claim_token=None)
+    return _delete_logging_job(con, expense_id, claim_token=None)
 
 
 def get_month_expenses(

@@ -1,5 +1,6 @@
 import base64
 import os
+import re as _re
 import shlex
 import shutil
 import sys
@@ -40,7 +41,7 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/dinary-server
-Environment=DINARY_GOOGLE_SHEETS_SPREADSHEET_ID={spreadsheet_id}
+EnvironmentFile=/home/ubuntu/dinary-server/.env
 ExecStart=/home/ubuntu/.local/bin/uv run uvicorn dinary.main:app --host {host} --port 8000
 Restart=always
 RestartSec=5
@@ -109,15 +110,50 @@ def _create_service(c, name, content):
     _ssh_sudo(c, f"systemctl restart {name}")
 
 
+_ENV_SAFE_RE = _re.compile(r"^[A-Za-z0-9_./:@\-]*$")
+
+
+def _systemd_quote(value: str | None) -> str:
+    r"""Quote a value for systemd's ``EnvironmentFile=`` parser.
+
+    systemd uses shell-like double-quote semantics: bare values may not
+    contain spaces, quotes, or special chars; quoted values back-slash
+    escape ``\``, ``"``, and ``$`` as in POSIX shell. We wrap any value
+    containing unsafe characters in double quotes so JSON, base64 blobs
+    with ``+``, and URLs with ``=``/``?`` round-trip correctly even
+    though ``dotenv_values()`` strips the surrounding quotes locally.
+    """
+    if not value:
+        return ""
+    if _ENV_SAFE_RE.match(value):
+        return value
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+    return f'"{escaped}"'
+
+
 def _sync_remote_env(c):
-    """Write server-side .env with settings that CLI tasks need (idempotent)."""
+    """Sync all DINARY_* settings from local .env to the server (idempotent).
+
+    Skips deploy-only keys (DINARY_DEPLOY_HOST, DINARY_TUNNEL) that are
+    only meaningful on the operator's machine. Values are quoted using
+    systemd's ``EnvironmentFile=`` syntax so JSON blobs (e.g.
+    ``DINARY_IMPORT_SOURCES_JSON``) and base64-encoded credentials
+    survive the transfer intact. The remote file is also chowned to
+    ``ubuntu`` so the systemd unit (``User=ubuntu``) can read it.
+    """
     env = _env()
-    spreadsheet_id = env.get("DINARY_GOOGLE_SHEETS_SPREADSHEET_ID", "")
-    if not spreadsheet_id:
-        print("Set DINARY_GOOGLE_SHEETS_SPREADSHEET_ID in .env")
+    skip = {"DINARY_DEPLOY_HOST", "DINARY_TUNNEL"}
+    lines = [
+        f"{k}={_systemd_quote(v)}\n"
+        for k, v in env.items()
+        if k.startswith("DINARY_") and k not in skip
+    ]
+    if not lines:
+        print("No DINARY_* settings found in local .env")
         sys.exit(1)
-    remote_env = f"DINARY_GOOGLE_SHEETS_SPREADSHEET_ID={spreadsheet_id}\n"
-    _write_remote_file(c, "/home/ubuntu/dinary-server/.env", remote_env)
+    remote_path = "/home/ubuntu/dinary-server/.env"
+    _write_remote_file(c, remote_path, "".join(lines))
+    _ssh_sudo(c, f"chown ubuntu:ubuntu {remote_path} && chmod 600 {remote_path}")
 
 
 def _setup_tailscale(c):
@@ -219,13 +255,8 @@ def pre(c):
 @task
 def setup(c):
     """One-time VM setup: install deps, clone repo, create services, upload creds."""
-    env = _env()
     host = _host()
     tunnel = _tunnel()
-    spreadsheet_id = env.get("DINARY_GOOGLE_SHEETS_SPREADSHEET_ID", "")
-    if not spreadsheet_id:
-        print("Set DINARY_GOOGLE_SHEETS_SPREADSHEET_ID in .env")
-        sys.exit(1)
 
     print("=== Hardening: disable rpcbind, verify iptables ===")
     _ssh(
@@ -264,8 +295,11 @@ def setup(c):
 
     bind_host = "0.0.0.0" if tunnel == "none" else "127.0.0.1"
     print(f"=== Creating dinary service (bind {bind_host}) ===")
-    service = DINARY_SERVICE.format(spreadsheet_id=spreadsheet_id, host=bind_host)
+    service = DINARY_SERVICE.format(host=bind_host)
     _create_service(c, "dinary", service)
+
+    print("=== Importing config.duckdb seed data from Google Sheets ===")
+    import_config(c)
 
     if tunnel == "tailscale":
         _setup_tailscale(c)
@@ -285,7 +319,7 @@ def deploy(c, ref="", no_restart=False):
     Use --ref to deploy a specific version. Use --no-restart for the coordinated
     destructive reset flow: it skips both the post-deploy systemctl restart and
     the auto-applied config migration, because the very next step in that flow
-    is `inv stop` followed by `inv rebuild-catalog --yes` which wipes
+    is `inv stop` followed by `inv import-catalog --yes` which wipes
     config.duckdb anyway.
     """
     print("=== Pre-deploy backup ===")
@@ -331,9 +365,9 @@ def deploy(c, ref="", no_restart=False):
             "=== --no-restart set: SKIPPING systemctl restart and config migration. ===\n"
             "=== Next steps in the coordinated reset flow: ===\n"
             "===   inv stop                                ===\n"
-            "===   inv rebuild-catalog --yes               ===\n"
-            "===   inv rebuild-budget-all --yes            ===\n"
-            "===   inv rebuild-income-all --yes            ===\n"
+            "===   inv import-catalog --yes                ===\n"
+            "===   inv import-budget-all --yes             ===\n"
+            "===   inv import-income-all --yes             ===\n"
             "===   inv verify-bootstrap-import-all         ===\n"
             "===   inv verify-income-equivalence-all       ===\n"
             "===   inv start                               ==="
@@ -385,9 +419,9 @@ def ssh(c):
     c.run(f"ssh {_host()}", pty=True)
 
 
-@task(name="seed-config")
-def seed_config(c):
-    """Seed config.duckdb from Google Sheets categories (run on server)."""
+@task(name="import-config")
+def import_config(c):
+    """Import config.duckdb seed data from the configured source sheets."""
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
@@ -451,7 +485,7 @@ def _coerce_year(year) -> int:
 def _require_year(year) -> int:
     """Like `_coerce_year` but refuses a blank value.
 
-    Use for destructive tasks (`rebuild-budget`, `rebuild-income`) where
+    Use for destructive tasks (`import-budget`, `import-income`) where
     silently defaulting to the current year would be a footgun: an
     operator who forgets `--year=2024` would otherwise wipe the
     most-active year by accident.
@@ -465,19 +499,19 @@ def _require_year(year) -> int:
     return _coerce_year(year)
 
 
-@task
-def sync(c):
-    """Drain sheet_sync_jobs for every yearly DB (on server)."""
+@task(name="drain-logging")
+def drain_logging(c):
+    """Sheet logging: drain sheet_logging_jobs for every yearly DB (on server)."""
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.sync import sync_pending; "
-        "import json; print(json.dumps(sync_pending()))'",
+        "from dinary.services.sheet_logging import drain_pending; "
+        "import json; print(json.dumps(drain_pending()))'",
     )
 
 
-@task(name="rebuild-catalog")
-def rebuild_catalog(c, yes=False):
+@task(name="import-catalog")
+def import_catalog(c, yes=False):
     """DESTRUCTIVE: Wipe config.duckdb and re-seed the 3D classification catalog.
 
     Bumps `app_metadata.catalog_version` by +1 on every successful run; the
@@ -485,8 +519,8 @@ def rebuild_catalog(c, yes=False):
     """
     if not _require_yes(
         yes,
-        "WARNING: rebuild-catalog will DELETE config.duckdb and re-seed it from "
-        "Google Sheets. Configured sheet_import_sources are preserved and restored. "
+        "WARNING: import-catalog will DELETE config.duckdb and re-seed it from "
+        "Google Sheets. Configured import_sources are preserved and restored. "
         "All clients will be forced to refresh on next /api/categories call.",
     ):
         return
@@ -498,13 +532,13 @@ def rebuild_catalog(c, yes=False):
     )
 
 
-@task(name="rebuild-budget")
-def rebuild_budget(c, year="", yes=False):
+@task(name="import-budget")
+def import_budget(c, year="", yes=False):
     """DESTRUCTIVE: Wipe budget_YYYY.duckdb and re-import from the Google Sheet."""
     year_int = _require_year(year)
     if not _require_yes(
         yes,
-        f"WARNING: rebuild-budget will DELETE every expense in budget_{year_int}.duckdb "
+        f"WARNING: import-budget will DELETE every expense in budget_{year_int}.duckdb "
         "and re-import from the Google Sheet. There is no manual-vs-import distinction "
         "anymore; nothing in the budget DB is preserved.",
     ):
@@ -512,23 +546,23 @@ def rebuild_budget(c, year="", yes=False):
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.import_sheet import import_year; "
+        "from dinary.imports.expense_import import import_year; "
         f"import json; print(json.dumps(import_year({year_int})))'",
     )
 
 
-@task(name="rebuild-budget-all")
-def rebuild_budget_all(c, yes=False):
-    """DESTRUCTIVE: Wipe and re-import every budget_YYYY.duckdb listed in sheet_import_sources.
+@task(name="import-budget-all")
+def import_budget_all(c, yes=False):
+    """DESTRUCTIVE: Wipe and re-import every budget_YYYY.duckdb listed in import_sources.
 
-    Iterates the years registered in `config.duckdb.sheet_import_sources` (in
+    Iterates the years registered in `config.duckdb.import_sources` (in
     ascending order) and re-imports each one via `import_year`. Intended for
-    use inside the coordinated reset flow after `rebuild-catalog --yes`.
+    use inside the coordinated reset flow after `import-catalog --yes`.
     """
     if not _require_yes(
         yes,
-        "WARNING: rebuild-budget-all will DELETE every budget_YYYY.duckdb "
-        "registered in sheet_import_sources and re-import each year from the "
+        "WARNING: import-budget-all will DELETE every budget_YYYY.duckdb "
+        "registered in import_sources and re-import each year from the "
         "Google Sheet. There is no manual-vs-import distinction anymore; "
         "nothing in any budget DB is preserved.",
     ):
@@ -537,11 +571,11 @@ def rebuild_budget_all(c, yes=False):
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services import duckdb_repo; "
-        "from dinary.services.import_sheet import import_year; "
+        "from dinary.imports.expense_import import import_year; "
         "import json, duckdb; "
         "con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True); "
         "years = [r[0] for r in con.execute("
-        "\"SELECT year FROM sheet_import_sources WHERE year > 0 ORDER BY year\""
+        "\"SELECT year FROM import_sources WHERE year > 0 ORDER BY year\""
         ").fetchall()]; "
         "con.close(); "
         "[print(json.dumps({\"year\": y, **import_year(y)})) for y in years]'",
@@ -560,7 +594,7 @@ def verify_bootstrap_import(c, year=""):
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.verify_equivalence import verify_bootstrap_import; "
+        "from dinary.imports.verify_equivalence import verify_bootstrap_import; "
         f"import json; result = verify_bootstrap_import({year_int}); "
         "print(json.dumps(result, indent=2, ensure_ascii=False)); "
         "import sys; sys.exit(0 if result[\"ok\"] else 1)'",
@@ -569,7 +603,7 @@ def verify_bootstrap_import(c, year=""):
 
 @task(name="verify-bootstrap-import-all")
 def verify_bootstrap_import_all(c):
-    """Run verify-bootstrap-import for every year registered in sheet_import_sources.
+    """Run verify-bootstrap-import for every year registered in import_sources.
 
     Used by the coordinated reset flow so verification covers every rebuilt
     year, not just the current calendar year. Exits non-zero if any single
@@ -579,11 +613,11 @@ def verify_bootstrap_import_all(c):
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services import duckdb_repo; "
-        "from dinary.services.verify_equivalence import verify_bootstrap_import; "
+        "from dinary.imports.verify_equivalence import verify_bootstrap_import; "
         "import json, duckdb, sys; "
         "con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True); "
         "years = [r[0] for r in con.execute("
-        "\"SELECT year FROM sheet_import_sources WHERE year > 0 ORDER BY year\""
+        "\"SELECT year FROM import_sources WHERE year > 0 ORDER BY year\""
         ").fetchall()]; "
         "con.close(); "
         "results = [{**verify_bootstrap_import(y), \"year\": y} for y in years]; "
@@ -592,30 +626,30 @@ def verify_bootstrap_import_all(c):
     )
 
 
-@task(name="rebuild-income")
-def rebuild_income(c, year="", yes=False):
+@task(name="import-income")
+def import_income(c, year="", yes=False):
     """DESTRUCTIVE: Wipe and re-import income for a single year from Google Sheet."""
     year_int = _require_year(year)
     if not _require_yes(
         yes,
-        f"WARNING: rebuild-income will DELETE every income row for {year_int} and re-import "
+        f"WARNING: import-income will DELETE every income row for {year_int} and re-import "
         "from Google Sheets.",
     ):
         return
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.import_income import import_year_income; "
+        "from dinary.imports.income_import import import_year_income; "
         f"import json; print(json.dumps(import_year_income({year_int})))'",
     )
 
 
-@task(name="rebuild-income-all")
-def rebuild_income_all(c, yes=False):
+@task(name="import-income-all")
+def import_income_all(c, yes=False):
     """DESTRUCTIVE: Re-import income for all years with a registered income worksheet."""
     if not _require_yes(
         yes,
-        "WARNING: rebuild-income-all will re-import income for EVERY year with a "
+        "WARNING: import-income-all will re-import income for EVERY year with a "
         "registered income source. Existing income rows are dropped first.",
     ):
         return
@@ -623,11 +657,11 @@ def rebuild_income_all(c, yes=False):
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services import duckdb_repo; "
-        "from dinary.services.import_income import import_year_income; "
+        "from dinary.imports.income_import import import_year_income; "
         "import json, duckdb; "
         "con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True); "
         "years = [r[0] for r in con.execute("
-        "\"SELECT year FROM sheet_import_sources WHERE income_worksheet_name != \\x27\\x27 ORDER BY year\""
+        "\"SELECT year FROM import_sources WHERE income_worksheet_name != \\x27\\x27 ORDER BY year\""
         ").fetchall()]; "
         "con.close(); "
         "[print(json.dumps(import_year_income(y))) for y in years]'",
@@ -645,7 +679,7 @@ def verify_income_equivalence(c, year=""):
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.verify_income import verify_income_equivalence; "
+        "from dinary.imports.verify_income import verify_income_equivalence; "
         f"import json; result = verify_income_equivalence({year_int}); "
         "print(json.dumps(result, indent=2, ensure_ascii=False)); "
         "import sys; sys.exit(0 if result[\"ok\"] else 1)'",
@@ -664,11 +698,11 @@ def verify_income_equivalence_all(c):
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services import duckdb_repo; "
-        "from dinary.services.verify_income import verify_income_equivalence; "
+        "from dinary.imports.verify_income import verify_income_equivalence; "
         "import json, duckdb, sys; "
         "con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True); "
         "years = [r[0] for r in con.execute("
-        "\"SELECT year FROM sheet_import_sources WHERE income_worksheet_name != \\x27\\x27 ORDER BY year\""
+        "\"SELECT year FROM import_sources WHERE income_worksheet_name != \\x27\\x27 ORDER BY year\""
         ").fetchall()]; "
         "con.close(); "
         "results = [{**verify_income_equivalence(y), \"year\": y} for y in years]; "
@@ -709,8 +743,8 @@ def backup(c):
     print(f"Backed up to {backup_dir}/")
 
 
-@task(name="report-2d-3d")
-def report_2d_3d(c, detail=False, fmt="stdout", output="", year=""):
+@task(name="import-report-2d-3d")
+def import_report_2d_3d(c, detail=False, fmt="stdout", output="", year=""):
     """Generate the 2D->3D resolution report on the server.
 
     Flags (all optional):
@@ -754,7 +788,7 @@ def report_2d_3d(c, detail=False, fmt="stdout", output="", year=""):
             # remote ``python -m`` call above).
             remote_path = output if output.startswith("/") else f"~/dinary-server/{output}"
         else:
-            remote_path = f"~/dinary-server/data/reports/report_2d_3d.{fmt}"
+            remote_path = f"~/dinary-server/data/reports/import_report_2d_3d.{fmt}"
         local_dir = Path("data") / "reports"
         local_dir.mkdir(parents=True, exist_ok=True)
         host = _host()

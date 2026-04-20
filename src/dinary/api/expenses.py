@@ -10,16 +10,18 @@ from pydantic import BaseModel, Field
 
 from dinary.services import duckdb_repo
 from dinary.services.nbs import convert_to_eur
-from dinary.services.sync import schedule_sync
+from dinary.services.sheet_logging import is_sheet_logging_enabled, schedule_logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 class ExpenseRequest(BaseModel):
-    """Phase-1 request body. Tags and event are intentionally absent — the PWA
-    has no way to set them yet, and runtime exports rely on category-only
-    forward-projection fallback in the latest sheet year."""
+    """Phase-1 request body. Tags and event are intentionally absent — the
+    PWA has no way to set them yet, and the optional sheet-logging worker
+    falls back to ``category.name`` when ``logging_mapping`` has no row
+    for the (category, event=NULL, tags=[]) triple.
+    """
 
     expense_id: str = Field(min_length=1)
     amount: float = Field(gt=0)
@@ -45,12 +47,12 @@ class ExpenseResponse(BaseModel):
 
 @router.post("/api/expenses", response_model=ExpenseResponse)
 async def create_expense(req: ExpenseRequest) -> ExpenseResponse:  # noqa: PLR0912, PLR0915
-    """Insert one expense and queue it for export to Sheets.
+    """Insert one expense and (optionally) queue it for sheet logging.
 
     The PLR0912/PLR0915 lints are silenced deliberately: the body is a
     flat sequence of HTTP-error gates (cross-year reservation check,
     catalog-version validation, duplicate detection, conflict mapping,
-    insert, schedule_sync) and each branch maps 1:1 to a documented
+    insert, schedule_logging) and each branch maps 1:1 to a documented
     HTTP status code. Decomposing the gates into helpers would force
     the helpers to either return rich `(status, detail)` tuples or
     raise `HTTPException` themselves — both options scatter the API
@@ -58,14 +60,16 @@ async def create_expense(req: ExpenseRequest) -> ExpenseResponse:  # noqa: PLR09
 
     Idempotency:
       * If `expense_id` already exists in `budget_<year>.duckdb` and every
-        field matches, return 200 `duplicate` without re-queuing sync.
+        field matches, return 200 `duplicate` without re-queuing logging.
       * If it exists with mismatching fields, return 409.
       * If `expense_id` is registered in another year (cross-year reuse),
         return 409.
 
-    Tags + event default to empty/NULL. The runtime export worker uses
-    forward projection to pick `(sheet_category, sheet_group)` in the
-    latest configured sheet year.
+    Sheet logging is opt-in via ``DINARY_SHEET_LOGGING_SPREADSHEET``; when
+    unset, ``enqueue_logging`` is False so jobs do not accumulate. When
+    enabled, the worker uses ``logging_mapping`` (year-agnostic) to pick
+    ``(sheet_category, sheet_group)``, falling back to ``category.name``
+    if the mapping is missing.
     """
     year = req.date.year
 
@@ -148,7 +152,7 @@ async def create_expense(req: ExpenseRequest) -> ExpenseResponse:  # noqa: PLR09
     # Why "conflict" must NOT release: the conflict result proves the budget
     # DB already holds this expense_id for `year` (with mismatched fields).
     # If `we_own_reservation` is True here it means `config.duckdb` was wiped
-    # (e.g. by `inv rebuild-catalog`) while the budget DB kept its rows; the
+    # (e.g. by `inv import-catalog`) while the budget DB kept its rows; the
     # reservation we just inserted is the correct repair, not a phantom row.
     # Releasing it would let a subsequent POST with `date.year=Y+1` succeed
     # against `budget_(Y+1)` and create a duplicate `expense_id` across years.
@@ -170,7 +174,7 @@ async def create_expense(req: ExpenseRequest) -> ExpenseResponse:  # noqa: PLR09
                     sheet_category=None,
                     sheet_group=None,
                     tag_ids=[],
-                    enqueue_sync=True,
+                    enqueue_logging=is_sheet_logging_enabled(),
                 )
             except ValueError as e:
                 # The insert itself failed (e.g. unknown category_id) so no
@@ -205,11 +209,11 @@ async def create_expense(req: ExpenseRequest) -> ExpenseResponse:  # noqa: PLR09
                 )
 
     if result == "created":
-        schedule_sync(req.expense_id, year)
+        schedule_logging(req.expense_id, year)
 
     # Read catalog_version AFTER the insert so the response reflects the
     # schema the row was written against. Reading it at the top of the
-    # handler races with `inv rebuild-catalog`: a concurrent rebuild would
+    # handler races with `inv import-catalog`: a concurrent rebuild would
     # bump the version mid-request, the insert would land against the new
     # schema, and the client would still cache the old version — exactly
     # the inverse of what catalog_version exists to guarantee.
