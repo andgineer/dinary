@@ -1,6 +1,6 @@
 """Tests for the queue-based, append-only sheet logging layer (3D)."""
 
-from datetime import datetime
+from datetime import date, datetime
 from unittest.mock import MagicMock, patch
 
 import allure
@@ -629,3 +629,281 @@ class TestClaimLoggingJobTransactionConflict:
             assert token is None
         finally:
             bcon.close()
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit, TTL, and year-window tests for drain_pending
+# ---------------------------------------------------------------------------
+
+
+def _insert_expense_with_date(year: int, expense_id: str, expense_date: date) -> None:
+    """Insert a minimal expense + queue row into budget_<year>.duckdb."""
+    bcon = duckdb_repo.get_budget_connection(year)
+    try:
+        duckdb_repo.insert_expense(
+            bcon,
+            expense_id=expense_id,
+            expense_datetime=datetime(expense_date.year, expense_date.month, expense_date.day, 10),
+            amount=10.0,
+            amount_original=10.0,
+            currency_original="EUR",
+            category_id=1,
+            event_id=None,
+            comment="",
+            sheet_category=None,
+            sheet_group=None,
+            tag_ids=[],
+            enqueue_logging=True,
+        )
+    finally:
+        bcon.close()
+
+
+def _count_pending(year: int) -> int:
+    """Return the number of rows still in sheet_logging_jobs for a year."""
+    bcon = duckdb_repo.get_budget_connection(year)
+    try:
+        return duckdb_repo.count_logging_jobs(bcon)
+    finally:
+        bcon.close()
+
+
+@allure.epic("SheetLogging")
+@allure.feature("drain_pending rate-limit and TTL")
+class TestDrainRateLimit:
+    """Exercise the rate-limiting, TTL, and year-window behaviour added
+    alongside the in-process periodic drain loop.
+    """
+
+    @patch("dinary.services.sheet_logging._drain_one_job")
+    def test_cap_honored(self, mock_drain_one, setup, monkeypatch):
+        """Hard cap stops the sweep after max_attempts."""
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_attempts_per_iteration", 5)
+        monkeypatch.setattr(settings, "sheet_logging_drain_inter_row_delay_sec", 0)
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_age_days", 90)
+
+        for i in range(25):
+            _insert_expense_with_date(2026, f"cap-{i:03d}", date(2026, 6, 1 + i % 25))
+
+        mock_drain_one.return_value = sheet_logging.DrainResult.APPENDED
+        summary = sheet_logging.drain_pending(today=date(2026, 6, 15))
+
+        assert mock_drain_one.call_count == 5
+        assert summary["cap_reached"] is True
+        assert summary["attempted"] == 5
+        # exp1 from setup + 20 untouched = 21 pending (5 drained + queue-cleared)
+        # Actually _drain_one_job is mocked so the queue rows are NOT cleared
+        assert _count_pending(2026) == 26  # 25 + 1 from setup
+
+    @patch("dinary.services.sheet_logging._drain_one_job")
+    def test_inter_row_sleep_observed(self, mock_drain_one, setup, monkeypatch):
+        """Sleep is called between attempts (before each except the first)."""
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_attempts_per_iteration", 10)
+        monkeypatch.setattr(settings, "sheet_logging_drain_inter_row_delay_sec", 0.001)
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_age_days", 90)
+
+        for i in range(3):
+            _insert_expense_with_date(2026, f"sleep-{i}", date(2026, 6, 1 + i))
+
+        mock_drain_one.return_value = sheet_logging.DrainResult.APPENDED
+        sleep_mock = MagicMock()
+        monkeypatch.setattr(sheet_logging.time, "sleep", sleep_mock)
+
+        sheet_logging.drain_pending(today=date(2026, 6, 15))
+
+        # exp1 from setup + 3 new = 4 total attempts; sleep before 2nd, 3rd, 4th
+        assert sleep_mock.call_count == 3
+        for call in sleep_mock.call_args_list:
+            assert call.args[0] == 0.001
+
+    @patch("dinary.services.sheet_logging._drain_one_job")
+    def test_inter_row_sleep_cross_year(self, mock_drain_one, setup, monkeypatch):
+        """Sleep also happens at the year boundary (between last row of
+        year A and first row of year B)."""
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_attempts_per_iteration", 20)
+        monkeypatch.setattr(settings, "sheet_logging_drain_inter_row_delay_sec", 0.001)
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_age_days", 90)
+
+        _insert_expense_with_date(2026, "cross-2026-a", date(2026, 4, 1))
+        _insert_expense_with_date(2025, "cross-2025-a", date(2025, 12, 20))
+        _insert_expense_with_date(2025, "cross-2025-b", date(2025, 12, 21))
+
+        mock_drain_one.return_value = sheet_logging.DrainResult.APPENDED
+        sleep_mock = MagicMock()
+        monkeypatch.setattr(sheet_logging.time, "sleep", sleep_mock)
+
+        # today=2026-01-15 → cutoff=2025-10-17 → both 2026 and 2025 in window
+        sheet_logging.drain_pending(today=date(2026, 1, 15))
+
+        # 2026: exp1 (setup) + cross-2026-a = 2 rows
+        # 2025: cross-2025-a + cross-2025-b = 2 rows
+        # Total: 4 attempts; sleep before 2nd, 3rd, 4th
+        assert sleep_mock.call_count == 3
+
+    @patch("dinary.services.sheet_logging._drain_one_job")
+    def test_ttl_skips_old_expenses(self, mock_drain_one, setup, monkeypatch):
+        """TTL filter skips rows older than max_age_days in the same year DB."""
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_attempts_per_iteration", 100)
+        monkeypatch.setattr(settings, "sheet_logging_drain_inter_row_delay_sec", 0)
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_age_days", 90)
+
+        # Fresh rows (within 90 days of 2026-06-15)
+        _insert_expense_with_date(2026, "fresh-1", date(2026, 6, 1))
+        _insert_expense_with_date(2026, "fresh-2", date(2026, 6, 10))
+
+        # Old rows (older than 90 days but same year DB)
+        _insert_expense_with_date(2026, "old-1", date(2026, 1, 5))
+        _insert_expense_with_date(2026, "old-2", date(2026, 1, 6))
+        _insert_expense_with_date(2026, "old-3", date(2026, 1, 7))
+
+        mock_drain_one.return_value = sheet_logging.DrainResult.APPENDED
+
+        summary = sheet_logging.drain_pending(today=date(2026, 6, 15))
+
+        # exp1 from setup is dated 2026-04-14 → within 90 days of 2026-06-15
+        assert mock_drain_one.call_count == 3  # exp1 + fresh-1 + fresh-2
+        assert summary["skipped_expired"] == 3  # old-1, old-2, old-3
+
+    @patch("dinary.services.sheet_logging._drain_one_job")
+    def test_year_window_restriction(self, mock_drain_one, setup, monkeypatch):
+        """Year-window prevents opening budget DBs far outside the TTL range."""
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_attempts_per_iteration", 100)
+        monkeypatch.setattr(settings, "sheet_logging_drain_inter_row_delay_sec", 0)
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_age_days", 90)
+
+        # Create a DB for 2020 with pending rows
+        _insert_expense_with_date(2020, "old-year-1", date(2020, 6, 1))
+        _insert_expense_with_date(2020, "old-year-2", date(2020, 6, 2))
+
+        budget_path_calls = []
+        original_budget_path = duckdb_repo.budget_path
+
+        def _recording_budget_path(year):
+            budget_path_calls.append(year)
+            return original_budget_path(year)
+
+        iter_calls = []
+        original_iter = duckdb_repo.iter_budget_years
+
+        def _recording_iter():
+            iter_calls.append(True)
+            return original_iter()
+
+        monkeypatch.setattr(duckdb_repo, "budget_path", _recording_budget_path)
+        monkeypatch.setattr(duckdb_repo, "iter_budget_years", _recording_iter)
+
+        mock_drain_one.return_value = sheet_logging.DrainResult.APPENDED
+
+        summary = sheet_logging.drain_pending(today=date(2026, 6, 15))
+
+        # Only 2026 should be visited; 2020 should never be opened
+        assert 2020 not in budget_path_calls
+        assert 2026 in budget_path_calls
+        assert len(iter_calls) == 0  # TTL>0, so hardcoded path, no glob
+        assert summary["skipped_expired"] == 0  # 2020 DB never opened
+
+    @patch("dinary.services.sheet_logging._drain_one_job")
+    def test_ttl_zero_disables_filter(self, mock_drain_one, setup, monkeypatch):
+        """TTL=0 visits all years and does not skip any rows."""
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_attempts_per_iteration", 100)
+        monkeypatch.setattr(settings, "sheet_logging_drain_inter_row_delay_sec", 0)
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_age_days", 0)
+
+        # Old rows in same year
+        _insert_expense_with_date(2026, "old-ttl0-1", date(2026, 1, 5))
+        _insert_expense_with_date(2026, "old-ttl0-2", date(2026, 1, 6))
+        # Fresh rows
+        _insert_expense_with_date(2026, "fresh-ttl0-1", date(2026, 6, 1))
+
+        iter_calls = []
+        original_iter = duckdb_repo.iter_budget_years
+
+        def _recording_iter():
+            iter_calls.append(True)
+            return original_iter()
+
+        monkeypatch.setattr(duckdb_repo, "iter_budget_years", _recording_iter)
+        mock_drain_one.return_value = sheet_logging.DrainResult.APPENDED
+
+        summary = sheet_logging.drain_pending(today=date(2026, 6, 15))
+
+        # exp1 from setup + 3 new = 4 total
+        assert mock_drain_one.call_count == 4
+        assert summary["skipped_expired"] == 0
+        assert len(iter_calls) == 1  # TTL=0 uses iter_budget_years
+
+    @patch("dinary.services.sheet_logging._drain_one_job")
+    def test_ttl_and_cap_combined(self, mock_drain_one, setup, monkeypatch):
+        """Expired rows do not count against the cap."""
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_attempts_per_iteration", 3)
+        monkeypatch.setattr(settings, "sheet_logging_drain_inter_row_delay_sec", 0)
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_age_days", 90)
+
+        # 5 expired rows
+        for i in range(5):
+            _insert_expense_with_date(2026, f"expired-cap-{i}", date(2026, 1, 1 + i))
+        # 10 fresh rows
+        for i in range(10):
+            _insert_expense_with_date(2026, f"fresh-cap-{i}", date(2026, 6, 1 + i))
+
+        mock_drain_one.return_value = sheet_logging.DrainResult.APPENDED
+
+        summary = sheet_logging.drain_pending(today=date(2026, 6, 15))
+
+        # exp1 from setup is 2026-04-14 → within 90 days → attempted
+        # cap=3 → only 3 attempts (all from fresh + exp1)
+        assert mock_drain_one.call_count == 3
+        assert summary["skipped_expired"] == 5
+        assert summary["cap_reached"] is True
+
+    @patch("dinary.services.sheet_logging._drain_one_job")
+    def test_orphan_rows_still_drained(self, mock_drain_one, setup, monkeypatch):
+        """Orphan queue rows (no matching expense) bypass the TTL filter."""
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_attempts_per_iteration", 100)
+        monkeypatch.setattr(settings, "sheet_logging_drain_inter_row_delay_sec", 0)
+        monkeypatch.setattr(settings, "sheet_logging_drain_max_age_days", 90)
+
+        # Create orphan queue rows: recreate the table without FK so we can
+        # insert expense_ids that don't exist in expenses.
+        bcon = duckdb_repo.get_budget_connection(2026)
+        try:
+            bcon.execute("CREATE TABLE _slj_copy AS SELECT * FROM sheet_logging_jobs")
+            bcon.execute("DROP TABLE sheet_logging_jobs")
+            bcon.execute(
+                "CREATE TABLE sheet_logging_jobs ("
+                "  expense_id TEXT PRIMARY KEY,"
+                "  status TEXT NOT NULL DEFAULT 'pending',"
+                "  claim_token TEXT,"
+                "  claimed_at TIMESTAMP,"
+                "  CHECK (status IN ('pending', 'in_progress'))"
+                ")"
+            )
+            bcon.execute("INSERT INTO sheet_logging_jobs SELECT * FROM _slj_copy")
+            bcon.execute("DROP TABLE _slj_copy")
+            bcon.execute(
+                "INSERT INTO sheet_logging_jobs (expense_id, status) VALUES ('orphan-1', 'pending')"
+            )
+            bcon.execute(
+                "INSERT INTO sheet_logging_jobs (expense_id, status) VALUES ('orphan-2', 'pending')"
+            )
+        finally:
+            bcon.close()
+
+        mock_drain_one.return_value = sheet_logging.DrainResult.NOOP_ORPHAN
+
+        summary = sheet_logging.drain_pending(today=date(2026, 6, 15))
+
+        # exp1 from setup + 2 orphans = 3
+        assert mock_drain_one.call_count == 3
+
+    def test_logging_disabled_returns_early(self, monkeypatch):
+        """When spreadsheet is unset, drain_pending returns bare disabled dict."""
+        monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "")
+
+        duckdb_repo.init_config_db()
+        summary = sheet_logging.drain_pending(today=date(2026, 6, 15))
+
+        assert summary == {"disabled": True}
+        assert "attempted" not in summary
+        assert "cap_reached" not in summary
+        assert "skipped_expired" not in summary

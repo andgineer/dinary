@@ -45,7 +45,7 @@ import dataclasses
 import logging
 import threading
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
@@ -827,12 +827,44 @@ def enqueue_logging_job(con: duckdb.DuckDBPyConnection, expense_id: str) -> None
     )
 
 
-def list_logging_jobs(con: duckdb.DuckDBPyConnection) -> list[str]:
-    """Return all expense_ids currently waiting in sheet_logging_jobs (any status)."""
-    rows = con.execute(
-        "SELECT expense_id FROM sheet_logging_jobs ORDER BY expense_id",
-    ).fetchall()
+def list_logging_jobs(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    min_expense_date: date | None = None,
+) -> list[str]:
+    """Return all expense_ids currently waiting in sheet_logging_jobs (any status).
+
+    When *min_expense_date* is given, only rows whose expense date is at
+    or after the cutoff are returned — plus orphan rows (queue rows whose
+    expense no longer exists) so they can still reach ``NOOP_ORPHAN``
+    cleanup in ``_drain_one_job``.
+    """
+    if min_expense_date is None:
+        rows = con.execute(
+            "SELECT expense_id FROM sheet_logging_jobs ORDER BY expense_id",
+        ).fetchall()
+    else:
+        rows = con.execute(
+            "SELECT slj.expense_id"
+            " FROM sheet_logging_jobs slj"
+            " LEFT JOIN expenses e ON slj.expense_id = e.id"
+            " WHERE e.id IS NULL OR CAST(e.datetime AS DATE) >= ?"
+            " ORDER BY slj.expense_id",
+            [min_expense_date],
+        ).fetchall()
     return [str(r[0]) for r in rows]
+
+
+def count_logging_jobs(con: duckdb.DuckDBPyConnection) -> int:
+    """Return the total count of rows in ``sheet_logging_jobs`` regardless of status.
+
+    Semantically equals ``len(list_logging_jobs(con))`` but avoids
+    materialising the expense_ids — intended for computing
+    ``skipped_expired`` as a Python-side diff when a TTL filter has
+    been applied to the list variant.
+    """
+    row = con.execute("SELECT count(*) FROM sheet_logging_jobs").fetchone()
+    return int(row[0]) if row else 0
 
 
 def claim_logging_job(

@@ -152,7 +152,7 @@ class TestConfigBudgetConnectionCoexistence:
     def test_budget_open_after_config_rw_open(self, real_db):  # noqa: ARG002
         """Reverse open order: API handler grabs config RW first (e.g.
         for rate-cache write inside `convert_to_eur`), THEN a peer task
-        opens a budget conn (e.g. an `inv drain-logging` sweep starts).
+        opens a budget conn (e.g. a periodic drain sweep starts).
         Symmetrical to the production scenario; must not raise either
         way.
         """
@@ -173,7 +173,7 @@ class TestConfigBudgetConnectionCoexistence:
 
     def test_two_budget_conns_then_config_rw(self, real_db):  # noqa: ARG002
         """Multi-year case: two budget DBs alive simultaneously plus a
-        config RW connection. Mirrors `inv drain-logging` (which iterates years)
+        config RW connection. Mirrors the periodic drain (which iterates years)
         running concurrently with a `POST /api/expenses` request.
         """
         b1 = duckdb_repo.get_budget_connection(2025)
@@ -194,7 +194,7 @@ class TestConfigBudgetConnectionCoexistence:
     def test_reserve_expense_id_year_while_budget_open(self, real_db):  # noqa: ARG002
         """Public helper that opens config RW internally must work while
         a budget conn is alive. The API handler calls this AFTER opening
-        a budget conn would be premature, but `inv drain-logging` (or another
+        a budget conn would be premature, but the periodic drain (or another
         async drain) routinely holds budget conns at the moment a fresh
         POST tries to reserve an id.
         """

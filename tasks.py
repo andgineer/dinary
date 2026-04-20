@@ -499,17 +499,6 @@ def _require_year(year) -> int:
     return _coerce_year(year)
 
 
-@task(name="drain-logging")
-def drain_logging(c):
-    """Sheet logging: drain sheet_logging_jobs for every yearly DB (on server)."""
-    _ssh(
-        c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.sheet_logging import drain_pending; "
-        "import json; print(json.dumps(drain_pending()))'",
-    )
-
-
 @task(name="import-catalog")
 def import_catalog(c, yes=False):
     """DESTRUCTIVE: Wipe config.duckdb and re-seed the 3D classification catalog.

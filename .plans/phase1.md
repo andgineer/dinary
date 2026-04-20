@@ -10,11 +10,12 @@
 > reset.
 >
 > **Operational warning:** The command names in this file are also frozen.
-> In the current codebase there is no `inv sync` alias; use
-> `inv drain-logging` instead. Likewise, the runtime queue is now
-> `sheet_logging_jobs`, and the current implementation is append-only
-> single-row logging — not the older full-month rebuild model described
-> below.
+> In the current codebase there is no `inv sync` alias; the
+> `inv drain-logging` CLI was removed and replaced by the in-process
+> periodic drain inside the FastAPI process — there is no current CLI
+> to invoke. The runtime queue is now `sheet_logging_jobs`, and the
+> current implementation is append-only single-row logging — not the
+> older full-month rebuild model described below.
 >
 > **Status note:** Phase 1 was reset from the originally-shipped 4D model (`category`, `beneficiary`, `event`, `sphere_of_life`) to the **3D model** (`category`, `event`, `tag_ids[]`) plus an export-only Google Sheets contract. The "Current state" section below captures the post-reset design as it stood when this document was frozen, but it still uses the original pre-rename terminology. Treat the entire file as historical reference, not as current documentation.
 

@@ -46,7 +46,7 @@ Implications:
 - The backend must remain a **small FastAPI + DuckDB process**, not a multi-service stack.
 - Do not require Docker in production on the 1 GB instance.
 - Do not run AI/LLM workloads, heavy batch classification, or other memory-hungry jobs on the server. Those stay on the laptop-side `dinary` agent.
-- Keep background work serialized and bounded: no fan-out workers, no parallel sync pipelines, no large in-memory queues.
+- Keep background work bounded: no fan-out worker pools beyond the asyncio event loop and its default thread pool, no parallel sync pipelines, no large in-memory queues. A small, fixed set of long-lived background tasks (e.g. the sheet-logging periodic drain) is fine; spawning a worker per pending row is not.
 - Optional sheet logging is **single-row append per `expense_id`** via the `sheet_logging_jobs` queue; never a full-sheet or full-month recomputation. Disabled (no queue rows are even created) when `DINARY_SHEET_LOGGING_SPREADSHEET` is unset.
 - Caches must stay small and optional. Correctness must not depend on large resident in-memory datasets.
 
@@ -203,9 +203,9 @@ CREATE TABLE expense_tags (
 -- Durable queue for "this expense still needs to be appended to Google Sheets".
 -- Producer: POST /api/expenses (inserts the queue row in the same DuckDB
 -- transaction as the expenses row).
--- Consumers: an asyncio task spawned by the API handler (opportunistic fast
--- path) and `inv drain-logging` (durable retry). Both run the same
--- single-row append.
+-- Consumers: an asyncio task spawned by the API handler (opportunistic
+-- fast path) and the lifespan-managed periodic `drain_pending` task
+-- (durable retry). Both run the same single-row append.
 -- A row is deleted on success; failure leaves it as `pending` for retry.
 -- `claim_token` + `claimed_at` implement lease-style atomic claim with stale
 -- recovery: a later worker may reclaim an `in_progress` row once `claimed_at`
@@ -512,9 +512,11 @@ From Phase 1 onward Google Sheets are **export-only** — the historical sheets 
 Producer: `POST /api/expenses` inserts the queue row in the *same* DuckDB transaction as the `expenses` row. Consumers both run the same single-row drain path centered on `_drain_one_job` (which in turn uses `_append_row_to_sheet`):
 
 1. **Async worker** — `asyncio.create_task` spawned by the API handler right before returning the response, only on the fresh-insert path that also created the queue row. Never spawned on idempotent replay.
-2. **`inv drain-logging`** — iterates every `sheet_logging_jobs` row across all `budget_*.duckdb` files and re-runs the same single-row append. Used after process crashes, transient Google API failures, network outages, etc.
+2. **In-process periodic sweep** — started by FastAPI `lifespan`, controlled by `DINARY_SHEET_LOGGING_DRAIN_INTERVAL_SEC` (default 300s, `0` disables). Drain runs immediately on entry, then every N seconds. Recovers from process restarts mid-flight, transient Sheets failures, and the no-event-loop branch of `schedule_logging`. There is no external CLI.
 
 A row is deleted as soon as its single-row append succeeds. On failure (after a successful claim) the row's claim is released back to `pending` so the next sweep retries it.
+
+**Rate-limiting and TTL.** Each `drain_pending` invocation is bounded by `DINARY_SHEET_LOGGING_DRAIN_MAX_ATTEMPTS_PER_ITERATION` (default 15, counts every `_drain_one_job` call across years) and paced by `DINARY_SHEET_LOGGING_DRAIN_INTER_ROW_DELAY_SEC` (default 1.0s, `time.sleep` inside the `asyncio.to_thread` worker — does NOT block the event loop). A single `_drain_one_job` call makes 1-3 Sheets API calls (read the marker cell, optional append, optional dedupe-cleanup), so sustained Sheets API usage is **≤9 calls/min** in the worst case and **~3 calls/min** in the common single-append case, well inside the 60/min per-user Sheets quota. The inter-row sleep further caps the instantaneous rate at ≤1 attempt/sec (≤3 API calls/sec). A TTL in days (`DINARY_SHEET_LOGGING_DRAIN_MAX_AGE_DAYS`, default 90) restricts each sweep to `budget_YYYY.duckdb` files covering the last 90 days (typically 1-2 yearly files) and, inside those files, further filters by `expense.date`. Expired rows remain in `sheet_logging_jobs` untouched. Orphan rows (queue rows whose expense was deleted) bypass the TTL filter via `LEFT JOIN ... OR e.id IS NULL` and still reach `_drain_one_job` for `NOOP_ORPHAN` cleanup. A backlog of N rows clears in `ceil(N / 15)` ticks (60 rows → ~20 min, 1000 rows → ~5.5 h) — slower than the removed `inv drain-logging` tight-loop behaviour, a deliberate trade-off for quota safety. Inside one sweep the newest year drains first (cap-aware), so an older year can be starved for one sweep if the newer year has more than `max_attempts` pending rows; it will be served on the next tick.
 
 ### Atomic claim and stale-claim recovery
 
@@ -561,7 +563,7 @@ Column G holds the month number only, so a naive month-only scan would collapse 
 
 When `ensure_category_row` inserts a new row, the worker splices the new year into `years_by_row` at the insert index so the post-insert helpers stay aligned with the refreshed grid. Without this splice, the rate-write step can either silently skip or land on another year's rate cell.
 
-Cost: one extra `batch_get` of column A per drained expense on top of `get_all_values`. Sheets' default 60 reads/min quota stays comfortable since `inv drain-logging` is a low-frequency catch-up sweep and the inline `schedule_logging` path runs once per `POST /api/expenses`.
+Cost: one extra `batch_get` of column A per drained expense on top of `get_all_values`. Sheets' default 60 reads/min quota stays comfortable since the in-process periodic drain is rate-limited and the inline `schedule_logging` path runs once per `POST /api/expenses`.
 
 ### Idempotency marker (column J)
 
@@ -668,6 +670,7 @@ Because the reference production target is the Oracle AMD Micro instance, the se
 
 - Run a single app process by default. Do not scale by adding multiple uvicorn workers on the 1 GB host.
   - This is also a **correctness** constraint, not just a memory one: `POST /api/expenses` opens `config.duckdb` in **write mode** for the NBS rate cache (`convert_to_eur` can populate `exchange_rates` on a cache miss). DuckDB allows at most one writer per file across processes, so a second uvicorn worker would fail the second concurrent POST with `IO Error: ... is already opened in another process`. Single-worker keeps writes serialized through the event loop. If a future phase needs multiple workers, split rate lookup into a read-only fast path that only takes a write connection on cache miss, and arbitrate the writer through a dedicated background task.
+  - Within that single process, the API is already concurrent: FastAPI runs many `POST /api/expenses` handlers on the asyncio event loop, blocking DuckDB/gspread work goes to the default thread pool via `asyncio.to_thread`, and `schedule_logging` plus the lifespan's periodic `drain_pending` add background drain tasks on the same loop. Safety relies on (a) the singleton DuckDB engine in `duckdb_repo` so each file is opened once per process, (b) the optimistic `claim_token` in `claim_logging_job`, and (c) DuckDB's OCC turning lost claim races into a clean `TransactionException` → `None`. The single-process rule exists precisely so this in-process coordination is the only coordination we need; a second OS process (extra uvicorn worker, ad-hoc `python -c` scripts that open `budget_*.duckdb` while the server runs, etc.) bypasses all three layers and trips DuckDB's per-file write-lock. There is intentionally no external CLI for draining the queue — recovery is the lifespan task's job.
 - Avoid colocating extra infrastructure on the VPS: no separate Postgres, Redis, Celery, message broker, or background analytics service in Phase 1.
 - Treat Google Sheets sync as lightweight projection work, not as a second analytics engine.
 - Prefer on-demand or dirty-month scoped recomputation over broad periodic rebuilds.
@@ -796,7 +799,7 @@ Detailed plan: [phase1.md](phase1.md)
 - **PWA contract**: sends `expense_id` (UUID) + `category_id` + optional `tag_ids[]`. Events stay out of the PWA contract; `event_id` from the client is rejected.
 - DuckDB-backed expense ingestion with idempotent dedup via `expenses.id PRIMARY KEY` plus year-scoped `expense_id_registry` for cross-year ownership.
 - Historical data import (2012–present) imported via destructive `inv import-budget` / `inv import-budget-all` and verified via `inv verify-bootstrap-import` / `inv verify-bootstrap-import-all`. Bootstrap-imported rows populate `sheet_category` / `sheet_group` as audit provenance.
-- Google Sheets is **export-only**: a persistent `sheet_logging_jobs` queue plus an `asyncio` worker performs single-row appends. `inv drain-logging` is the durable retry path. No full-month rebuild, no DB-to-sheet reconciliation.
+- Google Sheets is **export-only**: a persistent `sheet_logging_jobs` queue plus an `asyncio` worker performs single-row appends. The lifespan-managed periodic `drain_pending` task is the durable retry path. No full-month rebuild, no DB-to-sheet reconciliation.
 - Monotonic `catalog_version` (singleton in `app_metadata`) bumped only by `inv import-catalog`; echoed by `GET /api/categories` and `POST /api/expenses`.
 - Destructive operator commands (`import-catalog`, `import-budget`, `import-budget-all`, `import-income`, `import-income-all`) print loud warnings and require `--yes`. The coordinated reset flow is: stop server → deploy code/assets → `import-catalog --yes` → `import-budget-all --yes` → `import-income-all --yes` → `verify-bootstrap-import-all` → `verify-income-equivalence-all` → start server. The legacy standalone `inv import-sheet` operator workflow is retired (Phase 1 has no partial re-import semantics).
 

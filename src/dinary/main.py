@@ -1,5 +1,7 @@
 """FastAPI application for dinary-server."""
 
+import asyncio
+import contextlib
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -13,7 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from dinary import __version__
 from dinary.api import categories, expenses, qr
 from dinary.config import settings
-from dinary.services import duckdb_repo
+from dinary.services import duckdb_repo, sheet_logging
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _BUILT_STATIC = _PROJECT_ROOT / "_static"
@@ -46,10 +48,49 @@ def _setup_logging() -> None:
     )
 
 
+_drain_logger = logging.getLogger("dinary.sheet_logging.drain_loop")
+
+
+async def _drain_loop() -> None:
+    interval = settings.sheet_logging_drain_interval_sec
+    enabled = sheet_logging.is_sheet_logging_enabled()
+    if not enabled or interval <= 0:
+        _drain_logger.info(
+            "sheet-logging drain loop disabled"
+            " (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)",
+        )
+        return
+    _drain_logger.info("sheet-logging drain loop started: interval=%gs", interval)
+    first = True
+    while True:
+        if not first:
+            await asyncio.sleep(interval)
+        first = False
+        try:
+            summary = await asyncio.to_thread(sheet_logging.drain_pending)
+            attempted = summary.get("attempted", 0)
+            cap_reached = summary.get("cap_reached", False)
+            skipped_expired = summary.get("skipped_expired", 0)
+            if attempted > 0 or cap_reached or skipped_expired > 0:
+                _drain_logger.info("drain sweep: %s", summary)
+            else:
+                _drain_logger.debug("drain sweep: %s", summary)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _drain_logger.exception("drain sweep failed")
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     duckdb_repo.init_config_db()
-    yield
+    drain_task = asyncio.create_task(_drain_loop(), name="sheet-logging-drain")
+    try:
+        yield
+    finally:
+        drain_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await drain_task
 
 
 def create_app() -> FastAPI:

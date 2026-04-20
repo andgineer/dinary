@@ -18,27 +18,28 @@ Two callers run the same ``_drain_one_job`` codepath:
 
   1. fire-and-forget task scheduled by ``POST /api/expenses``
      (opportunistic fast path that hides Sheets latency from the client);
-  2. ``inv drain-logging`` CLI (sweep-everything-pending; recovers
-     anything the async worker missed because of a process crash,
-     network blip, etc.).
+  2. lifespan-managed periodic ``drain_pending`` task (durable retry;
+     recovers anything the async worker missed because of a process
+     crash, network blip, etc.).
 
 Both authenticate via the same gspread client and share the
-``sheet_logging_jobs`` claim/release semantics so two workers cannot
-double-append the same expense row.
+``sheet_logging_jobs`` claim/release semantics so concurrent drains
+cannot double-append the same expense row.
 
 Idempotency: each appended row carries an opaque audit trail in column
 J of the form ``"[exp:<expense_id>] [exp:<expense_id>] …"``. Before
 extending the formula in column B, ``append_expense_atomic`` reads
 column J and skips the write if our marker is already there. This
 closes the "Sheets API call succeeded but the response was lost to a
-timeout" hole that would otherwise turn a single ``inv drain-logging``
-retry into a duplicate amount.
+timeout" hole that would otherwise turn a periodic-drain retry into a
+duplicate amount.
 """
 
 import asyncio
 import enum
 import logging
-from datetime import date
+import time
+from datetime import date, timedelta
 from decimal import Decimal
 
 import gspread
@@ -129,7 +130,8 @@ def schedule_logging(expense_id: str, year: int) -> None:
         loop.create_task(_async_drain_one(expense_id, year))
     except RuntimeError:
         logger.info(
-            "No running event loop; expense %s queued for next `inv drain-logging` sweep",
+            "No running event loop; expense %s queued for the next periodic drain"
+            " inside the FastAPI process",
             expense_id,
         )
 
@@ -381,9 +383,9 @@ def _append_row_to_sheet(  # noqa: PLR0913
 
     Cost: one extra column-A ``batch_get`` per drained expense on top
     of the existing ``get_all_values`` traffic. Sheets' default
-    60-reads/min quota stays comfortable: ``inv drain-logging`` is a
-    low-frequency catch-up sweep, and the inline ``schedule_logging``
-    fast path runs once per ``POST /api/expenses``.
+    60-reads/min quota stays comfortable: the in-process periodic drain
+    is rate-limited, and the inline ``schedule_logging`` fast path runs
+    once per ``POST /api/expenses``.
 
     Year-list maintenance after insert: when ``ensure_category_row``
     inserts a row, ``all_values`` grows by one and the original
@@ -475,42 +477,56 @@ def _append_row_to_sheet(  # noqa: PLR0913
 
 
 # ---------------------------------------------------------------------------
-# `inv drain-logging` driver: sweep every yearly DB and drain its queue
+# Periodic drain: sweep yearly DBs and drain the sheet_logging_jobs queue
 # ---------------------------------------------------------------------------
 
 
-def drain_pending() -> dict:  # noqa: C901, PLR0912
-    """Drain every `sheet_logging_jobs` row across all `budget_*.duckdb` files.
+def drain_pending(*, today: date | None = None) -> dict:  # noqa: C901, PLR0912, PLR0915
+    """Drain ``sheet_logging_jobs`` rows across budget yearly DBs.
 
-    Side effect of the per-year `get_budget_connection(year)` call below:
-    each year DB we touch lazily applies any pending budget migrations
-    (yoyo-managed). That's how the post-deploy `0002_rename_sheet_sync_jobs`
-    rename actually lands on production year DBs — `inv drain-logging`
-    visits each year and `init_budget_db(year)` migrates it on the way.
+    The periodic lifespan task in ``main.py`` calls this function every
+    ``DINARY_SHEET_LOGGING_DRAIN_INTERVAL_SEC`` seconds (default 300).
+    Side effect of each per-year ``get_budget_connection(year)`` call:
+    pending budget migrations (yoyo-managed) are applied lazily.
+
+    Parameters
+    ----------
+    today:
+        Injected date for testability. When ``None`` (the default and
+        the only production value), ``date.today()`` is used.
+
+    Environment knobs consumed
+    --------------------------
+    * ``DINARY_SHEET_LOGGING_DRAIN_MAX_ATTEMPTS_PER_ITERATION`` — hard
+      cap on ``_drain_one_job`` calls per invocation (default 15).
+    * ``DINARY_SHEET_LOGGING_DRAIN_INTER_ROW_DELAY_SEC`` — sync sleep
+      between attempts (default 1.0 s).
+    * ``DINARY_SHEET_LOGGING_DRAIN_MAX_AGE_DAYS`` — rows whose
+      ``expense.date`` is older than *today − max_age_days* are skipped
+      (default 90; ``0`` disables the TTL filter).
 
     Returns ``{"disabled": True}`` immediately when
     ``DINARY_SHEET_LOGGING_SPREADSHEET`` is not set.
 
     Otherwise returns a summary dict with cross-year totals:
 
-      * `years`: number of `budget_*.duckdb` files we visited.
-      * `attempted`: number of queue rows we tried to drain (NOT
-        "successfully claimed" — an unclaimable row still bumps this).
-      * `appended`: clean Sheets append + queue clear.
-      * `already_logged`: idempotency marker found, write skipped, queue
-        cleared. Means a previous attempt reached Sheets even if its
-        response was lost.
-      * `failed`: nothing was written (or write errored); queue row
-        stays `pending` for the next sweep.
-      * `recovered_with_duplicate`: Sheets append succeeded but our
-        claim was stolen before we could clear; force-deleted queue row.
-      * `noop_orphan`: queue row pointed at a non-existent expense.
+      * ``years`` — number of ``budget_*.duckdb`` files visited.
+      * ``attempted`` — ``_drain_one_job`` calls made (any outcome).
+      * ``appended`` — clean Sheets append + queue clear.
+      * ``already_logged`` — idempotency marker found, write skipped.
+      * ``failed`` — nothing written; queue row stays pending.
+      * ``recovered_with_duplicate`` — append OK but claim stolen.
+      * ``noop_orphan`` — queue row pointed at a deleted expense.
+      * ``skipped_expired`` — rows inside opened yearly DBs that the
+        TTL filter dropped. Rows in unopened older DBs (outside the
+        year window) are neither attempted nor counted.
+      * ``cap_reached`` — ``True`` iff the hard cap stopped the loop.
     """
     spreadsheet_id = get_logging_spreadsheet_id()
     if spreadsheet_id is None:
         return {"disabled": True}
 
-    summary = {
+    summary: dict = {
         "years": 0,
         "attempted": 0,
         "appended": 0,
@@ -518,36 +534,61 @@ def drain_pending() -> dict:  # noqa: C901, PLR0912
         "failed": 0,
         "recovered_with_duplicate": 0,
         "noop_orphan": 0,
+        "skipped_expired": 0,
     }
     data_dir = duckdb_repo.DATA_DIR
     if not data_dir.exists():
         return summary
 
-    for db_path in sorted(data_dir.glob("budget_*.duckdb")):
-        stem = db_path.stem
-        try:
-            year = int(stem.replace("budget_", ""))
-        except ValueError:
+    today = today if today is not None else date.today()
+    max_age = settings.sheet_logging_drain_max_age_days
+    if max_age > 0:
+        cutoff = today - timedelta(days=max_age)
+        years_to_visit = {today.year}
+        if cutoff.year != today.year:
+            years_to_visit.add(cutoff.year)
+    else:
+        cutoff = None
+        years_to_visit = set(duckdb_repo.iter_budget_years())
+
+    attempts = 0
+    cap_reached = False
+    max_attempts = settings.sheet_logging_drain_max_attempts_per_iteration
+    delay = settings.sheet_logging_drain_inter_row_delay_sec
+
+    for year in sorted(years_to_visit, reverse=True):
+        db_path = duckdb_repo.budget_path(year)
+        if not db_path.exists():
             continue
         summary["years"] += 1
 
         con = duckdb_repo.get_budget_connection(year)
         try:
-            expense_ids = duckdb_repo.list_logging_jobs(con)
+            expense_ids = duckdb_repo.list_logging_jobs(con, min_expense_date=cutoff)
+            if cutoff is not None:
+                total_in_year = duckdb_repo.count_logging_jobs(con)
+                summary["skipped_expired"] += total_in_year - len(expense_ids)
         finally:
             con.close()
 
         for expense_id in expense_ids:
+            if attempts >= max_attempts:
+                cap_reached = True
+                break
+            if delay > 0 and attempts > 0:
+                time.sleep(delay)
             summary["attempted"] += 1
             try:
                 outcome = _drain_one_job(expense_id, year, spreadsheet_id=spreadsheet_id)
             except gspread.exceptions.GSpreadException:
                 logger.exception("Sheets error draining expense %s", expense_id)
                 summary["failed"] += 1
+                attempts += 1
                 continue
             except Exception:
                 logger.exception("Unexpected error draining expense %s", expense_id)
                 summary["failed"] += 1
+                attempts += 1
                 continue
             if outcome is DrainResult.APPENDED:
                 summary["appended"] += 1
@@ -559,5 +600,14 @@ def drain_pending() -> dict:  # noqa: C901, PLR0912
                 summary["noop_orphan"] += 1
             else:
                 summary["failed"] += 1
+            attempts += 1
+        if cap_reached:
+            break
 
+    summary["cap_reached"] = cap_reached
+    if cap_reached:
+        logger.info(
+            "drain cap reached: %d attempts, remaining rows will resume next sweep",
+            attempts,
+        )
     return summary

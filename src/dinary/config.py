@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     import_sources_json: str = ""
     sheet_logging_spreadsheet: str = ""
 
+    sheet_logging_drain_interval_sec: float = 300.0
+    sheet_logging_drain_max_attempts_per_iteration: int = 15
+    sheet_logging_drain_inter_row_delay_sec: float = 1.0
+    sheet_logging_drain_max_age_days: int = 90
+
     host: str = "0.0.0.0"  # noqa: S104
     port: int = 8000
     log_level: str = "info"

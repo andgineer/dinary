@@ -2,6 +2,7 @@ import duckdb
 import pytest
 from fastapi.testclient import TestClient
 
+from dinary.config import settings
 from dinary.main import create_app
 from dinary.services import duckdb_repo
 
@@ -49,6 +50,16 @@ def _reset_duckdb_engine():
     _reset_duckdb_engine_state()
     yield
     _reset_duckdb_engine_state()
+
+
+@pytest.fixture(autouse=True)
+def _disable_drain_loop(monkeypatch):
+    """Silence the lifespan periodic drain for every test by default.
+
+    Dedicated lifespan tests in tests/test_main.py opt back in by
+    overriding this setting inside their own body.
+    """
+    monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0)
 
 
 @pytest.fixture

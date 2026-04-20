@@ -84,7 +84,7 @@ Sheet logging automatically appends every new expense to a Google Sheets spreads
 - The 3D category/event/tags are projected to 2D `(sheet_category, sheet_group)` via the `logging_mapping` table. If no mapping exists for a category, the category name is used as a fallback.
 - The same worksheet may hold **multiple years** at once. Rows are sorted by `(year, month, sheet_category, sheet_group)`, with newer year/month blocks on top. The worker reads the year from column A's underlying date value (Google displays it as e.g. `Apr-1`, but the cell stores `2026-04-01`), so January 2026 and January 2027 do **not** collide.
 - Each appended row carries an opaque idempotency marker `[exp:<expense_id>]` in column J. If a previous append for the same expense reached Google but the response was lost (timeout), the next attempt sees the marker and skips the duplicate write.
-- If the append fails (network error, quota), the job stays in a queue and is retried on the next `inv drain-logging` sweep.
+- If the append fails (network error, quota), the job stays in a queue and is retried automatically by the in-process periodic drain (every `DINARY_SHEET_LOGGING_DRAIN_INTERVAL_SEC` seconds, default 300; set to `0` to disable).
 
 ### Enabling
 
@@ -104,12 +104,13 @@ The spreadsheet must be shared with the service account from step 4 (Editor role
 
 Leave `DINARY_SHEET_LOGGING_SPREADSHEET` empty or unset. Expenses are still saved to DuckDB; only the Google Sheets append is skipped.
 
-### Draining pending jobs
+### Retries are automatic
 
-If the server was restarted while sheet-append jobs were in flight, run:
+Pending jobs are retried automatically by the in-process periodic drain task that runs inside the FastAPI process. On startup, all pending jobs are drained immediately; after that, the drain runs every `DINARY_SHEET_LOGGING_DRAIN_INTERVAL_SEC` seconds (default 300). There is no external CLI to trigger — recovery is fully automatic.
 
-```bash
-inv drain-logging
-```
+**Rate limiting.** Each periodic sweep attempts at most `DINARY_SHEET_LOGGING_DRAIN_MAX_ATTEMPTS_PER_ITERATION` queue rows (default 15) with `DINARY_SHEET_LOGGING_DRAIN_INTER_ROW_DELAY_SEC` seconds pause between attempts (default 1.0). One attempt makes 1-3 Google Sheets API calls (read the idempotency marker, optional append, optional dedupe-cleanup), so steady-state Sheets API usage is between ~3 and ~9 calls/min — comfortably inside the 60/min per-user quota. A backlog of 60 rows recovers in about 20 minutes after a restart; a backlog of 1000 rows takes a few hours. Raise the cap only if you are sure your Sheets quota headroom allows it.
 
-This sweeps all `budget_*.duckdb` files and retries every pending job.
+**TTL.** Rows for expenses older than `DINARY_SHEET_LOGGING_DRAIN_MAX_AGE_DAYS` days (default 90) are silently skipped and left in `sheet_logging_jobs`. If you need to log an older expense, delete and re-create it, or manually delete the skipped queue row with DuckDB CLI while the server is stopped.
+
+!!! warning
+    There is no external CLI to drain the queue while the server is running. DuckDB enforces single-writer per file across processes, so an external drainer would have to be coordinated with a server stop. The lifespan task is the supported recovery path.
