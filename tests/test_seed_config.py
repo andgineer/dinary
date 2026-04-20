@@ -16,6 +16,7 @@ from dinary.services.seed_config import (
     RUSSIA_TRIP_EVENT_NAME,
     SYNTHETIC_EVENT_PREFIX,
     Category,
+    _rebuild_logging_mapping_from_latest_year,
     rebuild_config_from_sheets,
     seed_from_sheet,
 )
@@ -194,6 +195,45 @@ class TestSeedFromSheet:
             )
 
         assert summary["logging_mappings_bootstrapped"] == len(logging_rows)
+
+    def test_logging_mapping_canonical_defaults_fallback(self):
+        """Direct coverage of the canonical-defaults-only fallback path
+        taken by ``_rebuild_logging_mapping_from_latest_year`` when
+        ``latest_year <= 0`` (operator edge case: all configured
+        ``import_sources`` entries carry ``year = 0``). The normal
+        ``seed_from_sheet`` path cannot reach ``latest_year = 0`` in
+        practice because it requires ``pairs`` to be non-empty, so we
+        exercise the rebuild directly on a seeded DB.
+        """
+        _patched_seed()
+
+        con = duckdb_repo.get_connection()
+        try:
+            con.execute("DELETE FROM logging_mapping_tags")
+            con.execute("DELETE FROM logging_mapping")
+            active_categories = con.execute(
+                "SELECT id, name FROM categories WHERE is_active ORDER BY id",
+            ).fetchall()
+            cat_id_by_name = {name: int(cid) for cid, name in active_categories}
+
+            written = _rebuild_logging_mapping_from_latest_year(
+                con,
+                latest_year=0,
+                cat_id_by_name=cat_id_by_name,
+            )
+
+            logging_rows = con.execute(
+                "SELECT category_id, event_id, sheet_category, sheet_group"
+                " FROM logging_mapping ORDER BY id",
+            ).fetchall()
+        finally:
+            con.close()
+
+        assert written == len(active_categories)
+        assert len(logging_rows) == len(active_categories)
+        rows_by_cat = {r[0]: r for r in logging_rows}
+        for cat_id, cat_name in active_categories:
+            assert rows_by_cat[cat_id] == (cat_id, None, cat_name, "")
 
     def test_logging_mapping_rebuilt_on_reseed(self):
         _patched_seed()

@@ -190,11 +190,15 @@ class TestPostExpense:
         self,
         _mock_convert_fn,
         client,
+        monkeypatch,
     ):
-        # Default ``_tmp_duckdb`` fixture does not clear
-        # ``sheet_logging_spreadsheet``; the conftest autouse only
-        # disables the drain loop, not the flag. So a POST with logging
-        # enabled must enqueue one job keyed on the integer PK.
+        # Explicitly set a non-empty ``sheet_logging_spreadsheet`` so
+        # the test is deterministic regardless of the ambient
+        # ``DINARY_SHEET_LOGGING_SPREADSHEET`` env var (CI runs with
+        # it unset). The drain loop is still disabled by the autouse
+        # ``_disable_drain_loop`` fixture, so enqueued jobs just sit
+        # in the queue for us to assert on.
+        monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "test-spreadsheet-id")
         resp = client.post(
             "/api/expenses",
             json={
