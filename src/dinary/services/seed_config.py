@@ -1193,7 +1193,11 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
                 continue
             insert_mapping(latest_year, cat_name, "", cat_name, (), None)
 
-    logging_bootstrapped = _rebuild_logging_mapping_from_year_zero(con)
+    logging_bootstrapped = _rebuild_logging_mapping_from_latest_year(
+        con,
+        latest_year=latest_year,
+        cat_id_by_name=cat_id_by_name,
+    )
 
     return {
         "category_groups": len(group_id_by_title),
@@ -1205,54 +1209,133 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
     }
 
 
-def _rebuild_logging_mapping_from_year_zero(con: duckdb.DuckDBPyConnection) -> int:
-    """Rebuild ``logging_mapping`` from the freshly-seeded year=0 import_mapping.
+def _rebuild_logging_mapping_from_latest_year(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    latest_year: int,
+    cat_id_by_name: dict[str, int],
+) -> int:
+    """Rebuild ``logging_mapping`` from latest_year ``import_mapping`` rows only.
 
-    Called after ``seed_classification_catalog`` step 5 populates
-    ``import_mapping`` with the current active taxonomy ids. The
-    caller has already wiped ``logging_mapping(_tags)`` in step 0 so
-    we start from an empty table.
+    Runtime sheet logging targets a single live spreadsheet whose
+    layout reflects the user's *current* conventions, not the union
+    of every historical sheet ever imported. Sourcing
+    ``logging_mapping`` from year=0 (the union of all historical
+    pairs) used to flood the table with stale capitalisations and
+    cross-category aliases — e.g. category ``гаджеты`` had seven
+    historical rows including ``("Машина", "Gadgets")``, and the
+    projection's "first row by id" tie-breaker would pick the
+    historical alias instead of the canonical ``("гаджеты", "")``.
+    Sourcing from ``latest_year`` (the most recently configured
+    ``import_sources`` row) keeps the table small, predictable, and
+    in sync with the taxonomy step 8 of ``seed_classification_catalog``
+    has already filled in for missing canonical categories.
 
-    Under the FK-safe rename semantics, after an ``inv import-catalog``
-    run the logging mappings must reference *current active* taxonomy
-    ids. Previously this helper preserved operator edits by only
-    running on an empty table; under the plan's new contract that
-    trade-off is explicitly flipped — operator edits survive only if
-    represented in the seed rules, in exchange for guaranteed
-    consistency with the taxonomy.
+    Dedup invariant: for each canonical key
+    ``(category_id, event_id, sorted(tag_ids))`` the rebuilt
+    ``logging_mapping`` holds at most one row. ``import_mapping``
+    can legitimately carry multiple ``(sheet_category, sheet_group)``
+    pairs that resolve to the same 3D key (step 7 emits one row per
+    distinct legacy pair sharing an event); for runtime *output* we
+    only need one. The first one seen by ``id ASC`` wins and the
+    rest are dropped.
+
+    Canonical-default safety net: every active canonical category
+    must have a ``(event=NULL, tags=[])`` row so the bare API path
+    (``POST /api/expenses`` with only ``category``) always finds an
+    exact-match row. Step 8 already guarantees a default
+    ``(cat_name, "")`` import_mapping row for any category that
+    would otherwise have none in ``latest_year``; this rebuild
+    additionally synthesises the canonical row for any category
+    whose ``latest_year`` rows happen to all carry an event or tag
+    set, so the bare API path can never fall through to the
+    "first row by id" branch.
+
+    Called after ``seed_classification_catalog`` step 8 populates
+    ``import_mapping`` for ``latest_year``. The caller has already
+    wiped ``logging_mapping(_tags)`` in step 0 so we start empty.
     """
+    if latest_year <= 0:
+        # No historical sheets configured — synthesise canonical
+        # defaults for every active category so the API path still
+        # has somewhere to land.
+        return _seed_canonical_defaults_only(con, cat_id_by_name)
+
     rows = con.execute(
         "SELECT id, category_id, event_id, sheet_category, sheet_group"
-        " FROM import_mapping WHERE year = 0 ORDER BY id",
+        " FROM import_mapping WHERE year = ? ORDER BY id",
+        [latest_year],
     ).fetchall()
-    if not rows:
-        return 0
+    tag_rows = con.execute(
+        "SELECT mapping_id, tag_id FROM import_mapping_tags"
+        " WHERE mapping_id IN (SELECT id FROM import_mapping WHERE year = ?)",
+        [latest_year],
+    ).fetchall()
+    tags_by_mapping: dict[int, list[int]] = {}
+    for mapping_id, tag_id in tag_rows:
+        tags_by_mapping.setdefault(int(mapping_id), []).append(int(tag_id))
+
+    seen_keys: set[tuple[int, int | None, tuple[int, ...]]] = set()
+    selected: list[tuple[int, int | None, str, str, tuple[int, ...]]] = []
+    for old_id, category_id, event_id, sheet_category, sheet_group in rows:
+        tag_set = tuple(sorted(tags_by_mapping.get(int(old_id), [])))
+        key = (int(category_id), event_id, tag_set)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        selected.append((int(category_id), event_id, sheet_category, sheet_group, tag_set))
+
+    # Synthesise canonical defaults for any category not already
+    # covered by an exact (event=NULL, tags=[]) row. Step 8 covers
+    # most categories; this catches the corner case where the only
+    # latest_year rows for a category carry an event or tag set.
+    for cat_name, cat_id in cat_id_by_name.items():
+        key = (int(cat_id), None, ())
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        selected.append((int(cat_id), None, cat_name, "", ()))
 
     next_id = 1
-    old_to_new: dict[int, int] = {}
-    for old_id, category_id, event_id, sheet_category, sheet_group in rows:
+    for category_id, event_id, sheet_category, sheet_group, tag_set in selected:
         con.execute(
             "INSERT INTO logging_mapping"
             " (id, category_id, event_id, sheet_category, sheet_group)"
             " VALUES (?, ?, ?, ?, ?)",
             [next_id, category_id, event_id, sheet_category, sheet_group],
         )
-        old_to_new[int(old_id)] = next_id
+        for tag_id in tag_set:
+            con.execute(
+                "INSERT INTO logging_mapping_tags (mapping_id, tag_id) VALUES (?, ?)",
+                [next_id, tag_id],
+            )
         next_id += 1
 
-    tag_rows = con.execute(
-        "SELECT mapping_id, tag_id FROM import_mapping_tags"
-        " WHERE mapping_id IN ("
-        "   SELECT id FROM import_mapping WHERE year = 0"
-        " )",
-    ).fetchall()
-    for mapping_id, tag_id in tag_rows:
-        con.execute(
-            "INSERT INTO logging_mapping_tags (mapping_id, tag_id) VALUES (?, ?)",
-            [old_to_new[int(mapping_id)], int(tag_id)],
-        )
+    return len(selected)
 
-    return len(rows)
+
+def _seed_canonical_defaults_only(
+    con: duckdb.DuckDBPyConnection,
+    cat_id_by_name: dict[str, int],
+) -> int:
+    """Fallback path for fresh installs without any configured ``import_sources``.
+
+    Without a latest_year to copy from, every category gets a single
+    canonical default row ``(sheet_category=name, sheet_group='',
+    event=NULL, tags=[])``. The result is the same shape as a
+    ``latest_year`` rebuild whose source was empty — guaranteed to
+    keep the API path functional.
+    """
+    next_id = 1
+    for cat_name, cat_id in cat_id_by_name.items():
+        con.execute(
+            "INSERT INTO logging_mapping"
+            " (id, category_id, event_id, sheet_category, sheet_group)"
+            " VALUES (?, ?, NULL, ?, ?)",
+            [next_id, int(cat_id), cat_name, ""],
+        )
+        next_id += 1
+    return len(cat_id_by_name)
 
 
 # ---------------------------------------------------------------------------

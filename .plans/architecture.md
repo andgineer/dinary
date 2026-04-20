@@ -577,6 +577,14 @@ The async worker maps `(expense.category_id, expense.event_id, expense tag set)`
 - For Phase-1 manual rows `event_id` is always NULL, so the effective path is "exact match on `(category_id, tag set)`" then category-only fallback. The `event_id`-aware branch is kept for the future receipt-processing pipeline.
 - This is **best-effort placement, not a round-trip guarantee**. Tags whose combination does not match an exact mapping row use the best available fallback.
 
+### `logging_mapping` rebuild invariant
+
+`logging_mapping` is rebuilt from `import_mapping` rows of the **latest** configured year (`MAX(year) FROM import_sources WHERE year > 0`), never from the cross-year `year=0` aggregation. Historical years carry idiosyncratic `(sheet_category, sheet_group)` capitalisations and cross-category aliases that are correct for replaying old sheets but wrong for runtime output: e.g. `("Машина", "Gadgets")` historically resolved to canonical `гаджеты`, and copying that row into `logging_mapping` would make `POST /api/expenses {"category": "гаджеты"}` write `Машина / Gadgets` to the live logging sheet. Sourcing from the latest year keeps the table small (~one row per canonical category plus per-event/per-tag variants the user actually uses today) and predictable.
+
+Rebuild dedup invariant: for each canonical key `(category_id, event_id, sorted(tag_ids))` the rebuilt `logging_mapping` holds **at most one row**. `import_mapping` can legitimately carry several `(sheet_category, sheet_group)` pairs that resolve to the same 3D key (step 7 of `seed_classification_catalog` emits one row per distinct legacy pair sharing an event); for runtime *output* only one is needed and the first by id wins.
+
+Canonical-default safety net: every active canonical category is guaranteed to have a `(sheet_category=categories.name, sheet_group='', event=NULL, tags=[])` row, so the bare API path (`POST /api/expenses` with only `category`) always finds an exact-match row and never falls through to the "first row by id" branch. Step 8 of `seed_classification_catalog` already adds such defaults to the latest year of `import_mapping`; the rebuild additionally synthesises them for any category whose latest-year rows happen to all carry an event or tag set.
+
 ### Sheet layout contract
 
 The sheet logging worker writes to a flat-table layout (one tab holds **every year** of expenses):

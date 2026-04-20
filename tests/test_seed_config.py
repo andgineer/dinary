@@ -134,28 +134,66 @@ class TestSeedFromSheet:
             con.close()
         assert count > 0
 
-    def test_logging_mapping_bootstrapped_from_year_zero(self):
-        """import-config mirrors year=0 ``import_mapping`` rows into
-        ``logging_mapping`` so runtime sheet logging works out of the box."""
+    def test_logging_mapping_bootstrapped_from_latest_year(self):
+        """``logging_mapping`` is rebuilt from latest_year ``import_mapping``
+        rows (deduped by canonical 3D key), not from the cross-year year=0
+        aggregation. Every active canonical category is guaranteed to have
+        at least one ``(event=NULL, tags=[])`` row so the bare
+        ``POST /api/expenses`` path always finds an exact match."""
         summary = _patched_seed()
 
         con = duckdb_repo.get_connection()
         try:
-            year_zero = con.execute(
-                "SELECT id, category_id, event_id, sheet_category, sheet_group"
-                " FROM import_mapping WHERE year = 0 ORDER BY id",
+            active_categories = con.execute(
+                "SELECT id, name FROM categories WHERE is_active ORDER BY id",
             ).fetchall()
-            assert year_zero, "test setup must yield year=0 import_mapping rows"
 
             logging_rows = con.execute(
-                "SELECT category_id, event_id, sheet_category, sheet_group"
-                " FROM logging_mapping ORDER BY id",
+                "SELECT m.category_id, m.event_id, m.sheet_category, m.sheet_group,"
+                " COALESCE("
+                "   (SELECT LIST(mt.tag_id ORDER BY mt.tag_id)"
+                "    FROM logging_mapping_tags mt"
+                "    WHERE mt.mapping_id = m.id),"
+                "   []::INTEGER[]"
+                " )"
+                " FROM logging_mapping m ORDER BY m.id",
             ).fetchall()
         finally:
             con.close()
-        expected = [(r[1], r[2], r[3], r[4]) for r in year_zero]
-        assert logging_rows == expected
-        assert summary["logging_mappings_bootstrapped"] == len(year_zero)
+
+        assert active_categories, "test setup must seed at least one active category"
+        assert logging_rows, "logging_mapping must not be empty after seed"
+
+        # Dedup invariant: at most one row per canonical 3D key.
+        keys = [(r[0], r[1], tuple(r[4])) for r in logging_rows]
+        assert len(keys) == len(set(keys)), (
+            "logging_mapping must hold at most one row per (category, event, tag_set) key; "
+            f"got duplicates in {keys}"
+        )
+
+        # Canonical-default safety net: every active category has at
+        # least one (event=NULL, tags=[]) row whose sheet_category equals
+        # the canonical category name.
+        rows_by_cat: dict[int, list[tuple]] = {}
+        for cat_id, event_id, sheet_category, sheet_group, tag_ids in logging_rows:
+            rows_by_cat.setdefault(cat_id, []).append(
+                (event_id, sheet_category, sheet_group, tuple(tag_ids))
+            )
+        for cat_id, cat_name in active_categories:
+            cat_rows = rows_by_cat.get(cat_id, [])
+            default_rows = [r for r in cat_rows if r[0] is None and r[3] == ()]
+            assert default_rows, (
+                f"category id={cat_id} ({cat_name!r}) has no (event=NULL, tags=[]) "
+                f"default row in logging_mapping"
+            )
+            canonical_defaults = [r for r in default_rows if r[1] == cat_name and r[2] == ""]
+            assert canonical_defaults, (
+                f"category id={cat_id} ({cat_name!r}): default row exists but "
+                f"sheet_category/sheet_group are not canonical ({cat_name!r}, ''); "
+                f"got {default_rows}"
+            )
+
+        assert summary["logging_mappings_bootstrapped"] == len(logging_rows)
 
     def test_logging_mapping_rebuilt_on_reseed(self):
         _patched_seed()
