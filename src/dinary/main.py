@@ -70,8 +70,9 @@ async def _drain_loop() -> None:
             summary = await asyncio.to_thread(sheet_logging.drain_pending)
             attempted = summary.get("attempted", 0)
             cap_reached = summary.get("cap_reached", False)
-            skipped_expired = summary.get("skipped_expired", 0)
-            if attempted > 0 or cap_reached or skipped_expired > 0:
+            poisoned = summary.get("poisoned", 0)
+            failed = summary.get("failed", 0)
+            if attempted > 0 or cap_reached or poisoned > 0 or failed > 0:
                 _drain_logger.info("drain sweep: %s", summary)
             else:
                 _drain_logger.debug("drain sweep: %s", summary)
@@ -83,7 +84,7 @@ async def _drain_loop() -> None:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    duckdb_repo.init_config_db()
+    duckdb_repo.init_db()
     drain_task = asyncio.create_task(_drain_loop(), name="sheet-logging-drain")
     try:
         yield

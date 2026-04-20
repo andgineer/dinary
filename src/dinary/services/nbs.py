@@ -1,7 +1,7 @@
 """NBS exchange rate client with DuckDB caching.
 
 Fetches middle rates from kurs.resenje.org (National Bank of Serbia).
-Rates are cached in config.duckdb exchange_rates table.
+Rates are cached in the ``exchange_rates`` table in ``data/dinary.duckdb``.
 """
 
 import logging
@@ -136,7 +136,7 @@ def _resolve_from_frankfurter(con, rate_date: date, currency: str) -> Decimal | 
 def get_rate(con, rate_date: date, currency: str) -> Decimal:
     """Get NBS middle rate for currency on date (1 unit = ? RSD).
 
-    Uses DuckDB cache in config.duckdb. Falls back to previous working days
+    Uses DuckDB cache in data/dinary.duckdb. Falls back to previous working days
     if the target date is a weekend/holiday, then to Frankfurter (ECB) when
     NBS has no data for the currency (e.g. RUB before Dec 2012).
     Returns Decimal(1) for RSD.
@@ -156,20 +156,24 @@ def get_rate(con, rate_date: date, currency: str) -> Decimal:
     raise ValueError(msg)
 
 
-def convert_to_eur(
+def convert(
     con,
-    amount_original: Decimal,
-    currency_original: str,
+    amount: Decimal,
+    from_ccy: str,
+    to_ccy: str,
     rate_date: date,
-) -> Decimal:
-    """Convert amount in currency_original to EUR using NBS cross-rate.
+) -> tuple[Decimal, Decimal]:
+    """Convert *amount* from *from_ccy* to *to_ccy* using NBS rates.
 
-    Formula: amount_eur = amount_original * rate(currency) / rate(EUR)
-    Both rates are NBS middle rates in RSD.
+    Returns ``(converted_amount, rate)`` where ``rate`` is the
+    from_ccy/to_ccy exchange rate used (1 unit of from_ccy = rate units
+    of to_ccy). When ``from_ccy == to_ccy``, returns ``(amount, 1)``.
     """
-    if currency_original.upper() == "EUR":
-        return amount_original
+    if from_ccy.upper() == to_ccy.upper():
+        return amount, Decimal(1)
 
-    rate_cur = get_rate(con, rate_date, currency_original)
-    rate_eur = get_rate(con, rate_date, "EUR")
-    return (amount_original * rate_cur / rate_eur).quantize(Decimal("0.01"))
+    rate_from = get_rate(con, rate_date, from_ccy)
+    rate_to = get_rate(con, rate_date, to_ccy)
+    rate = (rate_from / rate_to).quantize(Decimal("0.000001"))
+    converted = (amount * rate).quantize(Decimal("0.01"))
+    return converted, rate

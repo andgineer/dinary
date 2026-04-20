@@ -1,4 +1,3 @@
-import duckdb
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,49 +6,27 @@ from dinary.main import create_app
 from dinary.services import duckdb_repo
 
 
-def _reset_duckdb_engine_state() -> None:
-    """Tear down the process-wide DuckDB engine between tests.
+def _reset_duckdb_singleton() -> None:
+    """Tear down the process-wide DuckDB connection between tests.
 
-    Lives in conftest (not in production `duckdb_repo`) because
-    nothing in production should ever close the singleton engine
-    out from under live connections; only the test harness needs
-    this hook.
-
-    `duckdb_repo` keeps a single engine for the whole process so
-    `config.duckdb` and every `budget_YYYY.duckdb` can coexist
-    without DuckDB's "unique file handle" conflict (see the
-    `duckdb_repo` module docstring for the full rationale). That
-    engine is shared across tests too — and since most tests
-    `monkeypatch` `DATA_DIR` / `CONFIG_DB` to a per-test `tmp_path`,
-    the engine from the previous test would still hold ATTACHes
-    pointing at the previous test's tmp dir.
+    Lives in conftest (not in production ``duckdb_repo``) because
+    nothing in production should ever close the singleton out from
+    under live callers; only the test harness needs this hook. The
+    production repo keeps a single connection to ``data/dinary.duckdb``
+    for the whole process; most tests monkeypatch ``DB_PATH`` (and
+    ``DATA_DIR``) to a per-test ``tmp_path``, so the singleton from
+    the previous test must be closed or it would still point at the
+    previous test's tmp file.
     """
-    with duckdb_repo._engine_lock:  # noqa: SLF001
-        state = duckdb_repo._engine_state  # noqa: SLF001
-        if state.engine is not None:
-            try:
-                state.engine.close()
-            except duckdb.Error:
-                duckdb_repo.logger.exception(
-                    "Failed to close singleton engine in test reset",
-                )
-        state.engine = None
-        state.config_attached = False
-        state.attached_budget_years = set()
+    duckdb_repo.close_connection()
 
 
 @pytest.fixture(autouse=True)
-def _reset_duckdb_engine():
-    """Reset the singleton engine before AND after each test.
-
-    Reset before so a test that forgets its own monkeypatch doesn't
-    inherit an ATTACH into a stale tmp dir; reset after so the next
-    test always starts with a clean engine that will re-ATTACH
-    against the freshly monkeypatched paths on first access.
-    """
-    _reset_duckdb_engine_state()
+def _reset_duckdb_connection():
+    """Reset the singleton connection before AND after each test."""
+    _reset_duckdb_singleton()
     yield
-    _reset_duckdb_engine_state()
+    _reset_duckdb_singleton()
 
 
 @pytest.fixture(autouse=True)
@@ -64,6 +41,15 @@ def _disable_drain_loop(monkeypatch):
 
 @pytest.fixture
 def client():
+    """FastAPI TestClient that surfaces server-side exceptions as HTTP 500.
+
+    The default ``TestClient`` re-raises unhandled exceptions straight into
+    the test body, which prevents assertions on the HTTP response Starlette
+    would actually serve to a real client. ``raise_server_exceptions=False``
+    flips the client to production-like behavior: unhandled exceptions go
+    through Starlette's error-handling middleware and come back as 500 with
+    an empty body, just like a deployed instance would see.
+    """
     app = create_app()
-    with TestClient(app) as c:
+    with TestClient(app, raise_server_exceptions=False) as c:
         yield c

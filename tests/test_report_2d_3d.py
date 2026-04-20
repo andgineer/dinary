@@ -6,6 +6,10 @@ import allure
 import pytest
 
 from dinary.imports import report_2d_3d as report_module
+from dinary.imports.expense_import import (
+    ParsedSheetRow,
+    resolve_row_to_3d,
+)
 from dinary.imports.report_2d_3d import (
     DETAIL_COLUMNS,
     SUMMARY_COLUMNS,
@@ -22,53 +26,59 @@ from dinary.imports.report_2d_3d import (
     render_years,
 )
 from dinary.services import duckdb_repo
-from dinary.imports.expense_import import (
-    ParsedSheetRow,
-    resolve_row_to_3d,
-)
 
 
 @pytest.fixture(autouse=True)
 def _tmp_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "CONFIG_DB", tmp_path / "config.duckdb")
+    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
 
 
-def _seed_config():
-    """Seed a minimal config DB for resolution tests."""
-    duckdb_repo.init_config_db()
-    con = duckdb_repo.get_config_connection(read_only=False)
+def _seed_catalog():
+    """Seed a minimal catalog into ``dinary.duckdb`` for resolution tests."""
+    duckdb_repo.init_db()
+    con = duckdb_repo.get_connection()
     try:
         con.execute(
             "INSERT INTO import_sources"
             " (year, spreadsheet_id, worksheet_name, layout_key, notes)"
             " VALUES (2024, 'sid', '', 'default', NULL)",
         )
-        con.execute("INSERT INTO category_groups VALUES (1, 'g', 1)")
-        con.execute("INSERT INTO categories VALUES (1, 'еда', 1)")
-        con.execute("INSERT INTO categories VALUES (2, 'мобильник', 1)")
-        con.execute("INSERT INTO categories VALUES (3, 'кафе', 1)")
-        con.execute("INSERT INTO categories VALUES (4, 'аренда', 1)")
-        con.execute("INSERT INTO categories VALUES (5, 'коммунальные', 1)")
-        con.execute("INSERT INTO categories VALUES (6, 'бытовая техника', 1)")
-        con.execute("INSERT INTO categories VALUES (7, 'транспорт', 1)")
-        con.execute("INSERT INTO categories VALUES (8, 'электроника', 1)")
-        con.execute("INSERT INTO categories VALUES (9, 'подарки', 1)")
-        con.execute("INSERT INTO categories VALUES (10, 'сервисы', 1)")
-        con.execute("INSERT INTO categories VALUES (11, 'инструменты', 1)")
-        con.execute("INSERT INTO categories VALUES (12, 'гаджеты', 1)")
-        con.execute("INSERT INTO tags VALUES (1, 'собака')")
-        con.execute("INSERT INTO tags VALUES (2, 'Аня')")
-        con.execute("INSERT INTO tags VALUES (3, 'релокация')")
+        con.execute(
+            "INSERT INTO category_groups (id, name, sort_order, is_active)"
+            " VALUES (1, 'g', 1, TRUE)",
+        )
+        for cid, name in [
+            (1, "еда"),
+            (2, "мобильник"),
+            (3, "кафе"),
+            (4, "аренда"),
+            (5, "коммунальные"),
+            (6, "бытовая техника"),
+            (7, "транспорт"),
+            (8, "электроника"),
+            (9, "подарки"),
+            (10, "сервисы"),
+            (11, "инструменты"),
+            (12, "гаджеты"),
+        ]:
+            con.execute(
+                "INSERT INTO categories (id, name, group_id, is_active) VALUES (?, ?, 1, TRUE)",
+                [cid, name],
+            )
+        for tid, name in [(1, "собака"), (2, "Аня"), (3, "релокация")]:
+            con.execute(
+                "INSERT INTO tags (id, name, is_active) VALUES (?, ?, TRUE)",
+                [tid, name],
+            )
         con.execute(
             "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
-            " VALUES (1, 'отпуск-2024', '2024-01-01', '2024-12-31', true)",
+            " VALUES (1, 'отпуск-2024', '2024-01-01', '2024-12-31', TRUE)",
         )
         con.execute(
             "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
-            " VALUES (2, 'релокация-в-Сербию', '2022-04-01', '2030-12-31', false)",
+            " VALUES (2, 'релокация-в-Сербию', '2022-04-01', '2030-12-31', FALSE)",
         )
-        # import_mapping rows
         con.execute(
             "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
             " category_id, event_id) VALUES (1, 0, 'еда', 'собака', 1, NULL)",
@@ -100,8 +110,8 @@ def _seed_config():
 @allure.feature("Row resolution")
 class TestResolveRowTo3d:
     def test_mapping_resolution_kind(self):
-        _seed_config()
-        con = duckdb_repo.get_config_connection(read_only=True)
+        _seed_catalog()
+        con = duckdb_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -110,8 +120,6 @@ class TestResolveRowTo3d:
                 comment="lunch",
                 amount_eur=45.0,
                 year=2024,
-                month=1,
-                row_idx=1,
                 travel_event_id=1,
                 business_trip_event_id=None,
                 relocation_event_id=2,
@@ -125,8 +133,8 @@ class TestResolveRowTo3d:
             con.close()
 
     def test_event_from_mapping(self):
-        _seed_config()
-        con = duckdb_repo.get_config_connection(read_only=True)
+        _seed_catalog()
+        con = duckdb_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -135,8 +143,6 @@ class TestResolveRowTo3d:
                 comment="resort",
                 amount_eur=30.0,
                 year=2024,
-                month=1,
-                row_idx=1,
                 travel_event_id=1,
                 business_trip_event_id=None,
                 relocation_event_id=2,
@@ -149,8 +155,8 @@ class TestResolveRowTo3d:
 
     def test_heuristic_detection_small_amount(self):
         """Amount < 200 EUR on 'аренда'+'релокация' → 'коммунальные' via heuristic."""
-        _seed_config()
-        con = duckdb_repo.get_config_connection(read_only=True)
+        _seed_catalog()
+        con = duckdb_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -159,8 +165,6 @@ class TestResolveRowTo3d:
                 comment="water bill",
                 amount_eur=50.0,
                 year=2024,
-                month=1,
-                row_idx=1,
                 travel_event_id=1,
                 business_trip_event_id=None,
                 relocation_event_id=2,
@@ -173,8 +177,8 @@ class TestResolveRowTo3d:
 
     def test_no_heuristic_for_large_amount(self):
         """Amount >= 200 EUR on 'аренда'+'релокация' stays 'аренда'."""
-        _seed_config()
-        con = duckdb_repo.get_config_connection(read_only=True)
+        _seed_catalog()
+        con = duckdb_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -183,8 +187,6 @@ class TestResolveRowTo3d:
                 comment="monthly rent",
                 amount_eur=500.0,
                 year=2024,
-                month=1,
-                row_idx=1,
                 travel_event_id=1,
                 business_trip_event_id=None,
                 relocation_event_id=2,
@@ -196,8 +198,8 @@ class TestResolveRowTo3d:
             con.close()
 
     def test_beneficiary_tag_added(self):
-        _seed_config()
-        con = duckdb_repo.get_config_connection(read_only=True)
+        _seed_catalog()
+        con = duckdb_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -206,8 +208,6 @@ class TestResolveRowTo3d:
                 comment="phone case",
                 amount_eur=30.0,
                 year=2024,
-                month=1,
-                row_idx=1,
                 travel_event_id=1,
                 business_trip_event_id=None,
                 relocation_event_id=None,
@@ -219,8 +219,8 @@ class TestResolveRowTo3d:
             con.close()
 
     def test_returns_none_for_unknown_pair(self):
-        _seed_config()
-        con = duckdb_repo.get_config_connection(read_only=True)
+        _seed_catalog()
+        con = duckdb_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -229,8 +229,6 @@ class TestResolveRowTo3d:
                 comment="",
                 amount_eur=100.0,
                 year=2024,
-                month=1,
-                row_idx=1,
                 travel_event_id=1,
                 business_trip_event_id=None,
                 relocation_event_id=None,
@@ -241,8 +239,7 @@ class TestResolveRowTo3d:
 
 
 # ---------------------------------------------------------------------------
-# Post-import fix simulation (covered end-to-end via resolve_row_to_3d so
-# the report doesn't have to import private helpers from expense_import)
+# Post-import fix simulation
 # ---------------------------------------------------------------------------
 
 
@@ -250,9 +247,8 @@ class TestResolveRowTo3d:
 @allure.feature("Post-import fix simulation")
 class TestPostImportFixViaResolve:
     def test_comment_keyed_fix_overrides_mapping(self):
-        """A comment that matches a post-import fix wins over the mapping."""
-        _seed_config()
-        con = duckdb_repo.get_config_connection(read_only=True)
+        _seed_catalog()
+        con = duckdb_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -261,8 +257,6 @@ class TestPostImportFixViaResolve:
                 comment="эпоксидка гриль зарядник батарейки ножи аккумулятор",
                 amount_eur=100.0,
                 year=2024,
-                month=1,
-                row_idx=1,
                 travel_event_id=1,
                 business_trip_event_id=None,
                 relocation_event_id=None,
@@ -275,8 +269,8 @@ class TestPostImportFixViaResolve:
             con.close()
 
     def test_unmatched_comment_keeps_mapping(self):
-        _seed_config()
-        con = duckdb_repo.get_config_connection(read_only=True)
+        _seed_catalog()
+        con = duckdb_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -285,8 +279,6 @@ class TestPostImportFixViaResolve:
                 comment="regular grocery shopping",
                 amount_eur=45.0,
                 year=2024,
-                month=1,
-                row_idx=1,
                 travel_event_id=1,
                 business_trip_event_id=None,
                 relocation_event_id=None,
@@ -504,15 +496,11 @@ class TestRenderers:
 @allure.feature("Detail collection")
 class TestCollectDetailRows:
     def test_collects_resolved_rows_for_year(self, monkeypatch):
-        _seed_config()
+        _seed_catalog()
 
-        # We need the synthetic vacation event for 2024 so
-        # build_resolution_context returns a non-None ctx; _seed_config
-        # already inserts event id=1 'отпуск-2024' which matches
-        # `_synthetic_event_for_year(2024)` ("отпуск-2024").
         seen_years: list[int] = []
 
-        def fake_iter(year, *, config_con=None):
+        def fake_iter(year, *, con=None):
             seen_years.append(year)
             yield ParsedSheetRow(
                 row_idx=10,
@@ -524,6 +512,7 @@ class TestCollectDetailRows:
                 beneficiary_raw="",
                 amount_original=45.0,
                 currency_original="EUR",
+                amount_app=0.0,
                 amount_eur=45.0,
             )
             yield ParsedSheetRow(
@@ -536,6 +525,7 @@ class TestCollectDetailRows:
                 beneficiary_raw="",
                 amount_original=30.0,
                 currency_original="EUR",
+                amount_app=0.0,
                 amount_eur=30.0,
             )
 
@@ -558,9 +548,9 @@ class TestCollectDetailRows:
         assert by_cat["мобильник"].resolution_kind == "mapping"
 
     def test_unresolved_row_increments_skipped(self, monkeypatch):
-        _seed_config()
+        _seed_catalog()
 
-        def fake_iter(_year, *, config_con=None):
+        def fake_iter(_year, *, con=None):
             yield ParsedSheetRow(
                 row_idx=10,
                 year=2024,
@@ -571,6 +561,7 @@ class TestCollectDetailRows:
                 beneficiary_raw="",
                 amount_original=10.0,
                 currency_original="EUR",
+                amount_app=0.0,
                 amount_eur=10.0,
             )
 
@@ -579,27 +570,16 @@ class TestCollectDetailRows:
         stats = CollectStats()
         rows = collect_detail_rows(years=[2024], stats=stats)
 
-        # Whatever the row is, it must not produce any output and must
-        # be accounted for either as "unresolved" or "errors", never as
-        # a real row. This keeps the test robust against future changes
-        # to the resolution heuristics.
         assert rows == []
         assert stats.rows == 0
         assert stats.skipped_unresolved + stats.skipped_errors == 1
 
     def test_unresolved_row_lands_in_skipped_unresolved_bucket(self, monkeypatch):
-        """Unknown-but-syntactically-valid 2D pairs must land in
-        ``skipped_unresolved``, not ``skipped_errors``.
+        """Unknown-but-syntactically-valid 2D pairs land in
+        ``skipped_unresolved``, not ``skipped_errors``."""
+        _seed_catalog()
 
-        This pins the bucket choice (separate from the robust counter
-        in the previous test) so a future bug that re-routes
-        "no mapping" into the error bucket — e.g. by raising instead
-        of returning ``None`` from ``resolve_row_to_3d`` — fails
-        loudly here.
-        """
-        _seed_config()
-
-        def fake_iter(_year, *, config_con=None):
+        def fake_iter(_year, *, con=None):
             yield ParsedSheetRow(
                 row_idx=10,
                 year=2024,
@@ -610,6 +590,7 @@ class TestCollectDetailRows:
                 beneficiary_raw="",
                 amount_original=10.0,
                 currency_original="EUR",
+                amount_app=0.0,
                 amount_eur=10.0,
             )
 
@@ -623,13 +604,13 @@ class TestCollectDetailRows:
         assert stats.skipped_errors == 0
 
     def test_missing_resolution_context_skips_year(self, monkeypatch):
-        # No catalog seeded → build_resolution_context returns None and
-        # the year is skipped without consulting the iterator.
-        duckdb_repo.init_config_db()
+        """No catalog seeded → build_resolution_context returns None and
+        the year is skipped without consulting the iterator."""
+        duckdb_repo.init_db()
 
         called = {"value": False}
 
-        def fake_iter(_year, *, config_con=None):
+        def fake_iter(_year, *, con=None):
             called["value"] = True
             yield  # pragma: no cover
 
@@ -644,9 +625,9 @@ class TestCollectDetailRows:
 
     def test_iter_exception_skips_year_only(self, monkeypatch):
         """A failure in iter_parsed_sheet_rows must not abort the run."""
-        _seed_config()
+        _seed_catalog()
 
-        def fake_iter(year, *, config_con=None):
+        def fake_iter(year, *, con=None):
             if year == 2024:
                 msg = "simulated gspread failure"
                 raise RuntimeError(msg)
@@ -660,15 +641,13 @@ class TestCollectDetailRows:
                 beneficiary_raw="",
                 amount_original=45.0,
                 currency_original="EUR",
+                amount_app=0.0,
                 amount_eur=45.0,
             )
 
         monkeypatch.setattr(report_module, "iter_parsed_sheet_rows", fake_iter)
 
         stats = CollectStats()
-        # 2024 is broken; the seeded catalog only has resolution context
-        # for 2024 (synthetic event "отпуск-2024"), so we use only [2024]
-        # here and check that we degrade gracefully instead of crashing.
         rows = collect_detail_rows(years=[2024], stats=stats)
 
         assert rows == []
@@ -677,21 +656,21 @@ class TestCollectDetailRows:
 
     def test_iter_exception_in_one_year_does_not_abort_others(self, monkeypatch):
         """Failure in year N must not prevent year N+1 from producing rows."""
-        _seed_config()
-        # Seed an additional vacation event so year 2025 also has a
-        # valid resolution context. Without this, build_resolution_context
+        _seed_catalog()
+        # Seed an additional vacation event so 2025 also has a valid
+        # resolution context. Without this, build_resolution_context
         # would itself skip 2025 and we couldn't tell the two skip
         # paths apart.
-        con = duckdb_repo.get_config_connection(read_only=False)
+        con = duckdb_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
-                " VALUES (3, 'отпуск-2025', '2025-01-01', '2025-12-31', true)",
+                " VALUES (3, 'отпуск-2025', '2025-01-01', '2025-12-31', TRUE)",
             )
         finally:
             con.close()
 
-        def fake_iter(year, *, config_con=None):
+        def fake_iter(year, *, con=None):
             if year == 2024:
                 msg = "simulated gspread failure for 2024"
                 raise RuntimeError(msg)
@@ -705,6 +684,7 @@ class TestCollectDetailRows:
                 beneficiary_raw="",
                 amount_original=45.0,
                 currency_original="EUR",
+                amount_app=0.0,
                 amount_eur=45.0,
             )
 

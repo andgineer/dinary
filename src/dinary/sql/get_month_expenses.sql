@@ -1,4 +1,5 @@
 SELECT e.id,
+       e.client_expense_id,
        e.datetime,
        e.amount,
        e.amount_original,

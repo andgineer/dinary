@@ -1,0 +1,17 @@
+DROP TABLE IF EXISTS income;
+DROP TABLE IF EXISTS sheet_logging_jobs;
+DROP TABLE IF EXISTS expense_tags;
+DROP TABLE IF EXISTS expenses;
+DROP SEQUENCE IF EXISTS expenses_id_seq;
+DELETE FROM app_metadata WHERE key = 'catalog_version';
+DROP TABLE IF EXISTS app_metadata;
+DROP TABLE IF EXISTS logging_mapping_tags;
+DROP TABLE IF EXISTS logging_mapping;
+DROP TABLE IF EXISTS import_mapping_tags;
+DROP TABLE IF EXISTS import_mapping;
+DROP TABLE IF EXISTS import_sources;
+DROP TABLE IF EXISTS exchange_rates;
+DROP TABLE IF EXISTS tags;
+DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS categories;
+DROP TABLE IF EXISTS category_groups;

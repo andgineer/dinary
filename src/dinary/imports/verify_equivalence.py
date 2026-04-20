@@ -1,4 +1,4 @@
-"""Verify a bootstrap-imported `budget_YYYY.duckdb` matches the source sheet.
+"""Verify a bootstrap-imported year matches the source sheet.
 
 Run after `inv import-budget --year=YYYY`. Aggregates by
 `(sheet_category, sheet_group)` per month on both sides:
@@ -6,9 +6,9 @@ Run after `inv import-budget --year=YYYY`. Aggregates by
   * sheet side — re-reads the historical worksheet exactly as
     `imports/expense_import.py` does (same layout, same RUB/RSD
     currency rules);
-  * DB side — sums `amount_original` on every row of `budget_YYYY.duckdb`
-    grouped by the `(sheet_category, sheet_group)` provenance pair that
-    `imports/expense_import.py` baked in.
+  * DB side — sums `amount_original` on every row of `data/dinary.duckdb`
+    that belongs to *year*, grouped by the `(sheet_category, sheet_group)`
+    provenance pair that `imports/expense_import.py` baked in.
 
 Equivalence is on `amount_original` (the raw value as it appears in the
 sheet). Any diff means the rebuild changed observable behavior. Runtime
@@ -104,12 +104,14 @@ def _read_db_aggregates(year: int) -> dict[int, dict[tuple[str, str], dict]]:
     """Aggregate every bootstrap-imported expense row by sheet provenance."""
     result: dict[int, dict[tuple[str, str], dict]] = defaultdict(dict)
 
-    con = duckdb_repo.get_budget_connection(year)
+    con = duckdb_repo.get_connection()
     try:
         rows = con.execute(
             "SELECT MONTH(datetime), sheet_category, sheet_group, amount_original, comment"
             " FROM expenses"
-            " WHERE sheet_category IS NOT NULL AND sheet_group IS NOT NULL",
+            " WHERE YEAR(datetime) = ?"
+            "   AND sheet_category IS NOT NULL AND sheet_group IS NOT NULL",
+            [year],
         ).fetchall()
     finally:
         con.close()
@@ -132,7 +134,7 @@ def verify_bootstrap_import(year: int) -> dict:
     but do not flip `ok` (sheet-side comments are concatenated with `;` and
     the import path may have applied normalization).
     """
-    duckdb_repo.init_config_db()
+    duckdb_repo.init_db()
     sheet_data = _read_sheet_aggregates(year)
     db_data = _read_db_aggregates(year)
 

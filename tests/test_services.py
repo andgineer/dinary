@@ -22,8 +22,8 @@ class TestNbsExchangeRate:
         duckdb_repo.ensure_data_dir()
         from dinary.services import db_migrations
 
-        db_path = tmp_path / "config.duckdb"
-        db_migrations.migrate_config_db(db_path)
+        db_path = tmp_path / "dinary.duckdb"
+        db_migrations.migrate_db(db_path)
 
         import duckdb
 
@@ -39,38 +39,41 @@ class TestNbsExchangeRate:
         finally:
             con.close()
 
-    def test_convert_to_eur_identity(self, tmp_path):
-        """EUR to EUR conversion should be identity."""
-        from dinary.services.nbs import convert_to_eur
+    def test_convert_identity_for_same_currency(self, tmp_path):
+        """EUR to EUR conversion should be identity with rate 1.0."""
+        from dinary.services.nbs import convert
 
         import duckdb
         from dinary.services import db_migrations
 
-        db_path = tmp_path / "config.duckdb"
-        db_migrations.migrate_config_db(db_path)
+        db_path = tmp_path / "dinary.duckdb"
+        db_migrations.migrate_db(db_path)
 
         con = duckdb.connect(str(db_path))
         try:
-            result = convert_to_eur(con, Decimal("100.00"), "EUR", date(2026, 4, 1))
-            assert result == Decimal("100.00")
+            converted, rate = convert(
+                con,
+                Decimal("100.00"),
+                "EUR",
+                "EUR",
+                date(2026, 4, 1),
+            )
+            assert converted == Decimal("100.00")
+            assert rate == Decimal("1.000000")
         finally:
             con.close()
 
     @patch("dinary.services.nbs.httpx.get")
     def test_convert_rsd_to_eur(self, mock_get, tmp_path):
-        from dinary.services.nbs import convert_to_eur
+        from dinary.services.nbs import convert
 
         import duckdb
         from dinary.services import db_migrations
 
-        db_path = tmp_path / "config.duckdb"
-        db_migrations.migrate_config_db(db_path)
-
-        call_count = 0
+        db_path = tmp_path / "dinary.duckdb"
+        db_migrations.migrate_db(db_path)
 
         def mock_responses(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
             url = args[0]
             mock_resp = MagicMock()
             mock_resp.raise_for_status = MagicMock()
@@ -86,8 +89,14 @@ class TestNbsExchangeRate:
 
         con = duckdb.connect(str(db_path))
         try:
-            result = convert_to_eur(con, Decimal("11700"), "RSD", date(2026, 4, 1))
-            assert result == Decimal("100.00")
+            converted, _rate = convert(
+                con,
+                Decimal("11700"),
+                "RSD",
+                "EUR",
+                date(2026, 4, 1),
+            )
+            assert converted == Decimal("100.00")
         finally:
             con.close()
 

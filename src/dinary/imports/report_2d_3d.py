@@ -191,7 +191,7 @@ def _collect_year(con, year: int, stats: CollectStats) -> list[DetailRow]:
 
     details: list[DetailRow] = []
     try:
-        parsed_rows = list(iter_parsed_sheet_rows(year, config_con=con))
+        parsed_rows = list(iter_parsed_sheet_rows(year, con=con))
     except Exception:  # noqa: BLE001 — see comment below
         # iter_parsed_sheet_rows can fail in many distinct ways (gspread
         # APIError on quota / network / auth, malformed sheet structure,
@@ -214,8 +214,6 @@ def _collect_year(con, year: int, stats: CollectStats) -> list[DetailRow]:
                 comment=parsed.comment,
                 amount_eur=parsed.amount_eur,
                 year=parsed.year,
-                month=parsed.month,
-                row_idx=parsed.row_idx,
                 travel_event_id=ctx.travel_event_id,
                 business_trip_event_id=ctx.business_trip_event_id,
                 relocation_event_id=ctx.relocation_event_id,
@@ -268,7 +266,7 @@ def collect_detail_rows(
     """
     if stats is None:
         stats = CollectStats()
-    con = duckdb_repo.get_config_connection(read_only=True)
+    con = duckdb_repo.get_connection()
     try:
         years_to_process = years if years is not None else _get_import_years(con)
         all_details: list[DetailRow] = []
@@ -419,17 +417,17 @@ def generate_report(
 ) -> CollectStats:
     """Generate and render the 2D-to-3D resolution report.
 
-    Strictly read-only: assumes ``config.duckdb`` already exists
-    (rebuilt by ``inv import-catalog``). Raises ``FileNotFoundError``
-    if it doesn't, instead of silently creating an empty config.
+    Strictly read-only: assumes ``data/dinary.duckdb`` already exists
+    (populated by ``inv import-catalog``). Raises ``FileNotFoundError``
+    if it doesn't, instead of silently creating an empty database.
 
     ``output_path`` is only honored for file-emitting formats
     (``csv``, ``md``); passing it together with ``output_format=stdout``
     raises ``ValueError`` so a forgotten ``--fmt`` doesn't silently
     discard the requested file.
     """
-    if not duckdb_repo.CONFIG_DB.exists():
-        msg = f"config DB not found at {duckdb_repo.CONFIG_DB}. Run `inv import-catalog` first."
+    if not duckdb_repo.DB_PATH.exists():
+        msg = f"DB not found at {duckdb_repo.DB_PATH}. Run `inv import-catalog` first."
         raise FileNotFoundError(msg)
     if output_path and output_format not in _FILE_FORMATS:
         msg = (

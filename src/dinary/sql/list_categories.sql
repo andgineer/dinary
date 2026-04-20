@@ -6,4 +6,5 @@ SELECT
     g.sort_order     AS group_sort_order
 FROM categories c
 JOIN category_groups g ON g.id = c.group_id
+WHERE c.is_active AND g.is_active
 ORDER BY g.sort_order, c.name

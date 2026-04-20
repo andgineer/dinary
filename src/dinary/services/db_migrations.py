@@ -62,14 +62,13 @@ class DuckDBBackend(DatabaseBackend):
 
 
 @cache
-def _migration_dir(kind: str) -> Path:
-    root = Path(__file__).resolve().parent.parent / "migrations"
-    return root / kind
+def _migrations_dir() -> Path:
+    return Path(__file__).resolve().parent.parent / "migrations"
 
 
 @cache
-def _read(kind: str):
-    return read_migrations(str(_migration_dir(kind)))
+def _read_migrations():
+    return read_migrations(str(_migrations_dir()))
 
 
 def _backend_for(path: Path) -> DuckDBBackend:
@@ -89,17 +88,9 @@ def _backend_for(path: Path) -> DuckDBBackend:
     return backend
 
 
-def migrate_path(path: Path, kind: str) -> None:
+def migrate_db(path: Path) -> None:
     """Apply all pending migrations for the given DuckDB file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    migrations = _read(kind)
+    migrations = _read_migrations()
     with _backend_for(path) as backend, backend.lock():
         backend.apply_migrations(backend.to_apply(migrations))
-
-
-def migrate_config_db(path: Path) -> None:
-    migrate_path(path, "config")
-
-
-def migrate_budget_db(path: Path) -> None:
-    migrate_path(path, "budget")

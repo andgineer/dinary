@@ -1,7 +1,8 @@
 """Import monthly income from Google Sheets into DuckDB.
 
-Reads the Income/Balance worksheet for a given year, aggregates EUR totals
-per month, and stores one row per (year, month) in budget_YYYY.duckdb.income.
+Reads the Income/Balance worksheet for a given year, aggregates totals
+per month in the configured app currency (``settings.app_currency``),
+and stores one row per (year, month) in ``data/dinary.duckdb.income``.
 
 Destructive re-import: wipes existing `income` rows for the target year
 before inserting.
@@ -14,6 +15,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
+from dinary.config import settings
 from dinary.imports.expense_import import MONTHS_IN_YEAR
 from dinary.services import duckdb_repo
 from dinary.services.nbs import get_rate
@@ -103,24 +105,32 @@ def _parse_date(raw: str) -> tuple[int, int] | None:
     return None
 
 
-def _convert_to_eur_from_cache(
+def _convert_to_app_from_cache(
     amount: Decimal,
     currency: str,
     month: int,
     rates: dict[int, dict[str, Decimal | None]],
+    *,
+    app_currency: str,
 ) -> Decimal | None:
-    """Pure (no-DB, no-HTTP) version of ``_convert_to_eur``.
+    """Convert ``amount`` from ``currency`` to ``app_currency``.
 
-    Returns None when the prefetch could not resolve a needed rate for
-    ``(month, currency)`` — caller must skip the row.
+    Uses the NBS rates cached by ``_prefetch_monthly_rates`` (all as
+    ``RSD per 1 unit of X``). Returns ``None`` when the prefetch could
+    not resolve a needed rate — caller must skip the row.
+
+    ``rate_src`` entries use ``Decimal(1)`` for RSD by convention; the
+    same holds for the app currency when it is RSD.
     """
-    if currency == "EUR":
-        return amount
-    rate_cur = rates[month][currency]
-    rate_eur = rates[month]["EUR"]
-    if rate_cur is None or rate_eur is None:
+    cu = currency.upper()
+    ac = app_currency.upper()
+    if cu == ac:
+        return amount.quantize(Decimal("0.01"))
+    rate_src = rates[month].get(cu)
+    rate_app = rates[month].get(ac)
+    if rate_src is None or rate_app is None:
         return None
-    return (amount * rate_cur / rate_eur).quantize(Decimal("0.01"))
+    return (amount * rate_src / rate_app).quantize(Decimal("0.01"))
 
 
 def _prefetch_monthly_rates(
@@ -131,35 +141,40 @@ def _prefetch_monthly_rates(
     will need, then close the writer connection BEFORE iterating the
     sheet rows.
 
-    Why prefetch: ``aggregate_from_sheet`` used to hold a ``config.duckdb``
-    writer connection across the entire row loop, calling ``get_rate``
-    (which may hit NBS HTTP) per row. Holding the writer slot across
-    multi-second HTTP round-trips blocks every other writer on
-    ``config.duckdb``. The writer slot is now held only during this short
-    prefetch (12 months x <=2 currencies, mostly cache hits).
+    Why prefetch: ``aggregate_from_sheet`` used to hold a DB writer
+    connection across the entire row loop, calling ``get_rate`` (which
+    may hit NBS HTTP) per row. Holding the writer slot across
+    multi-second HTTP round-trips blocks every other writer on the
+    single ``data/dinary.duckdb``. The writer slot is now held only
+    during this short prefetch (12 months x <=3 currencies, mostly
+    cache hits).
 
     Resilience: a missing rate for some ``(month, currency)`` produces a
-    ``None`` entry instead of raising. ``_convert_to_eur_from_cache``
+    ``None`` entry instead of raising. ``_convert_to_app_from_cache``
     returns None for a None-rate cell and the caller drops the row.
     """
-    currencies_to_fetch: set[str] = {"EUR", layout.currency}
+    app_currency = settings.app_currency.upper()
+    currencies_to_fetch: set[str] = {layout.currency.upper(), app_currency}
     if layout.transition_currency is not None:
-        currencies_to_fetch.add(layout.transition_currency)
+        currencies_to_fetch.add(layout.transition_currency.upper())
+    # RSD is the NBS anchor currency: its "rate" is implicit 1.0 and
+    # ``get_rate`` would raise for it.
+    currencies_to_fetch.discard("RSD")
 
     rates: dict[int, dict[str, Decimal | None]] = {}
-    config_con = duckdb_repo.get_config_connection(read_only=False)
+    con = duckdb_repo.get_connection()
     try:
         for month in range(1, MONTHS_IN_YEAR + 1):
             rate_date = date(year, month, 1)
-            month_rates: dict[str, Decimal | None] = {}
+            month_rates: dict[str, Decimal | None] = {"RSD": Decimal(1)}
             for cur in currencies_to_fetch:
                 try:
-                    month_rates[cur] = get_rate(config_con, rate_date, cur)
+                    month_rates[cur] = get_rate(con, rate_date, cur)
                 except ValueError:
                     month_rates[cur] = None
             rates[month] = month_rates
     finally:
-        config_con.close()
+        con.close()
     return rates
 
 
@@ -168,17 +183,19 @@ def aggregate_from_sheet(
     source: duckdb_repo.ImportSourceRow,
     layout: IncomeLayout,
 ) -> tuple[dict[int, Decimal], int]:
-    """Read Income/Balance worksheet and return {month: eur_total} and row count.
+    """Read Income/Balance worksheet and return ``{month: app_total}`` and row count.
 
+    Amounts are converted to ``settings.app_currency`` (RSD by default).
     Only rows whose date falls within the target year are included.
     """
+    app_currency = settings.app_currency.upper()
     rates = _prefetch_monthly_rates(year, layout)
 
     ss = get_sheet(source.spreadsheet_id)
     ws = ss.worksheet(source.income_worksheet_name)
     all_values = ws.get_all_values()
 
-    monthly_eur: dict[int, Decimal] = defaultdict(Decimal)
+    monthly_app: dict[int, Decimal] = defaultdict(Decimal)
     rows_aggregated = 0
     warned_missing_rate: set[tuple[int, str]] = set()
 
@@ -205,8 +222,14 @@ def aggregate_from_sheet(
         ):
             currency = layout.transition_currency
 
-        amount_eur = _convert_to_eur_from_cache(amount, currency, month, rates)
-        if amount_eur is None:
+        amount_app = _convert_to_app_from_cache(
+            amount,
+            currency,
+            month,
+            rates,
+            app_currency=app_currency,
+        )
+        if amount_app is None:
             key = (month, currency)
             if key not in warned_missing_rate:
                 warned_missing_rate.add(key)
@@ -219,10 +242,10 @@ def aggregate_from_sheet(
                     currency,
                 )
             continue
-        monthly_eur[month] += amount_eur
+        monthly_app[month] += amount_app
         rows_aggregated += 1
 
-    return dict(monthly_eur), rows_aggregated
+    return dict(monthly_app), rows_aggregated
 
 
 def _resolve_layout(year: int, source: duckdb_repo.ImportSourceRow) -> IncomeLayout:
@@ -243,7 +266,7 @@ def import_year_income(year: int) -> dict:
 
     Returns a dict that always carries ``year``, ``status``, and one of:
       * ``status="imported"``: success — ``rows_aggregated``,
-        ``months_written``, ``total_eur`` are populated.
+        ``months_written``, ``total_app``, ``app_currency`` are populated.
       * ``status="skipped"``: nothing to import — ``reason`` explains why.
     """
     source = duckdb_repo.get_import_source(year)
@@ -253,17 +276,17 @@ def import_year_income(year: int) -> dict:
         return {"year": year, "status": "skipped", "reason": "no income worksheet registered"}
 
     layout = _resolve_layout(year, source)
-    monthly_eur, rows_aggregated = aggregate_from_sheet(year, source, layout)
+    monthly_app, rows_aggregated = aggregate_from_sheet(year, source, layout)
 
-    con = duckdb_repo.get_budget_connection(year)
+    con = duckdb_repo.get_connection()
     try:
         con.execute("BEGIN")
         try:
             con.execute("DELETE FROM income WHERE year = ?", [year])
-            for month in sorted(monthly_eur):
+            for month in sorted(monthly_app):
                 con.execute(
                     "INSERT INTO income (year, month, amount) VALUES (?, ?, ?)",
-                    [year, month, float(monthly_eur[month])],
+                    [year, month, float(monthly_app[month])],
                 )
             con.execute("COMMIT")
         except Exception:
@@ -272,7 +295,7 @@ def import_year_income(year: int) -> dict:
     finally:
         con.close()
 
-    months_written = len(monthly_eur)
+    months_written = len(monthly_app)
     logger.info(
         "Imported income for %d: %d months from %d rows",
         year,
@@ -284,5 +307,6 @@ def import_year_income(year: int) -> dict:
         "status": "imported",
         "rows_aggregated": rows_aggregated,
         "months_written": months_written,
-        "total_eur": float(sum(monthly_eur.values())),
+        "total_app": float(sum(monthly_app.values())),
+        "app_currency": settings.app_currency,
     }

@@ -41,12 +41,15 @@ logger = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 # 1-indexed column numbers matching the actual Google Sheet layout:
-#   A=Date  B=RSD(formula)  C=EUR(formula)  D=Category  E=Group
-#   F=Comment  G=Month(formula)  H=Rate  J=ExpenseIds
-# Column I is intentionally skipped to leave the human-visible block (A..H)
-# untouched. J holds an opaque audit trail of "[exp:<expense_id>]" markers,
-# one per appended expense, used by sheet logging to detect a
-# timeout-after-success retry and skip the second write.
+#   A=Date  B=AppCurrency(formula)  C=EUR(formula)  D=Category  E=Group
+#   F=Comment  G=Month  H=Rate  J=LastClientExpenseId
+# Column I is intentionally skipped to leave the human-visible block
+# (A..H) untouched. J stores only the *most recent* ``client_expense_id``
+# appended to the row ("last-key-only" marker). If a retry arrives for
+# the same ``client_expense_id``, the drain worker sees J == key and
+# skips the second write; otherwise the marker is overwritten so the
+# cell size stays bounded to a single UUID regardless of how many
+# expenses a row aggregates over a month.
 COL_DATE = 1
 COL_AMOUNT_RSD = 2
 COL_CATEGORY = 4
@@ -57,11 +60,6 @@ COL_RATE_EUR = 8
 COL_EXPENSE_IDS = 10
 
 HEADER_ROWS = 1
-
-
-def expense_id_marker(expense_id: str) -> str:
-    """Stable ``[exp:<expense_id>]`` marker stored in ``COL_EXPENSE_IDS``."""
-    return f"[exp:{expense_id}]"
 
 
 _gc: gspread.Client | None = None
@@ -397,19 +395,31 @@ def insert_logging_row(  # noqa: PLR0913
     month: int,
     category: str,
     group: str,
+    *,
+    rate: str | None = None,
 ) -> None:
     """Insert a single blank row at *insert_at* and populate its cells.
 
     Cell values written:
       * A — first day of month (``YYYY-MM-DD``)
       * B — empty (filled later by ``append_expense_atomic``)
-      * C — EUR conversion formula ``=IF(H{r}="","",B{r}/H{r})``
+      * C — conversion formula ``=IF(H{r}="","",B{r}/H{r})`` (relative per row)
       * D — *category*
       * E — *group*
       * F — empty (comment, filled by ``append_expense_atomic``)
       * G — *month* number
-      * H — empty (rate, filled later by the user / a separate workflow)
-      * J — empty (idempotency markers, filled by ``append_expense_atomic``)
+      * H — *rate* (if provided) — written on every row, not only the
+        first row of a month, so the column-C formula stays stable. If
+        *rate* is ``None`` we write an explicit empty string rather
+        than skipping the cell; the first subsequent
+        ``append_expense_atomic`` on this row will then see an empty H
+        and backfill the rate via its set-if-missing guard. Skipping
+        H entirely would break that guard because ``batch_get`` on an
+        unset cell and on an empty-string cell both come back as ``""``
+        — the placeholder is what lets a caller tell "H was never
+        touched" apart from "H was touched and intentionally blank".
+      * J — empty (last-key-only ``client_expense_id`` marker, filled by
+        ``append_expense_atomic``)
     """
     ws.insert_rows([[]], row=insert_at)
 
@@ -424,7 +434,7 @@ def insert_logging_row(  # noqa: PLR0913
             {"range": f"E{r}", "values": [[group]]},
             {"range": f"F{r}", "values": [[""]]},
             {"range": f"G{r}", "values": [[str(month)]]},
-            {"range": f"H{r}", "values": [[""]]},
+            {"range": f"H{r}", "values": [[rate or ""]]},
             {"range": f"J{r}", "values": [[""]]},
         ],
         value_input_option=ValueInputOption.user_entered,
@@ -447,6 +457,7 @@ def ensure_category_row(  # noqa: PLR0913
     expense_date: date,
     *,
     years_by_row: list[int | None] | None = None,
+    rate: str | None = None,
 ) -> tuple[int, list[list[str]]]:
     """Return ``(row_index, refreshed_values)`` for ``(year?, month, cat, grp)``.
 
@@ -480,7 +491,15 @@ def ensure_category_row(  # noqa: PLR0913
         target_year=target_year,
         years_by_row=years_by_row,
     )
-    insert_logging_row(ws, insert_at, expense_date, target_month, category, group)
+    insert_logging_row(
+        ws,
+        insert_at,
+        expense_date,
+        target_month,
+        category,
+        group,
+        rate=rate,
+    )
     refreshed = ws.get_all_values()
     return insert_at, refreshed
 
@@ -513,24 +532,6 @@ def extend_comment(existing: str, new_comment: str) -> str:
         return existing
     separator = "; " if existing else ""
     return f"{existing}{separator}{new_comment}"
-
-
-def extend_expense_id_marker(existing_markers: str, expense_id: str) -> str:
-    """Pure function — append ``[exp:<expense_id>]`` to the J-cell value.
-
-    Markers are space-separated. ``contains_expense_id_marker`` reads the
-    same string back; the storage format is opaque to the rest of the
-    system.
-    """
-    marker = expense_id_marker(expense_id)
-    if not existing_markers:
-        return marker
-    return f"{existing_markers} {marker}"
-
-
-def contains_expense_id_marker(markers: str, expense_id: str) -> bool:
-    """Return True iff *markers* already records an append for *expense_id*."""
-    return expense_id_marker(expense_id) in markers
 
 
 def append_to_rsd_formula(ws: gspread.Worksheet, row: int, amount_rsd: float) -> None:
@@ -584,58 +585,73 @@ def append_expense_atomic(  # noqa: PLR0913
     ws: gspread.Worksheet,
     row: int,
     *,
-    expense_id: str,
+    marker_key: str,
     amount_rsd: float,
     comment: str,
+    rate: str | None = None,
 ) -> bool:
     """Idempotently record one expense at *row*.
 
-    Reads the live B (formula) / F (comment) / J (markers) cells in a
+    Reads the live B (formula) / F (comment) / J (marker) cells in a
     single ``batch_get`` call, then either:
 
-    * returns ``False`` immediately when J already contains
-      ``[exp:<expense_id>]`` — the previous attempt for this expense
-      reached the server even if we never saw the response;
+    * returns ``False`` immediately when J already equals *marker_key* —
+      the previous attempt for this expense reached the server even if
+      we never saw the response;
     * issues a single ``batch_update`` writing the new B, F (only when
-      *comment* is non-empty), and J in one HTTP request, and returns
-      ``True``.
+      *comment* is non-empty), J (overwriting any previous marker with
+      *marker_key* — "last-key-only" semantics), and H (when *rate* is
+      provided) in one HTTP request, and returns ``True``.
 
     Combining the writes into one request is what closes the
     timeout-after-success duplicate hole: the marker is written together
     with the formula it accounts for, so the only two observable states
-    are "all three updated" and "none updated", both of which the next
-    attempt handles correctly.
+    are "all updated" and "none updated", both of which the next attempt
+    handles correctly.
+
+    The J column stores only the most recent ``client_expense_id`` that
+    was appended to this row; older markers are overwritten. This bounds
+    the cell size to a single UUID regardless of how many expenses a
+    row aggregates.
     """
     formula_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_RSD)
     comment_addr = gspread.utils.rowcol_to_a1(row, COL_COMMENT)
-    markers_addr = gspread.utils.rowcol_to_a1(row, COL_EXPENSE_IDS)
+    marker_addr = gspread.utils.rowcol_to_a1(row, COL_EXPENSE_IDS)
+    rate_addr = gspread.utils.rowcol_to_a1(row, COL_RATE_EUR)
 
     fetched = ws.batch_get(
-        [formula_addr, comment_addr, markers_addr],
+        [formula_addr, comment_addr, marker_addr, rate_addr],
         value_render_option=ValueRenderOption.formula,
     )
     existing_formula = _first_cell(fetched[0])
     existing_comment = _first_cell(fetched[1])
-    existing_markers = _first_cell(fetched[2])
+    existing_marker = _first_cell(fetched[2])
+    existing_rate = _first_cell(fetched[3])
 
-    if contains_expense_id_marker(existing_markers, expense_id):
+    if existing_marker == marker_key:
         logger.info(
-            "Expense %s already recorded at row %d (marker present); skipping",
-            expense_id,
+            "Expense %s already recorded at row %d (J marker equal); skipping",
+            marker_key,
             row,
         )
         return False
 
     new_formula = extend_rsd_formula(existing_formula, amount_rsd)
-    new_markers = extend_expense_id_marker(existing_markers, expense_id)
 
     updates = [
         {"range": formula_addr, "values": [[new_formula]]},
-        {"range": markers_addr, "values": [[new_markers]]},
+        {"range": marker_addr, "values": [[marker_key]]},
     ]
     if comment:
         new_comment = extend_comment(existing_comment, comment)
         updates.append({"range": comment_addr, "values": [[new_comment]]})
+    # Set-if-missing: only backfill H when the cell is empty, so a user's
+    # manual rate edit (or an earlier importer-written rate) survives the
+    # next append. This matches architecture.md's column-H contract; a
+    # stale rate in an already-populated cell is the operator's problem,
+    # not the drain's.
+    if rate is not None and not existing_rate:
+        updates.append({"range": rate_addr, "values": [[rate]]})
 
     ws.batch_update(updates, value_input_option=ValueInputOption.user_entered)
     return True

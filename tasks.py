@@ -298,7 +298,7 @@ def setup(c):
     service = DINARY_SERVICE.format(host=bind_host)
     _create_service(c, "dinary", service)
 
-    print("=== Importing config.duckdb seed data from Google Sheets ===")
+    print("=== Importing catalog seed data from Google Sheets ===")
     import_config(c)
 
     if tunnel == "tailscale":
@@ -317,10 +317,11 @@ def deploy(c, ref="", no_restart=False):
     """Deploy latest code: git pull, sync deps, render version, restart service.
 
     Use --ref to deploy a specific version. Use --no-restart for the coordinated
-    destructive reset flow: it skips both the post-deploy systemctl restart and
-    the auto-applied config migration, because the very next step in that flow
-    is `inv stop` followed by `inv import-catalog --yes` which wipes
-    config.duckdb anyway.
+    reset flow: it skips both the post-deploy systemctl restart and the
+    auto-applied schema migration, because the very next step in that flow is
+    `inv stop` followed by `rm -f ~/dinary-server/data/*.duckdb` +
+    `inv migrate` + `inv import-catalog --yes` which rebuilds the single DB
+    anyway.
     """
     print("=== Pre-deploy backup ===")
     ts = _dt.now().strftime("%Y%m%d-%H%M%S")
@@ -349,12 +350,12 @@ def deploy(c, ref="", no_restart=False):
     _sync_remote_env(c)
 
     if not no_restart:
-        print("=== Applying config migrations ===")
+        print("=== Applying schema migrations ===")
         _ssh(
             c,
             "cd ~/dinary-server && source ~/.local/bin/env && "
-            "uv run python -c 'from dinary.services import duckdb_repo; duckdb_repo.init_config_db(); "
-            'print("Migrated config.duckdb")\'',
+            "uv run python -c 'from dinary.services import duckdb_repo; duckdb_repo.init_db(); "
+            'print("Migrated data/dinary.duckdb")\'',
         )
 
     print("=== Building _static/ with version ===")
@@ -362,15 +363,17 @@ def deploy(c, ref="", no_restart=False):
 
     if no_restart:
         print(
-            "=== --no-restart set: SKIPPING systemctl restart and config migration. ===\n"
-            "=== Next steps in the coordinated reset flow: ===\n"
-            "===   inv stop                                ===\n"
-            "===   inv import-catalog --yes                ===\n"
-            "===   inv import-budget-all --yes             ===\n"
-            "===   inv import-income-all --yes             ===\n"
-            "===   inv verify-bootstrap-import-all         ===\n"
-            "===   inv verify-income-equivalence-all       ===\n"
-            "===   inv start                               ==="
+            "=== --no-restart set: SKIPPING systemctl restart and schema migration. ===\n"
+            "=== Next steps in the coordinated reset flow:   ===\n"
+            "===   inv stop                                  ===\n"
+            "===   ssh $HOST 'rm -f ~/dinary-server/data/*.duckdb'  ===\n"
+            "===   inv migrate                               ===\n"
+            "===   inv import-catalog --yes                  ===\n"
+            "===   inv import-budget-all --yes               ===\n"
+            "===   inv import-income-all --yes               ===\n"
+            "===   inv verify-bootstrap-import-all           ===\n"
+            "===   inv verify-income-equivalence-all         ===\n"
+            "===   inv start                                 ==="
         )
         return
 
@@ -421,7 +424,7 @@ def ssh(c):
 
 @task(name="import-config")
 def import_config(c):
-    """Import config.duckdb seed data from the configured source sheets."""
+    """Seed the catalog (non-destructive) from the configured source sheets."""
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
@@ -430,26 +433,14 @@ def import_config(c):
     )
 
 
-@task(name="migrate-config")
-def migrate_config(c):
-    """Apply pending migrations to config.duckdb on the server."""
+@task(name="migrate")
+def migrate(c):
+    """Apply pending migrations to ``data/dinary.duckdb`` on the server."""
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && "
         "uv run python -c 'from dinary.services import duckdb_repo; "
-        'duckdb_repo.init_config_db(); print("Migrated config.duckdb")\'',
-    )
-
-
-@task(name="migrate-budget")
-def migrate_budget(c, year):
-    """Apply pending migrations to a yearly budget DB on the server."""
-    year_int = _coerce_year(year)
-    _ssh(
-        c,
-        "cd ~/dinary-server && source ~/.local/bin/env && "
-        f"uv run python -c 'from dinary.services import duckdb_repo; "
-        f"print(duckdb_repo.init_budget_db({year_int}))'",
+        'duckdb_repo.init_db(); print("Migrated data/dinary.duckdb")\'',
     )
 
 
@@ -501,16 +492,27 @@ def _require_year(year) -> int:
 
 @task(name="import-catalog")
 def import_catalog(c, yes=False):
-    """DESTRUCTIVE: Wipe config.duckdb and re-seed the 3D classification catalog.
+    """FK-safe in-place catalog sync: re-seed taxonomy without deleting the DB.
 
-    Bumps `app_metadata.catalog_version` by +1 on every successful run; the
-    PWA picks up the new value via GET /api/categories and POST /api/expenses.
+    Never deletes ``data/dinary.duckdb``. Ledger tables
+    (``expenses``/``expense_tags``/``sheet_logging_jobs``/``income``)
+    stay intact; catalog rows are upserted by natural key so existing
+    integer ids are preserved. Vocabulary no longer present in the
+    seed files is marked ``is_active=FALSE``. Mapping tables
+    (``import_mapping``/``logging_mapping``) are rebuilt from scratch
+    against the current active taxonomy ids.
+
+    Bumps ``app_metadata.catalog_version`` by +1 on every successful
+    run; the PWA picks up the new value via ``GET /api/categories``
+    and ``POST /api/expenses``.
     """
     if not _require_yes(
         yes,
-        "WARNING: import-catalog will DELETE config.duckdb and re-seed it from "
-        "Google Sheets. Configured import_sources are preserved and restored. "
-        "All clients will be forced to refresh on next /api/categories call.",
+        "WARNING: import-catalog will re-sync the taxonomy from Google Sheets. "
+        "Existing ledger data (expenses, tags, sheet logging queue, income) is "
+        "preserved. Vocabulary not present in the seed files will be marked "
+        "inactive. Mapping tables will be rebuilt. All PWA clients will be "
+        "forced to refresh on next /api/categories call.",
     ):
         return
     _ssh(
@@ -523,13 +525,19 @@ def import_catalog(c, yes=False):
 
 @task(name="import-budget")
 def import_budget(c, year="", yes=False):
-    """DESTRUCTIVE: Wipe budget_YYYY.duckdb and re-import from the Google Sheet."""
+    """DESTRUCTIVE: Delete every expense for the given year and re-import from Sheet.
+
+    Operates on the single ``data/dinary.duckdb`` file: the year's rows in
+    ``expenses``/``expense_tags``/``sheet_logging_jobs`` are removed and
+    re-imported from Google Sheets. Other years stay untouched.
+    """
     year_int = _require_year(year)
     if not _require_yes(
         yes,
-        f"WARNING: import-budget will DELETE every expense in budget_{year_int}.duckdb "
-        "and re-import from the Google Sheet. There is no manual-vs-import distinction "
-        "anymore; nothing in the budget DB is preserved.",
+        f"WARNING: import-budget will DELETE every expense for {year_int} in "
+        "data/dinary.duckdb and re-import from the Google Sheet. Other years "
+        "are untouched. There is no manual-vs-import distinction anymore; "
+        "nothing in the targeted year is preserved.",
     ):
         return
     _ssh(
@@ -542,18 +550,19 @@ def import_budget(c, year="", yes=False):
 
 @task(name="import-budget-all")
 def import_budget_all(c, yes=False):
-    """DESTRUCTIVE: Wipe and re-import every budget_YYYY.duckdb listed in import_sources.
+    """DESTRUCTIVE: Re-import every year registered in ``import_sources``.
 
-    Iterates the years registered in `config.duckdb.import_sources` (in
-    ascending order) and re-imports each one via `import_year`. Intended for
-    use inside the coordinated reset flow after `import-catalog --yes`.
+    Iterates the years registered in ``data/dinary.duckdb.import_sources``
+    (in ascending order) and re-imports each one via ``import_year``, which
+    deletes just that year's expense rows before re-importing. Intended for
+    use inside the coordinated reset flow after ``import-catalog --yes``.
     """
     if not _require_yes(
         yes,
-        "WARNING: import-budget-all will DELETE every budget_YYYY.duckdb "
-        "registered in import_sources and re-import each year from the "
-        "Google Sheet. There is no manual-vs-import distinction anymore; "
-        "nothing in any budget DB is preserved.",
+        "WARNING: import-budget-all will DELETE every expense row for every "
+        "year registered in import_sources and re-import each year from the "
+        "Google Sheet. Other ledger data (income, sheet logging queue) is "
+        "preserved; within each affected year nothing is preserved.",
     ):
         return
     _ssh(
@@ -561,8 +570,9 @@ def import_budget_all(c, yes=False):
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services import duckdb_repo; "
         "from dinary.imports.expense_import import import_year; "
-        "import json, duckdb; "
-        "con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True); "
+        "import json; "
+        "duckdb_repo.init_db(); "
+        "con = duckdb_repo.get_connection(); "
         "years = [r[0] for r in con.execute("
         "\"SELECT year FROM import_sources WHERE year > 0 ORDER BY year\""
         ").fetchall()]; "
@@ -603,8 +613,9 @@ def verify_bootstrap_import_all(c):
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services import duckdb_repo; "
         "from dinary.imports.verify_equivalence import verify_bootstrap_import; "
-        "import json, duckdb, sys; "
-        "con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True); "
+        "import json, sys; "
+        "duckdb_repo.init_db(); "
+        "con = duckdb_repo.get_connection(); "
         "years = [r[0] for r in con.execute("
         "\"SELECT year FROM import_sources WHERE year > 0 ORDER BY year\""
         ").fetchall()]; "
@@ -647,8 +658,9 @@ def import_income_all(c, yes=False):
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services import duckdb_repo; "
         "from dinary.imports.income_import import import_year_income; "
-        "import json, duckdb; "
-        "con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True); "
+        "import json; "
+        "duckdb_repo.init_db(); "
+        "con = duckdb_repo.get_connection(); "
         "years = [r[0] for r in con.execute("
         "\"SELECT year FROM import_sources WHERE income_worksheet_name != \\x27\\x27 ORDER BY year\""
         ").fetchall()]; "
@@ -688,8 +700,9 @@ def verify_income_equivalence_all(c):
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services import duckdb_repo; "
         "from dinary.imports.verify_income import verify_income_equivalence; "
-        "import json, duckdb, sys; "
-        "con = duckdb.connect(str(duckdb_repo.CONFIG_DB), read_only=True); "
+        "import json, sys; "
+        "duckdb_repo.init_db(); "
+        "con = duckdb_repo.get_connection(); "
         "years = [r[0] for r in con.execute("
         "\"SELECT year FROM import_sources WHERE income_worksheet_name != \\x27\\x27 ORDER BY year\""
         ").fetchall()]; "

@@ -1,7 +1,7 @@
 """Bootstrap historical Google Sheets import (one-time, destructive).
 
-This is the only path that reads from sheets and writes expenses. Once the
-sheet has been imported into ``budget_YYYY.duckdb``, runtime traffic
+This is the only path that reads from sheets and writes expenses. Once a
+year has been imported into ``data/dinary.duckdb``, runtime traffic
 (``POST /api/expenses`` plus the async sheet-append worker) takes over and
 the sheet becomes append-only.
 
@@ -14,19 +14,21 @@ The importer:
     available at import time (housing keywords, DIY routing, RUB→EUR
     fallback, "kto" beneficiary column);
   * inserts one expense row + tags + provenance pair into
-    ``budget_YYYY.duckdb`` with ``enqueue_logging=False`` (rows are already
-    in the sheet — re-uploading them is a bug).
+    ``data/dinary.duckdb`` with ``enqueue_logging=False`` (rows are
+    already in the sheet — re-uploading them is a bug) and
+    ``client_expense_id=None`` (legacy rows have no PWA-generated
+    idempotency key; ``UNIQUE`` allows multiple NULLs).
 
 It does not touch the runtime queue (``sheet_logging_jobs``) and does not
 bump ``catalog_version``.
 """
 
 import dataclasses
-import hashlib
 import logging
 from datetime import date, datetime
 from decimal import Decimal
 
+from dinary.config import settings
 from dinary.services import duckdb_repo
 from dinary.services.nbs import get_rate
 from dinary.services.seed_config import (
@@ -267,60 +269,68 @@ def resolve_currency(year: int, month: int, layout: SheetLayout) -> str:
     return "RSD"
 
 
-def _stable_id(year: int, month: int, row_idx: int, category: str, group: str) -> str:
-    raw = f"legacy-{year}-{month:02d}-r{row_idx}-{category}-{group}"
-    short_hash = hashlib.sha256(raw.encode()).hexdigest()[:8]
-    return f"legacy-{year}{month:02d}-{short_hash}"
-
-
 def _prefetch_monthly_rates(
     year: int,
     layout: SheetLayout,
     *,
-    config_con=None,
+    con=None,
 ) -> dict[int, dict[str, Decimal]]:
     """Pre-fetch NBS rates for every month in ``year``, keyed by month.
 
-    Under the singleton-engine model in ``duckdb_repo`` (see its
-    module docstring) ``get_config_connection`` returns a cursor of
-    the shared engine, so passing ``config_con`` is purely an
-    optimization: it lets a long-running caller (the 2D-to-3D report)
-    avoid one extra ``cursor()`` + ``USE config`` round-trip per year.
-    When ``config_con`` is ``None`` we cut a fresh cursor of the
-    singleton ourselves; that's the path taken by ``import_year``,
-    which has already closed its own config cursor before reaching
-    here.
+    Stored keys (all as ``RSD per 1 unit of X``, i.e. NBS middle rates):
+
+      * ``rate_src`` — source currency for the layout+month;
+        ``Decimal(1)`` when the source is "RSD".
+      * ``rate_eur`` — always present, used by the legacy housing
+        heuristic (threshold expressed in EUR) and the 2D→3D report.
+      * ``rate_app`` — the configured app currency
+        (``settings.app_currency``); ``Decimal(1)`` when app is "RSD".
+
+    ``con`` is the single shared ``data/dinary.duckdb`` cursor. Passing
+    it is purely an optimization for long-running callers (the 2D-to-3D
+    report) to avoid one extra ``cursor()`` round-trip per year. When
+    ``con`` is ``None`` we cut a fresh cursor ourselves.
     """
-    own_con = config_con is None
+    app_currency = settings.app_currency.upper()
+    own_con = con is None
     if own_con:
-        config_con = duckdb_repo.get_config_connection(read_only=False)
+        con = duckdb_repo.get_connection()
     try:
         rates: dict[int, dict[str, Decimal]] = {}
         for month in range(1, MONTHS_IN_YEAR + 1):
-            currency = resolve_currency(year, month, layout)
-            if currency == "EUR":
-                rates[month] = {}
-                continue
+            currency = resolve_currency(year, month, layout).upper()
             rate_date = date(year, month, 1)
-            rate_cur = get_rate(config_con, rate_date, currency)
-            rate_eur = get_rate(config_con, rate_date, "EUR")
-            rates[month] = {"rate_cur": rate_cur, "rate_eur": rate_eur}
+            rate_src = Decimal(1) if currency == "RSD" else get_rate(con, rate_date, currency)
+            rate_eur = Decimal(1) if currency == "EUR" else get_rate(con, rate_date, "EUR")
+            rate_app = (
+                Decimal(1) if app_currency == "RSD" else get_rate(con, rate_date, app_currency)
+            )
+            rates[month] = {
+                "rate_src": rate_src,
+                "rate_eur": rate_eur,
+                "rate_app": rate_app,
+            }
         return rates
     finally:
         if own_con:
-            config_con.close()
+            con.close()
 
 
-def _convert_with_prefetched(
+def _convert_to(
     amount_original: Decimal,
-    currency_original: str,
-    month_rates: dict[str, Decimal],
+    *,
+    rate_src: Decimal,
+    rate_target: Decimal,
 ) -> Decimal:
-    if currency_original == "EUR":
-        return amount_original
-    rate_cur = month_rates["rate_cur"]
-    rate_eur = month_rates["rate_eur"]
-    return (amount_original * rate_cur / rate_eur).quantize(Decimal("0.01"))
+    """Convert ``amount_original`` via two RSD-anchored NBS rates.
+
+    Both rates are ``RSD per 1 unit of X``, so the source amount in
+    RSD is ``amount_original * rate_src``, and dividing by
+    ``rate_target`` yields the amount in the target currency. When
+    ``rate_src == rate_target`` (same currency) the result is
+    bit-identical to ``amount_original`` modulo the final quantize.
+    """
+    return (amount_original * rate_src / rate_target).quantize(Decimal("0.01"))
 
 
 def _read_amounts_for_row(
@@ -330,7 +340,14 @@ def _read_amounts_for_row(
     year: int,
     month: int,
     monthly_rates: dict[int, dict[str, Decimal]],
-) -> tuple[float, str, float] | None:
+) -> tuple[float, str, float, float] | None:
+    """Return ``(amount_original, currency_original, amount_app, amount_eur)``.
+
+    * ``amount_app`` is the value stored in ``expenses.amount`` (the app
+      currency, ``settings.app_currency``).
+    * ``amount_eur`` is retained for the housing heuristic (threshold
+      expressed in EUR) and the 2D→3D diagnostic report.
+    """
     amount_original = parse_display_amount(_cell(row_display, layout.col_amount))
     currency_original = resolve_currency(year, month, layout)
 
@@ -348,12 +365,24 @@ def _read_amounts_for_row(
     if amount_original is None:
         return None
 
-    amount_eur_decimal = _convert_with_prefetched(
-        Decimal(str(amount_original)),
-        currency_original,
-        monthly_rates[month],
+    rates = monthly_rates[month]
+    original_dec = Decimal(str(amount_original))
+    amount_app = _convert_to(
+        original_dec,
+        rate_src=rates["rate_src"],
+        rate_target=rates["rate_app"],
     )
-    return amount_original, currency_original, float(amount_eur_decimal)
+    amount_eur = _convert_to(
+        original_dec,
+        rate_src=rates["rate_src"],
+        rate_target=rates["rate_eur"],
+    )
+    return (
+        amount_original,
+        currency_original,
+        float(amount_app),
+        float(amount_eur),
+    )
 
 
 def _apply_housing_heuristics(  # noqa: C901, PLR0912
@@ -408,17 +437,17 @@ def _apply_housing_heuristics(  # noqa: C901, PLR0912
 
 
 # ---------------------------------------------------------------------------
-# Catalog id resolution helpers (uses ATTACHed config.* tables)
+# Catalog id resolution helpers (single DB)
 # ---------------------------------------------------------------------------
 
 
 def _resolve_category_id(con, name: str) -> int | None:
-    row = con.execute("SELECT id FROM config.categories WHERE name = ?", [name]).fetchone()
+    row = con.execute("SELECT id FROM categories WHERE name = ?", [name]).fetchone()
     return int(row[0]) if row else None
 
 
 def _resolve_event_id(con, name: str) -> int | None:
-    row = con.execute("SELECT id FROM config.events WHERE name = ?", [name]).fetchone()
+    row = con.execute("SELECT id FROM events WHERE name = ?", [name]).fetchone()
     return int(row[0]) if row else None
 
 
@@ -427,9 +456,9 @@ def _resolve_tag_ids(con, names: list[str]) -> list[int]:
         return []
     ids: list[int] = []
     for name in names:
-        row = con.execute("SELECT id FROM config.tags WHERE name = ?", [name]).fetchone()
+        row = con.execute("SELECT id FROM tags WHERE name = ?", [name]).fetchone()
         if row is None:
-            msg = f"tag {name!r} not found in config.tags; re-seed required"
+            msg = f"tag {name!r} not found in tags; re-seed required"
             raise ValueError(msg)
         ids.append(int(row[0]))
     return ids
@@ -438,7 +467,7 @@ def _resolve_tag_ids(con, names: list[str]) -> list[int]:
 def _event_name_from_id(con, event_id: int | None) -> str | None:
     if event_id is None:
         return None
-    row = con.execute("SELECT name FROM config.events WHERE id = ?", [event_id]).fetchone()
+    row = con.execute("SELECT name FROM events WHERE id = ?", [event_id]).fetchone()
     return str(row[0]) if row else None
 
 
@@ -488,7 +517,7 @@ def _resolve_dimensions(  # noqa: C901, PLR0913, PLR0912
         event_id = mapping.event_id
         tag_ids = duckdb_repo.get_mapping_tag_ids(con, mapping.id)
         canonical_default_name = con.execute(
-            "SELECT name FROM config.categories WHERE id = ?",
+            "SELECT name FROM categories WHERE id = ?",
             [category_id],
         ).fetchone()
         canonical_default = canonical_default_name[0] if canonical_default_name else None
@@ -530,7 +559,7 @@ def _resolve_dimensions(  # noqa: C901, PLR0913, PLR0912
         tag_names = {
             r[0]
             for r in con.execute(
-                f"SELECT name FROM config.tags WHERE id IN ({placeholders})",  # noqa: S608
+                f"SELECT name FROM tags WHERE id IN ({placeholders})",  # noqa: S608
                 tag_ids,
             ).fetchall()
         }
@@ -601,7 +630,7 @@ def _resolve_tag_names(con, tag_ids: list[int] | tuple[int, ...]) -> tuple[str, 
         return ()
     placeholders = ",".join("?" * len(tag_ids))
     rows = con.execute(
-        f"SELECT name FROM config.tags WHERE id IN ({placeholders}) ORDER BY name",  # noqa: S608
+        f"SELECT name FROM tags WHERE id IN ({placeholders}) ORDER BY name",  # noqa: S608
         list(tag_ids),
     ).fetchall()
     return tuple(r[0] for r in rows)
@@ -609,21 +638,17 @@ def _resolve_tag_names(con, tag_ids: list[int] | tuple[int, ...]) -> tuple[str, 
 
 def _category_name_for_id(con, category_id: int) -> str:
     row = con.execute(
-        "SELECT name FROM config.categories WHERE id = ?",
+        "SELECT name FROM categories WHERE id = ?",
         [category_id],
     ).fetchone()
     return row[0] if row else ""
 
 
-def _simulate_post_import_fix(  # noqa: PLR0913
+def _simulate_post_import_fix(
     con,
     *,
     comment: str,
     year: int,
-    month: int,
-    row_idx: int,
-    sheet_category: str,
-    sheet_group: str,
     russia_trip_event_id: int | None,
 ) -> tuple[int, int | None] | None:
     """Check whether a post-import fix would override this row.
@@ -631,12 +656,9 @@ def _simulate_post_import_fix(  # noqa: PLR0913
     Mirrors ``_apply_post_import_fixes_body`` without any DB writes.
     Returns ``(category_id, event_id_or_None)`` when a fix matches.
 
-    Caveat: the 2018 rent special case keys on the literal expense id
-    "legacy-201806-269ec46a", which was derived from the importer's
-    ``_stable_id`` of one specific row. The report only fires that branch
-    when its own iteration order over the sheet produces the exact same
-    id, so a re-ordered or trimmed sheet can hide this fix from the
-    report even when the importer would still apply it.
+    The 2018 rent fix is keyed off ``comment == "покупка валюты"`` only
+    (the legacy deterministic-id branch was removed along with the
+    single-file DB refactor; expense ids are now opaque integers).
     """
     comment_lower = comment.lower().strip()
 
@@ -646,12 +668,10 @@ def _simulate_post_import_fix(  # noqa: PLR0913
             if cat_id is not None:
                 return (cat_id, None)
 
-    if year == 2018:  # noqa: PLR2004
-        expense_id = _stable_id(year, month, row_idx, sheet_category, sheet_group)
-        if expense_id == "legacy-201806-269ec46a" or comment_lower == "покупка валюты":
-            rent_id = _resolve_category_id(con, "аренда")
-            if rent_id is not None:
-                return (rent_id, None)
+    if year == 2018 and comment_lower == "покупка валюты":  # noqa: PLR2004
+        rent_id = _resolve_category_id(con, "аренда")
+        if rent_id is not None:
+            return (rent_id, None)
 
     if year == RUSSIA_TRIP_FIX_YEAR and comment_lower == "билеты в россию август 2026":
         transport_id = _resolve_category_id(con, "транспорт")
@@ -669,8 +689,6 @@ def resolve_row_to_3d(  # noqa: PLR0913
     comment: str,
     amount_eur: float,
     year: int,
-    month: int,
-    row_idx: int,
     travel_event_id: int,
     business_trip_event_id: int | None,
     relocation_event_id: int | None,
@@ -734,10 +752,6 @@ def resolve_row_to_3d(  # noqa: PLR0913
         con,
         comment=comment,
         year=year,
-        month=month,
-        row_idx=row_idx,
-        sheet_category=sheet_category,
-        sheet_group=sheet_group,
         russia_trip_event_id=russia_trip_event_id,
     )
     if postfix is not None:
@@ -813,7 +827,7 @@ def _apply_post_import_fixes_body(
             UPDATE expenses
             SET category_id = ?
             WHERE YEAR(datetime) = 2018
-              AND (id = 'legacy-201806-269ec46a' OR LOWER(COALESCE(comment, '')) = 'покупка валюты')
+              AND LOWER(COALESCE(comment, '')) = 'покупка валюты'
             """,
             [rent_category_id],
         )
@@ -851,38 +865,42 @@ class ParsedSheetRow:
     beneficiary_raw: str
     amount_original: float
     currency_original: str
+    # Amount stored in ``expenses.amount`` (settings.app_currency).
+    amount_app: float
+    # Amount in EUR, used by the housing heuristic threshold
+    # (200 EUR for "аренда/релокация") and by the 2D→3D report.
     amount_eur: float
 
 
-def iter_parsed_sheet_rows(year: int, *, config_con=None):
+def iter_parsed_sheet_rows(year: int, *, con=None):
     """Yield ``ParsedSheetRow`` for every importable row of *year*.
 
     Reuses the same parsing, month filtering, and FX conversion that
     ``import_year`` applies, so consumers (e.g. the 2D-to-3D report) get
     bit-identical inputs to whatever the importer would have processed.
 
-    If *config_con* is provided, ``_prefetch_monthly_rates`` reuses it
-    instead of opening a fresh config cursor.
+    If *con* is provided, ``_prefetch_monthly_rates`` reuses it
+    instead of opening a fresh cursor on the single DB.
     """
     source = duckdb_repo.get_import_source(year)
     if source is None:
-        own_con = config_con is None
+        own_con = con is None
         if own_con:
-            config_con = duckdb_repo.get_config_connection(read_only=True)
+            con = duckdb_repo.get_connection()
         try:
             available = [
                 r[0]
-                for r in config_con.execute(
+                for r in con.execute(
                     "SELECT year FROM import_sources ORDER BY year",
                 ).fetchall()
             ]
         finally:
             if own_con:
-                config_con.close()
+                con.close()
         msg = f"year {year} not in import_sources. Available years: {available}"
         raise ValueError(msg)
     layout = LAYOUTS[source.layout_key]
-    monthly_rates = _prefetch_monthly_rates(year, layout, config_con=config_con)
+    monthly_rates = _prefetch_monthly_rates(year, layout, con=con)
 
     ss = get_sheet(source.spreadsheet_id)
     ws = ss.worksheet(source.worksheet_name) if source.worksheet_name else ss.sheet1
@@ -912,7 +930,7 @@ def iter_parsed_sheet_rows(year: int, *, config_con=None):
         )
         if amounts is None:
             continue
-        amount_original, currency_original, amount_eur = amounts
+        amount_original, currency_original, amount_app, amount_eur = amounts
 
         comment = _cell(row_display, layout.col_comment)
         beneficiary_raw = (
@@ -929,6 +947,7 @@ def iter_parsed_sheet_rows(year: int, *, config_con=None):
             beneficiary_raw=beneficiary_raw,
             amount_original=amount_original,
             currency_original=currency_original,
+            amount_app=amount_app,
             amount_eur=amount_eur,
         )
 
@@ -941,50 +960,72 @@ def iter_parsed_sheet_rows(year: int, *, config_con=None):
 def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
     """Import all months for *year* from the configured sheet into DuckDB.
 
-    Always destructive within ``budget_YYYY.duckdb`` (TRUNCATE
-    expenses/tags); safe to re-run without producing duplicates because a
-    deterministic id and the truncate-then-insert pattern recreate
-    identical rows.
-    """
-    duckdb_repo.init_config_db()
+    Always destructive for rows whose ``YEAR(datetime) = year`` in the
+    single ``data/dinary.duckdb`` (DELETE expense_tags + expenses +
+    sheet_logging_jobs for *year*, then re-insert). Runtime rows from
+    other years are not touched; the single-file DB is shared with the
+    runtime POST path and with every other historical year.
 
-    config_con = duckdb_repo.get_config_connection(read_only=True)
+    Rows are inserted with ``client_expense_id=NULL`` — ``UNIQUE`` allows
+    multiple NULL values, so re-imports don't collide on the idempotency
+    key. There is no server-side stable id for legacy rows anymore; if
+    you need to reach a single legacy row, filter by
+    ``(YEAR(datetime), sheet_category, sheet_group, amount_original,
+    comment)``.
+
+    Failure semantics: this function is destructive-then-populate and
+    each call wipes every ledger row whose ``YEAR(datetime) = year``
+    before inserting anything. A mid-import crash therefore leaves the
+    year partially populated, and the operator's recovery is simply to
+    re-run ``inv import-budget --year YYYY``: the leading DELETEs make
+    the next attempt self-healing without needing a multi-thousand-row
+    transactional envelope around every INSERT. ``insert_expense``
+    still owns its own small transaction per row so a single bad row
+    (FK miss, constraint violation) does not corrupt its siblings.
+    """
+    duckdb_repo.init_db()
+
+    con = duckdb_repo.get_connection()
     try:
-        ctx = build_resolution_context(config_con, year)
+        ctx = build_resolution_context(con, year)
         if ctx is None:
             msg = (
-                f"Synthetic vacation event for year {year} is missing from config.events. "
+                f"Synthetic vacation event for year {year} is missing from events. "
                 "Re-run `inv import-catalog` so seed_config can create it."
             )
             raise ValueError(msg)
         if year == RUSSIA_TRIP_FIX_YEAR and ctx.russia_trip_event_id is None:
             msg = (
-                f"Event {RUSSIA_TRIP_EVENT_NAME!r} is missing from config.events. "
+                f"Event {RUSSIA_TRIP_EVENT_NAME!r} is missing from events. "
                 "Re-run `inv import-catalog --yes` so seed_config can create it."
             )
             raise ValueError(msg)
-    finally:
-        config_con.close()
 
-    budget_db_path = duckdb_repo.budget_path(year)
-    if budget_db_path.exists():
-        duckdb_repo.release_budget_attach(year)
-        budget_db_path.unlink()
-
-    con = duckdb_repo.get_budget_connection(year)
-    try:
-        # Wipe order matters: sheet_logging_jobs -> expense_tags -> expenses.
-        # DuckDB has no ON DELETE CASCADE; child tables FK into expenses.
-        # See commit history for the rationale behind autocommit DELETEs.
-        con.execute("DELETE FROM sheet_logging_jobs")
-        con.execute("DELETE FROM expense_tags")
-        con.execute("DELETE FROM expenses")
+        # Wipe order matters: sheet_logging_jobs -> expense_tags ->
+        # expenses. DuckDB has no ON DELETE CASCADE; child tables FK
+        # into expenses. Restricting each DELETE to rows that belong to
+        # *year* leaves runtime rows and other historical years
+        # untouched. These three statements run outside an explicit
+        # transaction; each DELETE auto-commits. Their combination is
+        # idempotent, so a crash between them just leaves a smaller
+        # ledger for *year* that the next DELETE will reduce further.
+        con.execute(
+            "DELETE FROM sheet_logging_jobs WHERE expense_id IN"
+            " (SELECT id FROM expenses WHERE YEAR(datetime) = ?)",
+            [year],
+        )
+        con.execute(
+            "DELETE FROM expense_tags WHERE expense_id IN"
+            " (SELECT id FROM expenses WHERE YEAR(datetime) = ?)",
+            [year],
+        )
+        con.execute("DELETE FROM expenses WHERE YEAR(datetime) = ?", [year])
 
         created = 0
         errors = 0
         months_seen: set[int] = set()
 
-        for parsed in iter_parsed_sheet_rows(year):
+        for parsed in iter_parsed_sheet_rows(year, con=con):
             try:
                 resolved = _resolve_dimensions(
                     con,
@@ -1035,22 +1076,14 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
                     tag_ids = sorted(set(tag_ids) | set(extra_ids))
 
             months_seen.add(parsed.month)
-
-            expense_id = _stable_id(
-                year,
-                parsed.month,
-                parsed.row_idx,
-                parsed.sheet_category,
-                parsed.sheet_group,
-            )
             expense_dt = datetime(year, parsed.month, 1, 12, 0, 0)
 
             try:
                 duckdb_repo.insert_expense(
                     con,
-                    expense_id=expense_id,
+                    client_expense_id=None,
                     expense_datetime=expense_dt,
-                    amount=parsed.amount_eur,
+                    amount=parsed.amount_app,
                     amount_original=parsed.amount_original,
                     currency_original=parsed.currency_original,
                     category_id=category_id,
@@ -1064,8 +1097,10 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
                 created += 1
             except Exception:
                 logger.exception(
-                    "Failed to insert expense %s for %s/%s",
-                    expense_id,
+                    "Failed to insert expense %d-%02d row %d (%s/%s)",
+                    year,
+                    parsed.month,
+                    parsed.row_idx,
                     parsed.sheet_category,
                     parsed.sheet_group,
                 )

@@ -1,12 +1,38 @@
-"""Seed config.duckdb with the Phase-1 3D classification catalog.
+"""Seed data/dinary.duckdb with the Phase-1 3D classification catalog.
 
-This file is the authoritative source of truth for `config.duckdb` contents:
-category groups, categories, events (synthetic + relocation), tags, and the
-legacy `import_mapping` rows used by the bootstrap historical import. When this
-file disagrees with `docs/src/ru/taxonomy.md`, the code wins.
+This file is the authoritative source of truth for the catalog tables
+(``category_groups``, ``categories``, ``events``, ``tags``, and the
+derived ``import_mapping`` / ``logging_mapping`` tables). When this file
+disagrees with ``docs/src/ru/taxonomy.md``, the code wins.
 
 Phase 1 PWA hardcodes the same tag dictionary defined here. There is no
-`/api/tags` endpoint.
+``/api/tags`` endpoint.
+
+FK-safe in-place sync
+---------------------
+
+``rebuild_config_from_sheets`` (driven by ``inv import-catalog``) never
+deletes the DB file and never renumbers catalog ids. Ledger tables
+(``expenses``, ``expense_tags``, ``sheet_logging_jobs``, ``income``)
+carry real FKs into the catalog; deleting and renumbering referenced
+rows would violate those FKs.
+
+The sync algorithm:
+
+1. Preserve ``import_sources`` intact (it's the operator-configured
+   source list, not a derived value).
+2. Mark every catalog row ``is_active=FALSE``. Rows that reappear in
+   the new taxonomy snapshot get flipped back to ``TRUE`` in step 3;
+   rows that don't stay ``FALSE`` and are hidden from the live API
+   while remaining FK-valid targets for historical ledger rows.
+3. Upsert groups / categories / events / tags by ``name`` (the natural
+   key). Pre-existing rows keep their integer ``id``; new rows get a
+   fresh ``id = max(id)+1``.
+4. Rebuild the ``import_mapping(_tags)`` + ``logging_mapping(_tags)``
+   tables from scratch by DELETE + INSERT. These are catalog-side
+   derived state; no ledger table FKs into them, so wholesale rebuild
+   is safe and keeps rename/retire semantics consistent.
+5. Bump ``app_metadata.catalog_version``.
 """
 
 import dataclasses
@@ -102,9 +128,9 @@ HISTORICAL_YEAR_TO = 2030
 class ExplicitEvent:
     """One-off event row that the bootstrap importer references by name.
 
-    Lives in the catalog (config.duckdb) so `catalog_version` reflects its
-    presence; `imports/expense_import.py` looks events up by name and never mutates
-    config.duckdb directly.
+    Lives in the catalog (``events`` table in ``dinary.duckdb``) so
+    ``catalog_version`` reflects its presence; ``imports/expense_import.py``
+    looks events up by name and never mutates the catalog directly.
     """
 
     name: str
@@ -217,27 +243,24 @@ def _ensure_import_sources(con: duckdb.DuckDBPyConnection) -> int:
     return len(rows)
 
 
-def _load_existing_import_sources() -> list[ImportSourceSeedRow]:
-    if not duckdb_repo.CONFIG_DB.exists():
-        return []
-    # Route through the singleton engine: a bare `duckdb.connect()`
-    # would clash with an already-attached config in the same process
-    # (the BinderException class motivating the singleton-engine
-    # refactor). `get_config_connection` returns a cursor of the
-    # singleton, which both avoids the conflict and shares the
-    # config ATTACH the rest of the process is already using.
-    con = duckdb_repo.get_config_connection(read_only=True)
+def _load_existing_import_sources(
+    con: duckdb.DuckDBPyConnection,
+) -> list[ImportSourceSeedRow]:
+    """Snapshot ``import_sources`` rows from the single DB.
+
+    Kept as a helper so ``rebuild_config_from_sheets`` can capture the
+    operator-configured source list before the catalog rebuild and
+    reapply it afterwards — defending against accidental edits to the
+    catalog hardcodes wiping out a configured source row.
+    """
     try:
-        try:
-            rows = con.execute(
-                "SELECT year, spreadsheet_id, worksheet_name, layout_key, notes,"
-                " income_worksheet_name, income_layout_key"
-                " FROM import_sources ORDER BY year",
-            ).fetchall()
-        except duckdb.Error:
-            return []
-    finally:
-        con.close()
+        rows = con.execute(
+            "SELECT year, spreadsheet_id, worksheet_name, layout_key, notes,"
+            " income_worksheet_name, income_layout_key"
+            " FROM import_sources ORDER BY year",
+        ).fetchall()
+    except duckdb.Error:
+        return []
     return [
         ImportSourceSeedRow(
             year=row[0],
@@ -252,36 +275,35 @@ def _load_existing_import_sources() -> list[ImportSourceSeedRow]:
     ]
 
 
-def _restore_import_sources(rows: list[ImportSourceSeedRow]) -> None:
+def _restore_import_sources(
+    con: duckdb.DuckDBPyConnection,
+    rows: list[ImportSourceSeedRow],
+) -> None:
     if not rows:
         return
-    con = duckdb_repo.get_config_connection(read_only=False)
-    try:
-        for row in rows:
-            con.execute(
-                "INSERT INTO import_sources"
-                " (year, spreadsheet_id, worksheet_name, layout_key, notes,"
-                "  income_worksheet_name, income_layout_key)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)"
-                " ON CONFLICT DO UPDATE SET"
-                "  spreadsheet_id = EXCLUDED.spreadsheet_id,"
-                "  worksheet_name = EXCLUDED.worksheet_name,"
-                "  layout_key = EXCLUDED.layout_key,"
-                "  notes = EXCLUDED.notes,"
-                "  income_worksheet_name = EXCLUDED.income_worksheet_name,"
-                "  income_layout_key = EXCLUDED.income_layout_key",
-                [
-                    row.year,
-                    row.spreadsheet_id,
-                    row.worksheet_name,
-                    row.layout_key,
-                    row.notes,
-                    row.income_worksheet_name,
-                    row.income_layout_key,
-                ],
-            )
-    finally:
-        con.close()
+    for row in rows:
+        con.execute(
+            "INSERT INTO import_sources"
+            " (year, spreadsheet_id, worksheet_name, layout_key, notes,"
+            "  income_worksheet_name, income_layout_key)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT DO UPDATE SET"
+            "  spreadsheet_id = EXCLUDED.spreadsheet_id,"
+            "  worksheet_name = EXCLUDED.worksheet_name,"
+            "  layout_key = EXCLUDED.layout_key,"
+            "  notes = EXCLUDED.notes,"
+            "  income_worksheet_name = EXCLUDED.income_worksheet_name,"
+            "  income_layout_key = EXCLUDED.income_layout_key",
+            [
+                row.year,
+                row.spreadsheet_id,
+                row.worksheet_name,
+                row.layout_key,
+                row.notes,
+                row.income_worksheet_name,
+                row.income_layout_key,
+            ],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -778,112 +800,287 @@ def _category_group_lookup() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _next_id(con: duckdb.DuckDBPyConnection, table: str) -> int:
+    """Return the next available integer id for a catalog table."""
+    row = con.execute(f"SELECT COALESCE(MAX(id), 0) FROM {table}").fetchone()  # noqa: S608
+    return int(row[0]) + 1 if row else 1
+
+
+def _upsert_category_group(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    name: str,
+    sort_order: int,
+) -> int:
+    """UPSERT a category_group by natural key (name); return its stable id."""
+    row = con.execute(
+        "SELECT id FROM category_groups WHERE name = ?",
+        [name],
+    ).fetchone()
+    if row is not None:
+        gid = int(row[0])
+        con.execute(
+            "UPDATE category_groups SET sort_order = ?, is_active = TRUE WHERE id = ?",
+            [sort_order, gid],
+        )
+        return gid
+    gid = _next_id(con, "category_groups")
+    con.execute(
+        "INSERT INTO category_groups (id, name, sort_order, is_active) VALUES (?, ?, ?, TRUE)",
+        [gid, name, sort_order],
+    )
+    return gid
+
+
+def _upsert_category(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    name: str,
+    group_id: int,
+) -> int:
+    """UPSERT a category by natural key (name); return its stable id.
+
+    DuckDB 1.5 caveat: any UPDATE that touches ``categories.group_id``
+    (an FK column) is internally implemented as DELETE+INSERT of the
+    row, which fails FK validation when ``expenses.category_id`` (or
+    the mapping tables) already reference that category id. Non-FK
+    columns like ``is_active`` update in place and are safe. So:
+
+    * always flip ``is_active`` back to TRUE in its own UPDATE — this
+      always succeeds, even on FK-referenced rows;
+    * only issue a ``group_id`` UPDATE when the value actually
+      changed, and only when no FK-referenced child row would block
+      it. When the category is already referenced by a ledger row,
+      ``group_id`` is left pinned to whatever the DB has: a natural
+      consequence of ``is_active=FALSE`` being the only way Phase 1
+      retires catalog rows.
+    """
+    row = con.execute(
+        "SELECT id, group_id, is_active FROM categories WHERE name = ?",
+        [name],
+    ).fetchone()
+    if row is None:
+        cid = _next_id(con, "categories")
+        con.execute(
+            "INSERT INTO categories (id, name, group_id, is_active) VALUES (?, ?, ?, TRUE)",
+            [cid, name, group_id],
+        )
+        return cid
+
+    cid = int(row[0])
+    existing_group = int(row[1]) if row[1] is not None else None
+    existing_active = bool(row[2])
+
+    if not existing_active:
+        con.execute(
+            "UPDATE categories SET is_active = TRUE WHERE id = ?",
+            [cid],
+        )
+
+    if existing_group != group_id:
+        try:
+            con.execute(
+                "UPDATE categories SET group_id = ? WHERE id = ?",
+                [group_id, cid],
+            )
+        except duckdb.ConstraintException:
+            # DuckDB 1.5 refuses to DELETE+INSERT an FK-referenced
+            # row even when the target FK column is unchanged at
+            # SQL level. Leaving group_id pinned is the lesser evil:
+            # the category is still reachable via its stable id and
+            # the live taxonomy (ENTRY_GROUPS) rarely re-homes a
+            # name between groups in production anyway.
+            logger.warning(
+                "Cannot re-home category %r (id=%d) from group_id=%s to %s: "
+                "row is FK-referenced and DuckDB 1.5 cannot UPDATE FK columns "
+                "on such rows. Leaving group_id unchanged.",
+                name,
+                cid,
+                existing_group,
+                group_id,
+            )
+    return cid
+
+
+def _upsert_event(  # noqa: PLR0913
+    con: duckdb.DuckDBPyConnection,
+    *,
+    name: str,
+    date_from: date,
+    date_to: date,
+    auto_attach_enabled: bool,
+) -> int:
+    """UPSERT an event by natural key (name); return its stable id."""
+    row = con.execute("SELECT id FROM events WHERE name = ?", [name]).fetchone()
+    if row is not None:
+        eid = int(row[0])
+        con.execute(
+            "UPDATE events SET date_from = ?, date_to = ?, auto_attach_enabled = ?,"
+            " is_active = TRUE WHERE id = ?",
+            [date_from, date_to, auto_attach_enabled, eid],
+        )
+        return eid
+    eid = _next_id(con, "events")
+    con.execute(
+        "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled, is_active)"
+        " VALUES (?, ?, ?, ?, ?, TRUE)",
+        [eid, name, date_from, date_to, auto_attach_enabled],
+    )
+    return eid
+
+
+def _upsert_tag(con: duckdb.DuckDBPyConnection, *, name: str) -> int:
+    """UPSERT a tag by natural key (name); return its stable id."""
+    row = con.execute("SELECT id FROM tags WHERE name = ?", [name]).fetchone()
+    if row is not None:
+        tid = int(row[0])
+        con.execute("UPDATE tags SET is_active = TRUE WHERE id = ?", [tid])
+        return tid
+    tid = _next_id(con, "tags")
+    con.execute(
+        "INSERT INTO tags (id, name, is_active) VALUES (?, ?, TRUE)",
+        [tid, name],
+    )
+    return tid
+
+
+def _purge_mapping_tables(con: duckdb.DuckDBPyConnection) -> None:
+    """Clear all mapping rows; they are rebuilt from current active taxonomy.
+
+    Ledger tables do NOT FK into mapping tables, so this is safe under
+    FKs. Mapping tables are catalog-side derived state: rename/retire
+    of a taxonomy row in step 3 must re-point any affected mapping row
+    onto the new active id, and doing that by DELETE+INSERT is simpler
+    and more correct than tracking per-row deltas.
+
+    MUST be called outside an open write transaction. DuckDB 1.5 does
+    not see intra-transaction DELETEs in the FK index, so a ``DELETE
+    FROM import_mapping_tags`` followed by ``DELETE FROM import_mapping``
+    inside a single ``BEGIN``/``COMMIT`` block raises a FK violation
+    on the second statement. Running each DELETE in its own implicit
+    auto-commit transaction sidesteps the limitation. Losing
+    transactional atomicity here is acceptable because mapping tables
+    are pure derived state: if the subsequent rebuild crashes we end
+    up with empty mapping tables, which is the same state a fresh
+    migration would produce and the very next seed run would
+    re-populate.
+    """
+    con.execute("DELETE FROM import_mapping_tags")
+    con.execute("DELETE FROM import_mapping")
+    con.execute("DELETE FROM logging_mapping_tags")
+    con.execute("DELETE FROM logging_mapping")
+
+
 def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
     con: duckdb.DuckDBPyConnection,
     *,
     year: int | None = None,
     discovered_pairs: list[Category] | None = None,
 ) -> dict:
-    """Seed the 3D taxonomy + legacy `import_mapping` rows into config.duckdb.
+    """FK-safe in-place sync of the 3D taxonomy into ``dinary.duckdb``.
 
-    Seeding order: category_groups -> categories -> events -> tags ->
-    import_mapping -> import_mapping_tags. All ids are resolved to integers
-    before insert; FKs are honored.
+    Seeding order: deactivate-all -> category_groups -> categories ->
+    events -> tags -> rebuild mapping tables. Integer ids for
+    pre-existing vocabulary are preserved; new vocabulary gets a fresh
+    ``max(id)+1``. Rows present in the DB but absent from the new
+    taxonomy snapshot stay ``is_active=FALSE`` so ledger rows keep a
+    valid FK target while the live API hides them.
 
-    `discovered_pairs` is the union of legacy `(sheet_category, sheet_group)`
-    pairs across configured import sources; it drives year=0 mapping rows.
+    ``discovered_pairs`` is the union of legacy
+    ``(sheet_category, sheet_group)`` pairs across configured import
+    sources; it drives year=0 mapping rows.
     """
     if year is None:
         year = date.today().year
 
-    # 1. category_groups
+    # 0. Deactivate everything; step 3 will flip back active rows in the
+    # new taxonomy snapshot. Rows that don't reappear stay inactive and
+    # ledger FKs remain valid.
+    con.execute("UPDATE category_groups SET is_active = FALSE")
+    con.execute("UPDATE categories SET is_active = FALSE")
+    con.execute("UPDATE events SET is_active = FALSE")
+    con.execute("UPDATE tags SET is_active = FALSE")
+
+    # NOTE: mapping tables must have been purged by the caller BEFORE
+    # opening the main transaction (see ``_purge_mapping_tables``
+    # docstring for the DuckDB 1.5 FK-in-txn limitation that forces
+    # this ordering).
+
+    # 1. category_groups (stable ids by name)
     group_id_by_title: dict[str, int] = {}
     for sort_order, (title, _cats) in enumerate(ENTRY_GROUPS, start=1):
-        con.execute(
-            "INSERT INTO category_groups (id, name, sort_order) VALUES (?, ?, ?)"
-            " ON CONFLICT DO NOTHING",
-            [sort_order, title, sort_order],
+        group_id_by_title[title] = _upsert_category_group(
+            con,
+            name=title,
+            sort_order=sort_order,
         )
-        group_id_by_title[title] = sort_order
 
-    # 2. categories
+    # 2. categories (stable ids by name)
     cat_id_by_name: dict[str, int] = {}
     cat_to_group = _category_group_lookup()
-    next_cat_id = 1
     for cat_name in cat_to_group:
-        con.execute(
-            "INSERT INTO categories (id, name, group_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-            [next_cat_id, cat_name, group_id_by_title[cat_to_group[cat_name]]],
+        cat_id_by_name[cat_name] = _upsert_category(
+            con,
+            name=cat_name,
+            group_id=group_id_by_title[cat_to_group[cat_name]],
         )
-        cat_id_by_name[cat_name] = next_cat_id
-        next_cat_id += 1
+    # Also expose retired categories (is_active=FALSE) through the
+    # in-memory map so any stray seed rule that names them can resolve
+    # to the existing id rather than silently failing. Retired rows
+    # deliberately keep their ids so mapping rebuilds can point at
+    # them if a rule explicitly does (tests cover the rename path).
     for r in fetchall_as(duckdb_repo.IdNameRow, con, load_sql("seed_load_categories.sql")):
-        cat_id_by_name[r.name] = r.id
+        cat_id_by_name.setdefault(r.name, r.id)
 
-    # 3. events
+    # 3. events (stable ids by name)
     event_id_by_name: dict[str, int] = {}
-    next_event_id = 1
     for y in range(HISTORICAL_YEAR_FROM, HISTORICAL_YEAR_TO + 1):
         name = f"{SYNTHETIC_EVENT_PREFIX}{y}"
-        con.execute(
-            "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
-            " VALUES (?, ?, ?, ?, true) ON CONFLICT DO NOTHING",
-            [next_event_id, name, date(y, 1, 1), date(y, 12, 31)],
+        event_id_by_name[name] = _upsert_event(
+            con,
+            name=name,
+            date_from=date(y, 1, 1),
+            date_to=date(y, 12, 31),
+            auto_attach_enabled=True,
         )
-        event_id_by_name[name] = next_event_id
-        next_event_id += 1
     for y in range(HISTORICAL_YEAR_FROM, BUSINESS_TRIP_EVENT_LAST_YEAR + 1):
         name = f"{BUSINESS_TRIP_EVENT_PREFIX}{y}"
-        con.execute(
-            "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
-            " VALUES (?, ?, ?, ?, true) ON CONFLICT DO NOTHING",
-            [next_event_id, name, date(y, 1, 1), date(y, 12, 31)],
+        event_id_by_name[name] = _upsert_event(
+            con,
+            name=name,
+            date_from=date(y, 1, 1),
+            date_to=date(y, 12, 31),
+            auto_attach_enabled=True,
         )
-        event_id_by_name[name] = next_event_id
-        next_event_id += 1
-    con.execute(
-        "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
-        " VALUES (?, ?, ?, ?, false) ON CONFLICT DO NOTHING",
-        [next_event_id, RELOCATION_EVENT_NAME, RELOCATION_EVENT_FROM, RELOCATION_EVENT_TO],
+    event_id_by_name[RELOCATION_EVENT_NAME] = _upsert_event(
+        con,
+        name=RELOCATION_EVENT_NAME,
+        date_from=RELOCATION_EVENT_FROM,
+        date_to=RELOCATION_EVENT_TO,
+        auto_attach_enabled=False,
     )
-    event_id_by_name[RELOCATION_EVENT_NAME] = next_event_id
-    next_event_id += 1
-
     for ev in EXPLICIT_EVENTS:
-        con.execute(
-            "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
-            " VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-            [next_event_id, ev.name, ev.date_from, ev.date_to, ev.auto_attach_enabled],
+        event_id_by_name[ev.name] = _upsert_event(
+            con,
+            name=ev.name,
+            date_from=ev.date_from,
+            date_to=ev.date_to,
+            auto_attach_enabled=ev.auto_attach_enabled,
         )
-        event_id_by_name[ev.name] = next_event_id
-        next_event_id += 1
 
-    rows = con.execute("SELECT id, name FROM events").fetchall()
-    for rid, rname in rows:
-        event_id_by_name[rname] = rid
-
-    # 4. tags
+    # 4. tags (stable ids by name)
     tag_id_by_name: dict[str, int] = {}
-    next_tag_id = 1
     for tag_name in PHASE1_TAGS:
-        con.execute(
-            "INSERT INTO tags (id, name) VALUES (?, ?) ON CONFLICT DO NOTHING",
-            [next_tag_id, tag_name],
-        )
-        tag_id_by_name[tag_name] = next_tag_id
-        next_tag_id += 1
-    rows = con.execute("SELECT id, name FROM tags").fetchall()
-    for rid, rname in rows:
-        tag_id_by_name[rname] = rid
+        tag_id_by_name[tag_name] = _upsert_tag(con, name=tag_name)
 
-    # 5. import_mapping (year=0 generic rows from discovered pairs)
+    # 5-8. Mapping rebuild. Tables were wiped in step 0, so we insert
+    # fresh rows here with sequential ids; the (year, sheet_category,
+    # sheet_group) UNIQUE constraint de-duplicates collisions within
+    # this rebuild.
     mapping_count = 0
-    next_mapping_id_row = con.execute("SELECT COALESCE(MAX(id), 0) FROM import_mapping").fetchone()
-    next_mapping_id = (next_mapping_id_row[0] if next_mapping_id_row else 0) + 1
+    next_mapping_id = 1
 
-    pairs = discovered_pairs or []
-
-    def upsert_mapping(  # noqa: PLR0913
+    def insert_mapping(  # noqa: PLR0913
         seed_year: int,
         sheet_category: str,
         sheet_group: str,
@@ -908,56 +1105,17 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
                 msg = f"Seeded mapping references unknown tag {t!r}"
                 raise ValueError(msg)
 
+        # UNIQUE (year, sheet_category, sheet_group); step 8 may revisit
+        # the same triple via canonical forward-projection. Skip duplicates
+        # silently — the first insert wins.
         existing = con.execute(
-            "SELECT id, category_id, event_id FROM import_mapping"
+            "SELECT id FROM import_mapping"
             " WHERE year = ? AND sheet_category = ? AND sheet_group = ?",
             [seed_year, sheet_category, sheet_group],
         ).fetchone()
-        # NOTE: `new_tag_ids` is derived from the caller-supplied `tag_names`.
-        # Callers in step 5 pass `tags_for_source(..., 0)` (year-agnostic),
-        # while step 7 passes `tags_for_source(..., y)` (year-aware) for the
-        # same `(sheet_category, sheet_group)`. The divergence guard below
-        # compares against whatever was stored last, so re-deriving tags
-        # inside upsert_mapping (instead of trusting the caller) would
-        # spuriously trip the guard for year-aware overrides.
-        new_tag_ids = sorted({tag_id_by_name[t] for t in tag_names})
-        if existing:
-            mapping_id, existing_category_id, existing_event_id = existing
-            # Idempotent reseed of the same logic: the row's identity columns
-            # (category_id, event_id) must match. We refuse to silently mutate
-            # them because DuckDB FK enforcement on UPDATE/DELETE+INSERT in the
-            # same transaction is unreliable when child rows exist. If the
-            # caller really needs to change the mapping target, they must run
-            # `inv import-catalog` which wipes the DB first.
-            if existing_category_id != category_id or existing_event_id != event_id:
-                msg = (
-                    f"Mapping ({seed_year}, {sheet_category!r}, {sheet_group!r}) "
-                    f"already exists with category_id={existing_category_id}, "
-                    f"event_id={existing_event_id}; refusing to mutate to "
-                    f"category_id={category_id}, event_id={event_id}. "
-                    "Run `inv import-catalog` to wipe and re-seed."
-                )
-                raise ValueError(msg)
-            existing_tag_ids = sorted(
-                int(r[0])
-                for r in con.execute(
-                    "SELECT tag_id FROM import_mapping_tags WHERE mapping_id = ?",
-                    [mapping_id],
-                ).fetchall()
-            )
-            if existing_tag_ids != new_tag_ids:
-                # Same identity columns but a different tag set means the seed
-                # rules diverged from what's stored. Silently inserting only
-                # the new tags would leave a stale superset; mutating in
-                # place runs into the same FK-on-UPDATE limitations as the
-                # identity-column case. Force a full rebuild instead.
-                msg = (
-                    f"Mapping ({seed_year}, {sheet_category!r}, {sheet_group!r}) already "
-                    f"exists with tag_ids={existing_tag_ids}; refusing to mutate to "
-                    f"tag_ids={new_tag_ids}. Run `inv import-catalog` to wipe and re-seed."
-                )
-                raise ValueError(msg)
+        if existing is not None:
             return
+
         mapping_id = next_mapping_id
         next_mapping_id += 1
         con.execute(
@@ -967,12 +1125,13 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
             [mapping_id, seed_year, sheet_category, sheet_group, category_id, event_id],
         )
         mapping_count += 1
-        for tag_id in new_tag_ids:
+        for tag_id in sorted({tag_id_by_name[t] for t in tag_names}):
             con.execute(
                 "INSERT INTO import_mapping_tags (mapping_id, tag_id) VALUES (?, ?)",
                 [mapping_id, tag_id],
             )
 
+    pairs = discovered_pairs or []
     for c in pairs:
         sheet_category = c.name
         sheet_group = c.group or ""
@@ -986,11 +1145,11 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
             )
             raise
         tag_names = tags_for_source(sheet_category, sheet_group, 0)
-        upsert_mapping(0, sheet_category, sheet_group, category_name, tag_names, None)
+        insert_mapping(0, sheet_category, sheet_group, category_name, tag_names, None)
 
     # 6. import_mapping (per-year explicit overrides)
     for row in EXPLICIT_MAPPING_OVERRIDES:
-        upsert_mapping(
+        insert_mapping(
             row.year,
             row.sheet_category,
             row.sheet_group,
@@ -1014,7 +1173,7 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
             if event_name is None:
                 continue
             tag_names = tags_for_source(sheet_category, sheet_group, y)
-            upsert_mapping(y, sheet_category, sheet_group, category_name, tag_names, event_name)
+            insert_mapping(y, sheet_category, sheet_group, category_name, tag_names, event_name)
 
     # 8. Forward-projection coverage: every hardcoded category needs at least
     # one row in the latest sheet year so `POST /api/expenses` can always
@@ -1032,9 +1191,9 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
             ).fetchone()
             if existing:
                 continue
-            upsert_mapping(latest_year, cat_name, "", cat_name, (), None)
+            insert_mapping(latest_year, cat_name, "", cat_name, (), None)
 
-    logging_bootstrapped = _sync_logging_mapping_from_year_zero(con)
+    logging_bootstrapped = _rebuild_logging_mapping_from_year_zero(con)
 
     return {
         "category_groups": len(group_id_by_title),
@@ -1046,33 +1205,22 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
     }
 
 
-def _sync_logging_mapping_from_year_zero(con: duckdb.DuckDBPyConnection) -> int:
-    """Mirror year=0 import_mapping into logging_mapping when empty.
+def _rebuild_logging_mapping_from_year_zero(con: duckdb.DuckDBPyConnection) -> int:
+    """Rebuild ``logging_mapping`` from the freshly-seeded year=0 import_mapping.
 
-    Idempotent: runs only when ``logging_mapping`` is empty. This protects
-    operator edits to logging_mapping (the whole reason it exists as a
-    separate table) from being clobbered by every ``inv import-config`` run.
+    Called after ``seed_classification_catalog`` step 5 populates
+    ``import_mapping`` with the current active taxonomy ids. The
+    caller has already wiped ``logging_mapping(_tags)`` in step 0 so
+    we start from an empty table.
 
-    Returns the number of rows inserted (0 when logging_mapping was
-    already populated).
-
-    Bootstrap split:
-      * Existing-DB upgrades: migration 0002 already pre-fills from
-        year=0, so ``logging_mapping`` is non-empty here -> no-op.
-      * Fresh installs: migration 0002 ran against an empty
-        ``import_mapping`` (the rename happened before any seed insert),
-        so ``logging_mapping`` is empty here. The year=0 rows we just
-        inserted into ``import_mapping`` are mirrored over.
+    Under the FK-safe rename semantics, after an ``inv import-catalog``
+    run the logging mappings must reference *current active* taxonomy
+    ids. Previously this helper preserved operator edits by only
+    running on an empty table; under the plan's new contract that
+    trade-off is explicitly flipped — operator edits survive only if
+    represented in the seed rules, in exchange for guaranteed
+    consistency with the taxonomy.
     """
-    existing = con.execute("SELECT COUNT(*) FROM logging_mapping").fetchone()
-    if existing and existing[0]:
-        return 0
-
-    next_id_row = con.execute(
-        "SELECT COALESCE(MAX(id), 0) FROM logging_mapping",
-    ).fetchone()
-    next_id = (next_id_row[0] if next_id_row else 0) + 1
-
     rows = con.execute(
         "SELECT id, category_id, event_id, sheet_category, sheet_group"
         " FROM import_mapping WHERE year = 0 ORDER BY id",
@@ -1080,6 +1228,7 @@ def _sync_logging_mapping_from_year_zero(con: duckdb.DuckDBPyConnection) -> int:
     if not rows:
         return 0
 
+    next_id = 1
     old_to_new: dict[int, int] = {}
     for old_id, category_id, event_id, sheet_category, sheet_group in rows:
         con.execute(
@@ -1091,18 +1240,17 @@ def _sync_logging_mapping_from_year_zero(con: duckdb.DuckDBPyConnection) -> int:
         old_to_new[int(old_id)] = next_id
         next_id += 1
 
-    if old_to_new:
-        tag_rows = con.execute(
-            "SELECT mapping_id, tag_id FROM import_mapping_tags"
-            " WHERE mapping_id IN ("
-            "   SELECT id FROM import_mapping WHERE year = 0"
-            " )",
-        ).fetchall()
-        for mapping_id, tag_id in tag_rows:
-            con.execute(
-                "INSERT INTO logging_mapping_tags (mapping_id, tag_id) VALUES (?, ?)",
-                [old_to_new[int(mapping_id)], int(tag_id)],
-            )
+    tag_rows = con.execute(
+        "SELECT mapping_id, tag_id FROM import_mapping_tags"
+        " WHERE mapping_id IN ("
+        "   SELECT id FROM import_mapping WHERE year = 0"
+        " )",
+    ).fetchall()
+    for mapping_id, tag_id in tag_rows:
+        con.execute(
+            "INSERT INTO logging_mapping_tags (mapping_id, tag_id) VALUES (?, ?)",
+            [old_to_new[int(mapping_id)], int(tag_id)],
+        )
 
     return len(rows)
 
@@ -1164,7 +1312,8 @@ def _validate_import_coverage(con: duckdb.DuckDBPyConnection, latest_year: int) 
     """
     rows = con.execute(
         "SELECT c.name FROM categories c"
-        " WHERE NOT EXISTS ("
+        " WHERE c.is_active"
+        " AND NOT EXISTS ("
         "   SELECT 1 FROM import_mapping m"
         "   WHERE m.year = ? AND m.category_id = c.id"
         " )",
@@ -1192,62 +1341,54 @@ def _bump_catalog_version(con: duckdb.DuckDBPyConnection, *, previous: int) -> i
 
 
 def seed_from_sheet(year: int | None = None) -> dict:
-    """Seed `config.duckdb` from the configured sheets.
+    """Seed the catalog from the configured sheets.
 
     Idempotent: re-runnable on top of an existing DB. Used both for the
     fresh-bootstrap path and for incremental seeding during dev.
 
-    NOTE: this path does NOT bump `app_metadata.catalog_version`. By design
-    only `inv import-catalog` touches the version (so PWA clients don't get
-    invalidated by every routine `import-config` run). When this function adds
-    new mappings on top of an existing catalog, it logs a warning so the
-    operator knows the PWA caches will not refresh until the next
-    `inv import-catalog`.
+    NOTE: this path does NOT bump ``app_metadata.catalog_version``. By
+    design only ``inv import-catalog`` touches the version (so PWA
+    clients don't get invalidated by every routine ``import-config``
+    run). When this function adds new mappings on top of an existing
+    catalog, it logs a warning so the operator knows the PWA caches
+    will not refresh until the next ``inv import-catalog``.
 
-    CONCURRENCY: the function uses three sequential connections (write
-    sources -> read sources + Sheets HTTP -> write catalog) instead of
-    one long transaction. This trades atomicity for not holding the
-    `config.duckdb` writer slot across multi-second Google API calls
-    (which would block `POST /api/expenses` on the rate-cache miss
-    path). Callers MUST NOT run two `seed_from_sheet` invocations
-    concurrently — the split allows a second invocation to mutate
-    `import_sources` between Steps 1 and 3, producing a Step-3
-    catalog derived from a stale source list. Phase 1 deployment runs
-    `inv` tasks one at a time, so this is operationally safe; if that
-    ever changes, take a coarse-grained lock around the whole function.
+    CONCURRENCY: the function uses three sequential cursors on the
+    single ``dinary.duckdb`` connection (write sources -> read sources
+    + Sheets HTTP -> write catalog) instead of one long transaction.
+    This trades atomicity for not holding the writer slot across
+    multi-second Google API calls (which would block
+    ``POST /api/expenses`` on the rate-cache miss path). Callers MUST
+    NOT run two ``seed_from_sheet`` invocations concurrently — the
+    split allows a second invocation to mutate ``import_sources``
+    between Steps 1 and 3, producing a Step-3 catalog derived from a
+    stale source list. Phase 1 deployment runs ``inv`` tasks one at a
+    time, so this is operationally safe; if that ever changes, take a
+    coarse-grained lock around the whole function.
     """
     if year is None:
         year = date.today().year
 
-    duckdb_repo.init_config_db()
+    duckdb_repo.init_db()
 
     # Step 1: bootstrap import sources in a quick write txn, then commit
-    # before any Sheets HTTP work so we don't hold `config.duckdb`'s
-    # single-writer slot while waiting on Google's API (which routinely
-    # takes seconds and can stall any other writer — chiefly
-    # `POST /api/expenses` on a rate-cache miss).
-    con = duckdb_repo.get_config_connection(read_only=False)
+    # before any Sheets HTTP work so we don't hold the DB writer slot
+    # while waiting on Google's API.
+    con = duckdb_repo.get_connection()
     try:
         con.execute("BEGIN")
         try:
             bootstrapped_sources = _ensure_import_sources(con)
             con.execute("COMMIT")
         except Exception:
-            # Symmetric with Step 3: explicit ROLLBACK so the writer slot
-            # is released cleanly even though `con.close()` would also
-            # auto-rollback. Static analysis is happier and operators
-            # don't see "transaction left open" warnings in the logs.
-            # `best_effort_rollback` swallows a secondary failure so the
-            # original exception (the real cause) is what re-raises.
             duckdb_repo.best_effort_rollback(con, context="seed_from_sheet step 1")
             raise
     finally:
         con.close()
 
     # Step 2: pull categories from each registered sheet. This is pure HTTP
-    # against Google Sheets — no DB lock held. A read-only connection is
-    # opened solely to enumerate the source rows we just committed.
-    read_con = duckdb_repo.get_config_connection(read_only=True)
+    # against Google Sheets — no DB lock held.
+    read_con = duckdb_repo.get_connection()
     try:
         pairs = _collect_categories(read_con)
     finally:
@@ -1256,9 +1397,12 @@ def seed_from_sheet(year: int | None = None) -> dict:
         raise ValueError("No categories discovered from import_sources")
 
     # Step 3: now that the slow Sheets I/O is done, take the writer slot
-    # again and apply the catalog rows in one transaction.
-    con = duckdb_repo.get_config_connection(read_only=False)
+    # again and apply the catalog rows. The mapping-table purge runs
+    # BEFORE BEGIN because of a DuckDB 1.5 FK-in-transaction limitation
+    # (see ``_purge_mapping_tables`` docstring).
+    con = duckdb_repo.get_connection()
     try:
+        _purge_mapping_tables(con)
         con.execute("BEGIN")
         summary = seed_classification_catalog(con, year=year, discovered_pairs=pairs)
         summary["bootstrapped_import_sources"] = bootstrapped_sources
@@ -1282,50 +1426,55 @@ def seed_from_sheet(year: int | None = None) -> dict:
 
 
 def rebuild_config_from_sheets() -> dict:
-    """Wipe `config.duckdb`, restore preserved import sources, then re-seed.
+    """FK-safe in-place catalog sync from the configured sheets.
 
-    Destructive `import-catalog` codepath. Always bumps `catalog_version`
-    monotonically:
-      * first ever run on an empty data dir: 1 (post-init floor) -> 2;
-      * subsequent runs: max(prior_value, post-init=1) -> +1.
-    Returns a summary dict with `previous_catalog_version` (the floor used
-    for the bump, never less than 1) and `catalog_version` (the new value).
+    Never deletes the DB file. Ledger tables (``expenses``,
+    ``expense_tags``, ``sheet_logging_jobs``, ``income``) retain real
+    FKs into the catalog and are left completely untouched.
+
+    Sync steps (all inside one write transaction):
+
+    * Preserve ``import_sources`` by snapshotting then restoring; this
+      guards against hardcodes accidentally wiping the operator's
+      configured source list.
+    * Run ``seed_classification_catalog``: deactivate every catalog
+      row, upsert the new taxonomy by natural key (stable ids
+      preserved, new ids for new vocabulary, retired rows stay
+      ``is_active=FALSE``), then rebuild mapping tables from scratch
+      against the current active ids.
+    * Validate that the latest configured year has import-mapping
+      coverage for every active category.
+    * Monotonically bump ``catalog_version``.
+
+    Returns a summary dict including ``previous_catalog_version``
+    (value before the bump, never less than 1) and ``catalog_version``
+    (the new value).
     """
+    duckdb_repo.init_db()
+
     previous_version = 0
-    if duckdb_repo.CONFIG_DB.exists():
+    try:
+        con = duckdb_repo.get_connection()
         try:
-            con = duckdb_repo.get_config_connection(read_only=True)
-            try:
-                previous_version = duckdb_repo.get_catalog_version(con)
-            finally:
-                con.close()
-        except (duckdb.Error, OSError, RuntimeError) as exc:
-            # Catch only the expected failure modes here: DuckDB errors
-            # (file corruption, schema drift, locked DB), filesystem
-            # errors (race with another process unlinking the file
-            # between `.exists()` and `get_config_connection`), and
-            # RuntimeError raised by `get_catalog_version` when the
-            # `app_metadata` table is missing or empty. Anything else
-            # (KeyboardInterrupt, MemoryError) should propagate.
-            logger.warning(
-                "Could not read previous catalog_version (%s); defaulting to 0",
-                exc.__class__.__name__,
-            )
-            previous_version = 0
+            previous_version = duckdb_repo.get_catalog_version(con)
+        finally:
+            con.close()
+    except (duckdb.Error, OSError, RuntimeError) as exc:
+        # Only expected failure modes: DuckDB errors (file corruption,
+        # schema drift, locked DB), filesystem errors, and RuntimeError
+        # raised by get_catalog_version when app_metadata is missing.
+        # Anything else (KeyboardInterrupt, MemoryError) should propagate.
+        logger.warning(
+            "Could not read previous catalog_version (%s); defaulting to 0",
+            exc.__class__.__name__,
+        )
+        previous_version = 0
 
-    preserved_sources = _load_existing_import_sources()
-    if duckdb_repo.CONFIG_DB.exists():
-        # Release the singleton engine's ATTACH on config before
-        # deleting the file. Without this the next ATTACH (lazy, on the
-        # `init_config_db` below) would race with a stale handle to the
-        # deleted inode and the destructive flow would silently degrade
-        # into a half-rebuild. See `duckdb_repo.release_config_attach`
-        # for the full process-wide invariant.
-        duckdb_repo.release_config_attach()
-        duckdb_repo.CONFIG_DB.unlink()
-
-    duckdb_repo.init_config_db()
-    _restore_import_sources(preserved_sources)
+    con = duckdb_repo.get_connection()
+    try:
+        preserved_sources = _load_existing_import_sources(con)
+    finally:
+        con.close()
 
     summary = seed_from_sheet()
     summary["preserved_import_sources"] = len(preserved_sources)
@@ -1333,15 +1482,19 @@ def rebuild_config_from_sheets() -> dict:
     effective_previous: int
     new_version: int
     latest_year: int
-    con = duckdb_repo.get_config_connection(read_only=False)
+    con = duckdb_repo.get_connection()
     try:
-        latest_year = _validate_latest_import_source(con)
-        _validate_import_coverage(con, latest_year)
-        # If the DB was wiped, the freshly-initialized version (1) is the
-        # floor for "previous": that's what a client would have observed if
-        # it queried right after the wipe.
-        effective_previous = max(previous_version, duckdb_repo.get_catalog_version(con))
-        new_version = _bump_catalog_version(con, previous=effective_previous)
+        con.execute("BEGIN")
+        try:
+            _restore_import_sources(con, preserved_sources)
+            latest_year = _validate_latest_import_source(con)
+            _validate_import_coverage(con, latest_year)
+            effective_previous = max(previous_version, duckdb_repo.get_catalog_version(con))
+            new_version = _bump_catalog_version(con, previous=effective_previous)
+            con.execute("COMMIT")
+        except Exception:
+            duckdb_repo.best_effort_rollback(con, context="rebuild_config_from_sheets commit")
+            raise
     finally:
         con.close()
 

@@ -46,3 +46,19 @@
 
 - Reply to the user in the language they used (Russian or English), using
   proper native script. Do not transliterate Cyrillic into Latin letters.
+
+## Verification before claiming done
+
+- **Always run `inv pre` and the full test suite (`uv run pytest`) before
+  telling the user that changes are complete or that "lint is clean".**
+  Running only `ReadLints` or a narrow `pytest -k` subset is **not** a
+  substitute — `inv pre` runs ruff, ruff-format, and pyrefly with the
+  project's actual configuration, and it is the gate that matters.
+- If `inv pre` reports errors (even ones that appear pre-existing in
+  unrelated files), fix them in the same change before reporting done.
+  Do not dismiss lint errors as "out of scope" or "pre-existing" unless
+  you have explicitly confirmed they fail on ``main`` as well *and* the
+  user has agreed to defer them. Dismissing them silently is a lie to
+  the user about the state of the tree.
+- If `inv pre` modifies files (ruff-format, end-of-file-fixer, etc.),
+  re-run it until it converges to "All checks passed!" / "0 errors".

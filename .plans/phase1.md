@@ -1,13 +1,25 @@
 # Phase 1: DuckDB Foundation, Idempotent Ingestion, Export-Only Sheets ✓ IMPLEMENTED (3D reset, 2026-04)
 
-> **Superseded:** This document is a historical plan, frozen as of the
-> Phase 1 3D reset. It still uses the pre-rename names
+> **Superseded twice.** This document is a historical plan, frozen as of the
+> Phase 1 3D reset. A follow-up **single-file reset** (also 2026-04)
+> landed afterwards and changed more of the design than this file
+> describes: the multi-file layout (`config.duckdb` + per-year
+> `budget_YYYY.duckdb`) was collapsed into a single `data/dinary.duckdb`,
+> the global `expense_id_registry` table was removed and idempotency
+> moved to a `client_expense_id` UUID with a plain `UNIQUE` constraint,
+> `expenses.amount` now stores the configured app currency instead of
+> EUR, `POST /api/expenses` no longer echoes the server-side expense id,
+> and `inv import-catalog` became FK-safe (toggles `is_active` instead
+> of wiping catalog rows). For the current architecture see
+> [`.plans/architecture.md`](architecture.md). Treat everything below as
+> historical reference.
+>
+> It still uses the pre-rename names
 > (`sheet_sync_jobs`, `inv sync`, `schedule_sync`,
 > `sheet_import_sources`, `sheet_mapping`, `sheet_mapping_tags`,
-> `import_sheet`). For the current architecture and current names see
-> [`.plans/architecture.md`](architecture.md). Do not edit names here
-> in-place — they document the as-shipped state at the time of the
-> reset.
+> `import_sheet`). Do not edit names here in-place — they document the
+> as-shipped state at the time of the 3D reset, not the current
+> post-single-file-reset codebase.
 >
 > **Operational warning:** The command names in this file are also frozen.
 > In the current codebase there is no `inv sync` alias; the
@@ -466,7 +478,7 @@ This makes idempotency observable and avoids ambiguity about whether the client 
 Recommended service behavior:
 
 1. begin DB transaction
-2. `INSERT INTO expenses ... ON CONFLICT DO NOTHING RETURNING id`
+2. `INSERT INTO expenses ... ON CONFLICT (client_expense_id) DO NOTHING RETURNING id`
 3. check if `RETURNING` produced a row:
   - if a row was returned (insert succeeded):
     - insert rows into `expense_tags` for each resolved `tag_id` (same transaction)
@@ -484,7 +496,7 @@ Recommended service behavior:
     - if the payload differs:
       - return **409 Conflict**
 
-Using `ON CONFLICT DO NOTHING` + `RETURNING id` is preferred over catching `ConstraintException` because it keeps the transaction usable after a conflict (no need to rollback and retry in a new transaction). DuckDB does not have a `changes()` function, so `RETURNING` is the idiomatic approach.
+Using `ON CONFLICT (client_expense_id) DO NOTHING` + `RETURNING id` is preferred over catching `ConstraintException` because it keeps the transaction usable after a conflict (no need to rollback and retry in a new transaction). DuckDB does not have a `changes()` function, so `RETURNING` is the idiomatic approach.
 
 **Comparison is on 5D-resolved values, not raw input.** The server resolves `(category, group)` to 5D via the mapping table first, then compares the resolved `category_id`, `beneficiary_id`, `event_id`, `tag_ids`, `store_id`, `amount`, `datetime`, and `comment` against the stored row. For stored expenses, `tag_ids` is derived from `expense_tags` as a canonical sorted array before comparison. This means:
 

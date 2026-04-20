@@ -25,7 +25,7 @@ def test_periodic_drain_runs(monkeypatch):
             "failed": 0,
             "recovered_with_duplicate": 0,
             "noop_orphan": 0,
-            "skipped_expired": 0,
+            "poisoned": 0,
             "cap_reached": False,
         }
     )
@@ -97,7 +97,7 @@ def test_failing_sweep_does_not_kill_loop(monkeypatch):
             "failed": 0,
             "recovered_with_duplicate": 0,
             "noop_orphan": 0,
-            "skipped_expired": 0,
+            "poisoned": 0,
             "cap_reached": False,
         }
 
@@ -126,7 +126,7 @@ def test_cancel_on_shutdown_is_clean(monkeypatch):
             "failed": 0,
             "recovered_with_duplicate": 0,
             "noop_orphan": 0,
-            "skipped_expired": 0,
+            "poisoned": 0,
             "cap_reached": False,
         }
     )

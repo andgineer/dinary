@@ -1,206 +1,131 @@
-"""DuckDB repository: config.duckdb (catalog) and budget_YYYY.duckdb (ledger).
+"""DuckDB repository: single data/dinary.duckdb for catalog + ledger.
 
-Process-wide single engine model
----------------------------------
-DuckDB enforces a per-process invariant that any database file may only
-be opened by ONE engine in that process — opening it a second time (even
-via `ATTACH` from a different `duckdb.connect()` instance) raises
-
-    BinderException: Unique file handle conflict: Cannot attach
-    "config" - the database file ... is already attached by database
-    "config"
-
-We hit this in production right after the 3D rollout: the async
-sheet-logging worker holds a `budget_YYYY` connection (which previously
-ATTACHed config READ_ONLY inside its own engine) for the duration of a
-gspread roundtrip. While that worker was parked on the network, every
-`POST /api/expenses` whose `convert_to_eur` step needed a config RW
-connection turned into a 500.
-
-The fix: keep ONE DuckDB engine for the whole process. `config.duckdb`
-and every needed `budget_YYYY.duckdb` are ATTACHed onto that engine
-exactly once, with the same lifetime as the engine. `get_*_connection`
-returns a fresh `cursor()` of the engine, with `USE config` or
-`USE budget_<year>` set so existing SQL — which assumes the relevant
-DB is the "current" one — keeps working. Cursors share the engine but
-have independent transaction state, so `BEGIN/COMMIT/ROLLBACK` semantics
-in `insert_expense`, `claim_logging_job`, `reserve_expense_id_year`, etc.
-are unchanged.
-
-Migration coordination
-----------------------
-Yoyo runs migrations through its own `duckdb.connect(path)` call —
-which would itself trigger the BinderException if the singleton already
-has the file attached. `init_config_db` / `init_budget_db` therefore
-DETACH the file from the singleton (if attached) before invoking yoyo,
-and the next `get_*_connection` call lazily re-ATTACHes. The same
-contract applies to destructive `unlink()` paths: `release_config_attach`
-and `release_budget_attach` are the public hooks that
-`seed_config.rebuild_config_from_sheets` and
-`dinary.imports.expense_import.import_year` call before deleting a DB
-file out from under us.
+Process-wide single connection opened once on init, shared across all
+callers via ``get_connection()``. No ATTACH, no per-year files.
 """
 
 import dataclasses
 import logging
-import threading
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
 import duckdb
 
+from dinary.config import settings
 from dinary.services import db_migrations
 from dinary.services.sql_loader import fetchall_as, fetchone_as, load_sql
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path("data")
+# DB_PATH is derived from ``settings.data_path`` so operators can point
+# the server (and ``inv`` tasks) at an alternate file via the
+# ``DINARY_DATA_PATH`` environment variable (e.g. for smoke tests).
+# DATA_DIR mirrors the parent directory so ``ensure_data_dir`` can
+# create it. Tests that want a tmp DB monkeypatch both.
+DB_PATH = Path(settings.data_path)
+DATA_DIR = DB_PATH.parent
 
-CONFIG_DB = DATA_DIR / "config.duckdb"
-
-# ---------------------------------------------------------------------------
-# Process-wide DuckDB engine (see module docstring)
-# ---------------------------------------------------------------------------
-
-_engine_lock = threading.Lock()
+_CLAIM_STALE_FLOOR_SEC = 600.0
 
 
-class _EngineState:
-    """Mutable container for the singleton-engine bookkeeping.
+def default_claim_stale_timeout() -> timedelta:
+    """Return the claim-stale cutoff used by the drain queue.
 
-    A class instance lets us mutate state inside helper functions
-    without `global` declarations at every call site (pylint PLW0603
-    flags the `global` keyword for good reason — it's the most common
-    source of "why is this changing under me?" bugs). The module-level
-    `_engine_state` instance below is the single source of truth.
+    Set to ``max(10 min, 2 × sheet_logging_drain_interval_sec)``. The
+    2× multiplier keeps us safely above "one in-flight drain pass took
+    slightly longer than one interval", which would otherwise let the
+    next drain iteration steal a still-working claim, produce spurious
+    ``RECOVERED_WITH_DUPLICATE`` outcomes, and fire the J-marker
+    recovery path for no reason. The 10-minute floor handles the
+    degenerate ``drain_interval ≤ 1s`` case (smoke tests).
     """
-
-    __slots__ = ("attached_budget_years", "config_attached", "engine")
-
-    def __init__(self) -> None:
-        self.engine: duckdb.DuckDBPyConnection | None = None
-        self.config_attached: bool = False
-        self.attached_budget_years: set[int] = set()
-
-
-_engine_state = _EngineState()
+    return timedelta(
+        seconds=max(
+            _CLAIM_STALE_FLOOR_SEC,
+            settings.sheet_logging_drain_interval_sec * 2,
+        ),
+    )
 
 
-def _ensure_engine() -> duckdb.DuckDBPyConnection:
-    """Lazily create the process-wide `:memory:` engine. Caller holds `_engine_lock`."""
-    if _engine_state.engine is None:
-        # The primary DB is `:memory:` so there is no on-disk file to
-        # collide with anything else; config and budget DBs are
-        # exclusively reached through ATTACH on this engine.
-        _engine_state.engine = duckdb.connect(":memory:")
-    return _engine_state.engine
-
-
-def _ensure_config_attached_locked() -> duckdb.DuckDBPyConnection:
-    engine = _ensure_engine()
-    if not _engine_state.config_attached:
-        # ATTACH does not accept the path as a bound parameter; SQL-escape
-        # the single quote for paths that legally contain it (macOS user
-        # dirs, pytest tmp paths under `O'Brien` etc.).
-        config_path_sql = str(CONFIG_DB).replace("'", "''")
-        engine.execute(f"ATTACH '{config_path_sql}' AS config (READ_WRITE)")
-        _engine_state.config_attached = True
-    return engine
-
-
-def _ensure_budget_attached_locked(year: int) -> duckdb.DuckDBPyConnection:
-    engine = _ensure_config_attached_locked()
-    if year not in _engine_state.attached_budget_years:
-        path_sql = str(budget_path(year)).replace("'", "''")
-        engine.execute(f"ATTACH '{path_sql}' AS budget_{year} (READ_WRITE)")
-        _engine_state.attached_budget_years.add(year)
-    return engine
-
-
-def release_config_attach() -> None:
-    """DETACH config from the singleton engine (no-op if not attached).
-
-    Public so destructive paths that `unlink()` `config.duckdb` (the
-    `inv import-catalog` flow inside `seed_config.rebuild_config_from_sheets`)
-    can release the file handle BEFORE the unlink. The next
-    `get_config_connection` call re-ATTACHes lazily against the new
-    file. Without this, a still-attached DuckDB would either prevent
-    the unlink (Windows) or leave a dangling file handle pointing at
-    the deleted inode (POSIX), and the next ATTACH would refuse with
-    BinderException.
-    """
-    with _engine_lock:
-        if _engine_state.engine is None or not _engine_state.config_attached:
-            return
-        # If a budget DB is still attached, it holds an internal
-        # reference to config (DuckDB won't let us DETACH config while
-        # there are queries pending). Detach those first to avoid the
-        # `Cannot detach database "config" because it is referenced`
-        # error class. The next get_budget_connection re-ATTACHes them.
-        for year in list(_engine_state.attached_budget_years):
-            try:
-                _engine_state.engine.execute(f"DETACH budget_{year}")
-            except duckdb.Error:
-                logger.exception(
-                    "Failed to DETACH budget_%d before releasing config",
-                    year,
-                )
-            _engine_state.attached_budget_years.discard(year)
-        try:
-            _engine_state.engine.execute("DETACH config")
-        except duckdb.Error:
-            logger.exception("Failed to DETACH config in release_config_attach")
-        _engine_state.config_attached = False
-
-
-def release_budget_attach(year: int) -> None:
-    """DETACH a budget_YYYY DB from the singleton engine (no-op if not attached).
-
-    Public for the same reason as `release_config_attach`: the
-    `dinary.imports.expense_import.import_year` `unlink()`s the budget DB
-    file before re-creating it under the (possibly new) schema, and the
-    file must be released from the engine first. Symmetric to the
-    config helper; safe to call when nothing is attached.
-    """
-    with _engine_lock:
-        if _engine_state.engine is None or year not in _engine_state.attached_budget_years:
-            return
-        try:
-            _engine_state.engine.execute(f"DETACH budget_{year}")
-        except duckdb.Error:
-            logger.exception("Failed to DETACH budget_%d", year)
-        _engine_state.attached_budget_years.discard(year)
-
-
-# Default time after which an in_progress sheet_logging_jobs claim is considered
-# stale and may be reclaimed by a new worker. Workers should pass an explicit
-# `stale_before` (now - timeout); this constant is the canonical timeout used
-# by callers that don't override it.
-DEFAULT_CLAIM_STALE_TIMEOUT = timedelta(minutes=5)
+_conn: duckdb.DuckDBPyConnection | None = None
 
 
 def best_effort_rollback(con: duckdb.DuckDBPyConnection, *, context: str) -> None:
-    """Issue ROLLBACK without letting a failed rollback mask the original error.
-
-    Use in `except Exception: best_effort_rollback(con, context=...); raise`
-    blocks. If ROLLBACK itself raises (broken connection, txn already aborted
-    by an earlier error inside the same statement, etc.) we log the
-    secondary failure and swallow it so the caller's `raise` re-raises the
-    *original* exception. The original cause is what an operator needs in
-    the traceback; a "ROLLBACK failed because connection is closed"
-    secondary error just buries the real bug.
-    """
+    """Issue ROLLBACK without letting a failed rollback mask the original error."""
     try:
         con.execute("ROLLBACK")
     except Exception:
         logger.exception("Best-effort ROLLBACK failed (context: %s)", context)
 
 
+def _is_unique_violation_of_client_expense_id(exc: BaseException) -> bool:
+    """True iff ``exc`` is the UNIQUE race on ``expenses.client_expense_id``.
+
+    Concurrent POSTs with the same UUID surface as a ``ConstraintException``
+    *or* a ``TransactionException`` at either the INSERT statement
+    (the winner's write is in-flight and their uncommitted snapshot
+    holds the UNIQUE key) or at COMMIT (the winner committed between
+    our INSERT and our COMMIT). DuckDB picks the class based on when
+    in transaction lifecycle the conflict is detected; both carry the
+    same duplicate-key diagnostic, and both mean "fall through to the
+    compare path against the now-committed winner". Any other
+    constraint/transaction error — FK violation on ``category_id``,
+    disk I/O error, etc. — must propagate as-is.
+
+    Implementation note. DuckDB's duplicate-key diagnostic doesn't
+    include the column name (just the offending value), so we key off
+    the "unique / primary-key / duplicate-key" phrasing. This is
+    safe-but-permissive: within ``insert_expense`` the statement-level
+    ``ON CONFLICT (client_expense_id) DO NOTHING`` target already
+    scopes the only silently-absorbed conflict to that column; the
+    auto-incremented ``expenses.id`` is never supplied by callers,
+    and the sibling ``expense_tags`` / ``sheet_logging_jobs`` inserts
+    are each scoped to their own PK (``ON CONFLICT (expense_id,
+    tag_id)`` / ``ON CONFLICT (expense_id)`` respectively), so a
+    future UNIQUE added to either of those tables would raise
+    cleanly instead of being laundered through this classifier.
+
+    The explicit ``"foreign"``-keyword exclusion is **defensive**, not
+    currently load-bearing: as of the DuckDB version this refactor
+    was written against, FK-violation messages look like
+    ``"Constraint Error: Violates foreign key constraint because key
+    ... does not exist in the referenced table"`` and carry none of
+    our positive keywords. The carve-out is a cheap forward-compat
+    hedge — if a future DuckDB release rewords FK diagnostics to
+    mention "primary key" (the parent's column) or "unique
+    constraint" (the referenced UNIQUE index), the guard prevents a
+    true FK violation from being silently laundered into a
+    duplicate/conflict response. Keep the guard in sync with the
+    ``test_classifies_real_fk_violation_as_not_a_race`` test: if
+    DuckDB ever emits an FK message without the word ``foreign``,
+    that test fails loudly, and this classifier needs a new
+    discriminator.
+    """
+    message = str(exc).lower()
+    if "foreign" in message:
+        return False
+    return "duplicate key" in message or "unique constraint" in message or "primary key" in message
+
+
+# Exception classes DuckDB may raise for the ``client_expense_id`` UNIQUE
+# race, at either the INSERT statement or the COMMIT. Kept as a module
+# constant so the ``insert_expense`` try/except blocks stay symmetric:
+# historically only COMMIT needed both classes, but DuckDB is free to
+# pick either at either point, and the cost of the extra class at
+# INSERT is zero (``_is_unique_violation_of_client_expense_id`` is the
+# real decision helper; the except clause just gates which errors it
+# gets to inspect).
+_DUCKDB_RACE_EXCS: tuple[type[duckdb.Error], ...] = (
+    duckdb.ConstraintException,
+    duckdb.TransactionException,
+)
+
+
 # ---------------------------------------------------------------------------
-# Row types for typed query results
+# Row types
 # ---------------------------------------------------------------------------
 
 
@@ -213,7 +138,8 @@ class MappingRow:
 
 @dataclasses.dataclass(slots=True)
 class ExpenseRow:
-    id: str
+    id: int
+    client_expense_id: str | None
     datetime: datetime
     amount: Decimal
     amount_original: Decimal
@@ -227,6 +153,7 @@ class ExpenseRow:
 
 @dataclasses.dataclass(slots=True)
 class ExistingExpenseRow:
+    id: int
     amount: Decimal
     amount_original: Decimal
     currency_original: str
@@ -266,14 +193,6 @@ class CategoryListRow:
 
 @dataclasses.dataclass(slots=True)
 class LoggingProjectionCandidateRow:
-    """One ``logging_mapping`` row plus its decoded tag-id set.
-
-    Used by ``logging_projection`` to score candidates: an exact-match
-    candidate has the same ``event_id`` and the same tag set as the
-    expense; the category-only fallback returns the first row by
-    ``id ASC``.
-    """
-
     id: int
     sheet_category: str
     sheet_group: str
@@ -286,144 +205,118 @@ class LoggingProjectionCandidateRow:
 # ---------------------------------------------------------------------------
 
 
-def budget_path(year: int) -> Path:
-    """Return the absolute path of `budget_YYYY.duckdb`.
-
-    Public so callers like `dinary.imports.expense_import.import_year` can unlink the file
-    before re-creating it under a new schema (yoyo otherwise treats the
-    pre-existing migration row as already applied).
-    """
-    return DATA_DIR / f"budget_{year}.duckdb"
-
-
 def ensure_data_dir() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def init_config_db() -> None:
-    """Create or migrate config.duckdb to the latest schema.
+def _get_db_path() -> Path:
+    """Return the effective DB path (allows test monkeypatching of DB_PATH)."""
+    return DB_PATH
 
-    Releases the singleton's ATTACH on config first: yoyo opens its own
-    `duckdb.connect(CONFIG_DB)` to apply migrations, which would clash
-    with the singleton's still-attached handle (the BinderException
-    that motivated the singleton-engine refactor). The next
-    `get_config_connection` re-ATTACHes lazily.
+
+def init_db() -> None:
+    """Create or migrate dinary.duckdb to the latest schema, then open the connection.
+
+    Must be called once per process before ``get_connection()``. The FastAPI
+    lifespan in ``dinary.main`` invokes it on startup; ``invoke`` tasks and
+    tests do so explicitly (see ``tests/conftest.py::_reset_duckdb_connection``).
     """
+    global _conn  # noqa: PLW0603
     ensure_data_dir()
-    release_config_attach()
-    db_migrations.migrate_config_db(CONFIG_DB)
+    if _conn is not None:
+        _conn.close()
+        _conn = None
+    db_migrations.migrate_db(_get_db_path())
+    _conn = duckdb.connect(str(_get_db_path()))
 
 
-def init_budget_db(year: int) -> Path:
-    """Create or migrate a yearly budget DB and return its path.
+def get_connection() -> duckdb.DuckDBPyConnection:
+    """Return a per-call cursor on the shared singleton connection.
 
-    Same migration-coordination contract as `init_config_db`: yoyo
-    needs exclusive file access, so we release the singleton's ATTACH
-    on this year first.
+    **Concurrency model.** DuckDB allows at most one writer per file
+    across processes, so the server runs a single uvicorn worker. The
+    cursor returned here shares the underlying engine (and its
+    write-set) with the singleton connection, but carries its own
+    transaction state — ``BEGIN``/``COMMIT`` on one cursor does not
+    affect another. Multiple cursors can run simultaneously because
+    ``POST /api/expenses`` offloads its blocking DB work via
+    ``asyncio.to_thread``, so several thread-pool workers may each
+    hold a cursor at once.
+
+    **UNIQUE races are real and are recovered, not prevented.** Under
+    real concurrent writers (e.g. two PWA clients — or one PWA + one
+    retry — submitting the same ``client_expense_id`` through the
+    event loop at the same time), ``ON CONFLICT DO NOTHING`` alone
+    isn't enough: DuckDB's MVCC only absorbs conflicts with rows
+    already committed at statement time, so racing cursors can both
+    see "no row yet" and the loser later surfaces either as a
+    ``ConstraintException`` at INSERT or a ``TransactionException``
+    at COMMIT (DuckDB picks the class based on when it notices the
+    conflict). ``insert_expense`` catches both classes, issues the
+    explicit ``ROLLBACK`` DuckDB needs to clear the aborted cursor,
+    and drops through to a compare-outside-tx path against the
+    committed winner. Any new writer module that takes a cursor from
+    here and uses ``ON CONFLICT`` on a user-supplied UNIQUE key must
+    apply the same recovery pattern; relying on "single-worker server
+    means no contention" is wrong because of ``asyncio.to_thread``.
+
+    **Lifecycle.** ``get_connection()`` will lazily open the DB file
+    without running migrations — callers that need a schema-guaranteed
+    DB (e.g. ``dinary.main`` lifespan, ``invoke migrate``, tests) must
+    call ``init_db()`` first. The returned cursor **must** be closed by
+    the caller (``try ... finally: con.close()``).
     """
-    ensure_data_dir()
-    path = budget_path(year)
-    created = not path.exists()
-    release_budget_attach(year)
-    db_migrations.migrate_budget_db(path)
-    if created:
-        logger.info("Created %s", path)
-    return path
+    global _conn  # noqa: PLW0603
+    if _conn is None:
+        _conn = duckdb.connect(str(_get_db_path()))
+    return _conn.cursor()
 
 
-def get_budget_connection(year: int) -> duckdb.DuckDBPyConnection:
-    """Return a cursor of the singleton engine pointed at `budget_<year>`.
-
-    The cursor has `USE budget_<year>` set so existing SQL — which
-    treats `expenses` / `expense_tags` / `sheet_logging_jobs` as the
-    "current" tables — keeps working. Cross-DB references to config
-    use the `config.X` qualifier and resolve through the same engine,
-    so no ATTACH inside the budget cursor is needed (and that's
-    exactly the ATTACH that produced the BinderException before this
-    refactor).
-
-    The caller is responsible for closing the returned cursor;
-    `cursor.close()` only closes the cursor, leaving the underlying
-    engine and its ATTACHes intact for subsequent callers.
-    """
-    init_budget_db(year)
-    with _engine_lock:
-        engine = _ensure_budget_attached_locked(year)
-    cur = engine.cursor()
-    cur.execute(f"USE budget_{year}")
-    return cur
-
-
-def get_config_connection(read_only: bool = True) -> duckdb.DuckDBPyConnection:  # noqa: ARG001 — kept for API compatibility
-    """Return a cursor of the singleton engine pointed at `config`.
-
-    The `read_only` parameter is accepted for backward compatibility
-    with the pre-singleton API but is now informational: the
-    singleton always attaches config READ_WRITE so a single engine
-    can serve both API writes (rate cache via `convert_to_eur`,
-    `expense_id_registry` mutation) and async-drain reads without
-    DuckDB's "unique file handle" conflict. Callers that previously
-    relied on DuckDB rejecting writes on a `read_only=True` connection
-    will silently succeed; in practice no production caller does this
-    — the read-only flag was a hint, not a contract.
-    """
-    with _engine_lock:
-        engine = _ensure_config_attached_locked()
-    cur = engine.cursor()
-    cur.execute("USE config")
-    return cur
-
-
-def iter_budget_years() -> list[int]:
-    """Return sorted list of years for which a budget_YYYY.duckdb file exists."""
-    if not DATA_DIR.exists():
-        return []
-    years: list[int] = []
-    for path in DATA_DIR.glob("budget_*.duckdb"):
-        stem = path.stem.replace("budget_", "")
-        try:
-            years.append(int(stem))
-        except ValueError:
-            continue
-    return sorted(years)
+def close_connection() -> None:
+    """Close the singleton connection (for clean shutdown in tests)."""
+    global _conn  # noqa: PLW0603
+    if _conn is not None:
+        _conn.close()
+        _conn = None
 
 
 # ---------------------------------------------------------------------------
-# Catalog (config) queries
+# Catalog queries
 # ---------------------------------------------------------------------------
 
 
 def list_categories(con: duckdb.DuckDBPyConnection) -> list[CategoryListRow]:
-    """Return all categories with embedded group info, ordered by group sort then name."""
+    """Return active categories with active group info, ordered by group sort then name."""
     return fetchall_as(CategoryListRow, con, load_sql("list_categories.sql"))
 
 
 def get_catalog_version(con: duckdb.DuckDBPyConnection) -> int:
-    """Return the current catalog_version from app_metadata singleton."""
-    row = con.execute("SELECT catalog_version FROM app_metadata WHERE id = 1").fetchone()
+    row = con.execute(
+        "SELECT value FROM app_metadata WHERE key = 'catalog_version'",
+    ).fetchone()
     if row is None:
-        msg = "app_metadata singleton row is missing"
+        msg = "app_metadata 'catalog_version' key is missing"
         raise RuntimeError(msg)
     return int(row[0])
 
 
 def _set_catalog_version(con: duckdb.DuckDBPyConnection, value: int) -> None:
-    """Module-internal: only `import-catalog` flow should call this (via tasks.py)."""
-    con.execute("UPDATE app_metadata SET catalog_version = ? WHERE id = 1", [value])
+    con.execute(
+        "UPDATE app_metadata SET value = ? WHERE key = 'catalog_version'",
+        [str(value)],
+    )
 
 
 def get_category_name(con: duckdb.DuckDBPyConnection, category_id: int) -> str | None:
-    """Return the category name for *category_id*, or None if missing."""
     row = con.execute(
-        "SELECT name FROM config.categories WHERE id = ?",
+        "SELECT name FROM categories WHERE id = ?",
         [category_id],
     ).fetchone()
     return str(row[0]) if row else None
 
 
 def get_import_source(year: int) -> ImportSourceRow | None:
-    """Look up the import source metadata for a given year."""
-    con = get_config_connection(read_only=True)
+    con = get_connection()
     try:
         return fetchone_as(
             ImportSourceRow,
@@ -438,7 +331,7 @@ def get_import_source(year: int) -> ImportSourceRow | None:
 
 
 # ---------------------------------------------------------------------------
-# Sheet mapping resolution (used by historical import only)
+# Sheet mapping resolution (import path)
 # ---------------------------------------------------------------------------
 
 
@@ -447,7 +340,6 @@ def resolve_mapping(
     category: str,
     group: str,
 ) -> MappingRow | None:
-    """Look up (sheet_category, sheet_group) in import_mapping via ATTACHed config (year=0)."""
     return fetchone_as(MappingRow, con, load_sql("resolve_mapping.sql"), [category, group])
 
 
@@ -457,10 +349,6 @@ def resolve_mapping_for_year(
     group: str,
     year: int,
 ) -> MappingRow | None:
-    """Look up (sheet_category, sheet_group) with year-scoped override support.
-
-    Prefers an exact year match; falls back to year=0 (default).
-    """
     return fetchone_as(
         MappingRow,
         con,
@@ -473,17 +361,15 @@ def get_mapping_tag_ids(
     con: duckdb.DuckDBPyConnection,
     mapping_id: int,
 ) -> list[int]:
-    """Return tag_ids attached to a given import_mapping row, ordered by tag_id."""
     rows = con.execute(
-        "SELECT tag_id FROM config.import_mapping_tags WHERE mapping_id = ? ORDER BY tag_id",
+        "SELECT tag_id FROM import_mapping_tags WHERE mapping_id = ? ORDER BY tag_id",
         [mapping_id],
     ).fetchall()
     return [int(r[0]) for r in rows]
 
 
 # ---------------------------------------------------------------------------
-# Logging projection: year-agnostic 3D→2D for optional sheet logging.
-# Uses the dedicated `logging_mapping` table instead of `import_mapping`.
+# Logging projection (3D -> 2D for sheet logging)
 # ---------------------------------------------------------------------------
 
 
@@ -496,22 +382,12 @@ def logging_projection(
 ) -> tuple[str, str] | None:
     """Resolve ``(category_id, event_id, tag set)`` to ``(sheet_category, sheet_group)``.
 
-    Year-agnostic 3D→2D projection for the sheet logging path. Reads
-    ``logging_mapping`` + ``logging_mapping_tags`` (created by
-    migration 0002). Historical 2D→3D import has its own year-aware
-    ``import_mapping`` resolution; the two pipelines no longer share
-    code so the projection logic stays single-purpose.
-
-    Lookup order:
-      1. exact match: same ``category_id``, same ``event_id`` (NULL ↔ NULL),
-         and same tag-id set;
-      2. category-level fallback: first ``logging_mapping`` row with the
-         same ``category_id``, ignoring ``event_id`` and tags.
-    Ties are broken by ``logging_mapping.id ASC``.
-
-    Returns ``None`` only when no ``logging_mapping`` row exists for this
-    ``category_id`` at all. The caller is expected to apply a default
-    fallback (``category.name``, empty group) in that case.
+    Returns ``None`` when no ``logging_mapping`` row exists for
+    ``category_id`` at all. The architectural "guaranteed category-name
+    fallback" (see architecture.md §"Logging projection rules") is
+    applied by the caller in ``sheet_logging._drain_one_job``, not here
+    — this function is strictly a mapping-table lookup so callers can
+    tell "no mapping" apart from "explicit mapping resolved".
     """
     expected_tags = sorted(int(t) for t in tag_ids)
     candidates = fetchall_as(
@@ -533,123 +409,65 @@ def logging_projection(
 
 
 # ---------------------------------------------------------------------------
-# expense_id_registry helpers (cross-year ownership of expense_id, in config.duckdb)
+# Expense lookup and insert
 # ---------------------------------------------------------------------------
 
 
-def reserve_expense_id_year(expense_id: str, year: int) -> tuple[int, bool]:
-    """Atomically claim or look up the year that owns `expense_id`.
+def lookup_existing_expense(
+    client_expense_id: str,
+    *,
+    con: duckdb.DuckDBPyConnection | None = None,
+) -> ExistingExpenseRow | None:
+    """Look up a stored expense by client_expense_id.
 
-    Returns `(stored_year, newly_inserted)`:
-      * `stored_year` is the year currently associated with the id after the
-        call (may differ from `year` if the row already existed — the API
-        layer turns that into a 409 cross-year reuse error).
-      * `newly_inserted` is True iff this call performed the INSERT. The
-        caller MUST `release_expense_id_year(expense_id)` if a downstream
-        step fails, so the registry doesn't end up holding a phantom row
-        for an expense that never made it into the budget DB.
+    When ``con`` is provided, run the SELECT on the caller's cursor —
+    this lets ``POST /api/expenses`` do the active-category /
+    idempotent-replay check on the same cursor it's about to pass to
+    ``insert_expense``, instead of opening a second short-lived cursor
+    on every write that hits an inactive category.
 
-    Concurrency: DuckDB doesn't give us a true row-level "SELECT FOR UPDATE",
-    so two concurrent callers can both fall through the `SELECT NULL` branch
-    and try to INSERT. The PK constraint on `expense_id` makes the loser's
-    INSERT fail with `duckdb.ConstraintException`; we catch that here and
-    re-read so the loser sees the same `(stored_year, False)` result it
-    would have gotten if it had simply run a fraction of a second later.
-    Without this, the loser would surface a 5xx instead of a clean 409.
+    When ``con`` is omitted, we fall back to opening and closing a
+    fresh cursor, for callers (tests, debugging utilities) that don't
+    have one handy.
+
+    **Snapshot invariant.** For the two branches to return equivalent
+    data, the caller-supplied cursor must be in auto-commit mode (no
+    open ``BEGIN``). The fresh-cursor branch always sees only
+    committed rows; the ``con=`` branch sees the caller's snapshot,
+    which inside an open transaction includes that transaction's own
+    uncommitted writes. Today's only ``con=`` caller
+    (``api.expenses._resolve_category_for_write``) is invoked before
+    ``insert_expense`` opens its ``BEGIN``, so the invariant holds.
+    Any future caller that threads this cursor through an already-
+    open transaction must understand the divergence or explicitly
+    drop to auto-commit first.
     """
-    con = get_config_connection(read_only=False)
+    if con is not None:
+        return fetchone_as(
+            ExistingExpenseRow,
+            con,
+            load_sql("get_existing_expense.sql"),
+            [client_expense_id],
+        )
+    own_con = get_connection()
     try:
-        # `txn_active` lets the outer except skip its own rollback when
-        # the inner ConstraintException path has already issued one. The
-        # alternative — a second `best_effort_rollback` against an
-        # already-closed txn — produces a misleading "ROLLBACK failed"
-        # log that masks the real RuntimeError("vanished row") path.
-        txn_active = True
-        con.execute("BEGIN")
-        try:
-            row = con.execute(
-                "SELECT year FROM expense_id_registry WHERE expense_id = ?",
-                [expense_id],
-            ).fetchone()
-            if row is not None:
-                con.execute("COMMIT")
-                txn_active = False
-                return int(row[0]), False
-            try:
-                con.execute(
-                    "INSERT INTO expense_id_registry (expense_id, year) VALUES (?, ?)",
-                    [expense_id, year],
-                )
-            except duckdb.ConstraintException:
-                # Lost a race to a concurrent reserver; the row is now there.
-                # Rollback the failed INSERT (ROLLBACK errors here would
-                # mean the connection is unusable anyway, so we let them
-                # propagate — unlike the outer except block, this path
-                # MUST roll back to release the txn before the SELECT
-                # below can succeed).
-                con.execute("ROLLBACK")
-                txn_active = False
-                raced = con.execute(
-                    "SELECT year FROM expense_id_registry WHERE expense_id = ?",
-                    [expense_id],
-                ).fetchone()
-                if raced is None:
-                    # Constraint fired but row vanished — should be impossible
-                    # for a PK insert, but bubble up as-is rather than guess.
-                    msg = (
-                        f"expense_id_registry race for {expense_id!r}: PK "
-                        "violation on INSERT but row not present on re-read"
-                    )
-                    raise RuntimeError(msg) from None
-                return int(raced[0]), False
-            con.execute("COMMIT")
-            txn_active = False
-            return year, True
-        except Exception:
-            if txn_active:
-                best_effort_rollback(
-                    con,
-                    context=f"reserve_expense_id({expense_id!r})",
-                )
-            raise
+        return fetchone_as(
+            ExistingExpenseRow,
+            own_con,
+            load_sql("get_existing_expense.sql"),
+            [client_expense_id],
+        )
     finally:
-        con.close()
-
-
-def get_registered_expense_year(expense_id: str) -> int | None:
-    """Return the year currently registered for `expense_id`, or None if absent."""
-    con = get_config_connection(read_only=True)
-    try:
-        row = con.execute(
-            "SELECT year FROM expense_id_registry WHERE expense_id = ?",
-            [expense_id],
-        ).fetchone()
-        return int(row[0]) if row else None
-    finally:
-        con.close()
-
-
-def release_expense_id_year(expense_id: str) -> None:
-    """Remove an expense_id from the registry. Use only on rollback/error cleanup."""
-    con = get_config_connection(read_only=False)
-    try:
-        con.execute("DELETE FROM expense_id_registry WHERE expense_id = ?", [expense_id])
-    finally:
-        con.close()
-
-
-# ---------------------------------------------------------------------------
-# Expense insert (3D)
-# ---------------------------------------------------------------------------
+        own_con.close()
 
 
 InsertExpenseResult = Literal["created", "duplicate", "conflict"]
 
 
-def insert_expense(  # noqa: PLR0913, C901
+def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
     con: duckdb.DuckDBPyConnection,
     *,
-    expense_id: str,
+    client_expense_id: str | None,
     expense_datetime: datetime,
     amount: float,
     amount_original: float,
@@ -664,12 +482,11 @@ def insert_expense(  # noqa: PLR0913, C901
 ) -> InsertExpenseResult:
     """Insert an expense + tags + queue row in one transaction.
 
-    Returns 'created', 'duplicate', or 'conflict'.
-    Validates `category_id` against ATTACHed config.categories and `event_id`
-    against ATTACHed config.events. Tag IDs are validated against
-    config.tags. Provenance pair `(sheet_category, sheet_group)` must be
-    NULL/NULL or both non-NULL — this is a runtime invariant enforced here
-    instead of a CHECK so the migration stays simple.
+    Returns 'created', 'duplicate', or 'conflict'. Safe under
+    concurrent callers sharing the same ``client_expense_id``: the
+    race is resolved deterministically by the UNIQUE constraint, and
+    the loser falls through to the compare path against the winner's
+    committed row.
     """
     if (sheet_category is None) != (sheet_group is None):
         msg = (
@@ -679,77 +496,191 @@ def insert_expense(  # noqa: PLR0913, C901
         raise ValueError(msg)
 
     tag_ids = tag_ids or []
+    incoming_tag_ids = sorted(int(t) for t in tag_ids)
+    incoming = (
+        Decimal(str(amount)),
+        Decimal(str(amount_original)),
+        currency_original,
+        category_id,
+        event_id,
+        comment,
+        expense_datetime,
+        sheet_category,
+        sheet_group,
+        incoming_tag_ids,
+    )
 
     con.execute("BEGIN")
+    tx_active = True
     try:
         if not con.execute(
-            "SELECT 1 FROM config.categories WHERE id = ?",
+            "SELECT 1 FROM categories WHERE id = ?",
             [category_id],
         ).fetchone():
-            raise ValueError(f"category_id {category_id} not found in config.categories")
+            raise ValueError(f"category_id {category_id} not found in categories")
         if (
             event_id is not None
             and not con.execute(
-                "SELECT 1 FROM config.events WHERE id = ?",
+                "SELECT 1 FROM events WHERE id = ?",
                 [event_id],
             ).fetchone()
         ):
-            raise ValueError(f"event_id {event_id} not found in config.events")
+            raise ValueError(f"event_id {event_id} not found in events")
         for tid in tag_ids:
             if not con.execute(
-                "SELECT 1 FROM config.tags WHERE id = ?",
+                "SELECT 1 FROM tags WHERE id = ?",
                 [tid],
             ).fetchone():
-                raise ValueError(f"tag_id {tid} not found in config.tags")
+                raise ValueError(f"tag_id {tid} not found in tags")
 
-        inserted = con.execute(
-            load_sql("insert_expense.sql"),
-            [
-                expense_id,
-                expense_datetime,
-                amount,
-                amount_original,
-                currency_original,
-                category_id,
-                event_id,
-                comment,
-                sheet_category,
-                sheet_group,
-            ],
-        ).fetchone()
+        # Under DuckDB's optimistic MVCC, ``ON CONFLICT DO NOTHING``
+        # only silently absorbs conflicts with rows that are already
+        # *committed* at statement time. A concurrent in-flight writer
+        # holding the same UNIQUE key instead surfaces immediately as
+        # a ``ConstraintException`` here; if that in-flight writer
+        # commits *after* our INSERT statement but *before* our COMMIT,
+        # our commit itself fails (as a ``TransactionException`` or
+        # a ``ConstraintException`` — DuckDB picks the class based on
+        # when it notices the conflict) with a message that wraps the
+        # same duplicate-key violation. Both cases reduce to "the
+        # winner is committed, we should compare against their row" —
+        # fall through to the compare-outside-tx path.
+        #
+        # Important: DuckDB marks the TX as aborted after either
+        # failure but does **not** clear the cursor state. Any
+        # subsequent statement on the same cursor rejects with
+        # ``TransactionContext Error: Current transaction is aborted
+        # (please ROLLBACK)`` until we issue an explicit ROLLBACK.
+        # The race-recovery branches below do exactly that via
+        # ``best_effort_rollback`` before falling through to the
+        # compare path, which is why those ROLLBACKs look redundant
+        # but are load-bearing.
+        inserted: tuple | None
+        try:
+            inserted = con.execute(
+                load_sql("insert_expense.sql"),
+                [
+                    client_expense_id,
+                    expense_datetime,
+                    amount,
+                    amount_original,
+                    currency_original,
+                    category_id,
+                    event_id,
+                    comment,
+                    sheet_category,
+                    sheet_group,
+                ],
+            ).fetchone()
+        except _DUCKDB_RACE_EXCS as exc:
+            if not _is_unique_violation_of_client_expense_id(exc):
+                raise
+            # Same aborted-TX cleanup as the COMMIT branch below:
+            # DuckDB leaves the cursor in an aborted state after a
+            # failed INSERT, and every subsequent statement on it
+            # rejects with "Current transaction is aborted (please
+            # ROLLBACK)" until we issue an explicit ROLLBACK.
+            best_effort_rollback(
+                con,
+                context=(
+                    "insert_expense race-recovery at INSERT "
+                    f"(client_expense_id={client_expense_id!r})"
+                ),
+            )
+            inserted = None
+            tx_active = False
 
         if inserted is not None:
+            expense_pk = int(inserted[0])
             for tid in tag_ids:
+                # Narrow the conflict target to the composite PK.
+                # Bare ``ON CONFLICT`` would work identically today
+                # (only one conflict target exists), but would silently
+                # absorb any future UNIQUE added to ``expense_tags``
+                # with no recovery net to notice — unlike
+                # ``insert_expense.sql`` whose compare-against-winner
+                # path would at least catch a mis-classified
+                # duplicate. Keep it scoped so an unexpected UNIQUE
+                # on, say, ``(expense_id, sort_order)`` raises cleanly.
                 con.execute(
                     "INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)"
-                    " ON CONFLICT DO NOTHING",
-                    [expense_id, tid],
+                    " ON CONFLICT (expense_id, tag_id) DO NOTHING",
+                    [expense_pk, tid],
                 )
             if enqueue_logging:
+                # Same reasoning: narrow to the PK target explicitly
+                # so any future UNIQUE on ``sheet_logging_jobs``
+                # (e.g. per-drain-run dedup) raises instead of being
+                # silently swallowed by an over-broad ON CONFLICT.
                 con.execute(
-                    "INSERT INTO sheet_logging_jobs (expense_id, status) VALUES (?, 'pending')"
-                    " ON CONFLICT DO NOTHING",
-                    [expense_id],
+                    "INSERT INTO sheet_logging_jobs (expense_id, status)"
+                    " VALUES (?, 'pending') ON CONFLICT (expense_id) DO NOTHING",
+                    [expense_pk],
                 )
-            con.execute("COMMIT")
-            return "created"
+            try:
+                con.execute("COMMIT")
+            except _DUCKDB_RACE_EXCS as exc:
+                if not _is_unique_violation_of_client_expense_id(exc):
+                    raise
+                # DuckDB marks the TX as aborted on a failed commit;
+                # subsequent statements on the same cursor would reject
+                # with "Current transaction is aborted (please
+                # ROLLBACK)". An explicit ROLLBACK drops us back to
+                # auto-commit so the compare path below can run.
+                best_effort_rollback(
+                    con,
+                    context=(
+                        f"insert_expense race-recovery (client_expense_id={client_expense_id!r})"
+                    ),
+                )
+                tx_active = False
+            else:
+                return "created"
+        elif tx_active:
+            # Classic ON CONFLICT DO NOTHING hit: the winner committed
+            # before our INSERT ran, so we never allocated a PK but
+            # our validation SELECTs are still sitting in an open TX.
+            # Close it cleanly before running the compare in
+            # auto-commit — keeping it open has no benefit and makes
+            # the cleanup at the bottom of this function harder to
+            # reason about.
+            con.execute("ROLLBACK")
+            tx_active = False
 
+        # Compare path — runs in auto-commit against the committed
+        # winner row (whichever leg we arrived on). client_expense_id
+        # is guaranteed non-None here: NULL rows can't trigger either
+        # branch because UNIQUE allows multiple NULLs, so a NULL
+        # incoming UUID always ends up in the happy-path above.
         existing = fetchone_as(
             ExistingExpenseRow,
             con,
             load_sql("get_existing_expense.sql"),
-            [expense_id],
+            [client_expense_id],
         )
-        assert existing is not None, f"expense {expense_id} vanished after ON CONFLICT"
+        if existing is None:
+            # Defensive: if the winner's commit got rolled back between
+            # our failed COMMIT and this SELECT, treat the condition
+            # as an unrecoverable internal error with a loud,
+            # traceable message (``assert`` is stripped by ``python -O``
+            # and would swallow this class of bug in a production
+            # build).
+            msg = (
+                f"insert_expense: client_expense_id={client_expense_id!r} "
+                "disappeared between ON CONFLICT/race recovery and the "
+                "compare SELECT — concurrent writer rolled back after "
+                "its commit? DB state is inconsistent with our "
+                "assumptions."
+            )
+            raise RuntimeError(msg)
 
         existing_tag_ids = sorted(
             int(r[0])
             for r in con.execute(
                 "SELECT tag_id FROM expense_tags WHERE expense_id = ?",
-                [expense_id],
+                [existing.id],
             ).fetchall()
         )
-        incoming_tag_ids = sorted(int(t) for t in tag_ids)
 
         stored = (
             existing.amount,
@@ -763,38 +694,21 @@ def insert_expense(  # noqa: PLR0913, C901
             existing.sheet_group,
             existing_tag_ids,
         )
-        incoming = (
-            Decimal(str(amount)),
-            Decimal(str(amount_original)),
-            currency_original,
-            category_id,
-            event_id,
-            comment,
-            expense_datetime,
-            sheet_category,
-            sheet_group,
-            incoming_tag_ids,
-        )
-
-        # NOT best-effort: this is the SUCCESS path (no INSERT
-        # happened, "duplicate"/"conflict" doesn't write). A failing
-        # ROLLBACK here is the primary error — bubbling it out is
-        # correct, masking it would leave the txn open.
-        con.execute("ROLLBACK")
 
         if stored == incoming:
             return "duplicate"
         return "conflict"
 
     except Exception:
-        # The outer except catches genuine failures (the SQL above
-        # raised). Use best-effort rollback so a secondary ROLLBACK
-        # failure doesn't replace the original error in the traceback.
-        best_effort_rollback(con, context=f"insert_expense({expense_id!r})")
+        if tx_active:
+            best_effort_rollback(
+                con,
+                context=f"insert_expense(client_expense_id={client_expense_id!r})",
+            )
         raise
 
 
-def get_expense_tags(con: duckdb.DuckDBPyConnection, expense_id: str) -> list[int]:
+def get_expense_tags(con: duckdb.DuckDBPyConnection, expense_id: int) -> list[int]:
     """Return the tag_ids attached to an expense, sorted ascending."""
     rows = con.execute(
         "SELECT tag_id FROM expense_tags WHERE expense_id = ? ORDER BY tag_id",
@@ -803,89 +717,74 @@ def get_expense_tags(con: duckdb.DuckDBPyConnection, expense_id: str) -> list[in
     return [int(r[0]) for r in rows]
 
 
-def get_expense_by_id(con: duckdb.DuckDBPyConnection, expense_id: str) -> ExistingExpenseRow | None:
-    """Read a stored expense row by id."""
+def get_expense_by_id(con: duckdb.DuckDBPyConnection, expense_id: int) -> ExpenseRow | None:
+    """Read a stored expense row by integer PK."""
     return fetchone_as(
-        ExistingExpenseRow,
+        ExpenseRow,
         con,
-        load_sql("get_existing_expense.sql"),
+        "SELECT id, client_expense_id, datetime, amount, amount_original,"
+        " currency_original, category_id, event_id, comment,"
+        " sheet_category, sheet_group"
+        " FROM expenses WHERE id = ?",
         [expense_id],
     )
 
 
 # ---------------------------------------------------------------------------
-# sheet_logging_jobs queue helpers (keyed by expense_id, with atomic claim/release)
+# sheet_logging_jobs queue helpers (integer PK based)
 # ---------------------------------------------------------------------------
-
-
-def enqueue_logging_job(con: duckdb.DuckDBPyConnection, expense_id: str) -> None:
-    """Insert a `pending` row for `expense_id` (no-op if it already exists)."""
-    con.execute(
-        "INSERT INTO sheet_logging_jobs (expense_id, status) VALUES (?, 'pending')"
-        " ON CONFLICT DO NOTHING",
-        [expense_id],
-    )
 
 
 def list_logging_jobs(
     con: duckdb.DuckDBPyConnection,
     *,
-    min_expense_date: date | None = None,
-) -> list[str]:
-    """Return all expense_ids currently waiting in sheet_logging_jobs (any status).
+    now: datetime | None = None,
+    stale_before: datetime | None = None,
+) -> list[int]:
+    """Return expense_ids the drain should attempt this pass.
 
-    When *min_expense_date* is given, only rows whose expense date is at
-    or after the cutoff are returned — plus orphan rows (queue rows whose
-    expense no longer exists) so they can still reach ``NOOP_ORPHAN``
-    cleanup in ``_drain_one_job``.
+    That is: rows in ``pending`` plus rows in ``in_progress`` whose
+    claim is older than ``stale_before`` (orphaned claims from a
+    previous worker that crashed mid-drain). Fresh ``in_progress``
+    rows are excluded because ``claim_logging_job`` would just reject
+    them — listing them here would burn one BEGIN/COMMIT round-trip
+    per row per drain iteration for no reason. Poisoned rows are
+    always excluded.
     """
-    if min_expense_date is None:
-        rows = con.execute(
-            "SELECT expense_id FROM sheet_logging_jobs ORDER BY expense_id",
-        ).fetchall()
-    else:
-        rows = con.execute(
-            "SELECT slj.expense_id"
-            " FROM sheet_logging_jobs slj"
-            " LEFT JOIN expenses e ON slj.expense_id = e.id"
-            " WHERE e.id IS NULL OR CAST(e.datetime AS DATE) >= ?"
-            " ORDER BY slj.expense_id",
-            [min_expense_date],
-        ).fetchall()
-    return [str(r[0]) for r in rows]
+    if now is None:
+        now = datetime.now()
+    if stale_before is None:
+        stale_before = now - default_claim_stale_timeout()
+    rows = con.execute(
+        "SELECT expense_id FROM sheet_logging_jobs"
+        " WHERE status = 'pending'"
+        "    OR (status = 'in_progress' AND claimed_at < ?)"
+        " ORDER BY expense_id",
+        [stale_before],
+    ).fetchall()
+    return [int(r[0]) for r in rows]
 
 
 def count_logging_jobs(con: duckdb.DuckDBPyConnection) -> int:
-    """Return the total count of rows in ``sheet_logging_jobs`` regardless of status.
-
-    Semantically equals ``len(list_logging_jobs(con))`` but avoids
-    materialising the expense_ids — intended for computing
-    ``skipped_expired`` as a Python-side diff when a TTL filter has
-    been applied to the list variant.
-    """
     row = con.execute("SELECT count(*) FROM sheet_logging_jobs").fetchone()
     return int(row[0]) if row else 0
 
 
 def claim_logging_job(
     con: duckdb.DuckDBPyConnection,
-    expense_id: str,
+    expense_id: int,
     *,
     claim_token: str | None = None,
     now: datetime | None = None,
     stale_before: datetime | None = None,
 ) -> str | None:
-    """Atomically claim `expense_id`. Returns the claim_token on success, None otherwise.
-
-    A row is claimable if it is `pending`, OR if it is `in_progress` with
-    `claimed_at < stale_before` (lease-style stale-claim recovery).
-    """
+    """Atomically claim a queue row. Returns the claim_token on success, None otherwise."""
     if claim_token is None:
         claim_token = uuid.uuid4().hex
     if now is None:
         now = datetime.now()
     if stale_before is None:
-        stale_before = now - DEFAULT_CLAIM_STALE_TIMEOUT
+        stale_before = now - default_claim_stale_timeout()
 
     con.execute("BEGIN")
     try:
@@ -912,36 +811,19 @@ def claim_logging_job(
         con.execute("COMMIT")
         return claim_token
     except duckdb.TransactionException:
-        # DuckDB uses optimistic concurrency control; under concurrent
-        # claim attempts on the same row the loser gets a transaction
-        # conflict here. Treat that as "not claimable right now" — the
-        # winner already moved the row to `in_progress`, so the next
-        # sweep (or the in-flight worker) will own it. Returning None
-        # avoids blowing up the sweep with a noisy exception that the
-        # caller would have to translate back to "skip this row" anyway.
         best_effort_rollback(con, context=f"claim_logging_job({expense_id}) txn conflict")
         logger.debug("Transaction conflict claiming %s; another worker won", expense_id)
         return None
     except Exception:
-        # Best-effort rollback: if ROLLBACK itself raises (broken
-        # connection, constraint surfacing only at boundary, etc.) we
-        # log and re-raise the *original* exception, not the secondary
-        # one, so the caller's traceback points at the real cause
-        # instead of a confusing rollback failure that masks it.
         best_effort_rollback(con, context=f"claim_logging_job({expense_id}) generic error")
         raise
 
 
 def release_logging_claim(
     con: duckdb.DuckDBPyConnection,
-    expense_id: str,
+    expense_id: int,
     claim_token: str,
 ) -> bool:
-    """Release a held claim back to `pending` (only if `claim_token` still matches).
-
-    Returns True if the row was released, False if not (different claimant
-    has taken over, or the row no longer exists).
-    """
     rows = con.execute(
         "UPDATE sheet_logging_jobs SET status = 'pending', claim_token = NULL, claimed_at = NULL"
         " WHERE expense_id = ? AND claim_token = ? RETURNING expense_id",
@@ -950,20 +832,24 @@ def release_logging_claim(
     return len(rows) > 0
 
 
+def poison_logging_job(
+    con: duckdb.DuckDBPyConnection,
+    expense_id: int,
+    error: str,
+) -> None:
+    """Mark a queue row as poisoned with an error reason."""
+    con.execute(
+        "UPDATE sheet_logging_jobs SET status = 'poisoned', last_error = ? WHERE expense_id = ?",
+        [error, expense_id],
+    )
+
+
 def _delete_logging_job(
     con: duckdb.DuckDBPyConnection,
-    expense_id: str,
+    expense_id: int,
     *,
     claim_token: str | None,
 ) -> bool:
-    """Single source of truth for deleting a `sheet_logging_jobs` row.
-
-    `claim_token=None` skips the token check (force-delete by expense_id
-    only). Factored out so a future column change to `sheet_logging_jobs`
-    only updates one DELETE statement instead of two divergent ones; the
-    public `clear_logging_job` and `force_clear_logging_job` are thin
-    wrappers that document the two distinct legitimate use cases.
-    """
     if claim_token is None:
         rows = con.execute(
             "DELETE FROM sheet_logging_jobs WHERE expense_id = ? RETURNING expense_id",
@@ -980,27 +866,13 @@ def _delete_logging_job(
 
 def clear_logging_job(
     con: duckdb.DuckDBPyConnection,
-    expense_id: str,
+    expense_id: int,
     claim_token: str,
 ) -> bool:
-    """Delete the queue row after a successful append. Requires matching claim_token."""
     return _delete_logging_job(con, expense_id, claim_token=claim_token)
 
 
-def force_clear_logging_job(con: duckdb.DuckDBPyConnection, expense_id: str) -> bool:
-    """Delete the queue row by expense_id, ignoring claim_token.
-
-    Use ONLY when the caller has definitively succeeded at the side-effect
-    that the queue row was tracking (e.g. the Sheets append already
-    happened) and a normal claim-token-protected `clear_logging_job`
-    failed because the claim was stolen by a stale-claim sweep. Deleting
-    unconditionally here prevents a *third* sheet append: the thief who
-    stole the claim will (or already did) cause the second append, and
-    leaving the row in place would cause the next sweep to claim and
-    append a third copy.
-
-    Returns True if a row was deleted.
-    """
+def force_clear_logging_job(con: duckdb.DuckDBPyConnection, expense_id: int) -> bool:
     return _delete_logging_job(con, expense_id, claim_token=None)
 
 
@@ -1009,5 +881,4 @@ def get_month_expenses(
     year: int,
     month: int,
 ) -> list[ExpenseRow]:
-    """Read all expenses for a given month."""
     return fetchall_as(ExpenseRow, con, load_sql("get_month_expenses.sql"), [year, month])
