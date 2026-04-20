@@ -8,6 +8,7 @@ exponential backoff (60s -> 30min cap). Permanent errors mark individual
 queue rows as ``poisoned`` and continue.
 """
 
+import asyncio
 import enum
 import logging
 import time
@@ -35,6 +36,15 @@ _BACKOFF_MAX_SEC = 1800.0
 _HTTP_CLIENT_ERROR_MIN = 400
 _HTTP_CLIENT_ERROR_MAX = 499
 
+# Wake-up channel: the lifespan drain loop registers an asyncio.Event
+# and its loop reference at startup; producers (e.g. POST /api/expenses)
+# call `notify_new_work` after committing a fresh ledger row so the
+# drain runs immediately instead of waiting for the next periodic tick.
+# The periodic timer stays as the canonical fallback for process
+# restarts and for crash-recovery of claims left by a previous worker.
+_wake_event: asyncio.Event | None = None
+_wake_loop: asyncio.AbstractEventLoop | None = None
+
 
 def get_logging_spreadsheet_id() -> str | None:
     return spreadsheet_id_from_setting(settings.sheet_logging_spreadsheet)
@@ -42,6 +52,51 @@ def get_logging_spreadsheet_id() -> str | None:
 
 def is_sheet_logging_enabled() -> bool:
     return get_logging_spreadsheet_id() is not None
+
+
+def register_wake_channel(
+    event: asyncio.Event,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Register the drain loop's wake-up event and its owning event loop.
+
+    Called exactly once per process by the lifespan drain loop. The
+    reference stays alive for the lifetime of the loop; on shutdown
+    the drain loop calls `clear_wake_channel` so stale `notify_new_work`
+    calls from a parallel test cannot touch a closed loop.
+    """
+    global _wake_event, _wake_loop  # noqa: PLW0603
+    _wake_event = event
+    _wake_loop = loop
+
+
+def clear_wake_channel() -> None:
+    """Detach the wake-up channel (lifespan shutdown / tests teardown)."""
+    global _wake_event, _wake_loop  # noqa: PLW0603
+    _wake_event = None
+    _wake_loop = None
+
+
+def notify_new_work() -> None:
+    """Signal the drain loop to start its next sweep immediately.
+
+    Thread-safe: safe to call from the event loop thread, from an
+    `asyncio.to_thread` worker, or from a regular sync context. If no
+    drain loop has registered (logging disabled, tests, shutdown),
+    this is a silent no-op — the periodic timer remains the canonical
+    wakeup source, so a missed notify never silently loses work.
+    """
+    ev = _wake_event
+    loop = _wake_loop
+    if ev is None or loop is None or loop.is_closed():
+        return
+    try:
+        loop.call_soon_threadsafe(ev.set)
+    except RuntimeError:
+        # Loop finished between the `is_closed` check and the schedule
+        # call. Dropping the notify is safe: the next lifespan startup
+        # will sweep any enqueued jobs on its first iteration.
+        return
 
 
 class DrainResult(enum.Enum):

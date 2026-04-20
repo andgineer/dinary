@@ -60,26 +60,38 @@ async def _drain_loop() -> None:
             " (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)",
         )
         return
+    # Register a wake-up event so producers (e.g. POST /api/expenses)
+    # can kick a sweep immediately instead of waiting for the next
+    # periodic tick. The timer is still the fallback for crash-recovery
+    # sweeps over jobs left behind by a previous worker.
+    wake = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    sheet_logging.register_wake_channel(wake, loop)
     _drain_logger.info("sheet-logging drain loop started: interval=%gs", interval)
-    first = True
-    while True:
-        if not first:
-            await asyncio.sleep(interval)
-        first = False
-        try:
-            summary = await asyncio.to_thread(sheet_logging.drain_pending)
-            attempted = summary.get("attempted", 0)
-            cap_reached = summary.get("cap_reached", False)
-            poisoned = summary.get("poisoned", 0)
-            failed = summary.get("failed", 0)
-            if attempted > 0 or cap_reached or poisoned > 0 or failed > 0:
-                _drain_logger.info("drain sweep: %s", summary)
-            else:
-                _drain_logger.debug("drain sweep: %s", summary)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            _drain_logger.exception("drain sweep failed")
+    try:
+        first = True
+        while True:
+            if not first:
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(wake.wait(), timeout=interval)
+                wake.clear()
+            first = False
+            try:
+                summary = await asyncio.to_thread(sheet_logging.drain_pending)
+                attempted = summary.get("attempted", 0)
+                cap_reached = summary.get("cap_reached", False)
+                poisoned = summary.get("poisoned", 0)
+                failed = summary.get("failed", 0)
+                if attempted > 0 or cap_reached or poisoned > 0 or failed > 0:
+                    _drain_logger.info("drain sweep: %s", summary)
+                else:
+                    _drain_logger.debug("drain sweep: %s", summary)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _drain_logger.exception("drain sweep failed")
+    finally:
+        sheet_logging.clear_wake_channel()
 
 
 @asynccontextmanager

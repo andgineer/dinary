@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 from dinary.config import settings
 from dinary.main import _lifespan, create_app
+from dinary.services import sheet_logging
 
 
 def _run(coro):
@@ -149,3 +150,61 @@ def test_cancel_on_shutdown_is_clean(monkeypatch):
     assert task_ref is not None
     assert task_ref.done()
     assert task_ref.cancelled()
+
+
+def test_notify_new_work_wakes_drain_immediately(monkeypatch):
+    """`notify_new_work` kicks the drain loop without waiting for the timer.
+
+    Uses a long interval (1s) so the timer cannot mask the wake-up: if
+    the event channel is wired correctly, `drain_pending` is called
+    immediately when notified, not after the timer fires.
+    """
+    monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 1.0)
+    app = create_app()
+    call_count = 0
+    done = asyncio.Event()
+
+    def _side_effect():
+        nonlocal call_count
+        call_count += 1
+        # Signal only on the second call (the post-notify sweep): the
+        # first call is the immediate startup sweep the drain loop
+        # always runs before its first timed wait.
+        if call_count >= 2:  # noqa: PLR2004
+            done.set()
+        return {
+            "attempted": 0,
+            "appended": 0,
+            "already_logged": 0,
+            "failed": 0,
+            "recovered_with_duplicate": 0,
+            "noop_orphan": 0,
+            "poisoned": 0,
+            "cap_reached": False,
+        }
+
+    async def _go():
+        with (
+            patch("dinary.main.sheet_logging.is_sheet_logging_enabled", return_value=True),
+            patch("dinary.main.sheet_logging.drain_pending", side_effect=_side_effect),
+        ):
+            async with _lifespan(app):
+                # Give the startup sweep a moment to complete.
+                for _ in range(20):
+                    await asyncio.sleep(0.01)
+                    if call_count >= 1:
+                        break
+                sheet_logging.notify_new_work()
+                # Wait up to 0.5s — drain interval is 1s, so if the
+                # wake signal doesn't work this assertion fails before
+                # the timer can save us.
+                await asyncio.wait_for(done.wait(), timeout=0.5)
+
+    _run(_go())
+    assert call_count >= 2  # noqa: PLR2004
+
+
+def test_notify_new_work_without_registered_channel_is_noop():
+    """Calling `notify_new_work` outside a lifespan must not raise."""
+    sheet_logging.clear_wake_channel()
+    sheet_logging.notify_new_work()

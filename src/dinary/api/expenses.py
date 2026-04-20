@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from dinary.config import settings
 from dinary.services import duckdb_repo
 from dinary.services.nbs import convert
-from dinary.services.sheet_logging import is_sheet_logging_enabled
+from dinary.services.sheet_logging import is_sheet_logging_enabled, notify_new_work
 from dinary.services.sql_loader import load_sql
 
 router = APIRouter()
@@ -42,7 +42,14 @@ async def create_expense(req: ExpenseRequest) -> ExpenseResponse:
     # other request on the single-worker event loop. Offload the whole
     # body to the default thread pool; the lifespan drain already does
     # the same for its own blocking work.
-    return await asyncio.to_thread(_create_expense_sync, req)
+    resp = await asyncio.to_thread(_create_expense_sync, req)
+    # Wake the drain loop for fresh creates so the sheet append runs
+    # immediately instead of waiting up to `drain_interval_sec` for the
+    # next periodic tick. Duplicates did not enqueue a new job (the
+    # queue row was created by the original insert), so skip them.
+    if resp.status == "ok" and is_sheet_logging_enabled():
+        notify_new_work()
+    return resp
 
 
 def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:

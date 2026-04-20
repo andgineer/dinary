@@ -534,7 +534,9 @@ A row is deleted as soon as its single-row append succeeds. On transient failure
 
 ### Periodic drain
 
-Started by FastAPI `lifespan` and controlled by `DINARY_SHEET_LOGGING_DRAIN_INTERVAL_SEC` (default 300s, `0` disables). The sweep runs immediately on entry, then every N seconds, and recovers from process restarts mid-flight and transient Sheets failures. A `time.sleep`-paced `asyncio.to_thread` worker keeps the event loop responsive.
+Started by FastAPI `lifespan` and controlled by `DINARY_SHEET_LOGGING_DRAIN_INTERVAL_SEC` (default 300s, `0` disables). The sweep runs immediately on entry, then waits on an `asyncio.Event` with a timeout of N seconds — whichever fires first triggers the next sweep. This keeps the append latency low for user-driven traffic (a `POST /api/expenses` that creates a fresh ledger row calls `sheet_logging.notify_new_work()`, which wakes the sweep instantly) while the timer remains the canonical fallback for process restarts and for crash-recovery of claims left by a previous worker. A `time.sleep`-paced `asyncio.to_thread` worker keeps the event loop responsive.
+
+Notify semantics: only fresh creates notify. Idempotent replays (`status=duplicate`) did not enqueue a new queue row, so they do not wake the loop; the original insert's notify already did. Notifies are coalesced (multiple POSTs while a sweep is running collapse into a single wake), so burst traffic does not cause sweep thrash.
 
 Per-sweep limits:
 
