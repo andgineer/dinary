@@ -117,6 +117,68 @@ class TestCatalogGet:
 
 
 @allure.epic("API")
+@allure.feature("Catalog (3D) — removable flag")
+class TestCatalogRemovableFlag:
+    """``removable`` must be ``true`` exactly when a DELETE on the row
+    would hard-delete (i.e. the row has no expense / mapping / auto_tags
+    reference anywhere). The PWA uses the flag to hide ``Удалить`` on
+    rows that would silently soft-delete, which otherwise makes the
+    management UI look broken ("я нажал удалить и ничего не удалилось").
+    """
+
+    def test_unreferenced_leaf_rows_are_removable(self, client):
+        # Categories, events, and tags in the fixture have no
+        # references at all, so they are all hard-deletable. Groups
+        # are tested separately because group 1 has child categories.
+        data = client.get("/api/catalog").json()
+        for key in ("categories", "events", "tags"):
+            for row in data[key]:
+                assert row["removable"] is True, (key, row)
+        # Childless group is removable; group-with-children is not.
+        groups = {g["id"]: g["removable"] for g in data["category_groups"]}
+        assert groups[1] is False
+        assert groups[2] is True
+
+    def test_category_becomes_non_removable_when_referenced_by_expense(self, client):
+        con = duckdb_repo.get_connection()
+        try:
+            con.execute(
+                "INSERT INTO expenses (id, client_expense_id, datetime, amount,"
+                " amount_original, currency_original, category_id)"
+                " VALUES (1, 'e1', '2026-04-21 12:00:00', 10.0, 10.0, 'RSD', 1)",
+            )
+        finally:
+            con.close()
+        data = client.get("/api/catalog").json()
+        cats = {c["id"]: c["removable"] for c in data["categories"]}
+        # Referenced category: no longer hard-deletable.
+        assert cats[1] is False
+        # Sibling unreferenced category stays removable.
+        assert cats[2] is True
+
+    def test_tag_non_removable_if_in_any_event_auto_tags(self, client):
+        # Add a tag, then list it in an event's ``auto_tags`` JSON
+        # payload. The FK engine won't see the name->name link, but
+        # the snapshot builder scans auto_tags and must mark the tag
+        # as non-removable.
+        con = duckdb_repo.get_connection()
+        try:
+            con.execute(
+                "INSERT INTO tags (id, name, is_active) VALUES (99, 'vacation', TRUE)",
+            )
+            con.execute(
+                "UPDATE events SET auto_tags = '[\"vacation\"]' WHERE id = 1",
+            )
+        finally:
+            con.close()
+        data = client.get("/api/catalog").json()
+        tags = {t["id"]: t["removable"] for t in data["tags"]}
+        assert tags[99] is False
+        # Pre-existing unrelated tag stays removable.
+        assert tags[1] is True
+
+
+@allure.epic("API")
 @allure.feature("Catalog (3D) — If-None-Match parsing")
 class TestIfNoneMatchUnit:
     """Direct unit coverage for the list/wildcard parser. The

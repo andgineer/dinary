@@ -18,6 +18,10 @@
  */
 
 import {
+  adminDeactivateCategory,
+  adminDeactivateEvent,
+  adminDeactivateGroup,
+  adminDeactivateTag,
   adminDeleteCategory,
   adminDeleteEvent,
   adminDeleteGroup,
@@ -111,19 +115,32 @@ export function findCategoryById(categoryId) {
   return _snapshot.categories.find((c) => c.id === cid) || null;
 }
 
+// Case-insensitive, locale-aware name match. Cyrillic "Еда" vs "еда"
+// (the PWA default constants use lowercase, but the seeded catalog
+// ships capitalised group names) used to miss each other with plain
+// ``===``, which left the category dropdown stuck on its HTML
+// placeholder after first paint. ``localeCompare`` with the
+// ``sensitivity: "accent"`` option treats case as equivalent while
+// still distinguishing accents.
+function namesEqual(a, b) {
+  if (a == null || b == null) return false;
+  return String(a).localeCompare(String(b), undefined, { sensitivity: "accent" }) === 0;
+}
+
 export function findCategoryByName(name, { groupId = null } = {}) {
   if (!_snapshot) return null;
   return (
     _snapshot.categories.find(
       (c) =>
-        c.name === name && (groupId === null || c.group_id === Number(groupId)),
+        namesEqual(c.name, name) &&
+        (groupId === null || c.group_id === Number(groupId)),
     ) || null
   );
 }
 
 export function findGroupByName(name) {
   if (!_snapshot) return null;
-  return _snapshot.category_groups.find((g) => g.name === name) || null;
+  return _snapshot.category_groups.find((g) => namesEqual(g.name, name)) || null;
 }
 
 export function populateGroupDropdown(selectEl) {
@@ -307,6 +324,40 @@ export async function reactivateEvent(eventId) {
 
 export async function reactivateTag(tagId) {
   const snap = await adminReactivateTag(tagId);
+  replaceSnapshot(snap);
+  return snap;
+}
+
+// ---------------------------------------------------------------------------
+// Deactivation (per-picker "Скрыть" button on active rows)
+//
+// Symmetric to reactivation: flips ``is_active`` to false without
+// touching row references. The row disappears from the normal
+// dropdown and becomes surfaced again only in the "Управлять" list
+// until the operator either reactivates it or hard-deletes via the
+// "Удалить" path.
+// ---------------------------------------------------------------------------
+
+export async function deactivateGroup(groupId) {
+  const snap = await adminDeactivateGroup(groupId);
+  replaceSnapshot(snap);
+  return snap;
+}
+
+export async function deactivateCategory(categoryId) {
+  const snap = await adminDeactivateCategory(categoryId);
+  replaceSnapshot(snap);
+  return snap;
+}
+
+export async function deactivateEvent(eventId) {
+  const snap = await adminDeactivateEvent(eventId);
+  replaceSnapshot(snap);
+  return snap;
+}
+
+export async function deactivateTag(tagId) {
+  const snap = await adminDeactivateTag(tagId);
   replaceSnapshot(snap);
   return snap;
 }

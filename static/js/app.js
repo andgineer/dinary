@@ -25,6 +25,10 @@ import {
   postExpense,
 } from "./api.js";
 import {
+  deactivateCategory,
+  deactivateEvent,
+  deactivateGroup,
+  deactivateTag,
   deleteCategory,
   deleteEvent,
   deleteGroup,
@@ -32,12 +36,16 @@ import {
   findCategoryById,
   findCategoryByName,
   findGroupByName,
+  getActiveEvents,
   getAutoAttachEventsOn,
+  getCategoriesByGroup,
+  getGroups,
   getInactiveCategoriesByGroup,
   getInactiveEventsInWindow,
   getInactiveGroups,
   getInactiveTags,
   getLastError,
+  getTags,
   loadCatalog,
   populateCategoryDropdown,
   populateEventDropdown,
@@ -485,138 +493,214 @@ function applyAutoAttachEventForDate(dateStr) {
 }
 
 // ---------------------------------------------------------------------------
-// Per-picker "Показать неактивные" toggle + reactivation list
+// Per-picker "Управлять" toggle — unified active + inactive management list.
+//
+// When the toggle is on we render two stacked lists under the picker:
+//   • active rows with a "Скрыть" button (deactivate; stays in the DB,
+//     disappears from normal dropdowns, can be re-surfaced via
+//     "Активировать"); the "Удалить" button is shown *only* when the
+//     server-precomputed ``removable`` flag says hard-delete would
+//     actually succeed (no expenses or mapping references, for tags
+//     additionally no event ``auto_tags`` membership). This makes the
+//     most common scenario — removing something just created by
+//     mistake — a single click, without forcing "скрыть -> удалить".
+//   • inactive rows with an "Активировать" button; here too "Удалить"
+//     is gated on ``removable``.
+//
+// The ``_showInactive`` flag name is legacy — we keep it because the
+// toggle control still lives at ``#toggle-inactive-<kind>`` — but it
+// now means "manage mode is on".
 // ---------------------------------------------------------------------------
 
-const INACTIVE_CONFIG = {
+const MANAGE_CONFIG = {
   group: {
     containerId: "inactive-group-list",
     toggleId: "toggle-inactive-group",
-    list: () => getInactiveGroups(),
+    activeList: () => getGroups({ includeInactive: false }),
+    inactiveList: () => getInactiveGroups(),
     label: (g) => g.name,
     reactivate: (id) => reactivateGroup(id),
+    deactivate: (id) => deactivateGroup(id),
     remove: (id) => deleteGroup(id),
     kindNoun: "группа",
   },
   category: {
     containerId: "inactive-category-list",
     toggleId: "toggle-inactive-category",
-    list: () => getInactiveCategoriesByGroup(getSelectedGroupId()),
+    activeList: () => {
+      const gid = getSelectedGroupId();
+      return gid ? getCategoriesByGroup(gid, { includeInactive: false }) : [];
+    },
+    inactiveList: () => getInactiveCategoriesByGroup(getSelectedGroupId()),
     label: (c) => c.name,
     reactivate: (id) => reactivateCategory(id),
+    deactivate: (id) => deactivateCategory(id),
     remove: (id) => deleteCategory(id),
     kindNoun: "категория",
   },
   event: {
     containerId: "inactive-event-list",
     toggleId: "toggle-inactive-event",
-    list: () => getInactiveEventsInWindow($("#date").value || today()),
+    activeList: () => getActiveEvents($("#date").value || today()),
+    inactiveList: () => getInactiveEventsInWindow($("#date").value || today()),
     label: (e) => `${e.name} (${e.date_from}..${e.date_to})`,
     reactivate: (id) => reactivateEvent(id),
+    deactivate: (id) => deactivateEvent(id),
     remove: (id) => deleteEvent(id),
     kindNoun: "событие",
   },
   tag: {
     containerId: "inactive-tag-list",
     toggleId: "toggle-inactive-tag",
-    list: () => getInactiveTags(),
+    activeList: () => getTags({ includeInactive: false }),
+    inactiveList: () => getInactiveTags(),
     label: (t) => t.name,
     reactivate: (id) => reactivateTag(id),
+    deactivate: (id) => deactivateTag(id),
     remove: (id) => deleteTag(id),
     kindNoun: "тэг",
   },
 };
 
-function renderInactiveList(kind) {
-  const cfg = INACTIVE_CONFIG[kind];
+function appendDeleteButton(row, cfg, it, siblings) {
+  // ``removable`` is the server-computed "hard-delete would succeed"
+  // flag (``build_catalog_snapshot``). If it's false — i.e. there
+  // are expenses, mapping-table refs, or (for tags) events with the
+  // tag in ``auto_tags`` — the button is not rendered so the
+  // operator doesn't get a confusing "нельзя удалить, всё ещё
+  // используется" dead-end. They can "Скрыть" instead.
+  if (it.removable !== true) return;
+  const delBtn = document.createElement("button");
+  delBtn.type = "button";
+  delBtn.className = "btn-inline inactive-delete";
+  delBtn.textContent = "Удалить";
+  delBtn.title = "Удалить окончательно (без ссылок на эту строку)";
+  delBtn.onclick = async () => {
+    if (!window.confirm(`Удалить «${cfg.label(it)}» окончательно?`)) return;
+    delBtn.disabled = true;
+    for (const s of siblings) s.disabled = true;
+    try {
+      const snap = await cfg.remove(it.id);
+      if (snap?.delete_status === "soft") {
+        // Race: something started referencing the row between the
+        // snapshot that set ``removable=true`` and this DELETE
+        // landing. We fall back to the legacy soft-delete toast.
+        const n = snap.usage_count ?? 0;
+        showToast(
+          `Не удалено: ещё используется в ${n} расходах. Осталось скрытым.`,
+          "info",
+        );
+      } else if (snap?.delete_status === "hard") {
+        showToast("Удалено окончательно", "success");
+      }
+      rerenderCatalogControls();
+    } catch (e) {
+      showToast(`Не удалось удалить: ${e.message}`, "error");
+      delBtn.disabled = false;
+      for (const s of siblings) s.disabled = false;
+    }
+  };
+  row.appendChild(delBtn);
+}
+
+function appendRow(container, cfg, it, primary) {
+  const row = document.createElement("div");
+  row.className =
+    primary === "deactivate" ? "inactive-row active-row" : "inactive-row";
+  const name = document.createElement("span");
+  name.className = "inactive-name";
+  name.textContent = cfg.label(it);
+  row.appendChild(name);
+
+  const primaryBtn = document.createElement("button");
+  primaryBtn.type = "button";
+  primaryBtn.className =
+    primary === "deactivate" ? "btn-inline inactive-hide" : "btn-inline inactive-activate";
+  primaryBtn.textContent = primary === "deactivate" ? "Скрыть" : "Активировать";
+  primaryBtn.onclick = async () => {
+    primaryBtn.disabled = true;
+    try {
+      if (primary === "deactivate") {
+        await cfg.deactivate(it.id);
+      } else {
+        await cfg.reactivate(it.id);
+      }
+      rerenderCatalogControls();
+    } catch (e) {
+      const verb = primary === "deactivate" ? "скрыть" : "активировать";
+      showToast(`Не удалось ${verb}: ${e.message}`, "error");
+      primaryBtn.disabled = false;
+    }
+  };
+  row.appendChild(primaryBtn);
+  appendDeleteButton(row, cfg, it, [primaryBtn]);
+  container.appendChild(row);
+}
+
+function appendSectionHeader(container, text) {
+  const h = document.createElement("div");
+  h.className = "inactive-section";
+  h.textContent = text;
+  container.appendChild(h);
+}
+
+function renderManageList(kind) {
+  const cfg = MANAGE_CONFIG[kind];
   const container = document.getElementById(cfg.containerId);
   if (!container) return;
   const toggle = document.getElementById(cfg.toggleId);
   if (!_showInactive[kind]) {
     container.hidden = true;
     container.innerHTML = "";
-    if (toggle) toggle.textContent = "Показать неактивные";
+    if (toggle) toggle.textContent = "Управлять";
     return;
   }
-  if (toggle) toggle.textContent = "Скрыть неактивные";
-  const items = cfg.list();
+  if (toggle) toggle.textContent = "Закрыть";
   container.hidden = false;
   container.innerHTML = "";
-  if (items.length === 0) {
+
+  const active = cfg.activeList();
+  appendSectionHeader(container, "Активные");
+  if (active.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "inactive-empty";
+    empty.textContent = "— нет активных —";
+    container.appendChild(empty);
+  } else {
+    for (const it of active) appendRow(container, cfg, it, "deactivate");
+  }
+
+  const inactive = cfg.inactiveList();
+  appendSectionHeader(container, "Неактивные");
+  if (inactive.length === 0) {
     const empty = document.createElement("div");
     empty.className = "inactive-empty";
     empty.textContent = "— нет неактивных —";
     container.appendChild(empty);
-    return;
-  }
-  for (const it of items) {
-    const row = document.createElement("div");
-    row.className = "inactive-row";
-    const name = document.createElement("span");
-    name.className = "inactive-name";
-    name.textContent = cfg.label(it);
-    row.appendChild(name);
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "btn-inline inactive-activate";
-    btn.textContent = "Активировать";
-    btn.onclick = async () => {
-      btn.disabled = true;
-      try {
-        await cfg.reactivate(it.id);
-        rerenderCatalogControls();
-      } catch (e) {
-        showToast(`Не удалось активировать: ${e.message}`, "error");
-        btn.disabled = false;
-      }
-    };
-    row.appendChild(btn);
-    const delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "btn-inline inactive-delete";
-    delBtn.textContent = "Удалить";
-    delBtn.title = "Удалить окончательно если не используется";
-    delBtn.onclick = async () => {
-      if (!window.confirm(`Удалить «${cfg.label(it)}» окончательно?`)) return;
-      delBtn.disabled = true;
-      btn.disabled = true;
-      try {
-        const snap = await cfg.remove(it.id);
-        if (snap?.delete_status === "soft") {
-          const n = snap.usage_count ?? 0;
-          showToast(
-            `Не удалено: ещё используется в ${n} расходах. Осталось скрытым.`,
-            "info",
-          );
-        } else if (snap?.delete_status === "hard") {
-          showToast("Удалено окончательно", "success");
-        }
-        rerenderCatalogControls();
-      } catch (e) {
-        showToast(`Не удалось удалить: ${e.message}`, "error");
-        delBtn.disabled = false;
-        btn.disabled = false;
-      }
-    };
-    row.appendChild(delBtn);
-    container.appendChild(row);
+  } else {
+    for (const it of inactive) appendRow(container, cfg, it, "reactivate");
   }
 }
 
+// Legacy alias — external callers still invoke the old name.
+function renderInactiveList(kind) {
+  renderManageList(kind);
+}
+
 function wireInactiveToggles() {
-  for (const kind of Object.keys(INACTIVE_CONFIG)) {
-    const toggle = document.getElementById(INACTIVE_CONFIG[kind].toggleId);
+  for (const kind of Object.keys(MANAGE_CONFIG)) {
+    const toggle = document.getElementById(MANAGE_CONFIG[kind].toggleId);
     if (!toggle) continue;
     toggle.addEventListener("click", () => {
       _showInactive[kind] = !_showInactive[kind];
-      renderInactiveList(kind);
+      renderManageList(kind);
     });
   }
 }
 
 function rerenderInactiveLists() {
-  for (const kind of Object.keys(INACTIVE_CONFIG)) {
-    renderInactiveList(kind);
+  for (const kind of Object.keys(MANAGE_CONFIG)) {
+    renderManageList(kind);
   }
 }
 

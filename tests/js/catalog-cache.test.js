@@ -15,7 +15,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as allure from "allure-js-commons";
 
 const CATALOG_CACHE_KEY = "dinary:catalog:v1";
-const ADMIN_TOKEN_KEY = "dinary:admin_token";
 
 function installLocalStorageStub() {
   const store = new Map();
@@ -82,10 +81,6 @@ async function importApi() {
 }
 
 describe("api.js — postAdmin catalog cache shape", () => {
-  beforeEach(() => {
-    localStorage.setItem(ADMIN_TOKEN_KEY, "test-token");
-  });
-
   it("writes category_groups (not groups) into the cached snapshot", async () => {
     await allure.feature("Catalog cache");
     vi.stubGlobal("fetch", mockOkFetch(ADMIN_ADD_RESPONSE));
@@ -140,34 +135,12 @@ describe("api.js — postAdmin catalog cache shape", () => {
     expect(Object.keys(afterAdmin).sort()).toEqual(Object.keys(afterGet).sort());
   });
 
-  it("401 clears admin token, other failure modes don't", async () => {
-    await allure.feature("Admin auth");
-    const make = (status) =>
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status,
-        json: async () => ({ detail: "x" }),
-      });
-
-    localStorage.setItem(ADMIN_TOKEN_KEY, "bad");
-    vi.stubGlobal("fetch", make(401));
-    const api = await importApi();
-    await expect(api.adminAddTag({ name: "x" })).rejects.toMatchObject({
-      status: 401,
-    });
-    expect(localStorage.getItem(ADMIN_TOKEN_KEY)).toBeNull();
-
-    localStorage.setItem(ADMIN_TOKEN_KEY, "ok");
-    vi.stubGlobal("fetch", make(500));
-    vi.resetModules();
-    const api2 = await importApi();
-    await expect(api2.adminAddTag({ name: "x" })).rejects.toMatchObject({
-      status: 500,
-    });
-    // Server errors must not evict the token — the operator typed it in
-    // and the server is the thing that failed.
-    expect(localStorage.getItem(ADMIN_TOKEN_KEY)).toBe("ok");
-  });
+  // Former "401 clears admin token" test lived here. The shared-token
+  // admin gate was removed (see ``DINARY_ADMIN_API_TOKEN`` in
+  // ``config.py::_DEPRECATED_ENV_REMOVED``); the PWA no longer
+  // reads or writes ``dinary:admin_token``. Nothing left to guard
+  // on the client for this auth mode — re-adding tests is blocked
+  // on the real auth layer being re-introduced.
 
   it("fetchCatalog derives If-None-Match from cached catalog_version", async () => {
     // Server-side ETag stopped shipping in the body, so the client

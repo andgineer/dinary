@@ -5,12 +5,23 @@ categories, events, tags) on the hot path. Payload:
 
     {
       catalog_version: int,
-      categories:       [{id, name, group, group_id, is_active}],
-      category_groups:  [{id, name, sort_order, is_active}],
+      categories:       [{id, name, group, group_id, is_active, removable}],
+      category_groups:  [{id, name, sort_order, is_active, removable}],
       events:           [{id, name, date_from, date_to,
-                          auto_attach_enabled, auto_tags, is_active}],
-      tags:             [{id, name, is_active}],
+                          auto_attach_enabled, auto_tags, is_active,
+                          removable}],
+      tags:             [{id, name, is_active, removable}],
     }
+
+``removable`` is the server-precomputed answer to "would a DELETE
+on this row hard-delete (i.e. succeed and actually drop the row)?".
+The flag is ``true`` only when the row is not referenced by any FK
+into it from ``expenses`` / ``expense_tags`` nor by any mapping
+table (``sheet_mapping`` / ``sheet_mapping_tags`` / ``import_mapping``
+/ ``import_mapping_tags``), and — for tags — no event's
+``auto_tags`` JSON payload contains the tag's name. The PWA uses it
+to hide the "Удалить" button on rows that would soft-delete
+anyway, keeping the management list honest.
 
 ETag is ``W/"catalog-v<N>"`` where N is ``catalog_version``. It rides
 on the HTTP ``ETag`` response header only — the body does **not**
@@ -33,6 +44,7 @@ events).
 """
 
 import logging
+from collections import Counter
 
 import duckdb
 from fastapi import APIRouter, Header, HTTPException, Response
@@ -50,6 +62,7 @@ class CategoryGroupItem(BaseModel):
     name: str
     sort_order: int
     is_active: bool
+    removable: bool
 
 
 class CategoryItem(BaseModel):
@@ -58,6 +71,7 @@ class CategoryItem(BaseModel):
     group: str
     group_id: int
     is_active: bool
+    removable: bool
 
 
 class EventItem(BaseModel):
@@ -68,12 +82,14 @@ class EventItem(BaseModel):
     auto_attach_enabled: bool
     auto_tags: list[str]
     is_active: bool
+    removable: bool
 
 
 class TagItem(BaseModel):
     id: int
     name: str
     is_active: bool
+    removable: bool
 
 
 class CatalogResponse(BaseModel):
@@ -105,6 +121,102 @@ def _if_none_match_matches(header_value: str, etag: str) -> bool:
     return any(token.strip() == etag for token in stripped.split(","))
 
 
+def _sum_counts_by_id(
+    con: duckdb.DuckDBPyConnection,
+    tables_and_cols: tuple[tuple[str, str], ...],
+) -> Counter[int]:
+    """Union of ``SELECT col, COUNT(*) ... GROUP BY col`` across tables.
+
+    Each (table, col) pair contributes one aggregate query; results
+    accumulate into a single ``Counter`` keyed by row id. ``col IS
+    NULL`` rows are excluded (they don't reference anything).
+    """
+    out: Counter[int] = Counter()
+    for table, col in tables_and_cols:
+        rows = con.execute(
+            f"SELECT {col}, COUNT(*) FROM {table} WHERE {col} IS NOT NULL GROUP BY {col}",  # noqa: S608
+        ).fetchall()
+        for row_id, n in rows:
+            out[int(row_id)] += int(n)
+    return out
+
+
+def _auto_tag_refs_by_tag_id(con: duckdb.DuckDBPyConnection) -> Counter[int]:
+    """Count events whose ``auto_tags`` JSON array contains each tag name.
+
+    ``events.auto_tags`` stores tag names (not ids), so DuckDB's FK
+    engine misses it. Scan once, build a name->count Counter, then
+    translate to ids via the ``tags`` table. Cheap: the events table
+    is small.
+    """
+    name_refs: Counter[str] = Counter()
+    rows = con.execute(
+        "SELECT auto_tags FROM events"
+        " WHERE auto_tags IS NOT NULL AND auto_tags != '' AND auto_tags != '[]'",
+    ).fetchall()
+    for (raw,) in rows:
+        for name in decode_auto_tags_value(raw, context="catalog auto_tags scan"):
+            name_refs[name] += 1
+    if not name_refs:
+        return Counter()
+    id_refs: Counter[int] = Counter()
+    for tag_id, tag_name in con.execute("SELECT id, name FROM tags").fetchall():
+        hits = name_refs.get(str(tag_name), 0)
+        if hits:
+            id_refs[int(tag_id)] = hits
+    return id_refs
+
+
+def _reference_counts(
+    con: duckdb.DuckDBPyConnection,
+) -> tuple[dict[int, int], dict[int, int], dict[int, int], dict[int, int]]:
+    """Aggregate FK/reference counts needed for the ``removable`` flag.
+
+    Returns four dicts keyed by row id: total-refs-per-category-id,
+    total-refs-per-event-id, total-refs-per-tag-id (including
+    ``events.auto_tags`` name matches), and total-child-count-per-
+    group-id. One aggregate query per reference table keeps this at
+    O(tables), not O(rows). The predicates (mapping tables + expense
+    FKs + events.auto_tags scan) mirror
+    ``catalog_writer._*_mapping_reference_count`` /
+    ``_events_auto_tags_reference_count`` so ``removable=true``
+    corresponds exactly to "hard-delete would succeed".
+    """
+    cat_refs = _sum_counts_by_id(
+        con,
+        (
+            ("expenses", "category_id"),
+            ("sheet_mapping", "category_id"),
+            ("import_mapping", "category_id"),
+        ),
+    )
+    event_refs = _sum_counts_by_id(
+        con,
+        (
+            ("expenses", "event_id"),
+            ("sheet_mapping", "event_id"),
+            ("import_mapping", "event_id"),
+        ),
+    )
+    tag_refs = _sum_counts_by_id(
+        con,
+        (
+            ("expense_tags", "tag_id"),
+            ("sheet_mapping_tags", "tag_id"),
+            ("import_mapping_tags", "tag_id"),
+        ),
+    )
+    tag_refs.update(_auto_tag_refs_by_tag_id(con))
+
+    group_child_counts: dict[int, int] = {}
+    for row_id, n in con.execute(
+        "SELECT group_id, COUNT(*) FROM categories GROUP BY group_id",
+    ).fetchall():
+        group_child_counts[int(row_id)] = int(n)
+
+    return dict(cat_refs), dict(event_refs), dict(tag_refs), group_child_counts
+
+
 def build_catalog_snapshot(con: duckdb.DuckDBPyConnection) -> dict:
     """Shared by GET /api/catalog and the admin POST/PATCH responses.
 
@@ -112,9 +224,14 @@ def build_catalog_snapshot(con: duckdb.DuckDBPyConnection) -> dict:
     pydantic response model (``CatalogResponse`` / ``AdminCatalogResponse``).
     Returns **all** rows regardless of ``is_active``; the flag is
     surfaced per-row so the PWA can render and reactivate inactive
-    items without hitting a separate endpoint.
+    items without hitting a separate endpoint. Each row also carries
+    a ``removable`` boolean indicating whether ``DELETE`` would
+    hard-delete (true) or soft-delete (false) the row today — the
+    PWA uses it to hide the ``Удалить`` button on still-referenced
+    rows.
     """
     version = duckdb_repo.get_catalog_version(con)
+    cat_refs, event_refs, tag_refs, group_children = _reference_counts(con)
 
     group_rows = con.execute(
         "SELECT id, name, sort_order, is_active FROM category_groups ORDER BY sort_order, id",
@@ -144,6 +261,7 @@ def build_catalog_snapshot(con: duckdb.DuckDBPyConnection) -> dict:
                 "name": str(r[1]),
                 "sort_order": int(r[2]),
                 "is_active": bool(r[3]),
+                "removable": group_children.get(int(r[0]), 0) == 0,
             }
             for r in group_rows
         ],
@@ -154,6 +272,7 @@ def build_catalog_snapshot(con: duckdb.DuckDBPyConnection) -> dict:
                 "group_id": int(r[2]),
                 "group": str(r[3]),
                 "is_active": bool(r[4]),
+                "removable": cat_refs.get(int(r[0]), 0) == 0,
             }
             for r in category_rows
         ],
@@ -169,10 +288,19 @@ def build_catalog_snapshot(con: duckdb.DuckDBPyConnection) -> dict:
                     context=f"event_id={int(r[0])}",
                 ),
                 "is_active": bool(r[6]),
+                "removable": event_refs.get(int(r[0]), 0) == 0,
             }
             for r in event_rows
         ],
-        "tags": [{"id": int(r[0]), "name": str(r[1]), "is_active": bool(r[2])} for r in tag_rows],
+        "tags": [
+            {
+                "id": int(r[0]),
+                "name": str(r[1]),
+                "is_active": bool(r[2]),
+                "removable": tag_refs.get(int(r[0]), 0) == 0,
+            }
+            for r in tag_rows
+        ],
     }
 
 

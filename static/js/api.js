@@ -259,7 +259,12 @@ export async function adminPatchTag(tag_id, body) {
   });
 }
 
-// Convenience reactivation helpers: one PATCH flipping ``is_active``.
+// Convenience reactivation / deactivation helpers: one PATCH flipping
+// ``is_active``. Deactivation is the symmetric operation the picker
+// "Управлять" list exposes for active rows — no destructive semantics,
+// no usage check; the row is simply hidden from normal dropdowns and
+// can be re-surfaced via reactivation. Hard vs soft delete stays on
+// the DELETE endpoint.
 
 export async function adminReactivateGroup(group_id) {
   return adminPatchGroup(group_id, { is_active: true });
@@ -275,6 +280,22 @@ export async function adminReactivateEvent(event_id) {
 
 export async function adminReactivateTag(tag_id) {
   return adminPatchTag(tag_id, { is_active: true });
+}
+
+export async function adminDeactivateGroup(group_id) {
+  return adminPatchGroup(group_id, { is_active: false });
+}
+
+export async function adminDeactivateCategory(category_id) {
+  return adminPatchCategory(category_id, { is_active: false });
+}
+
+export async function adminDeactivateEvent(event_id) {
+  return adminPatchEvent(event_id, { is_active: false });
+}
+
+export async function adminDeactivateTag(tag_id) {
+  return adminPatchTag(tag_id, { is_active: false });
 }
 
 // DELETE helpers. Server decides hard vs soft based on whether the row
