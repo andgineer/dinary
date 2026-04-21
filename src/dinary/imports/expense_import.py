@@ -878,6 +878,73 @@ def _apply_post_import_fixes(
         raise
 
 
+def _fk_safe_update_expenses(  # noqa: PLR0913
+    con,
+    *,
+    where_clause: str,
+    where_params: list,
+    set_clause: str,
+    set_params: list,
+    tag_id_rewrite=None,
+) -> list[int]:
+    """Run ``UPDATE expenses SET <set_clause> WHERE <where_clause>`` in a
+    way that dodges DuckDB 1.5's FK-on-UPDATE limitation.
+
+    DuckDB 1.5 implements ``UPDATE`` as DELETE+INSERT under the hood, and
+    its FK validator rejects the statement whenever the parent row is
+    still referenced from ``expense_tags`` — even when the UPDATE does
+    not touch the primary key. We work around it by snapshotting every
+    ``expense_tags`` row for the affected expenses, detaching them,
+    running the UPDATE against an FK-clear parent set, and re-attaching
+    the children afterwards.
+
+    ``tag_id_rewrite`` is an optional ``(expense_id, tag_ids) ->
+    Iterable[int]`` callback that rewrites the tag set per expense
+    before the re-attach step (e.g. to strip a previous event's
+    ``auto_tags`` and union the new event's ``auto_tags``). Returns
+    the list of affected expense ids so callers can do follow-up work.
+    """
+    affected_ids = [
+        row[0]
+        for row in con.execute(
+            f"SELECT id FROM expenses WHERE {where_clause}",  # noqa: S608
+            where_params,
+        ).fetchall()
+    ]
+    if not affected_ids:
+        return affected_ids
+
+    placeholders = ",".join(["?"] * len(affected_ids))
+    tag_pairs = con.execute(
+        f"SELECT expense_id, tag_id FROM expense_tags WHERE expense_id IN ({placeholders})",  # noqa: S608
+        affected_ids,
+    ).fetchall()
+    tags_by_expense: dict[int, list[int]] = {}
+    for expense_id, tag_id in tag_pairs:
+        tags_by_expense.setdefault(expense_id, []).append(tag_id)
+
+    con.execute(
+        f"DELETE FROM expense_tags WHERE expense_id IN ({placeholders})",  # noqa: S608
+        affected_ids,
+    )
+    con.execute(
+        f"UPDATE expenses SET {set_clause} WHERE {where_clause}",  # noqa: S608
+        [*set_params, *where_params],
+    )
+
+    for expense_id in affected_ids:
+        tag_ids = tags_by_expense.get(expense_id, [])
+        if tag_id_rewrite is not None:
+            tag_ids = list(tag_id_rewrite(expense_id, tag_ids))
+        for tag_id in dict.fromkeys(tag_ids):
+            con.execute(
+                "INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)"
+                " ON CONFLICT DO NOTHING",
+                [expense_id, tag_id],
+            )
+    return affected_ids
+
+
 def _apply_post_import_fixes_body(
     year: int,
     con,
@@ -888,95 +955,85 @@ def _apply_post_import_fixes_body(
         category_id = _resolve_category_id(con, category_name)
         if category_id is None:
             continue
-        con.execute(
-            """
-            UPDATE expenses
-            SET category_id = ?
-            WHERE YEAR(datetime) = ?
-              AND LOWER(COALESCE(comment, '')) = ?
-            """,
-            [category_id, year, comment_text],
+        _fk_safe_update_expenses(
+            con,
+            where_clause="YEAR(datetime) = ? AND LOWER(COALESCE(comment, '')) = ?",
+            where_params=[year, comment_text],
+            set_clause="category_id = ?",
+            set_params=[category_id],
         )
 
     rent_category_id = _resolve_category_id(con, "аренда")
     if rent_category_id is not None:
-        con.execute(
-            """
-            UPDATE expenses
-            SET category_id = ?
-            WHERE YEAR(datetime) = 2018
-              AND LOWER(COALESCE(comment, '')) = 'покупка валюты'
-            """,
-            [rent_category_id],
+        _fk_safe_update_expenses(
+            con,
+            where_clause=(
+                "YEAR(datetime) = 2018 AND LOWER(COALESCE(comment, '')) = 'покупка валюты'"
+            ),
+            where_params=[],
+            set_clause="category_id = ?",
+            set_params=[rent_category_id],
         )
 
     if year == RUSSIA_TRIP_FIX_YEAR:
         transport_category_id = _resolve_category_id(con, "транспорт")
         if transport_category_id is not None and russia_trip_event_id is not None:
-            # Snapshot the old (event_id, expense_id) pairs BEFORE the
-            # UPDATE so we can strip the previous event's ``auto_tags``
-            # from each affected expense. Without this step the helper
-            # is additive only: if ``resolve_row_to_3d`` originally
-            # attached the row to ``отпуск-2026`` with
-            # ``{отпуск, путешествия}``, rewriting to
-            # ``russia-trip-2026`` would leave those tags behind while
+            # Snapshot the old per-expense event id BEFORE the UPDATE so
+            # we can strip the previous event's ``auto_tags`` from each
+            # affected expense. Without this step the rewrite is
+            # additive only: if ``resolve_row_to_3d`` originally
+            # attached the row to "отпуск-2026" with
+            # {"отпуск", "путешествия"}, rewriting to
+            # "russia-trip-2026" would leave those tags behind while
             # also adding whatever the new event carries, producing a
             # tag set that no runtime path would ever write.
-            old_pairs = con.execute(
-                """
-                SELECT id, event_id
-                FROM expenses
-                WHERE YEAR(datetime) = 2026
-                  AND LOWER(COALESCE(comment, '')) = 'билеты в россию август 2026'
-                """,
-            ).fetchall()
+            old_event_ids: dict[int, int | None] = {
+                row[0]: row[1]
+                for row in con.execute(
+                    """
+                    SELECT id, event_id
+                    FROM expenses
+                    WHERE YEAR(datetime) = 2026
+                      AND LOWER(COALESCE(comment, '')) = 'билеты в россию август 2026'
+                    """,
+                ).fetchall()
+            }
             new_auto_tag_ids = set(
                 sheet_mapping.resolve_event_auto_tag_ids(
                     con,
                     russia_trip_event_id,
                 ),
             )
-            for expense_id, old_event_id in old_pairs:
-                if old_event_id is None or old_event_id == russia_trip_event_id:
-                    continue
-                stale_tag_ids = [
-                    tid
-                    for tid in sheet_mapping.resolve_event_auto_tag_ids(
-                        con,
-                        old_event_id,
-                    )
-                    if tid not in new_auto_tag_ids
-                ]
-                for tid in stale_tag_ids:
-                    con.execute(
-                        "DELETE FROM expense_tags WHERE expense_id = ? AND tag_id = ?",
-                        [expense_id, tid],
-                    )
-            con.execute(
-                """
-                UPDATE expenses
-                SET category_id = ?, event_id = ?
-                WHERE YEAR(datetime) = 2026
-                  AND LOWER(COALESCE(comment, '')) = 'билеты в россию август 2026'
-                """,
-                [transport_category_id, russia_trip_event_id],
+
+            def rewrite_tags(expense_id: int, tag_ids: list[int]) -> list[int]:
+                old_event_id = old_event_ids.get(expense_id)
+                stale: set[int] = set()
+                if old_event_id is not None and old_event_id != russia_trip_event_id:
+                    stale = {
+                        tid
+                        for tid in sheet_mapping.resolve_event_auto_tag_ids(
+                            con,
+                            old_event_id,
+                        )
+                        if tid not in new_auto_tag_ids
+                    }
+                kept = [tid for tid in tag_ids if tid not in stale]
+                for auto_id in new_auto_tag_ids:
+                    if auto_id not in kept:
+                        kept.append(auto_id)
+                return kept
+
+            _fk_safe_update_expenses(
+                con,
+                where_clause=(
+                    "YEAR(datetime) = 2026 "
+                    "AND LOWER(COALESCE(comment, '')) = 'билеты в россию август 2026'"
+                ),
+                where_params=[],
+                set_clause="category_id = ?, event_id = ?",
+                set_params=[transport_category_id, russia_trip_event_id],
+                tag_id_rewrite=rewrite_tags,
             )
-            # Re-union the target event's ``auto_tags`` into every
-            # rewritten row. ``ON CONFLICT DO NOTHING`` keeps the
-            # helper idempotent if ``expense_tags`` already carries
-            # the tag (e.g. a second run of ``inv import``).
-            for auto_id in sorted(new_auto_tag_ids):
-                con.execute(
-                    """
-                    INSERT INTO expense_tags (expense_id, tag_id)
-                    SELECT e.id, ?
-                    FROM expenses e
-                    WHERE YEAR(e.datetime) = 2026
-                      AND LOWER(COALESCE(e.comment, '')) = 'билеты в россию август 2026'
-                    ON CONFLICT DO NOTHING
-                    """,
-                    [auto_id],
-                )
     logger.info("Applied post-import fixes for %d", year)
 
 
