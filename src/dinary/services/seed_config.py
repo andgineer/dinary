@@ -343,10 +343,12 @@ def _upsert_event(  # noqa: PLR0913
     """UPSERT an event by natural key (name); return its stable id.
 
     ``auto_tags`` is stored as a JSON array on ``events.auto_tags``.
-    The names must match active ``tags.name`` rows at write time
-    (runtime + historical write paths look them up by name); this
-    helper does not validate that — seed explicitly orders tag
-    upserts before event upserts so the invariant holds.
+    The names must match ``tags.name`` rows at write time (runtime +
+    historical write paths look them up by name; ``is_active = FALSE``
+    on a tag is a "hide from the ручной пикер" affordance and does
+    not block event-driven auto-attach). This helper does not validate
+    that — seed explicitly orders tag upserts before event upserts so
+    the invariant holds.
     """
     auto_tags_json = json.dumps(list(auto_tags), ensure_ascii=False)
     row = con.execute("SELECT id FROM events WHERE name = ?", [name]).fetchone()

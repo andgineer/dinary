@@ -295,18 +295,22 @@ def resolve_projection(
 # ---------------------------------------------------------------------------
 
 
-def _load_active_catalog(
+def _load_catalog(
     con: duckdb.DuckDBPyConnection,
 ) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
-    cat_rows = con.execute(
-        "SELECT name, id FROM categories WHERE is_active",
-    ).fetchall()
-    event_rows = con.execute(
-        "SELECT name, id FROM events WHERE is_active",
-    ).fetchall()
-    tag_rows = con.execute(
-        "SELECT name, id FROM tags WHERE is_active",
-    ).fetchall()
+    """Load every catalog row (active or inactive) by name.
+
+    The map tab references names that must stay resolvable after an
+    operator hides a row from the manual PWA picker. ``is_active`` on
+    a category / event / tag is purely a "hide from the ручной пикер"
+    affordance; it must not break the mapping reload. Hard-deleted
+    rows are the only invariant — their names are simply absent and
+    ``parse_rows`` will still raise ``MapTabError`` with the
+    "did you mean" hint.
+    """
+    cat_rows = con.execute("SELECT name, id FROM categories").fetchall()
+    event_rows = con.execute("SELECT name, id FROM events").fetchall()
+    tag_rows = con.execute("SELECT name, id FROM tags").fetchall()
     return (
         {str(r[0]): int(r[1]) for r in cat_rows},
         {str(r[0]): int(r[1]) for r in event_rows},
@@ -388,7 +392,7 @@ def reload_now(*, check_after: bool = True) -> dict:
 
     con = duckdb_repo.get_connection()
     try:
-        cat_id_by_name, event_id_by_name, tag_id_by_name = _load_active_catalog(con)
+        cat_id_by_name, event_id_by_name, tag_id_by_name = _load_catalog(con)
         rows = parse_rows(
             raw,
             cat_id_by_name=cat_id_by_name,
@@ -474,7 +478,7 @@ def _warn_if_existing_map_tab_is_stale(
     """Dry-run the parser against an existing tab and WARN on stale names."""
     try:
         raw = ws.get_all_values()[1:]
-        cat_id_by_name, event_id_by_name, tag_id_by_name = _load_active_catalog(con)
+        cat_id_by_name, event_id_by_name, tag_id_by_name = _load_catalog(con)
         parse_rows(
             raw,
             cat_id_by_name=cat_id_by_name,
@@ -727,10 +731,13 @@ def resolve_event_auto_tag_ids(
     """Return catalog ids for the event's ``auto_tags`` names.
 
     The returned ids preserve the authoring order from
-    ``events.auto_tags`` (dedup by first occurrence). Names that don't
-    resolve to an active tag are logged at WARN and dropped; we never
-    block an expense write because the operator listed a retired tag
-    name in ``auto_tags``.
+    ``events.auto_tags`` (dedup by first occurrence). Tag rows are
+    matched by name regardless of their ``is_active`` flag —
+    ``tags.is_active = FALSE`` means "hide from the ручной пикер" and
+    must not break event-driven auto-attach. Only names that are
+    absent from the ``tags`` table entirely (hard-deleted or typo)
+    are logged at WARN and dropped; we never block an expense write
+    because the operator hid a tag from the picker.
     """
     names = load_event_auto_tag_names(con, event_id)
     if not names:
@@ -738,14 +745,14 @@ def resolve_event_auto_tag_ids(
     ordered_unique: list[str] = list(dict.fromkeys(names))
     placeholders = ",".join(["?"] * len(ordered_unique))
     rows = con.execute(
-        f"SELECT id, name FROM tags WHERE is_active AND name IN ({placeholders})",  # noqa: S608
+        f"SELECT id, name FROM tags WHERE name IN ({placeholders})",  # noqa: S608
         ordered_unique,
     ).fetchall()
     found = {str(r[1]): int(r[0]) for r in rows}
     missing = [n for n in ordered_unique if n not in found]
     if missing:
         logger.warning(
-            "events.auto_tags for event_id=%d references unknown/inactive tag names %r; dropping",
+            "events.auto_tags for event_id=%d references unknown tag names %r; dropping",
             event_id,
             missing,
         )

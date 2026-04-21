@@ -778,14 +778,15 @@ def add_event(  # noqa: PLR0913
     left untouched. To change those, use ``edit_event``.
 
     Input validation (``date_from <= date_to``, ``auto_tags`` names
-    resolve to active tags) runs regardless of whether we insert or
-    reactivate. The reactivate path discards the caller's values, but
-    the API contract is "supply a valid body" on every call — an
-    invalid body surfaces here as 422 instead of being silently
-    ignored. This keeps ``add_event`` symmetric with ``edit_event``
-    (which rejects the same inputs) and prevents the operator from
-    mistaking "the caller sent garbage which got dropped" for
-    "reactivated with the new values".
+    resolve to an existing ``tags`` row — active or inactive) runs
+    regardless of whether we insert or reactivate. The reactivate
+    path discards the caller's values, but the API contract is
+    "supply a valid body" on every call — an invalid body surfaces
+    here as 422 instead of being silently ignored. This keeps
+    ``add_event`` symmetric with ``edit_event`` (which rejects the
+    same inputs) and prevents the operator from mistaking "the
+    caller sent garbage which got dropped" for "reactivated with
+    the new values".
     """
     if date_from > date_to:
         raise CatalogWriteError(
@@ -990,10 +991,11 @@ def edit_tag(
     a denormalised JSON array of tag *names*, not ids. A rename that
     leaves ``events.auto_tags`` untouched would silently break the
     auto-attach contract (the event would reference a name that no
-    longer exists as an active tag). We rewrite every event row whose
-    ``auto_tags`` mentions the old name so the invariant "every name
-    in ``auto_tags`` resolves to an active tag" is preserved
-    atomically inside this same transaction.
+    longer exists in the ``tags`` table). We rewrite every event row
+    whose ``auto_tags`` mentions the old name so the invariant
+    "every name in ``auto_tags`` resolves to a known tag row
+    (active or inactive)" is preserved atomically inside this same
+    transaction.
     """
     # Run the pure-string name check before BEGIN so a malformed name
     # does not cost a transaction (mirrors ``add_tag``).
@@ -1119,28 +1121,33 @@ def _require_known_tag_names(
     con: duckdb.DuckDBPyConnection,
     names: list[str] | tuple[str, ...],
 ) -> None:
-    """422 if any name is not a known active tag.
+    """422 if any name is not present in the ``tags`` table at all.
 
     ``events.auto_tags`` is a denormalised name array (keeping a
     ``tag_id`` array would require a second catalog table just for
-    events). We therefore validate at write time that every name
-    resolves to an active ``tags`` row so the runtime / historical
-    write paths don't silently drop typos.
+    events). We validate at write time that every name resolves to
+    a ``tags`` row so typos don't silently route to the "unknown tag"
+    drop path in ``resolve_event_auto_tag_ids``. The ``is_active``
+    flag is deliberately not checked — it means "hide from the
+    ручной пикер", and events must keep auto-attaching tags that the
+    operator has retired from the picker (e.g. the "отпуск" tag is
+    only set automatically when a vacation event is picked, so it is
+    hidden from the manual picker while still being a valid auto-tag
+    name).
     """
     unique = sorted({str(n) for n in names})
     if not unique:
         return
     placeholders = ",".join(["?"] * len(unique))
     rows = con.execute(
-        f"SELECT name FROM tags WHERE is_active AND name IN ({placeholders})",  # noqa: S608
+        f"SELECT name FROM tags WHERE name IN ({placeholders})",  # noqa: S608
         unique,
     ).fetchall()
     found = {str(r[0]) for r in rows}
     missing = [n for n in unique if n not in found]
     if missing:
         raise CatalogWriteError(
-            f"auto_tags references unknown / inactive tag name(s) {missing}; "
-            "create the tag first or use its active name",
+            f"auto_tags references unknown tag name(s) {missing}; create the tag first",
             http_status=422,
         )
 

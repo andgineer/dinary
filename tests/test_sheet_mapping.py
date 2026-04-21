@@ -660,6 +660,66 @@ class TestEnsureFresh:
 
 
 @allure.epic("SheetMapping")
+@allure.feature("_load_catalog (inactive-tolerant)")
+class TestLoadCatalog:
+    """``_load_catalog`` must include inactive categories / events /
+    tags. ``is_active = FALSE`` is a "hide from the ручной пикер"
+    affordance and must not break map-tab reload — otherwise the
+    operator hiding a single auto-tag (e.g. "отпуск") wedges the
+    whole reload pipeline with a ``MapTabError`` on every tick.
+    """
+
+    def test_loads_inactive_tags(self):
+        con = duckdb_repo.get_connection()
+        try:
+            con.execute("UPDATE tags SET is_active = FALSE WHERE id = 3")
+            _, _, tag_id_by_name = sheet_mapping._load_catalog(con)
+        finally:
+            con.close()
+        assert tag_id_by_name.get("путешествия") == 3
+
+    def test_loads_inactive_categories(self):
+        con = duckdb_repo.get_connection()
+        try:
+            con.execute("UPDATE categories SET is_active = FALSE WHERE id = 2")
+            cat_id_by_name, _, _ = sheet_mapping._load_catalog(con)
+        finally:
+            con.close()
+        assert cat_id_by_name.get("машина") == 2
+
+    def test_loads_inactive_events(self):
+        con = duckdb_repo.get_connection()
+        try:
+            con.execute("UPDATE events SET is_active = FALSE WHERE id = 1")
+            _, event_id_by_name, _ = sheet_mapping._load_catalog(con)
+        finally:
+            con.close()
+        assert event_id_by_name.get("отпуск-2026") == 1
+
+    def test_parse_rows_accepts_inactive_tag_reference(self):
+        """End-to-end: when the catalog loader picks up an inactive tag,
+        ``parse_rows`` must accept a map-tab row that references it.
+        This pins the exact user-reported failure mode — a map-tab
+        row ``*,*,отпуск,*,путешествия`` surviving the operator
+        deactivating "отпуск" via the PWA "Управлять" list.
+        """
+        con = duckdb_repo.get_connection()
+        try:
+            con.execute("UPDATE tags SET is_active = FALSE WHERE id = 3")
+            cats, events, tags = sheet_mapping._load_catalog(con)
+        finally:
+            con.close()
+        rows = sheet_mapping.parse_rows(
+            [["*", "*", "путешествия", "*", "путешествия"]],
+            cat_id_by_name=cats,
+            event_id_by_name=events,
+            tag_id_by_name=tags,
+        )
+        assert len(rows) == 1
+        assert rows[0].tag_ids == (3,)
+
+
+@allure.epic("SheetMapping")
 @allure.feature("event auto_tags helpers")
 class TestEventAutoTags:
     def test_resolve_returns_active_tag_ids(self):
@@ -693,6 +753,25 @@ class TestEventAutoTags:
         try:
             con.execute(
                 'UPDATE events SET auto_tags = \'["путешествия", "missing"]\' WHERE id = 1',
+            )
+            ids = sheet_mapping.resolve_event_auto_tag_ids(con, 1)
+        finally:
+            con.close()
+        assert ids == [3]
+
+    def test_inactive_tag_name_still_resolves(self):
+        """``tags.is_active = FALSE`` means "hide from the ручной
+        пикер", not "retire from event-driven auto-attach". An event
+        whose ``auto_tags`` names an inactive tag must still get that
+        tag attached on expense write — otherwise hiding a
+        vacation-only tag like "отпуск" silently breaks the
+        event-based auto-attach pipeline (the direct complaint behind
+        this regression test)."""
+        con = duckdb_repo.get_connection()
+        try:
+            con.execute("UPDATE tags SET is_active = FALSE WHERE id = 3")
+            con.execute(
+                "UPDATE events SET auto_tags = '[\"путешествия\"]' WHERE id = 1",
             )
             ids = sheet_mapping.resolve_event_auto_tag_ids(con, 1)
         finally:

@@ -192,10 +192,9 @@ class TestAdminPatch:
         stable across seed rebuilds that renumber ids, but that means a
         plain ``UPDATE tags SET name = ?`` would silently break the
         auto-attach pipeline: the next ``resolve_event_auto_tag_ids``
-        call would log a "unknown/inactive tag name" WARN and drop the
-        tag from every new expense created under that event. The
-        cascade keeps auto-attach behaviour identical across the
-        rename.
+        call would log an "unknown tag name" WARN and drop the tag
+        from every new expense created under that event. The cascade
+        keeps auto-attach behaviour identical across the rename.
         """
         tag = client.post("/api/admin/catalog/tags", json={"name": "oldname"})
         tid = tag.json()["new_id"]

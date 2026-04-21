@@ -423,11 +423,59 @@ class TestAtomicPatch:
 @allure.epic("CatalogWriter")
 @allure.feature("Tag usage guard")
 class TestTagUsage:
+    def test_edit_event_accepts_inactive_tag_in_auto_tags(self, fresh_db):
+        """Deactivating a tag must not block writes that reference it
+        via event ``auto_tags``. The operator hides the tag from the
+        ручной пикер via the Управлять list; the tag still exists in
+        the ``tags`` table, so events and the map tab must keep
+        resolving it by name.
+
+        This pins the direct user-reported failure mode: hiding
+        "отпуск" (a tag set only by vacation events, never manually)
+        used to trip 422 in ``_require_known_tag_names`` on every
+        subsequent event-edit that still named it.
+        """
+        con = duckdb_repo.get_connection()
+        try:
+            _seed_minimal(con)
+            con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'отпуск', FALSE)")
+            con.execute(
+                "INSERT INTO events"
+                " (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
+                " VALUES (1, 'trip', '2026-01-01', '2026-12-31', TRUE, TRUE, '[]')",
+            )
+            catalog_writer.edit_event(con, 1, auto_tags=["отпуск"])
+            stored = con.execute("SELECT auto_tags FROM events WHERE id = 1").fetchone()
+        finally:
+            con.close()
+        assert stored[0] == '["отпуск"]'
+
+    def test_edit_event_still_rejects_unknown_tag_name(self, fresh_db):
+        """The ``is_active`` gate was lifted, but the absent-from-table
+        gate stays: a typo or a hard-deleted tag name still 422s so
+        ``resolve_event_auto_tag_ids`` never silently drops at runtime.
+        """
+        con = duckdb_repo.get_connection()
+        try:
+            _seed_minimal(con)
+            con.execute(
+                "INSERT INTO events"
+                " (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
+                " VALUES (1, 'trip', '2026-01-01', '2026-12-31', TRUE, TRUE, '[]')",
+            )
+            with pytest.raises(catalog_writer.CatalogWriteError, match="unknown tag name"):
+                catalog_writer.edit_event(con, 1, auto_tags=["ghost_tag"])
+        finally:
+            con.close()
+
     def test_soft_retire_tag_used_by_expense_is_allowed(self, fresh_db):
         """Soft-retiring a tag still referenced by an expense is
         allowed (matches PATCH/DELETE symmetry). The expense keeps
-        its tag_id row intact; the tag simply stops appearing in
-        active-only pickers and auto-attach unions."""
+        its tag_id row intact; the tag simply stops appearing in the
+        ручной пикер. Event-driven auto-attach keeps working against
+        inactive tags — that's the whole point of "hide from picker,
+        keep as an event auto_tags anchor".
+        """
         con = duckdb_repo.get_connection()
         try:
             _seed_minimal(con)
