@@ -2,24 +2,28 @@
 
 Reads real sheet rows across all years, resolves each row through the
 same pipeline as the importer (mapping, heuristics, post-import fixes),
-and renders a compact summary for visual inspection.  The report is
-strictly read-only: no DB writes, no ID allocation.
+and renders a compact summary for visual inspection. Strictly read-only:
+no DB writes, no ID allocation.
+
+Output always goes to stdout. CLI mirrors ``python -m
+dinary.reports.*``: rich table by default, ``--csv`` for CSV,
+``--json`` for the structured wire format used by
+``inv import-report-2d-3d --remote``.
 
 Usage::
 
     python -m dinary.imports.report_2d_3d \\
-        [--detail] [--fmt stdout|rich|csv|md] [--output PATH] [--year YYYY]
+        [--detail] [--csv | --json] [--year YYYY]
 """
 
 import argparse
 import csv
 import dataclasses
-import io
+import json
 import logging
 import sys
 from collections import defaultdict
 from decimal import Decimal
-from pathlib import Path
 from typing import IO
 
 from rich.console import Console
@@ -340,55 +344,64 @@ def build_summary(detail_rows: list[DetailRow]) -> list[SummaryRow]:
 # ---------------------------------------------------------------------------
 
 
-def _format_table_row(values: list[str], widths: list[int]) -> str:
-    return "  ".join(str(v).ljust(w) for v, w in zip(values, widths, strict=False))
-
-
-def render_stdout(
-    rows: list[SummaryRow] | list[DetailRow],
-    columns: list[str],
-    output: io.TextIOBase | None = None,
-) -> None:
-    """Print a plain-text table to *output* (defaults to ``sys.stdout``)."""
-    dest = output or sys.stdout
-    if not rows:
-        dest.write("No rows.\n")
-        return
-
-    str_rows = [[str(v) for v in dataclasses.astuple(r)] for r in rows]
-    widths = [max(len(columns[i]), *(len(sr[i]) for sr in str_rows)) for i in range(len(columns))]
-
-    dest.write(_format_table_row(columns, widths) + "\n")
-    dest.write("  ".join("-" * w for w in widths) + "\n")
-    for sr in str_rows:
-        dest.write(_format_table_row(sr, widths) + "\n")
-
-
 def render_csv(
     rows: list[SummaryRow] | list[DetailRow],
     columns: list[str],
-    output: io.TextIOBase,
+    output: IO[str] | None = None,
 ) -> None:
-    writer = csv.writer(output)
+    """Emit the report as CSV (header + one row per entry)."""
+    dest = output or sys.stdout
+    writer = csv.writer(dest)
     writer.writerow(columns)
     for row in rows:
         writer.writerow(dataclasses.astuple(row))
 
 
-def render_markdown(
+def render_json(
     rows: list[SummaryRow] | list[DetailRow],
     columns: list[str],
-    output: io.TextIOBase,
+    output: IO[str] | None = None,
 ) -> None:
-    if not rows:
-        output.write("*No rows.*\n")
-        return
-    output.write("| " + " | ".join(columns) + " |\n")
-    output.write("| " + " | ".join("---" for _ in columns) + " |\n")
-    for row in rows:
-        values = dataclasses.astuple(row)
-        escaped = [str(v).replace("|", "\\|") for v in values]
-        output.write("| " + " | ".join(escaped) + " |\n")
+    """Emit the report as a JSON envelope.
+
+    Wire format for ``inv import-report-2d-3d --remote``: the remote
+    emits this payload, the local side renders it. Envelope shape::
+
+        {
+            "detail": bool,        # True → DetailRow, False → SummaryRow
+            "columns": [...],      # field order for display
+            "rows": [{field: value}, ...],
+        }
+
+    ``detail`` is the row-type discriminator so :func:`rows_from_json`
+    can pick the right dataclass without sniffing field names.
+    ``ensure_ascii=False`` keeps Cyrillic fields
+    (``"путешествия"``, ``"отпуск-2026"``) readable in raw ``--json``
+    output and avoids a ~6× payload inflation from ``\\uXXXX`` escapes.
+    """
+    dest = output or sys.stdout
+    detail = columns is DETAIL_COLUMNS
+    payload = {
+        "detail": detail,
+        "columns": list(columns),
+        "rows": [dataclasses.asdict(row) for row in rows],
+    }
+    json.dump(payload, dest, ensure_ascii=False)
+    dest.write("\n")
+
+
+def rows_from_json(
+    payload: dict,
+) -> list[SummaryRow] | list[DetailRow]:
+    """Inverse of :func:`render_json`.
+
+    Dispatches on ``payload["detail"]`` to instantiate the correct
+    dataclass so downstream renderers receive a homogeneous list
+    and don't need to branch on row shape.
+    """
+    if payload.get("detail"):
+        return [DetailRow(**row) for row in payload["rows"]]
+    return [SummaryRow(**row) for row in payload["rows"]]
 
 
 # ---------------------------------------------------------------------------
@@ -502,67 +515,31 @@ def render_rich(
 # ---------------------------------------------------------------------------
 
 
-# File-output formats. The report emits to stdout when not in this set.
-_FILE_FORMATS = ("csv", "md")
-
-# Stdout-only formats. Distinct from ``_FILE_FORMATS`` so
-# ``generate_report`` can pick the right renderer without a long
-# ``if/elif`` chain. ``"stdout"`` is the plain-text fallback kept
-# for pipeable grep-ability; ``"rich"`` is the pretty box-drawing
-# table that falls back to monochrome ASCII when stdout is not a
-# TTY (e.g. over the SSH pipe that ``inv import-report-2d-3d`` uses).
-_STDOUT_FORMATS = ("stdout", "rich")
-
-#: Declarative renderer dispatch. Kept module-level so new formats
-#: only need one entry here and one line in the argparse ``choices``.
-_STDOUT_RENDERERS = {
-    "stdout": render_stdout,
-    "rich": render_rich,
-}
-_FILE_RENDERERS = {
-    "csv": render_csv,
-    "md": render_markdown,
-}
-
-
-def _default_output_path(output_format: str) -> Path:
-    """Resolve the default output path for a file-emitting format.
-
-    Computed lazily on every call so monkeypatching
-    ``duckdb_repo.DATA_DIR`` (per-test ``tmp_path``) takes effect
-    without having to also patch a module-level cached constant.
-    """
-    return duckdb_repo.DATA_DIR / "reports" / f"import_report_2d_3d.{output_format}"
-
-
 def generate_report(
     *,
     detail: bool = False,
-    output_format: str = "stdout",
-    output_path: str | None = None,
+    as_csv: bool = False,
+    as_json: bool = False,
     years: list[int] | None = None,
+    stream: IO[str] | None = None,
 ) -> CollectStats:
-    """Generate and render the 2D-to-3D resolution report.
+    """Generate and render the 2D-to-3D resolution report to stdout.
 
     Strictly read-only: assumes ``data/dinary.duckdb`` already exists
     (populated by ``inv import-catalog``). Raises ``FileNotFoundError``
     if it doesn't, instead of silently creating an empty database.
 
-    ``output_path`` is only honored for file-emitting formats
-    (``csv``, ``md``); passing it together with ``output_format=stdout``
-    raises ``ValueError`` so a forgotten ``--fmt`` doesn't silently
-    discard the requested file.
+    ``as_csv`` and ``as_json`` are mutually exclusive; see
+    :func:`dinary.reports.income.run` for the rationale.
     """
+    if as_csv and as_json:
+        msg = "--csv and --json are mutually exclusive"
+        raise ValueError(msg)
     if not duckdb_repo.DB_PATH.exists():
         msg = f"DB not found at {duckdb_repo.DB_PATH}. Run `inv import-catalog` first."
         raise FileNotFoundError(msg)
-    if output_path and output_format not in _FILE_FORMATS:
-        msg = (
-            f"output_path={output_path!r} requires output_format in "
-            f"{_FILE_FORMATS}, got {output_format!r}. "
-            "Did you forget --fmt csv or --fmt md?"
-        )
-        raise ValueError(msg)
+
+    out = stream if stream is not None else sys.stdout
 
     stats = CollectStats()
     detail_rows = collect_detail_rows(years=years, stats=stats)
@@ -574,21 +551,12 @@ def generate_report(
         columns = SUMMARY_COLUMNS
         display_rows = build_summary(detail_rows)
 
-    if output_format in _FILE_FORMATS:
-        path = Path(output_path) if output_path else _default_output_path(output_format)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        renderer = _FILE_RENDERERS[output_format]
-        # csv.writer adds its own line terminators, so opening with
-        # newline="" prevents Python from translating them and producing
-        # blank lines on Windows. Markdown is plain text, so the default
-        # newline translation (None) is fine.
-        newline_arg = "" if output_format == "csv" else None
-        with open(path, "w", newline=newline_arg, encoding="utf-8") as f:
-            renderer(display_rows, columns, f)
-        # stderr so the report file path doesn't pollute redirected stdout.
-        print(f"Written {len(display_rows)} rows to {path}", file=sys.stderr)
+    if as_json:
+        render_json(display_rows, columns, output=out)
+    elif as_csv:
+        render_csv(display_rows, columns, output=out)
     else:
-        _STDOUT_RENDERERS[output_format](display_rows, columns)
+        render_rich(display_rows, columns, output=out)
 
     print(
         f"Stats: rows={stats.rows} unresolved={stats.skipped_unresolved} "
@@ -606,16 +574,20 @@ def main() -> int:
     )
     parser = argparse.ArgumentParser(description="2D->3D resolution report")
     parser.add_argument("--detail", action="store_true", help="per-row output")
-    parser.add_argument(
-        "--fmt",
-        default="stdout",
-        choices=[*_STDOUT_FORMATS, *_FILE_FORMATS],
+    fmt = parser.add_mutually_exclusive_group()
+    fmt.add_argument(
+        "--csv",
+        action="store_true",
+        help="emit CSV to stdout instead of a rich table",
+    )
+    fmt.add_argument(
+        "--json",
+        action="store_true",
         help=(
-            "output format: stdout (plain-text, pipeable), rich "
-            "(pretty table, colours in a TTY), csv / md (write to file)"
+            "emit a JSON envelope to stdout (wire format used by "
+            "``inv import-report-2d-3d --remote``)"
         ),
     )
-    parser.add_argument("--output", default="", help="output file path (csv/md only)")
     parser.add_argument(
         "--year",
         type=int,
@@ -626,8 +598,8 @@ def main() -> int:
 
     stats = generate_report(
         detail=args.detail,
-        output_format=args.fmt,
-        output_path=args.output or None,
+        as_csv=args.csv,
+        as_json=args.json,
         years=[args.year] if args.year is not None else None,
     )
     # Non-zero exit when something went wrong, so CI / scripted callers

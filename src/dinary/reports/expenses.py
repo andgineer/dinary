@@ -234,20 +234,17 @@ def render_csv(rows: list[ExpenseSummaryRow], *, stream: TextIO) -> None:
 
 
 def render_json(rows: Iterable[ExpenseSummaryRow], *, stream: TextIO) -> None:
-    """Emit the summary as a JSON array — the remote-transport format.
+    """Emit the summary as a JSON array.
 
-    See the corresponding docstring in :mod:`dinary.reports.income` for
-    the rationale (avoids the UTF-8 chunk-boundary corruption that
-    :meth:`invoke.runners.Runner.decode` introduces when rich-rendered
-    text is shipped as stdout over SSH).
+    Wire format for ``inv report-expenses --remote``. See the
+    matching :func:`dinary.reports.income.render_json` docstring for
+    the shared rationale (Decimal-as-string, end-to-end UTF-8).
 
     ``category`` / ``event`` / ``tags`` routinely contain Cyrillic
-    (``еда``, ``отпуск-2026``, ``собака``), so ``ensure_ascii=False``
-    matters here even more than it does in ``reports.income``: with
-    ``ensure_ascii=True`` the Cyrillic fields balloon 6× (one
-    ``\\uXXXX`` escape per character) and become unreadable in raw
-    ``--json`` output, while adding zero safety — UTF-8 on the wire
-    is the contract anyway.
+    (``еда``, ``отпуск-2026``, ``собака``); ``ensure_ascii=False``
+    keeps them readable in raw ``--json`` output and avoids a ~6×
+    payload blow-up from ``\\uXXXX`` escapes. UTF-8 on the wire is
+    the contract regardless.
     """
     payload = [
         {
@@ -264,11 +261,12 @@ def render_json(rows: Iterable[ExpenseSummaryRow], *, stream: TextIO) -> None:
 
 
 def rows_from_json(payload: list[dict]) -> list[ExpenseSummaryRow]:
-    """Inverse of :func:`render_json` — used by the local render step.
+    """Inverse of :func:`render_json`.
 
-    Strings come back with ``int(entry["rows"])`` tolerant of both
-    int and str encodings because downstream code may JSON-round-trip
-    the payload through a tool that stringifies all scalars.
+    ``int(entry["rows"])`` / ``Decimal(str(entry["total"]))`` are
+    tolerant of both int/str and Decimal/str encodings so the
+    payload survives a round-trip through a tool that stringifies
+    all scalars (``jq -r``, ``yq``, ...).
     """
     return [
         ExpenseSummaryRow(
@@ -301,12 +299,10 @@ def render(  # noqa: PLR0913 — all args are cosmetic format knobs dispatched i
 ) -> None:
     """Render prefetched rows in the requested format.
 
-    Single entry point used by both ``run()`` (local DuckDB path) and
-    the ``tasks.py`` remote transport (rows arrive as a JSON payload
-    over SSH). ``year`` / ``month`` are forwarded only to the rich
-    renderer where they land in the table title — the rows
-    themselves are already filtered upstream, so the renderer never
-    uses them for anything but cosmetics.
+    Single entry point used by both :func:`run` (local DuckDB path)
+    and the ``tasks.py`` remote transport (JSON payload over SSH).
+    ``year`` / ``month`` are cosmetic — they land in the rich table
+    title only. Row filtering has already happened upstream.
     """
     if as_csv and as_json:
         msg = "--csv and --json are mutually exclusive"
@@ -333,16 +329,15 @@ def run(
     as_json: bool = False,
     stream: TextIO | None = None,
 ) -> int:
-    """Headless entry point used by both ``main()`` and tests.
+    """Headless entry point used by ``main()`` and tests.
 
-    Thin ``fetch → render`` composition: open the local DuckDB, run
-    the 3D aggregation (optionally filtered by ``year`` / ``month``),
-    render. Returns the intended CLI exit code: ``0``
-    unconditionally, since "no matching expenses" is a valid report
-    outcome, not an error.
+    Thin ``fetch → render`` composition: open the local DuckDB,
+    aggregate (optionally filtered by ``year`` / ``month``), render.
+    Returns ``0`` unconditionally — "no matching expenses" is a
+    valid report outcome, not an error.
 
-    ``as_csv`` and ``as_json`` are mutually exclusive; see the same
-    contract in :func:`dinary.reports.income.run` for the rationale.
+    ``as_csv`` and ``as_json`` are mutually exclusive; see
+    :func:`dinary.reports.income.run` for the rationale.
     """
     if as_csv and as_json:
         msg = "--csv and --json are mutually exclusive"
@@ -395,8 +390,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "emit a JSON array of rows to stdout (wire format used by "
-            "``inv report-expenses --remote`` to carry raw data back "
-            "for local rendering)"
+            "``inv report-expenses --remote``)"
         ),
     )
     args = parser.parse_args(argv)

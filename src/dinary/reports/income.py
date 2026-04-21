@@ -141,30 +141,24 @@ def render_csv(rows: list[IncomeSummaryRow], *, stream: TextIO) -> None:
 
 
 def render_json(rows: Iterable[IncomeSummaryRow], *, stream: TextIO) -> None:
-    """Emit the summary as a JSON array — the remote-transport format.
+    """Emit the summary as a JSON array.
 
-    Used by ``inv report-income --remote`` to ship raw query results
-    back to the operator's laptop, where ``render_rich`` / ``render_csv``
-    run locally against the deserialized rows. Shipping rendered text
-    over SSH would land it in :meth:`invoke.runners.Runner.decode`,
-    which decodes every read-buffer chunk independently with ``errors=
-    "replace"`` — that produces U+FFFD glyphs whenever a multi-byte
-    UTF-8 character (``─``, ``и``, ``ж``) lands on a chunk boundary.
-    Sending JSON bytes and doing a single ``.decode('utf-8')`` on the
-    operator side sidesteps that entirely.
+    Wire format for ``inv report-income --remote`` — the remote
+    process runs the query and emits this payload, the local
+    process renders it. Sending structured bytes and decoding once
+    end-to-end keeps Cyrillic and box-drawing glyphs intact across
+    the SSH transport.
 
     ``Decimal`` values are serialised as canonical decimal strings
-    (``"1779756.00"``) because JSON has no Decimal type: casting to
-    float on the wire would silently round ``593252.82`` → ``593252.82``
-    or drop trailing zeros, which is unacceptable for a financial
-    summary. ``rows_from_json`` parses the strings back with
-    ``Decimal(str)`` so round-tripping is bit-exact.
+    (``"1779756.00"``) because JSON has no Decimal type and casting
+    to float would silently drop trailing zeros / round. Use
+    :func:`rows_from_json` to round-trip bit-exact.
 
-    ``ensure_ascii=False`` keeps Cyrillic-bearing fields (not present
-    in this specific report, but mandatory in ``expenses`` — we keep
-    the two report modules symmetric) as UTF-8 bytes instead of
-    ``\\uXXXX`` escapes: shorter payload and easier to eyeball
-    raw ``--json`` output during debugging.
+    ``ensure_ascii=False`` keeps Cyrillic-bearing fields as UTF-8
+    bytes on the wire (shorter payload, readable in raw
+    ``--json`` output). The setting is applied here for symmetry
+    with :mod:`dinary.reports.expenses` where such fields do show
+    up.
     """
     payload = [
         {
@@ -180,11 +174,11 @@ def render_json(rows: Iterable[IncomeSummaryRow], *, stream: TextIO) -> None:
 
 
 def rows_from_json(payload: list[dict]) -> list[IncomeSummaryRow]:
-    """Inverse of :func:`render_json` — for the local render step.
+    """Inverse of :func:`render_json`.
 
-    Accepts the exact shape ``render_json`` emits (list of dicts with
-    Decimal-as-string) and returns fully-typed ``IncomeSummaryRow``
-    instances so the local renderers can stay unchanged.
+    Takes the list-of-dicts shape ``render_json`` emits and
+    returns fully-typed :class:`IncomeSummaryRow` instances so the
+    local renderers receive the same object type as the DB path.
     """
     return [
         IncomeSummaryRow(
@@ -206,12 +200,10 @@ def render(
 ) -> None:
     """Render prefetched rows in the requested format.
 
-    Single entry point used by both ``run()`` (local DuckDB path) and
-    the ``tasks.py`` remote transport (pulled rows from a JSON payload
-    over SSH). Splitting fetch from render lets the transport stay
-    agnostic of renderer-specific kwargs and keeps the remote /
-    local code paths producing bit-identical output for the same row
-    set.
+    Single entry point used by both :func:`run` (local DuckDB path)
+    and the ``tasks.py`` remote transport (JSON payload over SSH).
+    Keeping fetch separate from render is what lets the same row
+    set produce bit-identical output from either path.
     """
     if as_csv and as_json:
         msg = "--csv and --json are mutually exclusive"
@@ -231,19 +223,19 @@ def run(
     as_json: bool = False,
     stream: TextIO | None = None,
 ) -> int:
-    """Headless entry point used by both ``main()`` and tests.
+    """Headless entry point used by ``main()`` and tests.
 
     Thin ``fetch → render`` composition: open the local DuckDB,
     aggregate, render. Exists as a module-level function so the
-    ``dinary.reports.income`` module is callable via ``python -m``
-    without pulling in the operator-tooling layer in ``tasks.py``.
+    module is callable via ``python -m`` without pulling in the
+    operator-tooling layer in ``tasks.py``.
 
-    ``as_csv`` and ``as_json`` are mutually exclusive: both select the
-    single output format, and silently picking one when the operator
-    asked for both would hide a CLI usage mistake. We raise
-    ``ValueError`` here rather than ``SystemExit`` so library callers
-    get a normal exception they can surface however they want;
-    ``main()`` maps the CLI mutex to ``SystemExit`` via argparse.
+    ``as_csv`` and ``as_json`` are mutually exclusive: both select
+    the output format, and silently picking one when the operator
+    asked for both would hide a CLI usage mistake. Raises
+    ``ValueError`` so library callers can surface the error however
+    they want; :func:`main` maps the CLI mutex to ``SystemExit`` via
+    argparse.
     """
     if as_csv and as_json:
         msg = "--csv and --json are mutually exclusive"
@@ -282,8 +274,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "emit a JSON array of rows to stdout (wire format used by "
-            "``inv report-income --remote`` to carry raw data back for "
-            "local rendering)"
+            "``inv report-income --remote``)"
         ),
     )
     args = parser.parse_args(argv)

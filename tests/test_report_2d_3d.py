@@ -2,6 +2,7 @@
 
 import argparse
 import io
+import json
 
 import allure
 import pytest
@@ -25,9 +26,7 @@ from dinary.imports.report_2d_3d import (
     render_amount_range,
     render_comments,
     render_csv,
-    render_markdown,
     render_rich,
-    render_stdout,
     render_years,
 )
 from dinary.services import duckdb_repo
@@ -434,28 +433,6 @@ class TestRenderers:
     def test_render_comments_dedup(self):
         assert render_comments(["lunch", "lunch"]) == "lunch"
 
-    def test_render_stdout_summary(self):
-        rows = [
-            SummaryRow(
-                "еда",
-                "",
-                "собака",
-                3,
-                "еда",
-                "собака",
-                "mapping",
-                "2022-2023",
-                "45.00..50.00",
-                "lunch",
-            ),
-        ]
-        buf = io.StringIO()
-        render_stdout(rows, SUMMARY_COLUMNS, output=buf)
-        output = buf.getvalue()
-        assert "еда" in output
-        assert "mapping" in output
-        assert "2022-2023" in output
-
     def test_render_csv_summary(self):
         rows = [
             SummaryRow(
@@ -463,46 +440,10 @@ class TestRenderers:
             ),
         ]
         buf = io.StringIO()
-        render_csv(rows, SUMMARY_COLUMNS, buf)
+        render_csv(rows, SUMMARY_COLUMNS, output=buf)
         output = buf.getvalue()
         assert "category,event,tags" in output
         assert "еда" in output
-
-    def test_render_markdown_summary(self):
-        rows = [
-            SummaryRow(
-                "еда", "", "собака", 3, "еда", "собака", "mapping", "2022-2023", "45.00", "lunch"
-            ),
-        ]
-        buf = io.StringIO()
-        render_markdown(rows, SUMMARY_COLUMNS, buf)
-        output = buf.getvalue()
-        assert "| category |" in output
-        assert "| еда |" in output
-
-    def test_render_markdown_pipe_escaped(self):
-        rows = [
-            SummaryRow("cat", "", "", 1, "a|b", "", "mapping", "2022", "1.00", "c|d"),
-        ]
-        buf = io.StringIO()
-        render_markdown(rows, SUMMARY_COLUMNS, buf)
-        output = buf.getvalue()
-        assert "a\\|b" in output
-
-    def test_render_stdout_empty(self):
-        buf = io.StringIO()
-        render_stdout([], SUMMARY_COLUMNS, output=buf)
-        assert "No rows" in buf.getvalue()
-
-    def test_render_stdout_detail(self):
-        rows = [
-            DetailRow("еда", "", "собака", "еда", "собака", "mapping", 2022, 1, 45.0, "lunch"),
-        ]
-        buf = io.StringIO()
-        render_stdout(rows, DETAIL_COLUMNS, output=buf)
-        output = buf.getvalue()
-        assert "2022" in output
-        assert "lunch" in output
 
 
 # ---------------------------------------------------------------------------
@@ -807,34 +748,132 @@ class TestRenderRich:
 @allure.epic("Report")
 @allure.feature("CLI dispatch")
 class TestCliDispatch:
-    """Argparse-level contract for ``--fmt``.
+    """Argparse-level contract for the ``--csv`` / ``--json`` mutex.
 
-    Covers the full choice set (including the new ``rich``) and the
-    ``--output`` mutex that the CLI has always enforced for stdout
-    modes.
+    Output always goes to stdout: default ``rich`` table, ``--csv``
+    for CSV, ``--json`` for the wire envelope used by ``inv
+    import-report-2d-3d --remote``. The two format flags are
+    mutually exclusive so a command line cannot request contradictory
+    output at once.
     """
 
     def _build_parser(self):
-        # Reuse the same argparse config the module's main() uses
-        # without needing to invoke generate_report (which wants a
-        # real DB). Keeps the test fast and hermetic.
         p = argparse.ArgumentParser()
         p.add_argument("--detail", action="store_true")
-        p.add_argument(
-            "--fmt",
-            default="stdout",
-            choices=[*report_module._STDOUT_FORMATS, *report_module._FILE_FORMATS],
-        )
-        p.add_argument("--output", default="")
+        fmt = p.add_mutually_exclusive_group()
+        fmt.add_argument("--csv", action="store_true")
+        fmt.add_argument("--json", action="store_true")
         p.add_argument("--year", type=int, default=None)
         return p
 
-    def test_rich_is_accepted(self):
+    def test_defaults_select_rich(self):
         parser = self._build_parser()
-        args = parser.parse_args(["--fmt", "rich"])
-        assert args.fmt == "rich"
+        args = parser.parse_args([])
+        assert not args.csv
+        assert not args.json
 
-    def test_unknown_fmt_rejected(self):
+    def test_csv_and_json_are_mutex(self):
         parser = self._build_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args(["--fmt", "pdf"])
+            parser.parse_args(["--csv", "--json"])
+
+    def test_json_flag_is_accepted(self):
+        parser = self._build_parser()
+        args = parser.parse_args(["--json"])
+        assert args.json is True
+
+    def test_csv_flag_is_accepted(self):
+        parser = self._build_parser()
+        args = parser.parse_args(["--csv"])
+        assert args.csv is True
+
+
+@allure.epic("Report")
+@allure.feature("render_json / rows_from_json — remote transport")
+class TestRenderJson:
+    """The JSON wire format used by ``inv import-report-2d-3d --remote``
+    for ``rich`` / ``stdout`` output. Same motivation as
+    :mod:`dinary.reports.income` / ``.expenses``: ``invoke.Runner``
+    decodes SSH stdout in chunks with ``errors='replace'``, corrupting
+    any multi-byte UTF-8 character (``─`` box-drawing, Cyrillic) that
+    lands on a read-buffer boundary. Shipping structured JSON bytes
+    and decoding once on the client sidesteps that entirely.
+    """
+
+    def test_summary_roundtrip(self):
+        rows = [
+            SummaryRow(
+                category="путешествия",
+                event="",
+                tags="собака",
+                rows=3,
+                sheet_category="еда",
+                sheet_group="собака",
+                resolution_kind="mapping",
+                years="2022-2024",
+                amount="45.00..50.00",
+                comment="lunch",
+            ),
+        ]
+        buf = io.StringIO()
+        report_module.render_json(rows, SUMMARY_COLUMNS, buf)
+        payload = json.loads(buf.getvalue())
+        assert payload["detail"] is False
+        assert payload["columns"] == list(SUMMARY_COLUMNS)
+        rebuilt = report_module.rows_from_json(payload)
+        assert rebuilt == rows
+
+    def test_detail_roundtrip(self):
+        rows = [
+            DetailRow(
+                category="еда",
+                event="",
+                tags="собака",
+                sheet_category="еда",
+                sheet_group="собака",
+                resolution_kind="mapping",
+                year=2022,
+                month=1,
+                amount_eur=45.0,
+                comment="обед у бабушки",
+            ),
+        ]
+        buf = io.StringIO()
+        report_module.render_json(rows, DETAIL_COLUMNS, buf)
+        payload = json.loads(buf.getvalue())
+        assert payload["detail"] is True
+        rebuilt = report_module.rows_from_json(payload)
+        assert rebuilt == rows
+
+    def test_empty_rows_roundtrip(self):
+        buf = io.StringIO()
+        report_module.render_json([], SUMMARY_COLUMNS, buf)
+        payload = json.loads(buf.getvalue())
+        assert payload["rows"] == []
+        assert report_module.rows_from_json(payload) == []
+
+    def test_cyrillic_stays_unescaped_on_the_wire(self):
+        """``ensure_ascii=False`` keeps Cyrillic readable in raw
+        ``--json`` output and avoids a 6× payload blow-up.
+        """
+        rows = [
+            SummaryRow(
+                category="путешествия",
+                event="отпуск-2026",
+                tags="собака,кот",
+                rows=1,
+                sheet_category="путешествия",
+                sheet_group="отпуск",
+                resolution_kind="mapping",
+                years="2026",
+                amount="42000.00",
+                comment="Бали",
+            ),
+        ]
+        buf = io.StringIO()
+        report_module.render_json(rows, SUMMARY_COLUMNS, buf)
+        raw = buf.getvalue()
+        assert "путешествия" in raw
+        assert "отпуск-2026" in raw
+        assert "Бали" in raw
+        assert "\\u" not in raw

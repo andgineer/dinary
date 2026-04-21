@@ -165,28 +165,22 @@ def _ssh_sudo(c, cmd):
 
 
 def _ssh_capture_bytes(cmd: str) -> bytes:
-    """Run *cmd* over SSH and return its stdout as **raw bytes**.
+    """Run *cmd* over SSH and return its stdout as raw bytes.
 
-    Why bytes and not ``c.run(..., hide='stdout').stdout`` (a ``str``)?
-    ``invoke.runners.Runner.decode`` decodes *each* stdout read-buffer
-    chunk independently with ``errors='replace'`` — there is no
-    incremental UTF-8 decoder. When a multi-byte character (``─`` =
-    ``E2 94 80``, Cyrillic letters, etc.) lands on a chunk boundary,
-    each side becomes ``U+FFFD`` (the ``�`` "replacement character").
-    That is exactly the ``путешест��ия`` / ``├──────���┼`` corruption
-    the operator reported for ``inv report-* --remote``.
+    Uses ``subprocess.run`` directly (not ``invoke.Context.run``) so
+    the UTF-8 decode is a single end-of-stream call on the caller's
+    side rather than a per-chunk ``decode(..., errors='replace')``.
+    That matters because :meth:`invoke.runners.Runner.decode` splits
+    decoding along read-buffer boundaries; any multi-byte character
+    that lands on one becomes ``U+FFFD`` (the ``�`` replacement
+    glyph), which corrupts Cyrillic text and box-drawing glyphs.
 
-    We bypass that by using ``subprocess.run`` directly, capturing
-    stdout as raw bytes and leaving the decode to a single
-    ``.decode('utf-8')`` at the very end (performed by the caller, or
-    by ``_ssh_json`` on its behalf). Stderr is inherited so remote
-    tracebacks / ``uv run`` notices still surface live.
+    Stderr is inherited so remote tracebacks / ``uv run`` notices
+    still surface live.
 
-    Transport shape stays identical to the other ``_ssh*`` helpers:
-    the original command is base64-encoded and piped through
-    ``base64 -d | bash`` on the remote, so single-quote-bearing
-    payloads (Python one-liners, shell snippets) need no extra
-    escaping.
+    Transport shape matches the other ``_ssh*`` helpers: the command
+    is base64-encoded and piped through ``base64 -d | bash`` on the
+    remote, so single-quote-bearing payloads need no extra escaping.
     """
     b64 = base64.b64encode(cmd.encode()).decode()
     remote = f"echo {b64} | base64 -d | bash"
@@ -199,13 +193,12 @@ def _ssh_capture_bytes(cmd: str) -> bytes:
 
 
 def _ssh_capture(c, cmd):
-    """Run *cmd* over SSH and capture stdout as decoded text.
+    """Run *cmd* over SSH and return an ``invoke.Result``-shaped object.
 
-    Thin adapter over :func:`_ssh_capture_bytes` that returns an
-    object shaped like ``invoke.Result`` (``.stdout`` + ``.return_code``)
-    so the existing call sites stay working while the underlying
-    transport uses bytes-safe capture. New callers should prefer
-    :func:`_ssh_capture_bytes` directly.
+    Thin adapter over :func:`_ssh_capture_bytes` exposing
+    ``.stdout`` (already-decoded text) and ``.return_code``. New
+    callers should prefer :func:`_ssh_capture_bytes` directly and
+    decode when they actually need text.
     """
     stdout = _ssh_capture_bytes(cmd)
 
@@ -220,13 +213,9 @@ def _ssh_capture(c, cmd):
 def _ssh_json(c, cmd):
     """Run *cmd* on the server and return the JSON it printed to stdout.
 
-    Uses :func:`_ssh_capture_bytes` so a multi-byte character split
-    across SSH read-buffer boundaries cannot corrupt the payload
-    before :func:`json.loads` sees it. On parse failure we echo the
-    raw stdout back to local stderr (prefixed so it is obvious it
-    came from the remote) before raising — that way a Python
-    traceback from the remote ``python -c`` payload is still visible
-    instead of getting eaten by a cryptic ``JSONDecodeError``.
+    On parse failure the raw stdout is echoed back to local stderr
+    (so a Python traceback from the remote payload stays visible)
+    before raising ``RuntimeError``.
     """
     raw = _ssh_capture_bytes(cmd)
     try:
@@ -1022,72 +1011,87 @@ def backup(c):
     print(f"Backed up to {backup_dir}/")
 
 
-_REPORT_FMT_CHOICES = ("stdout", "rich", "csv", "md")
-_REPORT_FILE_FMTS = {"csv", "md"}
+def _render_2d3d_locally(raw: bytes, *, as_csv: bool) -> None:
+    """Render a JSON envelope produced by ``dinary.imports.report_2d_3d --json``.
+
+    The envelope carries both the row shape discriminator (``detail``)
+    and the column order, so the caller doesn't need to know whether
+    summary or detail rows came back.
+    """
+    from dinary.imports import report_2d_3d as report_module
+
+    payload = _json.loads(raw.decode("utf-8"))
+    rows = report_module.rows_from_json(payload)
+    columns = payload["columns"]
+    if as_csv:
+        report_module.render_csv(rows, columns, output=sys.stdout)
+    else:
+        report_module.render_rich(rows, columns, output=sys.stdout)
 
 
 @task(name="import-report-2d-3d")
-def import_report_2d_3d(c, detail=False, fmt="rich", output="", year=""):
-    """Generate the 2D->3D resolution report on the server.
+def import_report_2d_3d(
+    c,
+    detail=False,
+    csv=False,  # noqa: A002
+    json=False,
+    year="",
+    remote=False,
+):
+    """Show the 2D->3D resolution report over the imported sheets.
 
     Flags (all optional):
-        --detail        per-row output instead of aggregated summary
-        --fmt FMT       rich (default) | stdout | csv | md
-        --output PATH   override output path on the server (csv/md only;
-                        relative paths are resolved against
-                        ``~/dinary-server``, absolute paths are used as-is)
-        --year YEAR     restrict to a single year
+        --detail   per-row output instead of aggregated summary
+        --csv      emit CSV to stdout instead of a rich table
+        --json     emit a JSON envelope to stdout (mutex with --csv)
+        --year Y   restrict to a single calendar year
+        --remote   run the report on the server over SSH (default:
+                   runs locally against ``data/dinary.duckdb``)
 
-    ``rich`` (default) prints a pretty box-drawing table over the
-    SSH pipe; colours survive when your local terminal is a TTY
-    (rich auto-detects and falls back to monochrome ASCII
-    otherwise). ``stdout`` is the old plain-text pipeable format.
-    For ``fmt=csv`` / ``fmt=md`` the report is written under
-    ``~/dinary-server/data/reports/`` on the server (so it is part
-    of ``inv backup``'s scp) and also fetched back to the local
-    ``data/reports/`` directory for convenience. When ``--output``
-    is provided alongside ``--fmt csv`` / ``--fmt md`` the local
-    copy lands in ``data/reports/`` regardless of the remote name.
+    ``--remote`` uses the same JSON-over-SSH transport as
+    ``inv report-*`` (see :func:`_run_report_module`): the server
+    always emits ``--json`` against a snapshot of the live DB and
+    the local process renders. That is the only way to keep Cyrillic
+    / box-drawing glyphs intact across the SSH pipe.
     """
-    if fmt not in _REPORT_FMT_CHOICES:
-        print(
-            f"--fmt must be one of {_REPORT_FMT_CHOICES}, got {fmt!r}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if output and fmt not in _REPORT_FILE_FMTS:
-        print(
-            "--output requires --fmt csv or --fmt md (stdout / rich have no file)",
-            file=sys.stderr,
-        )
+    if csv and json:
+        print("--csv and --json are mutually exclusive", file=sys.stderr)
         sys.exit(1)
 
-    flags: list[str] = ["--fmt", shlex.quote(fmt)]
-    if detail:
-        flags.append("--detail")
-    if output:
-        flags.extend(["--output", shlex.quote(output)])
-    if year:
-        flags.extend(["--year", str(int(year))])
-    _ssh(
-        c,
+    def _build_flags(*, force_json: bool) -> list[str]:
+        flags: list[str] = []
+        if detail:
+            flags.append("--detail")
+        if force_json or json:
+            flags.append("--json")
+        elif csv:
+            flags.append("--csv")
+        if year:
+            flags.extend(["--year", str(int(year))])
+        return flags
+
+    if not remote:
+        cmd = "uv run python -m dinary.imports.report_2d_3d"
+        local_flags = _build_flags(force_json=False)
+        if local_flags:
+            cmd = f"{cmd} {' '.join(local_flags)}"
+        c.run(cmd)
+        return
+
+    remote_cmd = (
         "cd ~/dinary-server && source ~/.local/bin/env && "
-        f"uv run python -m dinary.imports.report_2d_3d {' '.join(flags)}",
+        f"uv run python -m dinary.imports.report_2d_3d {' '.join(_build_flags(force_json=True))}"
     )
+    raw = _ssh_capture_bytes(remote_cmd)
 
-    if fmt in _REPORT_FILE_FMTS:
-        if output:
-            # Absolute paths are used verbatim; relative paths are
-            # resolved against ``~/dinary-server`` (the cwd of the
-            # remote ``python -m`` call above).
-            remote_path = output if output.startswith("/") else f"~/dinary-server/{output}"
-        else:
-            remote_path = f"~/dinary-server/data/reports/import_report_2d_3d.{fmt}"
-        local_dir = Path("data") / "reports"
-        local_dir.mkdir(parents=True, exist_ok=True)
-        host = _host()
-        c.run(f"scp {host}:{shlex.quote(remote_path)} {local_dir}/")
-        print(f"Fetched {remote_path} -> {local_dir}/")
+    # ``--json --remote`` is the pipe-into-jq case: forward the
+    # server's bytes verbatim so stdout is exactly what the remote
+    # emitted.
+    if json:
+        sys.stdout.buffer.write(raw)
+        return
+
+    _render_2d3d_locally(raw, as_csv=csv)
 
 
 #: Remote path of the live DuckDB file the server process keeps
@@ -1096,18 +1100,17 @@ _REMOTE_DB_PATH = "/home/ubuntu/dinary-server/data/dinary.duckdb"
 
 
 def _remote_report_cmd(module: str, flags: list[str]) -> str:
-    """Build the remote shell command for ``inv show-<module> --remote``.
+    """Build the remote shell command for ``inv report-<module> --remote``.
 
     DuckDB 1.x holds a single-writer exclusive file lock on the
     primary DB file, so a second process — even one opened
     ``read_only=True`` — cannot attach while the server is up
-    (``IOException: Could not set lock on file ...``). We sidestep
-    that by ``cp``-snapshotting the primary file (and its ``.wal``
-    sidecar when present) into ``/tmp``, pointing
-    ``DINARY_DATA_PATH`` at the snapshot, and running the read-only
-    report module against that isolated copy. The snapshot is torn
-    down on every exit path via ``trap`` so a failed report never
-    leaks a multi-hundred-MB file into ``/tmp``.
+    (``IOException: Could not set lock on file ...``). The workaround:
+    ``cp``-snapshot the primary file (and its ``.wal`` sidecar when
+    present) into ``/tmp``, point ``DINARY_DATA_PATH`` at the
+    snapshot, and run the read-only report module against that
+    isolated copy. The snapshot is torn down on every exit path via
+    ``trap`` so a failed report never leaks a multi-hundred-MB file.
 
     Snapshot staleness: the ``cp`` captures whatever bytes are on
     disk at that moment. A write mid-checkpoint can leave the main
@@ -1118,7 +1121,7 @@ def _remote_report_cmd(module: str, flags: list[str]) -> str:
     read-only reporting.
 
     Unique per-invocation snapshot path: ``$$`` expands to the
-    remote shell's PID so two parallel ``inv show-*`` runs from
+    remote shell's PID so two parallel ``inv report-*`` runs from
     separate laptops cannot stomp on the same ``/tmp`` file.
     """
     report = f"uv run python -m dinary.reports.{module}"
@@ -1143,11 +1146,11 @@ def _remote_report_cmd(module: str, flags: list[str]) -> str:
 def _extract_format_flags(flags: list[str]) -> tuple[bool, bool, list[str]]:
     """Split ``flags`` into ``(as_csv, as_json, remaining)``.
 
-    ``--csv`` / ``--json`` are output-format knobs consumed locally;
-    they must never reach the remote, which always emits the JSON
-    wire format regardless of what the operator asked for. Filters
-    (``--year``, ``--month``, ...) stay in ``remaining`` and travel
-    through to the remote report module to affect the query result.
+    ``--csv`` / ``--json`` select the local output format and are
+    consumed here. Filters (``--year``, ``--month``, ...) stay in
+    ``remaining`` and travel through to the remote report module
+    (they affect which rows come back). The remote always runs in
+    JSON mode; ``--csv`` / ``--json`` never reach it.
     """
     as_csv = False
     as_json = False
@@ -1165,10 +1168,10 @@ def _extract_format_flags(flags: list[str]) -> tuple[bool, bool, list[str]]:
 def _extract_year_month(filter_flags: list[str]) -> tuple[int | None, tuple[int, int] | None]:
     """Pull ``--year YYYY`` / ``--month YYYY-MM`` out of filter flags.
 
-    Only used to pass cosmetic title context to the expenses rich
-    renderer — the rows themselves are already filtered upstream by
-    the remote query, so a missing / malformed value here only
-    affects the table header, not correctness.
+    The values are cosmetic — they drive the expenses rich table
+    title only. Row filtering has already happened on the remote
+    query, so a missing / malformed value here just degrades the
+    header text.
     """
     year: int | None = None
     month: tuple[int, int] | None = None
@@ -1193,29 +1196,22 @@ def _extract_year_month(filter_flags: list[str]) -> tuple[int | None, tuple[int,
 def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> None:
     """Dispatch a ``dinary.reports.<module>`` run locally or over SSH.
 
-    Architecture (both modes): **fetch rows → render locally**.
+    Both modes follow the same shape: fetch rows → render locally.
 
-    * Local: opens ``data/dinary.duckdb`` via ``c.run("uv run python
-      -m dinary.reports.<module> <flags>")``. The module is a single
-      process that performs both fetch and render — no transport
-      layer to decouple.
-    * Remote: runs the same module on the server *in ``--json`` mode*
-      via an SSH snapshot wrapper (see ``_remote_report_cmd`` for
-      the DuckDB-lock-workaround rationale), captures the JSON bytes
-      with :func:`_ssh_capture_bytes` (chunk-boundary-safe), parses
-      them with :func:`json.loads`, and invokes the module's
-      ``render`` on the local terminal.
+    * Local: ``uv run python -m dinary.reports.<module> <flags>`` —
+      a single process fetches from ``data/dinary.duckdb`` and
+      renders.
+    * Remote: the same module runs on the server in ``--json`` mode
+      via the SSH snapshot wrapper (see :func:`_remote_report_cmd`
+      for why the DuckDB snapshot is needed), the JSON bytes come
+      back through :func:`_ssh_capture_bytes`, and the module's
+      ``render`` runs on the local terminal.
 
-    Why JSON for the wire format (rather than rich-rendered text)?
-    :meth:`invoke.runners.Runner.decode` decodes SSH stdout chunks
-    independently with ``errors='replace'`` — a multi-byte UTF-8
-    character split on a read-buffer boundary becomes ``U+FFFD``
-    (``�``). Shipping rendered rich text over that exact codepath is
-    what caused the ``путешест��ия`` / ``├──────���┼`` corruption.
-    A structured JSON payload with a single end-of-stream UTF-8
-    decode is immune to that bug, *and* lets the local side pick any
-    renderer (rich, csv, or raw JSON passthrough) from the same
-    transport call.
+    JSON is the wire format so stdout over SSH only ever carries
+    structured data: a single end-of-stream UTF-8 decode on the
+    client keeps Cyrillic and box-drawing glyphs intact regardless
+    of how the SSH transport chunks the stream. The local side then
+    picks any renderer (rich, csv, or raw JSON passthrough).
     """
     if not remote:
         cmd = f"uv run python -m dinary.reports.{module}"
@@ -1226,29 +1222,24 @@ def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> Non
 
     as_csv, as_json, filter_flags = _extract_format_flags(flags)
 
-    # The wire format is always JSON — the remote never renders text.
-    # Force ``--json`` onto the remote invocation regardless of what
-    # the operator requested for the local output format.
+    # The remote always runs in JSON mode. ``--csv`` / ``--json``
+    # the operator passed are handled locally (below).
     remote_flags = [*filter_flags, "--json"]
     raw = _ssh_capture_bytes(_remote_report_cmd(module, remote_flags))
 
-    # ``--json --remote`` is the "pipe into jq" case: the operator
-    # wants the server's JSON verbatim. Re-parsing + re-serialising
-    # would round-trip through ``rows_from_json`` / ``render_json``
-    # and might subtly re-order keys or re-format whitespace; passing
-    # the bytes straight through keeps the contract "what the server
-    # emitted is what your stdout gets" obvious.
+    # ``--json --remote`` is the "pipe into jq" case: forward the
+    # server's bytes verbatim so stdout is exactly what the remote
+    # emitted (no key-order / whitespace round-trip through
+    # ``rows_from_json`` + ``render_json``).
     if as_json:
         sys.stdout.buffer.write(raw)
         return
 
     payload = _json.loads(raw.decode("utf-8"))
 
-    # Per-module dispatch kept explicit so the static type checker
-    # can see the concrete row type flowing from ``rows_from_json``
-    # into ``render`` — a ``dict[str, Module]`` lookup would widen
-    # to the union of the two row types and pyrefly would refuse
-    # (each ``render`` takes a narrow row list).
+    # Per-module dispatch is explicit so pyrefly can narrow the row
+    # type from ``rows_from_json`` into ``render``; a module-indexed
+    # dict would widen to the union of row types and fail the check.
     if module == "income":
         income_rows = income_report.rows_from_json(payload)
         income_report.render(income_rows, as_csv=as_csv, stream=sys.stdout)
