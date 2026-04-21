@@ -1,4 +1,5 @@
 import base64
+import json as _json
 import os
 import re as _re
 import shlex
@@ -8,6 +9,7 @@ from datetime import datetime as _dt
 from pathlib import Path
 
 from dinary.__about__ import __version__
+from dinary.reports import verify_budget, verify_income
 from dotenv import dotenv_values
 from invoke import Collection, Context, task
 
@@ -157,6 +159,51 @@ def _ssh(c, cmd):
 
 def _ssh_sudo(c, cmd):
     _ssh(c, f"sudo {cmd}")
+
+
+def _ssh_capture(c, cmd):
+    """Run *cmd* over SSH and capture stdout; stream stderr live.
+
+    Same base64-over-bash transport as ``_ssh`` so the remote
+    handles unquoted Python payloads identically. We hide stdout
+    because the caller wants to parse it (e.g. ``_ssh_json``);
+    stderr is left streaming so remote logging / tracebacks still
+    surface to the operator in real time. ``warn=True`` lets the
+    caller decide how to treat a non-zero remote exit — the verify
+    tasks ignore it and re-derive status from the JSON payload.
+    """
+    b64 = base64.b64encode(cmd.encode()).decode()
+    return c.run(
+        f"ssh {_host()} 'echo {b64} | base64 -d | bash'",
+        hide="stdout",
+        warn=True,
+    )
+
+
+def _ssh_json(c, cmd):
+    """Run *cmd* on the server and return the JSON it printed to stdout.
+
+    Wraps ``_ssh_capture`` with ``json.loads``. On parse failure we
+    echo the raw stdout back to local stderr (prefixed so it is
+    obvious it came from the remote) before raising — that way a
+    Python traceback from the remote ``python -c`` payload is still
+    visible instead of getting eaten by a cryptic ``JSONDecodeError``.
+    """
+    result = _ssh_capture(c, cmd)
+    try:
+        return _json.loads(result.stdout)
+    except _json.JSONDecodeError as exc:
+        sys.stderr.write(
+            "remote did not return valid JSON on stdout; raw stdout follows:\n",
+        )
+        sys.stderr.write(result.stdout)
+        if not result.stdout.endswith("\n"):
+            sys.stderr.write("\n")
+        msg = (
+            f"remote command failed to emit JSON (exit={result.return_code}): "
+            f"{exc.msg} at pos {exc.pos}"
+        )
+        raise RuntimeError(msg) from exc
 
 
 def _write_remote_file(c, path, content):
@@ -746,43 +793,63 @@ def import_budget_all(c, yes=False):
 
 
 @task(name="verify-bootstrap-import")
-def verify_bootstrap_import(c, year=""):
-    """Verify that bootstrap-imported budget DB reproduces sheet aggregates (on server)."""
+def verify_bootstrap_import(c, year="", json=False):  # noqa: A002
+    """Verify that bootstrap-imported budget DB reproduces sheet aggregates (on server).
+
+    Renders a rich summary panel with drill-down tables for
+    missing / extra / amount / comment diffs. Exits non-zero iff
+    ``ok=False`` on the verifier payload. Pass ``--json`` to emit
+    the raw ``json.dumps(..., indent=2)`` blob instead of the rich
+    view (back-compat for scripted consumers).
+    """
     # `_require_year` (not `_coerce_year`) because a blank year would
     # silently verify against today's year — most likely a runtime DB with
     # `sheet_category IS NULL` everywhere — which trivially passes (`ok=true`,
     # zero exit) and gives the operator a false-green for the exact
     # equivalence step that's supposed to catch silent reset mistakes.
     year_int = _require_year(year)
-    _ssh(
+    # The remote payload prints *just* the JSON — we derive the
+    # exit code locally from the parsed ``ok`` field so SSH exit
+    # status and renderer status cannot drift out of sync.
+    result = _ssh_json(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.verify_equivalence import verify_bootstrap_import; "
-        f"import json; result = verify_bootstrap_import({year_int}); "
-        "print(json.dumps(result, indent=2, ensure_ascii=False)); "
-        "import sys; sys.exit(0 if result[\"ok\"] else 1)'",
+        f"import json; print(json.dumps(verify_bootstrap_import({year_int}), "
+        "indent=2, ensure_ascii=False))'",
     )
+    if json:
+        verify_budget.print_json(result)
+    else:
+        verify_budget.render_single(result)
+    sys.exit(verify_budget.exit_code_for_single(result))
 
 
 @task(name="verify-bootstrap-import-all")
-def verify_bootstrap_import_all(c):
+def verify_bootstrap_import_all(c, json=False):  # noqa: A002
     """Run verify-bootstrap-import for every positive-year entry in ``.deploy/import_sources.json``.
 
     Used by the coordinated reset flow so verification covers every rebuilt
-    year, not just the current calendar year. Exits non-zero if any single
-    year fails the equivalence check.
+    year, not just the current calendar year. Renders a rich summary
+    table across all years with per-failing-year drill-downs. Exits
+    non-zero if any single year fails. Pass ``--json`` to emit the
+    raw JSON array (back-compat for scripted consumers).
     """
-    _ssh(
+    results = _ssh_json(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.config import read_import_sources; "
         "from dinary.imports.verify_equivalence import verify_bootstrap_import; "
-        "import json, sys; "
+        "import json; "
         "years = sorted(r.year for r in read_import_sources() if r.year > 0); "
         "results = [{**verify_bootstrap_import(y), \"year\": y} for y in years]; "
-        "print(json.dumps(results, indent=2, ensure_ascii=False)); "
-        "sys.exit(0 if all(r[\"ok\"] for r in results) else 1)'",
+        "print(json.dumps(results, indent=2, ensure_ascii=False))'",
     )
+    if json:
+        verify_budget.print_json(results)
+    else:
+        verify_budget.render_batch(results)
+    sys.exit(verify_budget.exit_code_for_batch(results))
 
 
 @task(name="import-income")
@@ -827,45 +894,61 @@ def import_income_all(c, yes=False):
 
 
 @task(name="verify-income-equivalence")
-def verify_income_equivalence(c, year=""):
-    """Verify that imported income matches the source Google Sheet (on server)."""
+def verify_income_equivalence(c, year="", json=False):  # noqa: A002
+    """Verify that imported income matches the source Google Sheet (on server).
+
+    Renders a rich summary panel with per-month diff table when
+    diffs are present. Exits non-zero on ``ok=False`` (including
+    the early-exit error branches, e.g. missing ``import_sources``
+    entry). Pass ``--json`` for the raw JSON escape hatch.
+    """
     # Same rationale as `verify-bootstrap-import`: a blank year that
     # silently coerces to "today" defeats the purpose of an equivalence
     # check (the operator wants to confirm the year they just rebuilt,
     # not whatever happens to be the current year).
     year_int = _require_year(year)
-    _ssh(
+    result = _ssh_json(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.verify_income import verify_income_equivalence; "
-        f"import json; result = verify_income_equivalence({year_int}); "
-        "print(json.dumps(result, indent=2, ensure_ascii=False)); "
-        "import sys; sys.exit(0 if result[\"ok\"] else 1)'",
+        f"import json; print(json.dumps(verify_income_equivalence({year_int}), "
+        "indent=2, ensure_ascii=False))'",
     )
+    if json:
+        verify_income.print_json(result)
+    else:
+        verify_income.render_single(result)
+    sys.exit(verify_income.exit_code_for_single(result))
 
 
 @task(name="verify-income-equivalence-all")
-def verify_income_equivalence_all(c):
+def verify_income_equivalence_all(c, json=False):  # noqa: A002
     """Run verify-income-equivalence for every year that has an income worksheet.
 
     Used by the coordinated reset flow so verification covers every rebuilt
-    income year. Exits non-zero if any single year fails the equivalence
-    check.
+    income year. Renders a rich summary table with per-failing-year
+    drill-downs. Exits non-zero if any single year fails. Pass
+    ``--json`` for the raw JSON array (back-compat for scripted
+    consumers).
     """
-    _ssh(
+    results = _ssh_json(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
         "from dinary.config import read_import_sources; "
         "from dinary.imports.verify_income import verify_income_equivalence; "
-        "import json, sys; "
+        "import json; "
         "years = sorted("
         "r.year for r in read_import_sources() "
         "if r.year > 0 and r.income_worksheet_name"
         "); "
         "results = [{**verify_income_equivalence(y), \"year\": y} for y in years]; "
-        "print(json.dumps(results, indent=2, ensure_ascii=False)); "
-        "sys.exit(0 if all(r[\"ok\"] for r in results) else 1)'",
+        "print(json.dumps(results, indent=2, ensure_ascii=False))'",
     )
+    if json:
+        verify_income.print_json(results)
+    else:
+        verify_income.render_batch(results)
+    sys.exit(verify_income.exit_code_for_batch(results))
 
 
 @task(name="build-static")
@@ -900,34 +983,49 @@ def backup(c):
     print(f"Backed up to {backup_dir}/")
 
 
+_REPORT_FMT_CHOICES = ("stdout", "rich", "csv", "md")
+_REPORT_FILE_FMTS = {"csv", "md"}
+
+
 @task(name="import-report-2d-3d")
-def import_report_2d_3d(c, detail=False, fmt="stdout", output="", year=""):
+def import_report_2d_3d(c, detail=False, fmt="rich", output="", year=""):
     """Generate the 2D->3D resolution report on the server.
 
     Flags (all optional):
         --detail        per-row output instead of aggregated summary
-        --fmt FMT       stdout (default) | csv | md
+        --fmt FMT       rich (default) | stdout | csv | md
         --output PATH   override output path on the server (csv/md only;
                         relative paths are resolved against
                         ``~/dinary-server``, absolute paths are used as-is)
         --year YEAR     restrict to a single year
 
+    ``rich`` (default) prints a pretty box-drawing table over the
+    SSH pipe; colours survive when your local terminal is a TTY
+    (rich auto-detects and falls back to monochrome ASCII
+    otherwise). ``stdout`` is the old plain-text pipeable format.
     For ``fmt=csv`` / ``fmt=md`` the report is written under
-    ``~/dinary-server/data/reports/`` on the server (so it is part of
-    ``inv backup``'s scp) and also fetched back to the local
-    ``data/reports/`` directory for convenience. When ``--output`` is
-    provided alongside ``--fmt csv`` / ``--fmt md`` the local copy
-    lands in ``data/reports/`` regardless of the remote name.
+    ``~/dinary-server/data/reports/`` on the server (so it is part
+    of ``inv backup``'s scp) and also fetched back to the local
+    ``data/reports/`` directory for convenience. When ``--output``
+    is provided alongside ``--fmt csv`` / ``--fmt md`` the local
+    copy lands in ``data/reports/`` regardless of the remote name.
     """
-    if output and fmt not in {"csv", "md"}:
-        print("--output requires --fmt csv or --fmt md (stdout has no file)")
+    if fmt not in _REPORT_FMT_CHOICES:
+        print(
+            f"--fmt must be one of {_REPORT_FMT_CHOICES}, got {fmt!r}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if output and fmt not in _REPORT_FILE_FMTS:
+        print(
+            "--output requires --fmt csv or --fmt md (stdout / rich have no file)",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    flags: list[str] = []
+    flags: list[str] = ["--fmt", shlex.quote(fmt)]
     if detail:
         flags.append("--detail")
-    if fmt != "stdout":
-        flags.extend(["--fmt", shlex.quote(fmt)])
     if output:
         flags.extend(["--output", shlex.quote(output)])
     if year:
@@ -938,7 +1036,7 @@ def import_report_2d_3d(c, detail=False, fmt="stdout", output="", year=""):
         f"uv run python -m dinary.imports.report_2d_3d {' '.join(flags)}",
     )
 
-    if fmt in {"csv", "md"}:
+    if fmt in _REPORT_FILE_FMTS:
         if output:
             # Absolute paths are used verbatim; relative paths are
             # resolved against ``~/dinary-server`` (the cwd of the

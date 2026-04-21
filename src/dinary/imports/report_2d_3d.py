@@ -8,7 +8,7 @@ strictly read-only: no DB writes, no ID allocation.
 Usage::
 
     python -m dinary.imports.report_2d_3d \\
-        [--detail] [--fmt stdout|csv|md] [--output PATH] [--year YYYY]
+        [--detail] [--fmt stdout|rich|csv|md] [--output PATH] [--year YYYY]
 """
 
 import argparse
@@ -20,6 +20,10 @@ import sys
 from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
+from typing import IO
+
+from rich.console import Console
+from rich.table import Table
 
 from dinary.config import read_import_sources
 from dinary.imports.expense_import import (
@@ -388,12 +392,137 @@ def render_markdown(
 
 
 # ---------------------------------------------------------------------------
+# rich rendering
+# ---------------------------------------------------------------------------
+
+#: Column names that should be right-aligned in the rich table.
+#: Kept tiny and declarative so new numeric columns (e.g. a future
+#: "row_count_eur") only need to be listed here, not in per-call
+#: ``add_column`` sites.
+_RIGHT_ALIGNED_COLUMNS = frozenset({"rows", "year", "month", "amount", "amount_eur"})
+
+#: Colour map for the ``resolution_kind`` column. Keyed on the
+#: *primary* kind (first ``+``-separated segment) emitted by
+#: ``dinary.imports.expense_import.resolve_row_to_3d``:
+#:
+#: * ``mapping``    — row was resolved via the explicit import mapping
+#:   (happy path, green).
+#: * ``derivation`` — mapping missed, a heuristic
+#:   ``canonical_category_for_source`` rule resolved it (yellow).
+#:
+#: Anything else falls through uncoloured so unknown primary kinds
+#: degrade gracefully rather than raising.
+_KIND_STYLE = {
+    "mapping": "green",
+    "derivation": "yellow",
+}
+
+
+def _style_for_resolution_kind(kind: str) -> str:
+    """Return a rich style string for ``resolution_kind`` cell text.
+
+    Splits on ``+`` to honour compound labels like
+    ``"mapping+heuristic"`` / ``"derivation+postfix"`` by colouring
+    on the primary segment only. Empty / unknown kinds return ``""``
+    which rich treats as "no style".
+    """
+    if not kind:
+        return ""
+    primary = kind.split("+", 1)[0]
+    return _KIND_STYLE.get(primary, "")
+
+
+#: Forced console dimensions for the rich renderer.
+#:
+#: The primary consumer of this module is ``inv import-report-2d-3d``,
+#: which runs Python on the server and pipes stdout back through SSH.
+#: In that pipe rich sees a non-TTY file and, if ``TERM=dumb`` (or no
+#: ``TERM`` at all), short-circuits to ``(80, 25)`` regardless of any
+#: ``width=`` override — too narrow for our 10-column summary and it
+#: clips category / tag / comment cells behind ``…``.
+#:
+#: Passing **both** ``width`` and ``height`` to ``Console`` makes it
+#: take the direct-return branch in ``Console.size`` and honour the
+#: override unconditionally, so the remote rendering carries full
+#: content that operators eyeball in their own (wider) local terminal.
+_RICH_CONSOLE_WIDTH = 220
+_RICH_CONSOLE_HEIGHT = 25
+
+
+def render_rich(
+    rows: list[SummaryRow] | list[DetailRow],
+    columns: list[str],
+    output: IO[str] | None = None,
+) -> None:
+    """Render *rows* as a ``rich.Table``.
+
+    Stdout-only format: unlike ``csv`` / ``md``, rich output goes
+    straight to the console and never lands on disk. Numeric
+    columns (``rows`` / ``year`` / ``month`` / ``amount`` /
+    ``amount_eur``) are right-aligned; ``resolution_kind`` cells
+    are colour-coded by primary kind so an operator can spot
+    fallback-to-derivation lines at a glance.
+
+    When *rows* is empty the function prints a dim placeholder,
+    matching the other renderers' contract of always emitting
+    *something* so stdout is never silently empty.
+    """
+    console = Console(
+        file=output,
+        width=_RICH_CONSOLE_WIDTH,
+        height=_RICH_CONSOLE_HEIGHT,
+    )
+    title = "2D→3D resolution report — " + ("detail" if columns is DETAIL_COLUMNS else "summary")
+    table = Table(title=title, show_lines=False)
+    for column in columns:
+        justify = "right" if column in _RIGHT_ALIGNED_COLUMNS else "left"
+        table.add_column(column, justify=justify)
+
+    try:
+        kind_index = columns.index("resolution_kind")
+    except ValueError:
+        kind_index = -1
+
+    for row in rows:
+        values = [str(v) for v in dataclasses.astuple(row)]
+        if kind_index >= 0:
+            kind_value = values[kind_index]
+            style = _style_for_resolution_kind(kind_value)
+            if style:
+                values[kind_index] = f"[{style}]{kind_value}[/{style}]"
+        table.add_row(*values)
+
+    console.print(table)
+    if not rows:
+        console.print("[dim](no rows)[/dim]")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 
 # File-output formats. The report emits to stdout when not in this set.
 _FILE_FORMATS = ("csv", "md")
+
+# Stdout-only formats. Distinct from ``_FILE_FORMATS`` so
+# ``generate_report`` can pick the right renderer without a long
+# ``if/elif`` chain. ``"stdout"`` is the plain-text fallback kept
+# for pipeable grep-ability; ``"rich"`` is the pretty box-drawing
+# table that falls back to monochrome ASCII when stdout is not a
+# TTY (e.g. over the SSH pipe that ``inv import-report-2d-3d`` uses).
+_STDOUT_FORMATS = ("stdout", "rich")
+
+#: Declarative renderer dispatch. Kept module-level so new formats
+#: only need one entry here and one line in the argparse ``choices``.
+_STDOUT_RENDERERS = {
+    "stdout": render_stdout,
+    "rich": render_rich,
+}
+_FILE_RENDERERS = {
+    "csv": render_csv,
+    "md": render_markdown,
+}
 
 
 def _default_output_path(output_format: str) -> Path:
@@ -448,7 +577,7 @@ def generate_report(
     if output_format in _FILE_FORMATS:
         path = Path(output_path) if output_path else _default_output_path(output_format)
         path.parent.mkdir(parents=True, exist_ok=True)
-        renderer = render_csv if output_format == "csv" else render_markdown
+        renderer = _FILE_RENDERERS[output_format]
         # csv.writer adds its own line terminators, so opening with
         # newline="" prevents Python from translating them and producing
         # blank lines on Windows. Markdown is plain text, so the default
@@ -459,7 +588,7 @@ def generate_report(
         # stderr so the report file path doesn't pollute redirected stdout.
         print(f"Written {len(display_rows)} rows to {path}", file=sys.stderr)
     else:
-        render_stdout(display_rows, columns)
+        _STDOUT_RENDERERS[output_format](display_rows, columns)
 
     print(
         f"Stats: rows={stats.rows} unresolved={stats.skipped_unresolved} "
@@ -480,8 +609,11 @@ def main() -> int:
     parser.add_argument(
         "--fmt",
         default="stdout",
-        choices=["stdout", *_FILE_FORMATS],
-        help="output format",
+        choices=[*_STDOUT_FORMATS, *_FILE_FORMATS],
+        help=(
+            "output format: stdout (plain-text, pipeable), rich "
+            "(pretty table, colours in a TTY), csv / md (write to file)"
+        ),
     )
     parser.add_argument("--output", default="", help="output file path (csv/md only)")
     parser.add_argument(

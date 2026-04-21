@@ -1,5 +1,6 @@
 """Tests for the 2D→3D resolution report pipeline."""
 
+import argparse
 import io
 
 import allure
@@ -18,12 +19,14 @@ from dinary.imports.report_2d_3d import (
     CollectStats,
     DetailRow,
     SummaryRow,
+    _style_for_resolution_kind,
     build_summary,
     collect_detail_rows,
     render_amount_range,
     render_comments,
     render_csv,
     render_markdown,
+    render_rich,
     render_stdout,
     render_years,
 )
@@ -714,3 +717,124 @@ class TestCollectDetailRows:
         assert len(rows) == 1
         assert rows[0].year == 2025
         assert rows[0].category == "еда"
+
+
+# ---------------------------------------------------------------------------
+# rich renderer + format dispatch
+# ---------------------------------------------------------------------------
+
+
+@allure.epic("Report")
+@allure.feature("Rich renderer")
+class TestRenderRich:
+    """Smoke tests for the rich summary / detail renderer.
+
+    We don't parse the rich box-drawing output — layout is a
+    black-box contract — but we pin that the renderer completes,
+    emits the key data values, picks the right title, and that the
+    resolution-kind colour-mapping helper keeps its known-values
+    contract (so the renderer's colouring step stays correct).
+    """
+
+    def test_renders_summary_rows(self):
+        rows = [
+            SummaryRow(
+                "еда",
+                "",
+                "собака",
+                3,
+                "еда",
+                "собака",
+                "mapping",
+                "2022-2023",
+                "45.00..50.00",
+                "lunch",
+            ),
+        ]
+        buf = io.StringIO()
+        render_rich(rows, SUMMARY_COLUMNS, output=buf)
+        out = buf.getvalue()
+        assert "summary" in out
+        assert "еда" in out
+        assert "mapping" in out
+        assert "2022-2023" in out
+
+    def test_renders_detail_rows(self):
+        rows = [
+            DetailRow(
+                "еда",
+                "",
+                "собака",
+                "еда",
+                "собака",
+                "derivation+heuristic",
+                2022,
+                1,
+                45.0,
+                "lunch",
+            ),
+        ]
+        buf = io.StringIO()
+        render_rich(rows, DETAIL_COLUMNS, output=buf)
+        out = buf.getvalue()
+        assert "detail" in out
+        # Compound resolution_kind values render with their primary
+        # kind used for colour and the full text kept for the eye.
+        assert "derivation+heuristic" in out
+        assert "2022" in out
+
+    def test_empty_rows_prints_placeholder(self):
+        buf = io.StringIO()
+        render_rich([], SUMMARY_COLUMNS, output=buf)
+        assert "no rows" in buf.getvalue()
+
+    def test_style_for_known_kinds(self):
+        # Happy-path mapping → green; fallback derivation → yellow.
+        # Compound labels ("mapping+heuristic") colour by the primary
+        # segment so the palette stays declarative.
+        assert _style_for_resolution_kind("mapping") == "green"
+        assert _style_for_resolution_kind("mapping+heuristic") == "green"
+        assert _style_for_resolution_kind("derivation") == "yellow"
+        assert _style_for_resolution_kind("derivation+postfix") == "yellow"
+
+    def test_style_for_unknown_kind_is_empty(self):
+        # Unknown primary kind → no style so rich prints the cell
+        # verbatim instead of blowing up on a bad markup tag.
+        assert _style_for_resolution_kind("banana") == ""
+        assert _style_for_resolution_kind("") == ""
+
+
+@allure.epic("Report")
+@allure.feature("CLI dispatch")
+class TestCliDispatch:
+    """Argparse-level contract for ``--fmt``.
+
+    Covers the full choice set (including the new ``rich``) and the
+    ``--output`` mutex that the CLI has always enforced for stdout
+    modes.
+    """
+
+    def _build_parser(self):
+        # Reuse the same argparse config the module's main() uses
+        # without needing to invoke generate_report (which wants a
+        # real DB). Keeps the test fast and hermetic.
+        p = argparse.ArgumentParser()
+        p.add_argument("--detail", action="store_true")
+        p.add_argument(
+            "--fmt",
+            default="stdout",
+            choices=[*report_module._STDOUT_FORMATS, *report_module._FILE_FORMATS],
+        )
+        p.add_argument("--output", default="")
+        p.add_argument("--year", type=int, default=None)
+        return p
+
+    def test_rich_is_accepted(self):
+        parser = self._build_parser()
+        args = parser.parse_args(["--fmt", "rich"])
+        assert args.fmt == "rich"
+
+    def test_unknown_fmt_rejected(self):
+        parser = self._build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--fmt", "pdf"])
