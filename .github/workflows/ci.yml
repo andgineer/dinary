@@ -7,6 +7,14 @@ name: CI
 env:
   PRIMARY_PYTHON_VERSION: '3.13'
   PRIMARY_PLATFORM: 'ubuntu-latest'
+  # Force Python's UTF-8 mode so text I/O (e.g.
+  # ``yoyo.read_migrations`` opening ``*.sql`` files) defaults to
+  # utf-8 on every platform. Without this the Windows matrix entries
+  # fall back to cp1252 and crash on any non-ASCII byte in migration
+  # comments (e.g. ``"отпуск"`` / em-dashes), producing a fleet of
+  # ``UnicodeDecodeError: 'charmap' codec can't decode byte 0x81``
+  # failures at fixture-collection time.
+  PYTHONUTF8: '1'
   PYTEST_CMD: >-
     python -m pytest
     --junitxml=pytest.xml
