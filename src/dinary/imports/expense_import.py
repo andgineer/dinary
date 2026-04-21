@@ -862,20 +862,27 @@ def _apply_post_import_fixes(
     *,
     russia_trip_event_id: int | None = None,
 ) -> None:
-    con.execute("BEGIN")
-    try:
-        _apply_post_import_fixes_body(
-            year,
-            con,
-            russia_trip_event_id=russia_trip_event_id,
-        )
-        con.execute("COMMIT")
-    except Exception:
-        duckdb_repo.best_effort_rollback(
-            con,
-            context=f"_apply_post_import_fixes({year})",
-        )
-        raise
+    """Apply post-import category/event rewrites for *year* in auto-commit.
+
+    Originally wrapped in ``BEGIN``/``COMMIT`` for atomicity, but DuckDB
+    1.5's FK validator only honours the post-COMMIT child-table state:
+    detaching every ``expense_tags`` row for an expense inside the same
+    transaction as the subsequent ``UPDATE expenses`` still raises
+    "expense_id: N is still referenced" because the FK index has not
+    been refreshed from the uncommitted DELETE. Running each statement
+    in its own implicit transaction lets the FK index catch up between
+    DELETE, UPDATE, and re-INSERT; we give up atomicity of the fix
+    pass, but the enclosing ``import_year`` is already non-transactional
+    (its leading wipe-then-insert is self-healing), so a mid-fix crash
+    simply leaves the year in a consistent-but-partially-rewritten
+    state that the next ``inv import-budget --year YYYY`` rebuilds from
+    scratch.
+    """
+    _apply_post_import_fixes_body(
+        year,
+        con,
+        russia_trip_event_id=russia_trip_event_id,
+    )
 
 
 def _fk_safe_update_expenses(  # noqa: PLR0913
