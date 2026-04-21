@@ -1051,6 +1051,56 @@ def import_report_2d_3d(c, detail=False, fmt="rich", output="", year=""):
         print(f"Fetched {remote_path} -> {local_dir}/")
 
 
+#: Remote path of the live DuckDB file the server process keeps
+#: exclusively locked (single-writer DuckDB 1.x).
+_REMOTE_DB_PATH = "/home/ubuntu/dinary-server/data/dinary.duckdb"
+
+
+def _remote_report_cmd(module: str, flags: list[str]) -> str:
+    """Build the remote shell command for ``inv show-<module> --remote``.
+
+    DuckDB 1.x holds a single-writer exclusive file lock on the
+    primary DB file, so a second process — even one opened
+    ``read_only=True`` — cannot attach while the server is up
+    (``IOException: Could not set lock on file ...``). We sidestep
+    that by ``cp``-snapshotting the primary file (and its ``.wal``
+    sidecar when present) into ``/tmp``, pointing
+    ``DINARY_DATA_PATH`` at the snapshot, and running the read-only
+    report module against that isolated copy. The snapshot is torn
+    down on every exit path via ``trap`` so a failed report never
+    leaks a multi-hundred-MB file into ``/tmp``.
+
+    Snapshot staleness: the ``cp`` captures whatever bytes are on
+    disk at that moment. A write mid-checkpoint can leave the main
+    file and WAL slightly out of sync, but DuckDB replays the WAL
+    on open and converges to the latest *committed* state — so the
+    operator sees a consistent point-in-time view, at most a single
+    uncommitted transaction stale. Acceptable for operator-triggered
+    read-only reporting.
+
+    Unique per-invocation snapshot path: ``$$`` expands to the
+    remote shell's PID so two parallel ``inv show-*`` runs from
+    separate laptops cannot stomp on the same ``/tmp`` file.
+    """
+    report = f"uv run python -m dinary.reports.{module}"
+    if flags:
+        report = f"{report} {' '.join(flags)}"
+    # ``set -e`` propagates a failed ``cp`` as a non-zero exit so the
+    # operator sees it rather than silently running the report
+    # against a stale / missing snapshot. The trap is registered
+    # *before* the copy so an interrupt between ``cp`` and ``trap``
+    # cannot leak the snapshot.
+    return (
+        "set -e; "
+        "SNAP=/tmp/dinary-report-snapshot-$$.duckdb; "
+        'trap "rm -f ${SNAP} ${SNAP}.wal" EXIT; '
+        f"cp {_REMOTE_DB_PATH} ${{SNAP}}; "
+        f"cp {_REMOTE_DB_PATH}.wal ${{SNAP}}.wal 2>/dev/null || true; "
+        "cd ~/dinary-server && source ~/.local/bin/env && "
+        f"DINARY_DATA_PATH=${{SNAP}} {report}"
+    )
+
+
 def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> None:
     """Dispatch a ``dinary.reports.<module>`` run locally or over SSH.
 
@@ -1064,14 +1114,18 @@ def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> Non
     lack of a TTY over the SSH pipe and falls back to monochrome
     ASCII box-drawing, and ``--csv`` emits machine-readable CSV, so
     both modes pipe cleanly into other tools.
+
+    The remote branch runs the report against a ``cp``-snapshot of
+    the live DB (see ``_remote_report_cmd``) because the server
+    holds the DuckDB file lock.
     """
+    if remote:
+        _ssh(c, _remote_report_cmd(module, flags))
+        return
     cmd = f"uv run python -m dinary.reports.{module}"
     if flags:
         cmd = f"{cmd} {' '.join(flags)}"
-    if remote:
-        _ssh(c, f"cd ~/dinary-server && source ~/.local/bin/env && {cmd}")
-    else:
-        c.run(cmd)
+    c.run(cmd)
 
 
 @task(name="show-expenses")
