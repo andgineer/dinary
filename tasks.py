@@ -953,6 +953,79 @@ def import_report_2d_3d(c, detail=False, fmt="stdout", output="", year=""):
         print(f"Fetched {remote_path} -> {local_dir}/")
 
 
+def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> None:
+    """Dispatch a ``dinary.reports.<module>`` run locally or over SSH.
+
+    Local mode opens ``data/dinary.duckdb`` directly (fast, zero
+    round-trips, matches the post-``inv backup`` workflow where the
+    operator inspects a snapshot on their laptop). ``--remote`` forks
+    the same module on the server so the operator sees live prod
+    data without an intervening backup.
+
+    The remote path forwards stdout as-is: ``rich`` auto-detects the
+    lack of a TTY over the SSH pipe and falls back to monochrome
+    ASCII box-drawing, and ``--csv`` emits machine-readable CSV, so
+    both modes pipe cleanly into other tools.
+    """
+    cmd = f"uv run python -m dinary.reports.{module}"
+    if flags:
+        cmd = f"{cmd} {' '.join(flags)}"
+    if remote:
+        _ssh(c, f"cd ~/dinary-server && source ~/.local/bin/env && {cmd}")
+    else:
+        c.run(cmd)
+
+
+@task(name="show-expenses")
+def show_expenses(c, year="", month="", csv=False, remote=False):  # noqa: A002
+    """Show expenses aggregated by unique (category, event, tags) coord.
+
+    Flags (all optional):
+        --year YYYY        restrict to a single calendar year
+        --month YYYY-MM    restrict to a single month (mutex with --year)
+        --csv              emit CSV to stdout instead of a rich table
+        --remote           query the production DB over SSH. Default
+                           runs locally against ``data/dinary.duckdb``
+                           — useful after ``inv backup`` or during
+                           local development.
+
+    The aggregation key is the project's 3D coord: the expense's
+    category name, its event name (blank when the expense has no
+    event), and the deterministic join of its tag names. Rows sort
+    by descending total so the biggest spend lines surface at the top.
+    """
+    if year and month:
+        print("--year and --month are mutually exclusive", file=sys.stderr)
+        sys.exit(1)
+
+    flags: list[str] = []
+    if year:
+        flags.extend(["--year", str(int(year))])
+    if month:
+        flags.extend(["--month", shlex.quote(month)])
+    if csv:
+        flags.append("--csv")
+    _run_report_module(c, "expenses", flags, remote=remote)
+
+
+@task(name="show-income")
+def show_income(c, csv=False, remote=False):  # noqa: A002
+    """Show income aggregated by year.
+
+    Flags (all optional):
+        --csv      emit CSV to stdout instead of a rich table
+        --remote   query the production DB over SSH. Default runs
+                   locally against ``data/dinary.duckdb``.
+
+    One row per calendar year, with per-year total, count of
+    months-with-data, and average per data-month.
+    """
+    flags: list[str] = []
+    if csv:
+        flags.append("--csv")
+    _run_report_module(c, "income", flags, remote=remote)
+
+
 namespace = Collection.from_module(sys.modules[__name__])
 for name in ALLOWED_VERSION_TYPES:
     namespace.add_task(ver_task_factory(name), name=f"ver-{name}")  # type: ignore[bad-argument-type]
