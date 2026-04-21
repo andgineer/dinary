@@ -174,6 +174,20 @@ class TestSshCaptureBytes:
     payload without any replacement characters.
     """
 
+    @pytest.fixture(autouse=True)
+    def _stub_host(self, monkeypatch):
+        """Every ``_ssh_capture_bytes`` call resolves the SSH target via
+        ``_host()`` → ``_env()`` → ``.deploy/.env``. That file is a
+        developer-workstation artifact and is (correctly) absent on
+        CI runners, so without this stub every test in this class
+        would ``SystemExit(1)`` before reaching the mocked
+        ``subprocess.run``. We scope the stub to the class because
+        the real ``_host`` / ``_env`` path is covered elsewhere
+        (``TestDeploy`` / manual smoke) and isn't what this class
+        is exercising.
+        """
+        monkeypatch.setattr(_tasks, "_host", lambda: "ubuntu@test.invalid")
+
     def test_returns_raw_bytes_not_decoded_str(self, monkeypatch):
         captured = subprocess.CompletedProcess(
             args=[], returncode=0, stdout=b'{"k": "v"}\n', stderr=b"",
