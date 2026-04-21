@@ -58,7 +58,7 @@ class TestSystemdQuote:
 @allure.epic("Deploy")
 @allure.feature("Remote report snapshot wrapper")
 class TestRemoteReportCmd:
-    """``inv show-income --remote`` / ``inv show-expenses --remote``
+    """``inv report-income --remote`` / ``inv report-expenses --remote``
     cannot open the primary prod DuckDB file directly — the running
     uvicorn worker holds an exclusive single-writer lock on it
     (DuckDB 1.x). ``_remote_report_cmd`` wraps the report invocation
@@ -101,7 +101,7 @@ class TestRemoteReportCmd:
         assert "dinary.reports.income " not in cmd or "dinary.reports.income --" in cmd
 
     def test_snapshot_is_pid_scoped_for_parallel_runs(self):
-        """Two operators running ``inv show-income --remote`` at the
+        """Two operators running ``inv report-income --remote`` at the
         same time must not clobber each other's ``/tmp`` file. ``$$``
         expands to the remote shell PID and is how we keep them
         isolated without coordinating via a lock file.

@@ -2,7 +2,7 @@
 
 Reads the ``income`` table (one row per ``(year, month)``) and rolls
 it up to one row per year with per-year total, months-with-data
-count, and average-per-month. ``inv show-income`` wraps this module.
+count, and average-per-month. ``inv report-income`` wraps this module.
 
 Output is a ``rich`` table by default; ``--csv`` emits plain CSV to
 stdout instead. Strictly read-only — no DB writes, no ledger mutation.
@@ -145,7 +145,7 @@ def run(*, as_csv: bool, stream: TextIO | None = None) -> int:
         msg = (
             f"DB not found at {duckdb_repo.DB_PATH}. Either point "
             "DINARY_DATA_PATH at an existing DuckDB file, or use "
-            "`inv show-income --remote` to query the server."
+            "`inv report-income --remote` to query the server."
         )
         print(msg, file=sys.stderr)
         return 1

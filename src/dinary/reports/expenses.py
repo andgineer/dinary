@@ -7,7 +7,7 @@ mutually exclusive filters narrow the window: ``--year YYYY`` or
 ``--month YYYY-MM``. Neither flag → whole ledger.
 
 Output is a ``rich`` table by default; ``--csv`` emits plain CSV to
-stdout instead, which is what ``inv show-expenses --csv`` consumes
+stdout instead, which is what ``inv report-expenses --csv`` consumes
 to pipe the result into downstream tooling.
 
 Strictly read-only. Opens the shared ``duckdb_repo`` cursor, runs one
@@ -184,7 +184,7 @@ def render_rich(
     """Pretty-print the summary as a ``rich`` table.
 
     This module (``dinary.reports.expenses``) is dev-only tooling: it
-    is invoked exclusively through ``inv show-expenses`` / ``python -m
+    is invoked exclusively through ``inv report-expenses`` / ``python -m
     dinary.reports.expenses`` and is never imported by the FastAPI
     runtime. That is why depending on ``rich`` (a dev-only dep) at
     module level is safe here — the runtime import graph never
@@ -256,7 +256,7 @@ def run(
         msg = (
             f"DB not found at {duckdb_repo.DB_PATH}. Either point "
             "DINARY_DATA_PATH at an existing DuckDB file, or use "
-            "`inv show-expenses --remote` to query the server."
+            "`inv report-expenses --remote` to query the server."
         )
         print(msg, file=sys.stderr)
         return 1

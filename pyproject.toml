@@ -49,8 +49,12 @@ line-length = 99
 [tool.hatch.version]
 path = "src/dinary/__about__.py"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+# PEP 735 dev dependency group. Previously this lived under
+# ``[tool.uv].dev-dependencies``; uv has since deprecated that in
+# favour of the standard ``dependency-groups`` table and emits a
+# noisy warning on every ``uv run`` until it is migrated.
+dev = [
     "allure-pytest>=2.14.2",
     "invoke>=2.2.0",
     "mkdocs-awesome-pages-plugin>=2.10.1",

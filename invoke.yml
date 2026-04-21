@@ -1,5 +1,6 @@
-debug: true
-
+# ``debug`` and ``run.echo`` are intentionally off so ``inv show-*`` /
+# ``inv verify-*`` don't dump every ``ssh ... base64 -d | bash`` line
+# on top of the report output. Re-enable per-invocation with
+# ``invoke --debug --echo <task>`` when troubleshooting.
 run:
   pty: true
-  echo: true

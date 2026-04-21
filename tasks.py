@@ -1128,8 +1128,8 @@ def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> Non
     c.run(cmd)
 
 
-@task(name="show-expenses")
-def show_expenses(c, year="", month="", csv=False, remote=False):  # noqa: A002
+@task(name="report-expenses")
+def report_expenses(c, year="", month="", csv=False, remote=False):  # noqa: A002
     """Show expenses aggregated by unique (category, event, tags) coord.
 
     Flags (all optional):
@@ -1160,8 +1160,8 @@ def show_expenses(c, year="", month="", csv=False, remote=False):  # noqa: A002
     _run_report_module(c, "expenses", flags, remote=remote)
 
 
-@task(name="show-income")
-def show_income(c, csv=False, remote=False):  # noqa: A002
+@task(name="report-income")
+def report_income(c, csv=False, remote=False):  # noqa: A002
     """Show income aggregated by year.
 
     Flags (all optional):
