@@ -18,7 +18,9 @@ production data while the FastAPI service is serving HTTP.
 import argparse
 import csv
 import dataclasses
+import json
 import sys
+from collections.abc import Iterable
 from decimal import Decimal
 from typing import TextIO
 
@@ -231,6 +233,55 @@ def render_csv(rows: list[ExpenseSummaryRow], *, stream: TextIO) -> None:
         writer.writerow((r.category, r.event, r.tags, r.rows, f"{r.total:.2f}"))
 
 
+def render_json(rows: Iterable[ExpenseSummaryRow], *, stream: TextIO) -> None:
+    """Emit the summary as a JSON array — the remote-transport format.
+
+    See the corresponding docstring in :mod:`dinary.reports.income` for
+    the rationale (avoids the UTF-8 chunk-boundary corruption that
+    :meth:`invoke.runners.Runner.decode` introduces when rich-rendered
+    text is shipped as stdout over SSH).
+
+    ``category`` / ``event`` / ``tags`` routinely contain Cyrillic
+    (``еда``, ``отпуск-2026``, ``собака``), so ``ensure_ascii=False``
+    matters here even more than it does in ``reports.income``: with
+    ``ensure_ascii=True`` the Cyrillic fields balloon 6× (one
+    ``\\uXXXX`` escape per character) and become unreadable in raw
+    ``--json`` output, while adding zero safety — UTF-8 on the wire
+    is the contract anyway.
+    """
+    payload = [
+        {
+            "category": r.category,
+            "event": r.event,
+            "tags": r.tags,
+            "rows": r.rows,
+            "total": format(r.total, "f"),
+        }
+        for r in rows
+    ]
+    json.dump(payload, stream, ensure_ascii=False)
+    stream.write("\n")
+
+
+def rows_from_json(payload: list[dict]) -> list[ExpenseSummaryRow]:
+    """Inverse of :func:`render_json` — used by the local render step.
+
+    Strings come back with ``int(entry["rows"])`` tolerant of both
+    int and str encodings because downstream code may JSON-round-trip
+    the payload through a tool that stringifies all scalars.
+    """
+    return [
+        ExpenseSummaryRow(
+            category=str(entry["category"]),
+            event=str(entry["event"]),
+            tags=str(entry["tags"]),
+            rows=int(entry["rows"]),
+            total=Decimal(str(entry["total"])),
+        )
+        for entry in payload
+    ]
+
+
 def _title_suffix(year: int | None, month: tuple[int, int] | None) -> str:
     if month is not None:
         return f"{month[0]:04d}-{month[1]:02d}"
@@ -239,19 +290,63 @@ def _title_suffix(year: int | None, month: tuple[int, int] | None) -> str:
     return "all time"
 
 
+def render(  # noqa: PLR0913 — all args are cosmetic format knobs dispatched inline
+    rows: list[ExpenseSummaryRow],
+    *,
+    year: int | None = None,
+    month: tuple[int, int] | None = None,
+    as_csv: bool = False,
+    as_json: bool = False,
+    stream: TextIO | None = None,
+) -> None:
+    """Render prefetched rows in the requested format.
+
+    Single entry point used by both ``run()`` (local DuckDB path) and
+    the ``tasks.py`` remote transport (rows arrive as a JSON payload
+    over SSH). ``year`` / ``month`` are forwarded only to the rich
+    renderer where they land in the table title — the rows
+    themselves are already filtered upstream, so the renderer never
+    uses them for anything but cosmetics.
+    """
+    if as_csv and as_json:
+        msg = "--csv and --json are mutually exclusive"
+        raise ValueError(msg)
+    out = stream if stream is not None else sys.stdout
+    if as_json:
+        render_json(rows, stream=out)
+    elif as_csv:
+        render_csv(rows, stream=out)
+    else:
+        render_rich(
+            rows,
+            currency=settings.app_currency,
+            title_suffix=_title_suffix(year, month),
+            stream=out,
+        )
+
+
 def run(
     *,
     year: int | None,
     month: tuple[int, int] | None,
-    as_csv: bool,
+    as_csv: bool = False,
+    as_json: bool = False,
     stream: TextIO | None = None,
 ) -> int:
     """Headless entry point used by both ``main()`` and tests.
 
-    Returns the intended CLI exit code: ``0`` unconditionally, since
-    "no matching expenses" is a valid report outcome, not an error.
+    Thin ``fetch → render`` composition: open the local DuckDB, run
+    the 3D aggregation (optionally filtered by ``year`` / ``month``),
+    render. Returns the intended CLI exit code: ``0``
+    unconditionally, since "no matching expenses" is a valid report
+    outcome, not an error.
+
+    ``as_csv`` and ``as_json`` are mutually exclusive; see the same
+    contract in :func:`dinary.reports.income.run` for the rationale.
     """
-    out = stream if stream is not None else sys.stdout
+    if as_csv and as_json:
+        msg = "--csv and --json are mutually exclusive"
+        raise ValueError(msg)
     if not duckdb_repo.DB_PATH.exists():
         msg = (
             f"DB not found at {duckdb_repo.DB_PATH}. Either point "
@@ -267,15 +362,14 @@ def run(
     finally:
         con.close()
 
-    if as_csv:
-        render_csv(rows, stream=out)
-    else:
-        render_rich(
-            rows,
-            currency=settings.app_currency,
-            title_suffix=_title_suffix(year, month),
-            stream=out,
-        )
+    render(
+        rows,
+        year=year,
+        month=month,
+        as_csv=as_csv,
+        as_json=as_json,
+        stream=stream,
+    )
     return 0
 
 
@@ -290,16 +384,27 @@ def main(argv: list[str] | None = None) -> int:
         type=parse_month,
         help="restrict to a single month (YYYY-MM)",
     )
-    parser.add_argument(
+    fmt = parser.add_mutually_exclusive_group()
+    fmt.add_argument(
         "--csv",
         action="store_true",
         help="emit CSV to stdout instead of a rich table",
+    )
+    fmt.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "emit a JSON array of rows to stdout (wire format used by "
+            "``inv report-expenses --remote`` to carry raw data back "
+            "for local rendering)"
+        ),
     )
     args = parser.parse_args(argv)
     return run(
         year=args.year,
         month=args.month,
         as_csv=args.csv,
+        as_json=args.json,
     )
 
 

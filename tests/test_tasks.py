@@ -5,10 +5,16 @@ against a real server and are exercised via the deploy flow.
 """
 
 import importlib.util
+import io
+import json
+import subprocess
 import sys
+from decimal import Decimal
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import allure
+import pytest
 
 _TASKS_PATH = Path(__file__).resolve().parent.parent / "tasks.py"
 _spec = importlib.util.spec_from_file_location("_dinary_tasks", _TASKS_PATH)
@@ -132,3 +138,216 @@ class TestRemoteReportCmd:
         """
         cmd = _remote_report_cmd("income", [])
         assert cmd.startswith("set -e; ")
+
+
+@allure.epic("Deploy")
+@allure.feature("SSH bytes-capture (UTF-8 chunk-boundary safety)")
+class TestSshCaptureBytes:
+    """``inv report-* --remote`` used to hand stdout off to
+    ``invoke.c.run(..., hide='stdout')``, whose
+    :meth:`invoke.runners.Runner.decode` decodes each
+    ``read_proc_stdout`` chunk independently with ``errors='replace'``
+    — no incremental decoder. When a multi-byte UTF-8 character
+    (``─`` = ``E2 94 80``, Cyrillic letters) lands on a chunk
+    boundary, each side of the split becomes U+FFFD (``�``). That's
+    the ``путешест��ия`` / ``├──────���┼`` corruption the operator
+    reported. The fix is to capture bytes via a raw subprocess,
+    decode **once** at the end, and only then parse / render. These
+    tests pin the new helper's contract: it uses ``subprocess.run``
+    (not invoke), returns bytes, and round-trips a realistic UTF-8
+    payload without any replacement characters.
+    """
+
+    def test_returns_raw_bytes_not_decoded_str(self, monkeypatch):
+        captured = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=b'{"k": "v"}\n', stderr=b"",
+        )
+        monkeypatch.setattr(_tasks.subprocess, "run", lambda *a, **kw: captured)
+        out = _tasks._ssh_capture_bytes("whoami")
+        assert isinstance(out, bytes)
+        assert out == b'{"k": "v"}\n'
+
+    def test_invokes_ssh_with_host_and_base64_wrapped_cmd(self, monkeypatch):
+        """The transport is ssh + a base64 envelope around the real
+        command (same shape as ``_ssh`` / ``_ssh_capture``) so a
+        command carrying single quotes doesn't need manual escaping.
+        Pin that shape so a future refactor cannot silently break
+        quoting for every remote report / verify call at once.
+        """
+        seen = {}
+
+        def fake_run(args, **kwargs):
+            seen["args"] = args
+            seen["kwargs"] = kwargs
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout=b"", stderr=b"",
+            )
+
+        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
+        monkeypatch.setattr(_tasks, "_host", lambda: "ubuntu@203.0.113.1")
+        _tasks._ssh_capture_bytes("echo hello")
+
+        args = seen["args"]
+        assert args[0] == "ssh"
+        assert args[1] == "ubuntu@203.0.113.1"
+        # Remote shell gets ``echo <b64> | base64 -d | bash`` so it can
+        # execute an arbitrary original command without nested quoting.
+        assert "base64 -d | bash" in args[2]
+
+    def test_roundtrips_cyrillic_and_box_drawing_bytes_intact(self, monkeypatch):
+        """Realistic payload carrying Cyrillic (``путешествия``) and
+        box-drawing (``─ ┼``). Through the new bytes-first path we
+        must see them come back *byte-identical* — any ``\\ufffd``
+        would signal a regression to the chunk-boundary-corruption
+        codepath.
+        """
+        payload = "путешествия — ├─┼ ┃ 2026".encode()
+        captured = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=payload, stderr=b"",
+        )
+        monkeypatch.setattr(_tasks.subprocess, "run", lambda *a, **kw: captured)
+        out = _tasks._ssh_capture_bytes("whatever")
+        decoded = out.decode("utf-8")
+        assert "\ufffd" not in decoded
+        assert "путешествия" in decoded
+        assert "─" in decoded
+
+
+@allure.epic("Deploy")
+@allure.feature("report-* --remote: fetch JSON, render locally")
+class TestRunReportModuleRemote:
+    """End-to-end architectural contract for ``inv report-<mod> --remote``:
+
+    1. Remote side executes the report in ``--json`` mode and only
+       ships raw row data over SSH (no rich text).
+    2. Transport captures bytes, decodes UTF-8 *once*, parses JSON.
+    3. Local process calls the module's ``render`` on the resulting
+       rows, so the final rendered output matches what the operator
+       would see from a local run against the same data.
+
+    These tests assert that contract with a mocked
+    ``_ssh_capture_bytes`` so we never touch the network.
+    """
+
+    @pytest.fixture
+    def _fake_ssh_bytes(self, monkeypatch):
+        """Return a handle that lets each test set the remote JSON payload."""
+
+        class Spy:
+            payload: bytes = b"[]\n"
+            last_cmd: str | None = None
+
+        spy = Spy()
+
+        def fake(cmd):
+            spy.last_cmd = cmd
+            return spy.payload
+
+        monkeypatch.setattr(_tasks, "_ssh_capture_bytes", fake)
+        return spy
+
+    def test_income_remote_uses_json_transport_regardless_of_user_format(
+        self, _fake_ssh_bytes,
+    ):
+        """The user may ask for ``--csv`` / ``--json`` / rich — the
+        wire format is always JSON, because that's the only
+        byte-exact, chunk-boundary-safe transport.
+        """
+        _fake_ssh_bytes.payload = b"[]\n"
+        c = MagicMock()
+        _tasks._run_report_module(c, "income", [], remote=True)
+        # The remote cmd must ask for ``--json`` so we get structured
+        # data back, not a rendered rich table.
+        assert "--json" in _fake_ssh_bytes.last_cmd
+
+    def test_income_remote_csv_still_pulls_json_locally_renders_csv(
+        self, _fake_ssh_bytes, monkeypatch, capsys,
+    ):
+        _fake_ssh_bytes.payload = json.dumps(
+            [{"year": 2026, "months": 3, "total": "1779756.00", "avg_month": "593252.00"}],
+        ).encode()
+        c = MagicMock()
+        _tasks._run_report_module(c, "income", ["--csv"], remote=True)
+        out = capsys.readouterr().out
+        assert out.splitlines()[0] == "year,months,total,avg_month"
+        assert "1779756.00" in out
+        # Remote never rendered CSV — the server emitted JSON only.
+        assert "--csv" not in (_fake_ssh_bytes.last_cmd or "")
+        assert "--json" in (_fake_ssh_bytes.last_cmd or "")
+
+    def test_income_remote_json_forwards_raw_bytes_without_re_rendering(
+        self, _fake_ssh_bytes, capsysbinary,
+    ):
+        """``--json --remote`` is the piping-into-jq case. We should
+        pass the server's bytes straight through — no ``rows_from_json``
+        + ``render_json`` round-trip (which would re-format and
+        re-shape whitespace / key order).
+        """
+        payload = b'[{"year": 2025, "tags": "\xd0\xbf\xd1\x83"}]\n'
+        _fake_ssh_bytes.payload = payload
+        c = MagicMock()
+        _tasks._run_report_module(c, "income", ["--json"], remote=True)
+        out = capsysbinary.readouterr().out
+        assert out == payload
+
+    def test_income_remote_rich_cyrillic_tags_survive_roundtrip(
+        self, _fake_ssh_bytes, capsys,
+    ):
+        """The original bug: Cyrillic text corrupted into ``�`` on the
+        way back. With JSON transport + single-shot decode + local
+        rich render, the tag / event names must appear intact in the
+        operator's terminal.
+        """
+        _fake_ssh_bytes.payload = json.dumps(
+            [
+                {
+                    "year": 2025,
+                    "months": 10,
+                    "total": "5899845.00",
+                    "avg_month": "589984.50",
+                },
+            ],
+        ).encode()
+        c = MagicMock()
+        _tasks._run_report_module(c, "income", [], remote=True)
+        out = capsys.readouterr().out
+        # No replacement characters anywhere in the rendered output.
+        assert "\ufffd" not in out
+        assert "2025" in out
+        assert "5,899,845.00" in out or "5899845.00" in out
+
+    def test_expenses_remote_rich_preserves_cyrillic_category(
+        self, _fake_ssh_bytes, capsys,
+    ):
+        _fake_ssh_bytes.payload = json.dumps(
+            [
+                {
+                    "category": "путешествия",
+                    "event": "",
+                    "tags": "",
+                    "rows": 3,
+                    "total": "42000.00",
+                },
+            ],
+            ensure_ascii=False,
+        ).encode()
+        c = MagicMock()
+        _tasks._run_report_module(c, "expenses", [], remote=True)
+        out = capsys.readouterr().out
+        assert "\ufffd" not in out
+        assert "путешествия" in out
+
+    def test_expenses_remote_forwards_filter_flags_but_not_format_flags(
+        self, _fake_ssh_bytes, capsys,
+    ):
+        _fake_ssh_bytes.payload = b"[]\n"
+        c = MagicMock()
+        _tasks._run_report_module(
+            c, "expenses", ["--year", "2026", "--csv"], remote=True,
+        )
+        cmd = _fake_ssh_bytes.last_cmd or ""
+        # Filters go to remote (they affect the query result).
+        assert "--year 2026" in cmd
+        # Format flags do NOT — wire format is always JSON.
+        assert "--csv" not in cmd
+        assert "--json" in cmd

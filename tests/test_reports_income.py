@@ -1,6 +1,7 @@
 """Tests for ``dinary.reports.income`` — aggregated income viewer."""
 
 import io
+import json
 from decimal import Decimal
 
 import allure
@@ -134,3 +135,72 @@ class TestRun:
         lines = buf.getvalue().splitlines()
         assert lines[0] == "year,months,total,avg_month"
         assert len(lines) == 3
+
+
+@allure.epic("Reports")
+@allure.feature("income — render_json / rows_from_json (remote transport)")
+class TestRenderJson:
+    """The remote-execution path ships raw rows as JSON (``inv report-income
+    --remote`` runs the query on the server, the client renders locally).
+    These tests pin the wire format so a future refactor of the CLI
+    renderers cannot silently drift the serialization used by the
+    ``tasks.py`` transport layer.
+    """
+
+    def test_emits_valid_json_array(self, _seeded_con):
+        rows = income_report.aggregate_income(_seeded_con)
+        buf = io.StringIO()
+        income_report.render_json(rows, stream=buf)
+        parsed = json.loads(buf.getvalue())
+        assert isinstance(parsed, list)
+        assert len(parsed) == len(rows)
+
+    def test_decimal_serialized_as_string_for_precision(self, _seeded_con):
+        """JSON has no Decimal type; floats lose precision. Emitting
+        Decimals as canonical decimal strings is the only way to keep
+        cents-exact totals across the SSH transport boundary.
+        """
+        rows = income_report.aggregate_income(_seeded_con)
+        buf = io.StringIO()
+        income_report.render_json(rows, stream=buf)
+        parsed = json.loads(buf.getvalue())
+        for entry in parsed:
+            assert isinstance(entry["total"], str)
+            assert isinstance(entry["avg_month"], str)
+            Decimal(entry["total"])
+            Decimal(entry["avg_month"])
+
+    def test_rows_from_json_roundtrip_preserves_decimal(self, _seeded_con):
+        rows = income_report.aggregate_income(_seeded_con)
+        buf = io.StringIO()
+        income_report.render_json(rows, stream=buf)
+        rebuilt = income_report.rows_from_json(json.loads(buf.getvalue()))
+        assert rebuilt == rows
+
+    def test_run_as_json_writes_json_only(self, _seeded_con):
+        buf = io.StringIO()
+        rc = income_report.run(as_json=True, stream=buf)
+        assert rc == 0
+        parsed = json.loads(buf.getvalue())
+        years = [entry["year"] for entry in parsed]
+        assert years == sorted(years, reverse=True)
+
+    def test_run_mutex_csv_and_json_rejected(self, _seeded_con):
+        buf = io.StringIO()
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            income_report.run(as_csv=True, as_json=True, stream=buf)
+
+
+@allure.epic("Reports")
+@allure.feature("income — CLI")
+class TestCli:
+    def test_json_flag_emits_json(self, _seeded_con, capsys):
+        rc = income_report.main(["--json"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        parsed = json.loads(out)
+        assert len(parsed) == 2
+
+    def test_json_and_csv_are_mutex(self, _seeded_con):
+        with pytest.raises(SystemExit):
+            income_report.main(["--csv", "--json"])

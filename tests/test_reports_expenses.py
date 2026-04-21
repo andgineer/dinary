@@ -2,6 +2,7 @@
 
 import argparse
 import io
+import json
 from decimal import Decimal
 
 import allure
@@ -238,3 +239,88 @@ class TestMainCli:
     def test_year_and_month_are_mutex(self, _seeded_con):
         with pytest.raises(SystemExit):
             expenses_report.main(["--year", "2026", "--month", "2026-06"])
+
+
+@allure.epic("Reports")
+@allure.feature("expenses — render_json / rows_from_json (remote transport)")
+class TestRenderJson:
+    """Wire-format tests for the ``--json`` mode used by ``inv
+    report-expenses --remote``: the remote process runs the query and
+    emits JSON over stdout, the local process parses and renders —
+    instead of shipping a rendered rich table whose UTF-8 bytes
+    :func:`invoke.runners.Runner.decode` chops across read-buffer
+    boundaries into U+FFFD replacement characters.
+    """
+
+    def test_emits_valid_json_array(self, _seeded_con):
+        rows = expenses_report.aggregate_expenses(_seeded_con)
+        buf = io.StringIO()
+        expenses_report.render_json(rows, stream=buf)
+        parsed = json.loads(buf.getvalue())
+        assert isinstance(parsed, list)
+        assert len(parsed) == len(rows)
+
+    def test_decimal_serialized_as_string(self, _seeded_con):
+        rows = expenses_report.aggregate_expenses(_seeded_con)
+        buf = io.StringIO()
+        expenses_report.render_json(rows, stream=buf)
+        for entry in json.loads(buf.getvalue()):
+            assert isinstance(entry["total"], str)
+            Decimal(entry["total"])
+
+    def test_preserves_cyrillic_in_fields(self, _seeded_con):
+        """``category`` / ``event`` / ``tags`` routinely contain
+        Cyrillic (``еда``, ``отпуск-2026``, ``собака``). The JSON
+        transport must preserve them byte-for-byte on the wire —
+        ``ensure_ascii=False`` is how we keep the payload shorter
+        than an ASCII-escaped version and side-step any LC_ALL
+        surprises on the remote shell.
+        """
+        rows = expenses_report.aggregate_expenses(_seeded_con)
+        buf = io.StringIO()
+        expenses_report.render_json(rows, stream=buf)
+        raw = buf.getvalue()
+        assert "еда" in raw
+        assert "отпуск-2026" in raw
+        assert "собака" in raw
+        assert "\\u" not in raw
+
+    def test_rows_from_json_roundtrip_preserves_decimal(self, _seeded_con):
+        rows = expenses_report.aggregate_expenses(_seeded_con)
+        buf = io.StringIO()
+        expenses_report.render_json(rows, stream=buf)
+        rebuilt = expenses_report.rows_from_json(json.loads(buf.getvalue()))
+        assert rebuilt == rows
+
+    def test_run_as_json_writes_json_only(self, _seeded_con):
+        buf = io.StringIO()
+        rc = expenses_report.run(year=None, month=None, as_json=True, stream=buf)
+        assert rc == 0
+        parsed = json.loads(buf.getvalue())
+        # Sort order contract: biggest total first.
+        assert parsed[0]["category"] == "гаджеты"
+
+    def test_run_mutex_csv_and_json_rejected(self, _seeded_con):
+        buf = io.StringIO()
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            expenses_report.run(
+                year=None,
+                month=None,
+                as_csv=True,
+                as_json=True,
+                stream=buf,
+            )
+
+
+@allure.epic("Reports")
+@allure.feature("expenses — CLI --json")
+class TestCliJson:
+    def test_json_flag_emits_json(self, _seeded_con, capsys):
+        rc = expenses_report.main(["--json"])
+        assert rc == 0
+        parsed = json.loads(capsys.readouterr().out)
+        assert len(parsed) == 2
+
+    def test_json_and_csv_are_mutex(self, _seeded_con):
+        with pytest.raises(SystemExit):
+            expenses_report.main(["--csv", "--json"])

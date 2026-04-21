@@ -4,11 +4,14 @@ import os
 import re as _re
 import shlex
 import shutil
+import subprocess
 import sys
 from datetime import datetime as _dt
 from pathlib import Path
 
 from dinary.__about__ import __version__
+from dinary.reports import expenses as expenses_report
+from dinary.reports import income as income_report
 from dinary.reports import verify_budget, verify_income
 from dotenv import dotenv_values
 from invoke import Collection, Context, task
@@ -161,46 +164,82 @@ def _ssh_sudo(c, cmd):
     _ssh(c, f"sudo {cmd}")
 
 
-def _ssh_capture(c, cmd):
-    """Run *cmd* over SSH and capture stdout; stream stderr live.
+def _ssh_capture_bytes(cmd: str) -> bytes:
+    """Run *cmd* over SSH and return its stdout as **raw bytes**.
 
-    Same base64-over-bash transport as ``_ssh`` so the remote
-    handles unquoted Python payloads identically. We hide stdout
-    because the caller wants to parse it (e.g. ``_ssh_json``);
-    stderr is left streaming so remote logging / tracebacks still
-    surface to the operator in real time. ``warn=True`` lets the
-    caller decide how to treat a non-zero remote exit — the verify
-    tasks ignore it and re-derive status from the JSON payload.
+    Why bytes and not ``c.run(..., hide='stdout').stdout`` (a ``str``)?
+    ``invoke.runners.Runner.decode`` decodes *each* stdout read-buffer
+    chunk independently with ``errors='replace'`` — there is no
+    incremental UTF-8 decoder. When a multi-byte character (``─`` =
+    ``E2 94 80``, Cyrillic letters, etc.) lands on a chunk boundary,
+    each side becomes ``U+FFFD`` (the ``�`` "replacement character").
+    That is exactly the ``путешест��ия`` / ``├──────���┼`` corruption
+    the operator reported for ``inv report-* --remote``.
+
+    We bypass that by using ``subprocess.run`` directly, capturing
+    stdout as raw bytes and leaving the decode to a single
+    ``.decode('utf-8')`` at the very end (performed by the caller, or
+    by ``_ssh_json`` on its behalf). Stderr is inherited so remote
+    tracebacks / ``uv run`` notices still surface live.
+
+    Transport shape stays identical to the other ``_ssh*`` helpers:
+    the original command is base64-encoded and piped through
+    ``base64 -d | bash`` on the remote, so single-quote-bearing
+    payloads (Python one-liners, shell snippets) need no extra
+    escaping.
     """
     b64 = base64.b64encode(cmd.encode()).decode()
-    return c.run(
-        f"ssh {_host()} 'echo {b64} | base64 -d | bash'",
-        hide="stdout",
-        warn=True,
+    remote = f"echo {b64} | base64 -d | bash"
+    result = subprocess.run(
+        ["ssh", _host(), remote],
+        stdout=subprocess.PIPE,
+        check=True,
     )
+    return result.stdout
+
+
+def _ssh_capture(c, cmd):
+    """Run *cmd* over SSH and capture stdout as decoded text.
+
+    Thin adapter over :func:`_ssh_capture_bytes` that returns an
+    object shaped like ``invoke.Result`` (``.stdout`` + ``.return_code``)
+    so the existing call sites stay working while the underlying
+    transport uses bytes-safe capture. New callers should prefer
+    :func:`_ssh_capture_bytes` directly.
+    """
+    stdout = _ssh_capture_bytes(cmd)
+
+    class _Result:
+        def __init__(self, stdout_bytes: bytes) -> None:
+            self.stdout = stdout_bytes.decode("utf-8")
+            self.return_code = 0
+
+    return _Result(stdout)
 
 
 def _ssh_json(c, cmd):
     """Run *cmd* on the server and return the JSON it printed to stdout.
 
-    Wraps ``_ssh_capture`` with ``json.loads``. On parse failure we
-    echo the raw stdout back to local stderr (prefixed so it is
-    obvious it came from the remote) before raising — that way a
-    Python traceback from the remote ``python -c`` payload is still
-    visible instead of getting eaten by a cryptic ``JSONDecodeError``.
+    Uses :func:`_ssh_capture_bytes` so a multi-byte character split
+    across SSH read-buffer boundaries cannot corrupt the payload
+    before :func:`json.loads` sees it. On parse failure we echo the
+    raw stdout back to local stderr (prefixed so it is obvious it
+    came from the remote) before raising — that way a Python
+    traceback from the remote ``python -c`` payload is still visible
+    instead of getting eaten by a cryptic ``JSONDecodeError``.
     """
-    result = _ssh_capture(c, cmd)
+    raw = _ssh_capture_bytes(cmd)
     try:
-        return _json.loads(result.stdout)
+        return _json.loads(raw.decode("utf-8"))
     except _json.JSONDecodeError as exc:
         sys.stderr.write(
             "remote did not return valid JSON on stdout; raw stdout follows:\n",
         )
-        sys.stderr.write(result.stdout)
-        if not result.stdout.endswith("\n"):
+        sys.stderr.buffer.write(raw)
+        if not raw.endswith(b"\n"):
             sys.stderr.write("\n")
         msg = (
-            f"remote command failed to emit JSON (exit={result.return_code}): "
+            f"remote command failed to emit JSON: "
             f"{exc.msg} at pos {exc.pos}"
         )
         raise RuntimeError(msg) from exc
@@ -1101,31 +1140,131 @@ def _remote_report_cmd(module: str, flags: list[str]) -> str:
     )
 
 
+def _extract_format_flags(flags: list[str]) -> tuple[bool, bool, list[str]]:
+    """Split ``flags`` into ``(as_csv, as_json, remaining)``.
+
+    ``--csv`` / ``--json`` are output-format knobs consumed locally;
+    they must never reach the remote, which always emits the JSON
+    wire format regardless of what the operator asked for. Filters
+    (``--year``, ``--month``, ...) stay in ``remaining`` and travel
+    through to the remote report module to affect the query result.
+    """
+    as_csv = False
+    as_json = False
+    remaining: list[str] = []
+    for flag in flags:
+        if flag == "--csv":
+            as_csv = True
+        elif flag == "--json":
+            as_json = True
+        else:
+            remaining.append(flag)
+    return as_csv, as_json, remaining
+
+
+def _extract_year_month(filter_flags: list[str]) -> tuple[int | None, tuple[int, int] | None]:
+    """Pull ``--year YYYY`` / ``--month YYYY-MM`` out of filter flags.
+
+    Only used to pass cosmetic title context to the expenses rich
+    renderer — the rows themselves are already filtered upstream by
+    the remote query, so a missing / malformed value here only
+    affects the table header, not correctness.
+    """
+    year: int | None = None
+    month: tuple[int, int] | None = None
+    it = iter(filter_flags)
+    for token in it:
+        if token == "--year":
+            try:
+                year = int(next(it))
+            except (StopIteration, ValueError):
+                year = None
+        elif token == "--month":
+            value = next(it, "")
+            parts = value.split("-")
+            if len(parts) == 2:
+                try:
+                    month = (int(parts[0]), int(parts[1]))
+                except ValueError:
+                    month = None
+    return year, month
+
+
 def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> None:
     """Dispatch a ``dinary.reports.<module>`` run locally or over SSH.
 
-    Local mode opens ``data/dinary.duckdb`` directly (fast, zero
-    round-trips, matches the post-``inv backup`` workflow where the
-    operator inspects a snapshot on their laptop). ``--remote`` forks
-    the same module on the server so the operator sees live prod
-    data without an intervening backup.
+    Architecture (both modes): **fetch rows → render locally**.
 
-    The remote path forwards stdout as-is: ``rich`` auto-detects the
-    lack of a TTY over the SSH pipe and falls back to monochrome
-    ASCII box-drawing, and ``--csv`` emits machine-readable CSV, so
-    both modes pipe cleanly into other tools.
+    * Local: opens ``data/dinary.duckdb`` via ``c.run("uv run python
+      -m dinary.reports.<module> <flags>")``. The module is a single
+      process that performs both fetch and render — no transport
+      layer to decouple.
+    * Remote: runs the same module on the server *in ``--json`` mode*
+      via an SSH snapshot wrapper (see ``_remote_report_cmd`` for
+      the DuckDB-lock-workaround rationale), captures the JSON bytes
+      with :func:`_ssh_capture_bytes` (chunk-boundary-safe), parses
+      them with :func:`json.loads`, and invokes the module's
+      ``render`` on the local terminal.
 
-    The remote branch runs the report against a ``cp``-snapshot of
-    the live DB (see ``_remote_report_cmd``) because the server
-    holds the DuckDB file lock.
+    Why JSON for the wire format (rather than rich-rendered text)?
+    :meth:`invoke.runners.Runner.decode` decodes SSH stdout chunks
+    independently with ``errors='replace'`` — a multi-byte UTF-8
+    character split on a read-buffer boundary becomes ``U+FFFD``
+    (``�``). Shipping rendered rich text over that exact codepath is
+    what caused the ``путешест��ия`` / ``├──────���┼`` corruption.
+    A structured JSON payload with a single end-of-stream UTF-8
+    decode is immune to that bug, *and* lets the local side pick any
+    renderer (rich, csv, or raw JSON passthrough) from the same
+    transport call.
     """
-    if remote:
-        _ssh(c, _remote_report_cmd(module, flags))
+    if not remote:
+        cmd = f"uv run python -m dinary.reports.{module}"
+        if flags:
+            cmd = f"{cmd} {' '.join(flags)}"
+        c.run(cmd)
         return
-    cmd = f"uv run python -m dinary.reports.{module}"
-    if flags:
-        cmd = f"{cmd} {' '.join(flags)}"
-    c.run(cmd)
+
+    as_csv, as_json, filter_flags = _extract_format_flags(flags)
+
+    # The wire format is always JSON — the remote never renders text.
+    # Force ``--json`` onto the remote invocation regardless of what
+    # the operator requested for the local output format.
+    remote_flags = [*filter_flags, "--json"]
+    raw = _ssh_capture_bytes(_remote_report_cmd(module, remote_flags))
+
+    # ``--json --remote`` is the "pipe into jq" case: the operator
+    # wants the server's JSON verbatim. Re-parsing + re-serialising
+    # would round-trip through ``rows_from_json`` / ``render_json``
+    # and might subtly re-order keys or re-format whitespace; passing
+    # the bytes straight through keeps the contract "what the server
+    # emitted is what your stdout gets" obvious.
+    if as_json:
+        sys.stdout.buffer.write(raw)
+        return
+
+    payload = _json.loads(raw.decode("utf-8"))
+
+    # Per-module dispatch kept explicit so the static type checker
+    # can see the concrete row type flowing from ``rows_from_json``
+    # into ``render`` — a ``dict[str, Module]`` lookup would widen
+    # to the union of the two row types and pyrefly would refuse
+    # (each ``render`` takes a narrow row list).
+    if module == "income":
+        income_rows = income_report.rows_from_json(payload)
+        income_report.render(income_rows, as_csv=as_csv, stream=sys.stdout)
+    elif module == "expenses":
+        expense_rows = expenses_report.rows_from_json(payload)
+        year, month = _extract_year_month(filter_flags)
+        expenses_report.render(
+            expense_rows,
+            year=year,
+            month=month,
+            as_csv=as_csv,
+            stream=sys.stdout,
+        )
+    else:
+        msg = f"unknown report module: {module!r}"
+        raise ValueError(msg)
 
 
 @task(name="report-expenses")

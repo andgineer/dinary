@@ -11,7 +11,9 @@ stdout instead. Strictly read-only — no DB writes, no ledger mutation.
 import argparse
 import csv
 import dataclasses
+import json
 import sys
+from collections.abc import Iterable
 from decimal import Decimal
 from typing import TextIO
 
@@ -138,9 +140,114 @@ def render_csv(rows: list[IncomeSummaryRow], *, stream: TextIO) -> None:
         )
 
 
-def run(*, as_csv: bool, stream: TextIO | None = None) -> int:
-    """Headless entry point used by both ``main()`` and tests."""
+def render_json(rows: Iterable[IncomeSummaryRow], *, stream: TextIO) -> None:
+    """Emit the summary as a JSON array — the remote-transport format.
+
+    Used by ``inv report-income --remote`` to ship raw query results
+    back to the operator's laptop, where ``render_rich`` / ``render_csv``
+    run locally against the deserialized rows. Shipping rendered text
+    over SSH would land it in :meth:`invoke.runners.Runner.decode`,
+    which decodes every read-buffer chunk independently with ``errors=
+    "replace"`` — that produces U+FFFD glyphs whenever a multi-byte
+    UTF-8 character (``─``, ``и``, ``ж``) lands on a chunk boundary.
+    Sending JSON bytes and doing a single ``.decode('utf-8')`` on the
+    operator side sidesteps that entirely.
+
+    ``Decimal`` values are serialised as canonical decimal strings
+    (``"1779756.00"``) because JSON has no Decimal type: casting to
+    float on the wire would silently round ``593252.82`` → ``593252.82``
+    or drop trailing zeros, which is unacceptable for a financial
+    summary. ``rows_from_json`` parses the strings back with
+    ``Decimal(str)`` so round-tripping is bit-exact.
+
+    ``ensure_ascii=False`` keeps Cyrillic-bearing fields (not present
+    in this specific report, but mandatory in ``expenses`` — we keep
+    the two report modules symmetric) as UTF-8 bytes instead of
+    ``\\uXXXX`` escapes: shorter payload and easier to eyeball
+    raw ``--json`` output during debugging.
+    """
+    payload = [
+        {
+            "year": r.year,
+            "months": r.months,
+            "total": format(r.total, "f"),
+            "avg_month": format(r.avg_month, "f"),
+        }
+        for r in rows
+    ]
+    json.dump(payload, stream, ensure_ascii=False)
+    stream.write("\n")
+
+
+def rows_from_json(payload: list[dict]) -> list[IncomeSummaryRow]:
+    """Inverse of :func:`render_json` — for the local render step.
+
+    Accepts the exact shape ``render_json`` emits (list of dicts with
+    Decimal-as-string) and returns fully-typed ``IncomeSummaryRow``
+    instances so the local renderers can stay unchanged.
+    """
+    return [
+        IncomeSummaryRow(
+            year=int(entry["year"]),
+            months=int(entry["months"]),
+            total=Decimal(entry["total"]),
+            avg_month=Decimal(entry["avg_month"]),
+        )
+        for entry in payload
+    ]
+
+
+def render(
+    rows: list[IncomeSummaryRow],
+    *,
+    as_csv: bool = False,
+    as_json: bool = False,
+    stream: TextIO | None = None,
+) -> None:
+    """Render prefetched rows in the requested format.
+
+    Single entry point used by both ``run()`` (local DuckDB path) and
+    the ``tasks.py`` remote transport (pulled rows from a JSON payload
+    over SSH). Splitting fetch from render lets the transport stay
+    agnostic of renderer-specific kwargs and keeps the remote /
+    local code paths producing bit-identical output for the same row
+    set.
+    """
+    if as_csv and as_json:
+        msg = "--csv and --json are mutually exclusive"
+        raise ValueError(msg)
     out = stream if stream is not None else sys.stdout
+    if as_json:
+        render_json(rows, stream=out)
+    elif as_csv:
+        render_csv(rows, stream=out)
+    else:
+        render_rich(rows, currency=settings.app_currency, stream=out)
+
+
+def run(
+    *,
+    as_csv: bool = False,
+    as_json: bool = False,
+    stream: TextIO | None = None,
+) -> int:
+    """Headless entry point used by both ``main()`` and tests.
+
+    Thin ``fetch → render`` composition: open the local DuckDB,
+    aggregate, render. Exists as a module-level function so the
+    ``dinary.reports.income`` module is callable via ``python -m``
+    without pulling in the operator-tooling layer in ``tasks.py``.
+
+    ``as_csv`` and ``as_json`` are mutually exclusive: both select the
+    single output format, and silently picking one when the operator
+    asked for both would hide a CLI usage mistake. We raise
+    ``ValueError`` here rather than ``SystemExit`` so library callers
+    get a normal exception they can surface however they want;
+    ``main()`` maps the CLI mutex to ``SystemExit`` via argparse.
+    """
+    if as_csv and as_json:
+        msg = "--csv and --json are mutually exclusive"
+        raise ValueError(msg)
     if not duckdb_repo.DB_PATH.exists():
         msg = (
             f"DB not found at {duckdb_repo.DB_PATH}. Either point "
@@ -156,10 +263,7 @@ def run(*, as_csv: bool, stream: TextIO | None = None) -> int:
     finally:
         con.close()
 
-    if as_csv:
-        render_csv(rows, stream=out)
-    else:
-        render_rich(rows, currency=settings.app_currency, stream=out)
+    render(rows, as_csv=as_csv, as_json=as_json, stream=stream)
     return 0
 
 
@@ -167,13 +271,23 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Show income aggregated by year.",
     )
-    parser.add_argument(
+    fmt = parser.add_mutually_exclusive_group()
+    fmt.add_argument(
         "--csv",
         action="store_true",
         help="emit CSV to stdout instead of a rich table",
     )
+    fmt.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "emit a JSON array of rows to stdout (wire format used by "
+            "``inv report-income --remote`` to carry raw data back for "
+            "local rendering)"
+        ),
+    )
     args = parser.parse_args(argv)
-    return run(as_csv=args.csv)
+    return run(as_csv=args.csv, as_json=args.json)
 
 
 if __name__ == "__main__":
