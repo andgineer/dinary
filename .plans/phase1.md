@@ -29,6 +29,18 @@
 > current implementation is append-only single-row logging — not the
 > older full-month rebuild model described below.
 >
+> **Schema warning (post-file-backed-import-sources reset, 2026-04):**
+> every mention of `sheet_import_sources` / `import_sources` below
+> refers to a **DuckDB table that no longer exists**. The per-year
+> source registry is now an operator-local, gitignored JSON file at
+> `.deploy/import_sources.json`, loaded by
+> `dinary.config.read_import_sources`. Where this document says
+> "row in `sheet_import_sources`", the current equivalent is an entry
+> in that JSON array; where it says "latest configured sheet year",
+> the current equivalent is `max(r.year for r in read_import_sources()
+> if r.year > 0)`. See [`.plans/architecture.md`](architecture.md)
+> and the repo-root `imports/` directory for the live design.
+>
 > **Status note:** Phase 1 was reset from the originally-shipped 4D model (`category`, `beneficiary`, `event`, `sphere_of_life`) to the **3D model** (`category`, `event`, `tag_ids[]`) plus an export-only Google Sheets contract. The "Current state" section below captures the post-reset design as it stood when this document was frozen, but it still uses the original pre-rename terminology. Treat the entire file as historical reference, not as current documentation.
 
 ## Goal

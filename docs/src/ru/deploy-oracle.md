@@ -79,28 +79,31 @@ Oracle Cloud Always Free предоставляет бессрочные VM — 
 !!! tip "Альтернатива: ARM"
     Если ARM-мощности доступны, можно выбрать `Canonical Ubuntu 22.04 Minimal aarch64` + shape `VM.Standard.A1.Flex` (1 OCPU, 6 ГБ RAM). Больше RAM позволяет использовать Docker при желании. Остальная настройка такая же.
 
-## 4. Настройка .env
+## 4. Настройка .deploy/.env
 
-После создания VM скопируйте публичный IP из панели Oracle и настройте `.env` на ноутбуке:
+Вся инстанс-специфичная конфигурация (что не коммитится в репо) живёт в директории `.deploy/` в корне репозитория. После создания VM скопируйте публичный IP из панели Oracle и создайте `.deploy/.env` на ноутбуке:
 
 ```bash
-cp .env.example .env
+mkdir -p .deploy
+cp .deploy.example/.env .deploy/.env
 ```
 
-Отредактируйте `.env`:
+Отредактируйте `.deploy/.env`:
 
 ```
 DINARY_DEPLOY_HOST=ubuntu@<PUBLIC_IP>
 # DINARY_TUNNEL=tailscale  # tailscale (по умолч.) | cloudflare | none
-# DINARY_IMPORT_SOURCES_JSON=[{"year":2026,"spreadsheet_id":"YOUR_IMPORT_SPREADSHEET_ID","worksheet_name":"Sheet1","layout_key":"default"}]
 # DINARY_SHEET_LOGGING_SPREADSHEET=https://docs.google.com/spreadsheets/d/YOUR_ID/edit
 ```
 
-`inv setup` теперь синхронизирует ваш локальный `.env` на VM и запускает
-`inv import-config` на сервере. Поэтому для первого запуска нужен рабочий
-`DINARY_IMPORT_SOURCES_JSON` (и таблицы, расшаренные на сервисный аккаунт),
-иначе bootstrap VM завершит системную настройку, но упадёт на seeding
-`config.duckdb`.
+Опционально — если хотите запускать bootstrap import на сервере — также создайте `.deploy/import_sources.json` из шаблона:
+
+```bash
+cp .deploy.example/import_sources.json .deploy/import_sources.json
+$EDITOR .deploy/import_sources.json  # пропишите реальные spreadsheet_id
+```
+
+`inv setup` синхронизирует локальные `.deploy/.env` и (если есть) `.deploy/import_sources.json` на VM в `/home/ubuntu/dinary-server/.deploy/`, сиды базовую таксономию командой `inv bootstrap-catalog`, и — только если `import_sources.json` присутствует — запускает `inv import-config`. Если ваш деплой не использует bootstrap import, достаточно одного `.deploy/.env`; bootstrap VM корректно отработает без `import_sources.json`. Схема и workflows импорта — в директории `imports/` в корне репо.
 
 Проверьте SSH-доступ:
 
@@ -121,10 +124,10 @@ inv setup
 - Устанавливает системные пакеты (python3, git)
 - Устанавливает uv (менеджер пакетов Python)
 - Клонирует репозиторий и устанавливает зависимости
-- Синхронизирует ваш локальный `.env` на VM
+- Синхронизирует ваш локальный `.deploy/.env` (и `.deploy/import_sources.json`, если есть) на VM
 - Загружает `~/.config/gspread/service_account.json` на VM
 - Создаёт и запускает systemd-сервис `dinary`
-- Заполняет `config.duckdb` из настроенных import-source таблиц
+- Сеет базовую таксономию в `dinary.duckdb` через `inv bootstrap-catalog`, а `inv import-config` запускает только если `.deploy/import_sources.json` присутствует
 - Настраивает туннель (Tailscale по умолчанию, или Cloudflare — в зависимости от `DINARY_TUNNEL`)
 
 ### Tailscale (по умолчанию)
@@ -141,7 +144,7 @@ inv setup
 
 ### Cloudflare
 
-Установите `DINARY_TUNNEL=cloudflare` в `.env` перед запуском `inv setup`. Во время настройки `cloudflared tunnel login` попросит авторизоваться в браузере. Требуется домен, управляемый через Cloudflare DNS — см. [Cloudflare Tunnel и Access](cloudflare-setup.md).
+Установите `DINARY_TUNNEL=cloudflare` в `.deploy/.env` перед запуском `inv setup`. Во время настройки `cloudflared tunnel login` попросит авторизоваться в браузере. Требуется домен, управляемый через Cloudflare DNS — см. [Cloudflare Tunnel и Access](cloudflare-setup.md).
 
 ### Без туннеля
 

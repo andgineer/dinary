@@ -47,11 +47,6 @@ def setup() -> int:
             "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'еда', 1, TRUE)",
         )
         con.execute(
-            "INSERT INTO import_sources"
-            " (year, spreadsheet_id, worksheet_name, layout_key, notes)"
-            " VALUES (2026, 'sheet-id', 'Sheet1', 'default', NULL)",
-        )
-        con.execute(
             "INSERT INTO sheet_mapping (row_order, category_id, event_id,"
             " sheet_category, sheet_group) VALUES (1, 1, NULL, 'Food', 'Essentials')",
         )

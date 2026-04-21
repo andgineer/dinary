@@ -1,63 +1,84 @@
-"""Seed data/dinary.duckdb with the Phase-1 3D classification catalog.
+"""Runtime classification taxonomy for ``dinary.duckdb``.
 
-This file is the authoritative source of truth for the catalog tables
-(``category_groups``, ``categories``, ``events``, ``tags``, and the
-derived ``import_mapping`` table). When this file disagrees with
-``docs/src/ru/taxonomy.md``, the code wins.
+This file is the authoritative source of truth for the runtime catalog
+tables: ``category_groups``, ``categories``, ``tags``, and ``events``.
+When this file disagrees with ``docs/src/ru/taxonomy.md``, the code
+wins.
 
-Phase 1 PWA hardcodes the same tag dictionary defined here. There is no
-``/api/tags`` endpoint.
+Phase 1 PWA hardcodes the same tag dictionary defined here. There is
+no ``/api/tags`` endpoint.
+
+Scope of this module
+--------------------
+
+Only the *runtime* catalog lives here — the hardcoded 3D vocabulary
+(``ENTRY_GROUPS``, ``PHASE1_TAGS``, event constants, ``EXPLICIT_EVENTS``)
+plus the FK-safe in-place upsert primitives and the single public
+entry point ``seed_classification_catalog``. The ``import_mapping``
+table, the legacy 2D→3D derivation rules, and the
+``.deploy/import_sources.json``-driven category discovery all live
+in ``dinary.imports.seed``. The direction of dependency is strictly
+``imports.seed -> services.seed_config`` (never the reverse); runtime
+code never reaches into ``imports.seed``, and non-import deployments
+never import it.
+
+Non-import bootstrap: ``bootstrap_catalog()`` provides a zero-Sheets
+entry point that seeds only the hardcoded runtime taxonomy. This is
+what ``inv bootstrap-catalog`` invokes on every deploy, so every
+deployment lands with a populated catalog even when the operator has
+no historical Google Sheets to import from.
 
 FK-safe in-place sync
 ---------------------
 
-``rebuild_config_from_sheets`` (driven by ``inv import-catalog``) never
-deletes the DB file and never renumbers catalog ids. Ledger tables
-(``expenses``, ``expense_tags``, ``sheet_logging_jobs``, ``income``)
-carry real FKs into the catalog; deleting and renumbering referenced
-rows would violate those FKs.
+``seed_classification_catalog`` never deletes the DB file and never
+renumbers catalog ids. Ledger tables (``expenses``, ``expense_tags``,
+``sheet_logging_jobs``, ``income``) carry real FKs into the catalog;
+deleting and renumbering referenced rows would violate those FKs.
 
 The sync algorithm:
 
-1. Preserve ``import_sources`` intact (it's the operator-configured
-   source list, not a derived value).
-2. Mark every catalog row ``is_active=FALSE``. Rows that reappear in
-   the new taxonomy snapshot get flipped back to ``TRUE`` in step 3;
-   rows that don't stay ``FALSE`` and are hidden from the live API
-   while remaining FK-valid targets for historical ledger rows.
-3. Upsert groups / categories / events / tags by ``name`` (the natural
-   key). Pre-existing rows keep their integer ``id``; new rows get a
-   fresh ``id = max(id)+1``.
-4. Rebuild the ``import_mapping(_tags)`` table from scratch by
-   DELETE + INSERT. Runtime 3D->2D routing for sheet logging now lives
-   in the separate ``sheet_mapping`` table, populated exclusively
-   from the hand-curated ``map`` tab in the logging spreadsheet (see
-   ``sheet_mapping.py``); this seed pipeline no longer writes to it.
-5. Bump ``app_metadata.catalog_version``.
+1. Mark every catalog row ``is_active=FALSE``. Rows that reappear in
+   the new taxonomy snapshot get flipped back to ``TRUE``; rows that
+   don't stay ``FALSE`` and are hidden from the live API while
+   remaining FK-valid targets for historical ledger rows.
+2. Upsert groups / categories / tags / events by ``name`` (the
+   natural key). Pre-existing rows keep their integer ``id``; new
+   rows get a fresh ``id = max(id)+1``.
+3. Return a summary dict + a ``TaxonomyIdMaps`` snapshot the caller
+   needs to hand to any import-mapping rebuild step.
 """
 
 import dataclasses
 import json
 import logging
-from collections.abc import Callable
 from datetime import date
 
 import duckdb
 
-from dinary.config import settings
-from dinary.services import catalog_writer, duckdb_repo, sheet_mapping
-from dinary.services.sheets import HEADER_ROWS, _cell, get_sheet
+from dinary.services import duckdb_repo
 from dinary.services.sql_loader import fetchall_as, load_sql
 
 logger = logging.getLogger(__name__)
 
 
-@dataclasses.dataclass
-class Category:
-    """Lightweight (category, group) value object used by the seed pipeline."""
+@dataclasses.dataclass(frozen=True, slots=True)
+class TaxonomyIdMaps:
+    """``name -> id`` lookups returned by ``seed_classification_catalog``.
 
-    name: str
-    group: str
+    The import-mapping rebuild in ``imports.seed._rebuild_import_mapping``
+    consumes these to resolve ``category_name`` / ``tag_name`` /
+    ``event_name`` references into stable integer ids. Exposing them
+    as an explicit return value (instead of re-querying the DB)
+    avoids an extra round of ``SELECT id FROM …`` and keeps the
+    invariants from the upsert phase (ordering, stable ids) visible
+    to the downstream caller.
+    """
+
+    group_id_by_title: dict[str, int]
+    cat_id_by_name: dict[str, int]
+    tag_id_by_name: dict[str, int]
+    event_id_by_name: dict[str, int]
 
 
 # ---------------------------------------------------------------------------
@@ -187,637 +208,6 @@ EXPLICIT_EVENTS: list[ExplicitEvent] = [
 
 
 # ---------------------------------------------------------------------------
-# Sheet import sources bootstrap
-# ---------------------------------------------------------------------------
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class ImportSourceSeedRow:
-    year: int
-    spreadsheet_id: str
-    worksheet_name: str
-    layout_key: str
-    notes: str | None = None
-    income_worksheet_name: str = ""
-    income_layout_key: str = ""
-
-
-_RUB_2012_LAST_YEAR = 2012
-_RUB_2014_LAST_YEAR = 2014
-_RUB_2016_LAST_YEAR = 2016
-_RUB_6COL_LAST_YEAR = 2021
-_RUB_FALLBACK_YEAR = 2022
-
-#: Layout keys recognized by the historical-import / runtime-export code.
-KNOWN_LAYOUT_KEYS: frozenset[str] = frozenset(
-    {"default", "rub", "rub_fallback", "rub_6col", "rub_2016", "rub_2014", "rub_2012"},
-)
-
-
-def _default_layout_for_year(year: int) -> str:
-    if year <= _RUB_2012_LAST_YEAR:
-        return "rub_2012"
-    if year <= _RUB_2014_LAST_YEAR:
-        return "rub_2014"
-    if year <= _RUB_2016_LAST_YEAR:
-        return "rub_2016"
-    if year <= _RUB_6COL_LAST_YEAR:
-        return "rub_6col"
-    if year == _RUB_FALLBACK_YEAR:
-        return "rub_fallback"
-    return "default"
-
-
-def _bootstrap_import_sources() -> list[ImportSourceSeedRow]:
-    if settings.import_sources_json:
-        payload = json.loads(settings.import_sources_json)
-        return [
-            ImportSourceSeedRow(
-                year=int(row["year"]),
-                spreadsheet_id=row.get("spreadsheet_id", ""),
-                worksheet_name=row.get("worksheet_name", ""),
-                layout_key=row.get("layout_key", _default_layout_for_year(int(row["year"]))),
-                notes=row.get("notes"),
-                income_worksheet_name=row.get("income_worksheet_name", ""),
-                income_layout_key=row.get("income_layout_key", ""),
-            )
-            for row in payload
-        ]
-    return []
-
-
-def _ensure_import_sources(con: duckdb.DuckDBPyConnection) -> int:
-    """Insert bootstrap rows only if `import_sources` is empty."""
-    count_row = con.execute("SELECT COUNT(*) FROM import_sources").fetchone()
-    if count_row and count_row[0]:
-        return 0
-    rows = _bootstrap_import_sources()
-    if not rows:
-        return 0
-    for row in rows:
-        con.execute(
-            "INSERT INTO import_sources"
-            " (year, spreadsheet_id, worksheet_name, layout_key, notes,"
-            "  income_worksheet_name, income_layout_key)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-                row.year,
-                row.spreadsheet_id,
-                row.worksheet_name,
-                row.layout_key,
-                row.notes,
-                row.income_worksheet_name,
-                row.income_layout_key,
-            ],
-        )
-    return len(rows)
-
-
-def _load_existing_import_sources(
-    con: duckdb.DuckDBPyConnection,
-) -> list[ImportSourceSeedRow]:
-    """Snapshot ``import_sources`` rows from the single DB.
-
-    Kept as a helper so ``rebuild_config_from_sheets`` can capture the
-    operator-configured source list before the catalog rebuild and
-    reapply it afterwards — defending against accidental edits to the
-    catalog hardcodes wiping out a configured source row.
-    """
-    try:
-        rows = con.execute(
-            "SELECT year, spreadsheet_id, worksheet_name, layout_key, notes,"
-            " income_worksheet_name, income_layout_key"
-            " FROM import_sources ORDER BY year",
-        ).fetchall()
-    except duckdb.Error:
-        return []
-    return [
-        ImportSourceSeedRow(
-            year=row[0],
-            spreadsheet_id=row[1],
-            worksheet_name=row[2],
-            layout_key=row[3],
-            notes=row[4],
-            income_worksheet_name=row[5] or "",
-            income_layout_key=row[6] or "",
-        )
-        for row in rows
-    ]
-
-
-def _restore_import_sources(
-    con: duckdb.DuckDBPyConnection,
-    rows: list[ImportSourceSeedRow],
-) -> None:
-    if not rows:
-        return
-    for row in rows:
-        con.execute(
-            "INSERT INTO import_sources"
-            " (year, spreadsheet_id, worksheet_name, layout_key, notes,"
-            "  income_worksheet_name, income_layout_key)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)"
-            " ON CONFLICT DO UPDATE SET"
-            "  spreadsheet_id = EXCLUDED.spreadsheet_id,"
-            "  worksheet_name = EXCLUDED.worksheet_name,"
-            "  layout_key = EXCLUDED.layout_key,"
-            "  notes = EXCLUDED.notes,"
-            "  income_worksheet_name = EXCLUDED.income_worksheet_name,"
-            "  income_layout_key = EXCLUDED.income_layout_key",
-            [
-                row.year,
-                row.spreadsheet_id,
-                row.worksheet_name,
-                row.layout_key,
-                row.notes,
-                row.income_worksheet_name,
-                row.income_layout_key,
-            ],
-        )
-
-
-# ---------------------------------------------------------------------------
-# Legacy (sheet_category, sheet_group) -> 3D derivation rules
-#
-# These rules used to live in seed/import code split between beneficiary,
-# sphere, and event helpers. In the 3D model they collapse into a single
-# (category_name, tag_set, event_name) tuple per legacy pair, and the result
-# is pre-baked into `import_mapping` + `import_mapping_tags` rows during seed.
-# `imports/expense_import.py` only does table lookups at import time.
-# ---------------------------------------------------------------------------
-
-LEGACY_FOOD_CATEGORY = "еда&бытовые"
-BULAVKI_CATEGORY = "булавки"
-
-#: envelope value -> beneficiary tag name
-_BENEFICIARY_BY_ENVELOPE: dict[str, str] = {
-    "собака": "собака",
-    "ребенок": "Аня",
-    "лариса": "Лариса",
-}
-
-#: envelope value -> sphere-of-life tag name
-_SPHERE_BY_ENVELOPE: dict[str, str] = {
-    "релокация": "релокация",
-    "профессиональное": "профессиональное",
-    "дача": "дача",
-}
-
-#: source_type -> canonical category name (lowercased keys)
-_CATEGORY_BY_SOURCE_TYPE: dict[str, str] = {
-    "еда&бытовые": "еда",
-    "еда": "еда",
-    "фрукты": "фрукты",
-    "деликатесы": "деликатесы",
-    "алкоголь": "алкоголь",
-    "бытовые": "хозтовары",
-    "хозтовары": "хозтовары",
-    "household": "хозтовары",
-    "обустройство": "хозтовары",
-    "аренда": "аренда",
-    "ремонт": "ремонт",
-    "ремонт комнаты ани": "ремонт",
-    "мебель": "мебель",
-    "бытовая техника": "бытовая техника",
-    "техника": "бытовая техника",
-    "коммунальные": "коммунальные",
-    "мобильник": "мобильник",
-    "интернет": "интернет",
-    "сервисы": "сервисы",
-    "медицина": "медицина",
-    "лекарства": "лекарства",
-    "страхование жизни": "медицина",
-    "очки": "медицина",
-    "гигиена": "гигиена",
-    "стрижка": "гигиена",
-    "косметика": "гигиена",
-    "зож": "ЗОЖ",
-    "бад": "ЗОЖ",
-    "спорт": "спорт",
-    "велосипед": "велосипед",
-    "лыжи": "лыжи",
-    "развлечения": "развлечения",
-    "кафе": "кафе",
-    "гаджеты": "гаджеты",
-    "электроника": "электроника",
-    "инструменты": "инструменты",
-    "avito": "гаджеты",
-    "транспорт": "транспорт",
-    "танспорт": "транспорт",
-    "pubtransport": "транспорт",
-    "машина": "машина",
-    "топливо": "топливо",
-    "обучение": "обучение",
-    "продуктивность": "продуктивность",
-    "работа": "продуктивность",
-    "professional": "продуктивность",
-    "учеба": "обучение",
-    "школа": "обучение",
-    "курсы": "обучение",
-    "карманные": "карманные",
-    "собака": "карманные",
-    "подарки": "подарки",
-    "социальное": "подарки",
-    "социализация": "подарки",
-    "страховка": "коммунальные",
-    "одежда": "одежда",
-    "банк": "сервисы",
-    "налог": "налог",
-    "налоги": "налог",
-    "штрафы": "штрафы",
-    "приложения": "продуктивность",
-    "parallels": "развлечения",
-    "wellness": "гигиена",
-    "welness": "гигиена",
-}
-
-_EDA_SUB: dict[str, str] = {
-    "кафе": "кафе",
-    "lunch": "кафе",
-    "общепит": "кафе",
-    "ресторан": "кафе",
-    "кофе": "кафе",
-    "ужин": "кафе",
-    "перекусы": "кафе",
-    "фрукты": "фрукты",
-    "деликатесы": "деликатесы",
-    "алкоголь": "алкоголь",
-}
-
-_COMMUNAL_SUB: dict[str, str] = {
-    "mobile": "мобильник",
-    "phone": "мобильник",
-    "мобильник": "мобильник",
-    "мобильный": "мобильник",
-    "internet": "интернет",
-    "интернет": "интернет",
-    "video": "сервисы",
-    "skype": "сервисы",
-}
-
-_MASHINA_SUB: dict[str, str] = {
-    "gas": "топливо",
-    "топливо": "топливо",
-    "такси": "транспорт",
-    "налог": "налог",
-    "налоги": "налог",
-    "штраф": "штрафы",
-    "штрафы": "штрафы",
-    "страховка": "машина",
-    "gadgets": "гаджеты",
-}
-
-_DACHA_SUB: dict[str, str] = {
-    "": "ремонт",
-    "ремонт": "ремонт",
-    "колодец": "ремонт",
-    "electro": "ремонт",
-    "diy": "ремонт",
-    "краски": "ремонт",
-    "мебель": "мебель",
-    "инструменты": "инструменты",
-    "налог": "налог",
-    "налоги": "налог",
-    "свет": "коммунальные",
-    "электро": "коммунальные",
-    "электроэнергия": "коммунальные",
-    "сигнализация": "коммунальные",
-    "сингнализация": "коммунальные",
-    "страховка": "коммунальные",
-    "коммунальные": "коммунальные",
-    "интернет": "интернет",
-    "internet": "интернет",
-    "mobile": "мобильник",
-    "транспорт": "транспорт",
-    "техника": "бытовая техника",
-}
-
-_RAZVL_SUB: dict[str, str] = {
-    "спорт": "спорт",
-    "skiitime": "лыжи",
-    "wellness": "гигиена",
-    "diy": "гаджеты",
-    "dyi": "гаджеты",
-    "gadgets": "гаджеты",
-    "подарок": "подарки",
-    "подарки": "подарки",
-    "отпуск": "аренда",
-    "игрушки": "развлечения",
-    "игрушка": "развлечения",
-    "ресторан": "кафе",
-    "books": "обучение",
-    "книги": "обучение",
-    "журналы": "обучение",
-    "apps": "продуктивность",
-}
-
-_SKI_ENVELOPES: frozenset[str] = frozenset(
-    {"skiitime", "skitime", "лыжи", "лыжероллеры"},
-)
-
-_VACATION_CATEGORY_BY_ENVELOPE: dict[str, str] = {
-    "": "аренда",
-    "проживание": "аренда",
-    "жилье": "аренда",
-    "отель": "аренда",
-    "еда": "кафе",
-    "кафе": "кафе",
-    "кофе": "кафе",
-    "перекусы": "кафе",
-    "ужин": "кафе",
-    "продукты": "еда",
-    "магазин": "еда",
-    "фрукты": "фрукты",
-    "транспорт": "транспорт",
-    "билеты": "транспорт",
-    "такси": "транспорт",
-    "перелет": "транспорт",
-    "развлечения": "развлечения",
-    "музей": "развлечения",
-    "шезлонги": "развлечения",
-    "экскурсии": "развлечения",
-    "подарки": "подарки",
-    "игрушки и подарки": "подарки",
-    "медицина": "медицина",
-    "мобильный": "мобильник",
-    "sim-travel": "мобильник",
-    "duty free": "алкоголь",
-    "сейф": "сервисы",
-    "фото": "развлечения",
-    "чемодан": "одежда",
-    "ларисе": "подарки",
-}
-
-_KOMANDIROVKA_CATEGORY_BY_ENVELOPE: dict[str, str] = {
-    "": "аренда",
-    "аренда": "аренда",
-    "обустройство": "бытовая техника",
-    "транспорт": "транспорт",
-    "еда": "еда",
-    "развлечения": "развлечения",
-    "внж": "налог",
-    "банк": "сервисы",
-    "комуннальные": "коммунальные",
-    "коммунальные": "коммунальные",
-    "налог": "налог",
-    "обучение": "обучение",
-    "поиск квартиры": "сервисы",
-    "школа": "обучение",
-}
-
-#: Legacy ``source_envelope`` values that mark a row as a vacation
-#: expense for the synthetic-event derivation in
-#: ``event_name_for_source`` (and for the post-cut-over warning in
-#: ``imports/expense_import.py``). Public because both the importer
-#: and the historical report need to share the exact same set.
-VACATION_ENVELOPES: frozenset[str] = frozenset(
-    {"путешествия", "sim-travel", "отпуск", "travel"},
-)
-
-# Back-compat alias — internal callers still reference the private
-# name. Keep until those call sites are updated in-tree.
-_VACATION_ENVELOPES = VACATION_ENVELOPES
-
-
-def canonical_category_for_source(  # noqa: C901, PLR0911, PLR0912
-    source_type: str,
-    source_envelope: str,
-) -> str:
-    """Map a legacy `(source_type, source_envelope)` to a canonical category name.
-
-    Public because `imports/expense_import.py` reads the same legacy
-    `(source_type, source_envelope)` cells and must apply the same mapping
-    rules at import time. Keeping a private alias would silently drift if
-    one caller's signature changes without the other's.
-    """
-    source_lower = source_type.lower().strip()
-    envelope_lower = source_envelope.lower().strip()
-
-    if source_type == BULAVKI_CATEGORY:
-        return "карманные"
-    if source_lower == "приложения":
-        # Empty envelope = entertainment apps, "профессиональное" envelope = work
-        # productivity tools. Without this split the year=0 fallback collapses
-        # both into one row and conflicts with EXPLICIT_MAPPING_OVERRIDES.
-        if not envelope_lower:
-            return "развлечения"
-        return "продуктивность"
-    if source_lower in {"wellness", "welness"}:
-        if envelope_lower in _SKI_ENVELOPES:
-            return "лыжи"
-        if envelope_lower == "спорт":
-            return "спорт"
-        if envelope_lower in {"yazio"}:
-            return "ЗОЖ"
-        return "гигиена"
-    if source_lower == "отпуск":
-        return _VACATION_CATEGORY_BY_ENVELOPE.get(envelope_lower, "аренда")
-    if source_lower == "командировка":
-        return _KOMANDIROVKA_CATEGORY_BY_ENVELOPE.get(envelope_lower, "аренда")
-    if source_lower in {"еда", LEGACY_FOOD_CATEGORY}:
-        return _EDA_SUB.get(envelope_lower, "еда")
-    if source_lower == "коммунальные":
-        return _COMMUNAL_SUB.get(envelope_lower, "коммунальные")
-    if source_lower == "машина":
-        return _MASHINA_SUB.get(envelope_lower, "машина")
-    if source_lower == "дача":
-        return _DACHA_SUB.get(envelope_lower, "хозтовары")
-    if source_lower == "развлечения":
-        if envelope_lower in _SKI_ENVELOPES:
-            return "лыжи"
-        return _RAZVL_SUB.get(envelope_lower, "развлечения")
-    if source_lower == "спорт":
-        if envelope_lower in _SKI_ENVELOPES:
-            return "лыжи"
-        return "спорт"
-    if source_lower == "household":
-        if envelope_lower in {"налог", "налоги"}:
-            return "налог"
-        if envelope_lower == "мебель":
-            return "мебель"
-        if envelope_lower == "страховка":
-            return "коммунальные"
-        if envelope_lower in {"diy", "dyi"}:
-            return "гаджеты"
-    if source_lower in _CATEGORY_BY_SOURCE_TYPE:
-        return _CATEGORY_BY_SOURCE_TYPE[source_lower]
-    if source_type in TAXONOMY_CATEGORIES:
-        return source_type
-    msg = (
-        f"Unmapped sheet (sheet_category={source_type!r}, sheet_group={source_envelope!r}). "
-        "Add a rule to seed_config._CATEGORY_BY_SOURCE_TYPE or to the legacy-derivation tables."
-    )
-    raise ValueError(msg)
-
-
-def tags_for_source(  # noqa: C901
-    source_type: str,
-    source_envelope: str,
-    year: int,
-) -> list[str]:
-    """Return tag names for a legacy `(source_type, source_envelope)` pair.
-
-    Combines beneficiary + sphere-of-life axes from the old 4D model into
-    one tag set. Year-aware rules (e.g. "командировка" relocation tag from
-    2022 onward) are resolved here so per-year `import_mapping` rows can
-    carry the right tags.
-    """
-    tags: set[str] = set()
-    envelope_lower = source_envelope.lower().strip()
-    source_lower = source_type.lower().strip()
-
-    if source_envelope in _BENEFICIARY_BY_ENVELOPE:
-        tags.add(_BENEFICIARY_BY_ENVELOPE[source_envelope])
-    if source_type == BULAVKI_CATEGORY:
-        tags.add("Лариса")
-    if source_lower == "собака":
-        tags.add("собака")
-    if source_type == "Ремонт комнаты Ани":
-        tags.add("Аня")
-    if source_lower == "школа":
-        tags.add("Аня")
-
-    if source_envelope in _SPHERE_BY_ENVELOPE:
-        tags.add(_SPHERE_BY_ENVELOPE[source_envelope])
-    if source_lower == "дача":
-        tags.add("дача")
-
-    if year != 0:
-        is_komandirovka = source_lower == "командировка" or envelope_lower == "командировка"
-        if is_komandirovka:
-            if year > BUSINESS_TRIP_EVENT_LAST_YEAR:
-                tags.add("релокация")
-            else:
-                tags.add("профессиональное")
-
-    return sorted(tags)
-
-
-def event_name_for_source(source_type: str, source_envelope: str, year: int) -> str | None:
-    """Return the synthetic event name (if any) for a legacy `(source, envelope)` pair.
-
-    Public because `imports/expense_import.py` must derive the same per-year event
-    name when promoting historical rows that lack an explicit mapping.
-    Returns None when the pair has no event association (the common
-    case — only vacations and pre-cutover business trips synthesize an
-    event from this layer).
-    """
-    source_lower = source_type.lower().strip()
-    envelope_lower = source_envelope.lower().strip()
-    if source_lower == "отпуск" and year <= VACATION_EVENT_YEAR_TO:
-        return f"{SYNTHETIC_EVENT_PREFIX}{year}"
-    if envelope_lower in _VACATION_ENVELOPES and year <= VACATION_EVENT_YEAR_TO:
-        return f"{SYNTHETIC_EVENT_PREFIX}{year}"
-    is_komandirovka = source_lower == "командировка" or envelope_lower == "командировка"
-    if is_komandirovka and year <= BUSINESS_TRIP_EVENT_LAST_YEAR:
-        return f"{BUSINESS_TRIP_EVENT_PREFIX}{year}"
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Per-year explicit overrides (rare cases the generic derivation gets wrong)
-# ---------------------------------------------------------------------------
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class MappingSeedRow:
-    year: int
-    sheet_category: str
-    sheet_group: str
-    category: str
-    tags: tuple[str, ...] = ()
-    event_name: str | None = None
-
-
-EXPLICIT_MAPPING_OVERRIDES: list[MappingSeedRow] = [
-    # ("приложения", "") and ("приложения", "профессиональное") are now resolved
-    # entirely by canonical_category_for_source + tags_for_source, so the
-    # year=0 entries that used to live here are intentionally absent.
-    MappingSeedRow(2023, "professional", "apps", "продуктивность", ("профессиональное",)),
-    MappingSeedRow(2018, "Работа", "App", "продуктивность", ("профессиональное",)),
-    MappingSeedRow(2018, "Parallels", "", "развлечения"),
-    MappingSeedRow(0, "Коммунальные", "страховка", "коммунальные"),
-    MappingSeedRow(0, "Коммунальные", "Страховка", "коммунальные"),
-    MappingSeedRow(0, "Дача", "страховка", "коммунальные", ("дача",)),
-    MappingSeedRow(2017, "Дача", "Страховка", "коммунальные", ("дача",)),
-    MappingSeedRow(2018, "Дача", "Страховка", "коммунальные", ("дача",)),
-    MappingSeedRow(0, "Машина", "страховка", "машина"),
-    MappingSeedRow(2017, "Машина", "Страховка", "машина"),
-    MappingSeedRow(2017, "Страхование жизни", "", "медицина"),
-    MappingSeedRow(2018, "Коммунальные", "Газфонд", "коммунальные"),
-    MappingSeedRow(2019, "Wellness", "Стрижка", "гигиена"),
-    MappingSeedRow(0, "Wellness", "стрижка", "гигиена"),
-    MappingSeedRow(0, "стрижка", "личный уход", "гигиена"),
-    MappingSeedRow(2018, "wellness", "рив гош", "гигиена"),
-    MappingSeedRow(2022, "подарки", "", "подарки"),
-    MappingSeedRow(2017, "Развлечения", "SkiiTime", "лыжи"),
-    MappingSeedRow(2018, "Спорт", "SkiiTime", "лыжи"),
-    MappingSeedRow(2018, "Спорт", "лыжи", "лыжи"),
-    MappingSeedRow(2019, "Спорт", "SkiiTime", "лыжи"),
-    MappingSeedRow(2021, "Спорт", "skitime", "лыжи"),
-    MappingSeedRow(2021, "Спорт", "лыжероллеры", "лыжи"),
-    MappingSeedRow(2021, "Спорт", "лыжи", "лыжи"),
-    MappingSeedRow(2021, "спорт", "лыжи", "лыжи"),
-    MappingSeedRow(2022, "спорт", "лыжи", "лыжи"),
-    MappingSeedRow(2018, "Avito", "", "гаджеты"),
-    MappingSeedRow(2022, "очки", "", "медицина"),
-]
-
-
-# ---------------------------------------------------------------------------
-# Discovery: pull category pairs from configured sheets to feed seed_mapping
-# ---------------------------------------------------------------------------
-
-_CATEGORY_COLUMNS_BY_LAYOUT = {
-    "default": (4, 5),
-    "rub": (4, 5),
-    "rub_fallback": (4, 5),
-    "rub_6col": (3, 4),
-    "rub_2016": (3, 4),
-    "rub_2014": (3, 4),
-    "rub_2012": (3, 4),
-}
-
-
-def _load_categories_for_sheet(
-    spreadsheet_id: str,
-    worksheet_name: str,
-    layout_key: str,
-) -> list[Category]:
-    ss = get_sheet(spreadsheet_id)
-    ws = ss.worksheet(worksheet_name) if worksheet_name else ss.sheet1
-    all_values = ws.get_all_values()
-    col_category, col_group = _CATEGORY_COLUMNS_BY_LAYOUT[layout_key]
-
-    seen: set[tuple[str, str]] = set()
-    categories: list[Category] = []
-    for row in all_values[HEADER_ROWS:]:
-        cat_name = _cell(row, col_category)
-        group_name = _cell(row, col_group)
-        if cat_name and (cat_name, group_name) not in seen:
-            seen.add((cat_name, group_name))
-            categories.append(Category(name=cat_name, group=group_name))
-    return categories
-
-
-def _collect_categories(con: duckdb.DuckDBPyConnection) -> list[Category]:
-    """Collect (category, group) pairs across every registered import source."""
-    seen: set[tuple[str, str]] = set()
-    categories: list[Category] = []
-
-    sources = con.execute(
-        "SELECT spreadsheet_id, worksheet_name, layout_key FROM import_sources ORDER BY year",
-    ).fetchall()
-    for spreadsheet_id, worksheet_name, layout_key in sources:
-        for row in _load_categories_for_sheet(spreadsheet_id, worksheet_name, layout_key):
-            key = (row.name, row.group)
-            if key not in seen:
-                seen.add(key)
-                categories.append(row)
-    return categories
-
-
-# ---------------------------------------------------------------------------
 # Group assignment for hardcoded categories
 # ---------------------------------------------------------------------------
 
@@ -835,7 +225,7 @@ def _category_group_lookup() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Main seeding entry points
+# Upsert primitives
 # ---------------------------------------------------------------------------
 
 
@@ -993,66 +383,45 @@ def _upsert_tag(con: duckdb.DuckDBPyConnection, *, name: str) -> int:
     return tid
 
 
-def _purge_mapping_tables(con: duckdb.DuckDBPyConnection) -> None:
-    """Clear all mapping rows; they are rebuilt from current active taxonomy.
-
-    Ledger tables do NOT FK into mapping tables, so this is safe under
-    FKs. Mapping tables are catalog-side derived state: rename/retire
-    of a taxonomy row in step 3 must re-point any affected mapping row
-    onto the new active id, and doing that by DELETE+INSERT is simpler
-    and more correct than tracking per-row deltas.
-
-    MUST be called outside an open write transaction. DuckDB 1.5 does
-    not see intra-transaction DELETEs in the FK index, so a ``DELETE
-    FROM import_mapping_tags`` followed by ``DELETE FROM import_mapping``
-    inside a single ``BEGIN``/``COMMIT`` block raises a FK violation
-    on the second statement. Running each DELETE in its own implicit
-    auto-commit transaction sidesteps the limitation. Losing
-    transactional atomicity here is acceptable because mapping tables
-    are pure derived state: if the subsequent rebuild crashes we end
-    up with empty mapping tables, which is the same state a fresh
-    migration would produce and the very next seed run would
-    re-populate.
-    """
-    con.execute("DELETE FROM import_mapping_tags")
-    con.execute("DELETE FROM import_mapping")
-    # sheet_mapping(_tags) are owned by sheet_mapping.py; seed never touches them.
+# ---------------------------------------------------------------------------
+# Main seeding entry point — runtime taxonomy only
+# ---------------------------------------------------------------------------
 
 
-def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
+def seed_classification_catalog(  # noqa: PLR0915
     con: duckdb.DuckDBPyConnection,
     *,
     year: int | None = None,
-    discovered_pairs: list[Category] | None = None,
-) -> dict:
-    """FK-safe in-place sync of the 3D taxonomy into ``dinary.duckdb``.
+) -> tuple[dict, TaxonomyIdMaps]:
+    """FK-safe in-place sync of the runtime taxonomy into ``dinary.duckdb``.
 
     Seeding order: deactivate-all -> category_groups -> categories ->
-    events -> tags -> rebuild mapping tables. Integer ids for
-    pre-existing vocabulary are preserved; new vocabulary gets a fresh
-    ``max(id)+1``. Rows present in the DB but absent from the new
-    taxonomy snapshot stay ``is_active=FALSE`` so ledger rows keep a
-    valid FK target while the live API hides them.
+    tags -> events. Integer ids for pre-existing vocabulary are
+    preserved; new vocabulary gets a fresh ``max(id)+1``. Rows present
+    in the DB but absent from the new taxonomy snapshot stay
+    ``is_active=FALSE`` so ledger rows keep a valid FK target while
+    the live API hides them.
 
-    ``discovered_pairs`` is the union of legacy
-    ``(sheet_category, sheet_group)`` pairs across configured import
-    sources; it drives year=0 mapping rows.
+    Does NOT touch ``import_mapping`` / ``import_mapping_tags`` —
+    those tables are owned by ``imports.seed._rebuild_import_mapping``
+    and only relevant to deployments that actually import from
+    Google Sheets. Non-import deployments (``inv bootstrap-catalog``,
+    which calls ``bootstrap_catalog()`` below) never populate them.
+
+    Returns ``(summary_dict, TaxonomyIdMaps)``. The summary includes
+    counts of each catalog table; the id-maps expose the ``name -> id``
+    lookups that ``_rebuild_import_mapping`` needs.
     """
     if year is None:
         year = date.today().year
 
-    # 0. Deactivate everything; step 3 will flip back active rows in the
-    # new taxonomy snapshot. Rows that don't reappear stay inactive and
-    # ledger FKs remain valid.
+    # 0. Deactivate everything; subsequent steps flip back active rows
+    # in the new taxonomy snapshot. Rows that don't reappear stay
+    # inactive and ledger FKs remain valid.
     con.execute("UPDATE category_groups SET is_active = FALSE")
     con.execute("UPDATE categories SET is_active = FALSE")
     con.execute("UPDATE events SET is_active = FALSE")
     con.execute("UPDATE tags SET is_active = FALSE")
-
-    # NOTE: mapping tables must have been purged by the caller BEFORE
-    # opening the main transaction (see ``_purge_mapping_tables``
-    # docstring for the DuckDB 1.5 FK-in-txn limitation that forces
-    # this ordering).
 
     # 1. category_groups (stable ids by name)
     group_id_by_title: dict[str, int] = {}
@@ -1080,15 +449,14 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
     for r in fetchall_as(duckdb_repo.IdNameRow, con, load_sql("seed_load_categories.sql")):
         cat_id_by_name.setdefault(r.name, r.id)
 
-    # 4. tags (stable ids by name). Upserted BEFORE events so that
+    # 3. tags (stable ids by name). Upserted BEFORE events so that
     # auto_tags names stored on ``events.auto_tags`` reliably resolve
     # to live ``tags.name`` rows on every subsequent lookup.
     tag_id_by_name: dict[str, int] = {}
     for tag_name in PHASE1_TAGS:
         tag_id_by_name[tag_name] = _upsert_tag(con, name=tag_name)
 
-    # 3. events (stable ids by name). Moved below tags so vacation
-    # ``auto_tags`` references a guaranteed-active tag row.
+    # 4. events (stable ids by name).
     event_id_by_name: dict[str, int] = {}
     vacation_auto_tags = tuple(VACATION_AUTO_TAGS)
     for y in range(HISTORICAL_YEAR_FROM, VACATION_EVENT_YEAR_TO + 1):
@@ -1128,232 +496,68 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
             auto_tags=ev.auto_tags,
         )
 
-    # 5-8. Mapping rebuild. Tables were wiped in step 0, so we insert
-    # fresh rows here with sequential ids; the (year, sheet_category,
-    # sheet_group) UNIQUE constraint de-duplicates collisions within
-    # this rebuild.
-    mapping_count = 0
-    next_mapping_id = 1
-
-    def insert_mapping(  # noqa: PLR0913
-        seed_year: int,
-        sheet_category: str,
-        sheet_group: str,
-        category_name: str,
-        tag_names: list[str] | tuple[str, ...],
-        event_name: str | None,
-    ) -> None:
-        nonlocal mapping_count, next_mapping_id
-
-        category_id = cat_id_by_name.get(category_name)
-        if category_id is None:
-            msg = f"Seeded mapping references unknown category {category_name!r}"
-            raise ValueError(msg)
-        event_id = None
-        if event_name is not None:
-            event_id = event_id_by_name.get(event_name)
-            if event_id is None:
-                msg = f"Seeded mapping references unknown event {event_name!r}"
-                raise ValueError(msg)
-        for t in tag_names:
-            if t not in tag_id_by_name:
-                msg = f"Seeded mapping references unknown tag {t!r}"
-                raise ValueError(msg)
-
-        # UNIQUE (year, sheet_category, sheet_group); step 8 may revisit
-        # the same triple via canonical forward-projection. Skip duplicates
-        # silently — the first insert wins.
-        existing = con.execute(
-            "SELECT id FROM import_mapping"
-            " WHERE year = ? AND sheet_category = ? AND sheet_group = ?",
-            [seed_year, sheet_category, sheet_group],
-        ).fetchone()
-        if existing is not None:
-            return
-
-        mapping_id = next_mapping_id
-        next_mapping_id += 1
-        con.execute(
-            "INSERT INTO import_mapping"
-            " (id, year, sheet_category, sheet_group, category_id, event_id)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            [mapping_id, seed_year, sheet_category, sheet_group, category_id, event_id],
-        )
-        mapping_count += 1
-        for tag_id in sorted({tag_id_by_name[t] for t in tag_names}):
-            con.execute(
-                "INSERT INTO import_mapping_tags (mapping_id, tag_id) VALUES (?, ?)",
-                [mapping_id, tag_id],
-            )
-
-    pairs = discovered_pairs or []
-    for c in pairs:
-        sheet_category = c.name
-        sheet_group = c.group or ""
-        try:
-            category_name = canonical_category_for_source(sheet_category, sheet_group)
-        except ValueError:
-            logger.exception(
-                "No legacy mapping for (%r, %r); add a rule to seed_config.",
-                sheet_category,
-                sheet_group,
-            )
-            raise
-        tag_names = tags_for_source(sheet_category, sheet_group, 0)
-        insert_mapping(0, sheet_category, sheet_group, category_name, tag_names, None)
-
-    # 6. import_mapping (per-year explicit overrides)
-    for row in EXPLICIT_MAPPING_OVERRIDES:
-        insert_mapping(
-            row.year,
-            row.sheet_category,
-            row.sheet_group,
-            row.category,
-            row.tags,
-            row.event_name,
-        )
-
-    # 7. per-year synthetic event mappings derived from generic pairs (e.g.
-    # "отпуск-2026" event for a vacation pair). Only emit when the year-aware
-    # derivation actually produces an event different from the generic row.
-    # `canonical_category_for_source` cannot raise here: step 5 above iterates
-    # the same `pairs` and re-raises on every unmapped pair, so by the time we
-    # reach step 7 every pair is known to resolve.
-    for c in pairs:
-        sheet_category = c.name
-        sheet_group = c.group or ""
-        category_name = canonical_category_for_source(sheet_category, sheet_group)
-        for y in range(HISTORICAL_YEAR_FROM, HISTORICAL_YEAR_TO + 1):
-            event_name = event_name_for_source(sheet_category, sheet_group, y)
-            if event_name is None:
-                continue
-            tag_names = tags_for_source(sheet_category, sheet_group, y)
-            insert_mapping(y, sheet_category, sheet_group, category_name, tag_names, event_name)
-
-    # 8. Forward-projection coverage: every hardcoded category needs at least
-    # one row in the latest sheet year so `POST /api/expenses` can always
-    # resolve a sheet target. Emit a default-landing mapping
-    # (sheet_category=<category_name>, sheet_group="") for the latest year.
-    latest_row = con.execute(
-        "SELECT MAX(year) FROM import_sources WHERE year > 0",
-    ).fetchone()
-    latest_year = int(latest_row[0]) if latest_row and latest_row[0] is not None else 0
-    if latest_year:
-        for cat_name, cat_id in cat_id_by_name.items():
-            existing = con.execute(
-                "SELECT 1 FROM import_mapping WHERE year = ? AND category_id = ? LIMIT 1",
-                [latest_year, cat_id],
-            ).fetchone()
-            if existing:
-                continue
-            insert_mapping(latest_year, cat_name, "", cat_name, (), None)
-
-    # Runtime 3D->2D mapping used to be rebuilt here from the latest-year
-    # import_mapping rows. Phase 2 replaced that with ``sheet_mapping``,
-    # owned exclusively by ``sheet_mapping.py`` and sourced from a
-    # hand-curated ``map`` worksheet tab. Seed never writes to it — the
-    # drain loop pulls a fresh copy on its own schedule.
-
-    return {
+    summary = {
         "category_groups": len(group_id_by_title),
         "categories": len(cat_id_by_name),
         "events": len(event_id_by_name),
         "tags": len(tag_id_by_name),
-        "mappings_created": mapping_count,
     }
-
-
-# Deprecated: kept as a public no-op shim for back-compat with old
-# callers / tests that still import the symbol. Runtime 3D->2D mapping
-# moved to ``sheet_mapping.py`` (``sheet_mapping`` table, hand-curated
-# ``map`` worksheet). This function intentionally does nothing and
-# returns zero so any accidental call site fails loudly in review
-# rather than silently diverging from the new source of truth.
-def _rebuild_logging_mapping_from_latest_year(
-    con: duckdb.DuckDBPyConnection,  # noqa: ARG001
-    *,
-    latest_year: int,  # noqa: ARG001
-    cat_id_by_name: dict[str, int],  # noqa: ARG001
-) -> int:
-    """Deprecated no-op shim. See module docstring."""
-    logger.warning(
-        "_rebuild_logging_mapping_from_latest_year is a no-op in Phase 2; "
-        "runtime 3D->2D routing is owned by sheet_mapping.py (sheet_mapping table).",
+    id_maps = TaxonomyIdMaps(
+        group_id_by_title=group_id_by_title,
+        cat_id_by_name=cat_id_by_name,
+        tag_id_by_name=tag_id_by_name,
+        event_id_by_name=event_id_by_name,
     )
-    return 0
+    return summary, id_maps
 
 
 # ---------------------------------------------------------------------------
-# Validation: catch silent breakage before the server boots
+# Public entry points
 # ---------------------------------------------------------------------------
 
 
-def _validate_latest_import_source(con: duckdb.DuckDBPyConnection) -> int:
-    """Validate the latest configured import_sources row.
+def bootstrap_catalog(year: int | None = None) -> dict:
+    """Non-destructive runtime-catalog bootstrap (no Google Sheets, no imports).
 
-    Returns the latest positive year. Raises if the row is missing fields
-    the import pipeline relies on (spreadsheet_id, worksheet_name,
-    layout_key from KNOWN_LAYOUT_KEYS). Runtime sheet logging is no
-    longer involved here — it has its own separate spreadsheet config
-    (DINARY_SHEET_LOGGING_SPREADSHEET) and its own table
-    (sheet_mapping, owned by sheet_mapping.py).
+    Seeds (and keeps in sync) the hardcoded Phase-1 taxonomy:
+    ``category_groups``, ``categories``, ``tags``, ``events``.
+    Idempotent and FK-safe — re-running never renumbers ids, never
+    drops FK-referenced rows, and never mutates ``import_mapping``
+    / ``sheet_mapping``.
+
+    This is what ``inv bootstrap-catalog`` invokes on every deploy.
+    Non-import users (``.deploy/import_sources.json`` absent or empty)
+    rely on this as their only catalog-population path; import users
+    get it as the first step of ``inv import-catalog`` too.
+
+    Does NOT bump ``app_metadata.catalog_version`` — that's reserved
+    for ``rebuild_config_from_sheets`` (``inv import-catalog``) so
+    routine bootstraps don't churn PWA caches. The very first run on
+    a fresh DB still observes a version change because the row
+    transitions from the schema-default ``0`` to the initial post-seed
+    state; subsequent runs are proper no-ops.
     """
-    row = con.execute(
-        "SELECT MAX(year) FROM import_sources WHERE year > 0",
-    ).fetchone()
-    if not row or row[0] is None:
-        msg = "import_sources has no positive year; nothing to import"
-        raise ValueError(msg)
-    latest = int(row[0])
+    duckdb_repo.init_db()
 
-    src = con.execute(
-        "SELECT spreadsheet_id, worksheet_name, layout_key FROM import_sources WHERE year = ?",
-        [latest],
-    ).fetchone()
-    if src is None:
-        msg = f"import_sources row missing for latest year {latest}"
-        raise ValueError(msg)
-    spreadsheet_id, worksheet_name, layout_key = src
-    if not spreadsheet_id:
-        msg = f"import_sources year {latest} has empty spreadsheet_id"
-        raise ValueError(msg)
-    if not worksheet_name:
-        msg = f"import_sources year {latest} has empty worksheet_name"
-        raise ValueError(msg)
-    if not layout_key or layout_key not in KNOWN_LAYOUT_KEYS:
-        msg = (
-            f"import_sources year {latest} has unsupported layout_key {layout_key!r}; "
-            f"known: {sorted(KNOWN_LAYOUT_KEYS)}"
-        )
-        raise ValueError(msg)
+    con = duckdb_repo.get_connection()
+    try:
+        con.execute("BEGIN")
+        try:
+            summary, _ = seed_classification_catalog(con, year=year)
+            con.execute("COMMIT")
+        except Exception:
+            duckdb_repo.best_effort_rollback(con, context="bootstrap_catalog")
+            raise
+    finally:
+        con.close()
 
-    return latest
+    logger.info("bootstrap_catalog complete: %s", summary)
+    return summary
 
 
-def _validate_import_coverage(con: duckdb.DuckDBPyConnection, latest_year: int) -> None:
-    """Every category must have at least one import_mapping row in the latest year.
-
-    This protects the bootstrap import pipeline (which needs year-scoped
-    import_mapping coverage). Runtime sheet logging uses the separate
-    ``sheet_mapping`` table driven by the hand-curated ``map`` worksheet
-    (see ``sheet_mapping.py``), so a gap here does not break runtime logging.
-    """
-    rows = con.execute(
-        "SELECT c.name FROM categories c"
-        " WHERE c.is_active"
-        " AND NOT EXISTS ("
-        "   SELECT 1 FROM import_mapping m"
-        "   WHERE m.year = ? AND m.category_id = c.id"
-        " )",
-        [latest_year],
-    ).fetchall()
-    if rows:
-        missing = [r[0] for r in rows]
-        msg = (
-            f"Import coverage gap: latest sheet year {latest_year} has no "
-            f"import_mapping row for categories {missing}."
-        )
-        raise ValueError(msg)
+# ---------------------------------------------------------------------------
+# Catalog versioning
+# ---------------------------------------------------------------------------
 
 
 def _bump_catalog_version(con: duckdb.DuckDBPyConnection, *, previous: int) -> int:
@@ -1371,241 +575,19 @@ def _bump_catalog_version(con: duckdb.DuckDBPyConnection, *, previous: int) -> i
 
 
 # ---------------------------------------------------------------------------
-# Public seed entry points
+# Deprecated no-op shim (kept for back-compat with old callers)
 # ---------------------------------------------------------------------------
 
 
-def seed_from_sheet(
-    year: int | None = None,
+def _rebuild_logging_mapping_from_latest_year(
+    con: duckdb.DuckDBPyConnection,  # noqa: ARG001
     *,
-    finalize: Callable[[duckdb.DuckDBPyConnection], dict] | None = None,
-) -> dict:
-    """Seed the catalog from the configured sheets.
-
-    Idempotent: re-runnable on top of an existing DB. Used both for the
-    fresh-bootstrap path and for incremental seeding during dev.
-
-    ``finalize``: optional hook invoked *inside* step 3's transaction,
-    after ``seed_classification_catalog`` has applied the catalog
-    changes but *before* we COMMIT. Any dict it returns is merged
-    into the summary. The hook exists so
-    ``rebuild_config_from_sheets`` can restore ``import_sources``,
-    validate coverage, and bump ``catalog_version`` atomically with
-    the catalog rebuild — a failure in any of those steps must roll
-    back the catalog rebuild too, not leave the DB half-committed.
-
-    NOTE: this path does NOT bump ``app_metadata.catalog_version`` on
-    its own. By design only ``inv import-catalog`` touches the
-    version (so PWA clients don't get invalidated by every routine
-    ``import-config`` run). The ``finalize`` hook (used by
-    ``rebuild_config_from_sheets``) is what opts into the bump. When
-    this function adds new mappings on top of an existing catalog
-    without a ``finalize`` hook, it logs a warning so the operator
-    knows the PWA caches will not refresh until the next ``inv
-    import-catalog``.
-
-    CONCURRENCY: the function uses three sequential cursors on the
-    single ``dinary.duckdb`` connection (write sources -> read sources
-    + Sheets HTTP -> write catalog) instead of one long transaction.
-    This trades atomicity for not holding the writer slot across
-    multi-second Google API calls (which would block
-    ``POST /api/expenses`` on the rate-cache miss path). Callers MUST
-    NOT run two ``seed_from_sheet`` invocations concurrently — the
-    split allows a second invocation to mutate ``import_sources``
-    between Steps 1 and 3, producing a Step-3 catalog derived from a
-    stale source list. Phase 1 deployment runs ``inv`` tasks one at a
-    time, so this is operationally safe; if that ever changes, take a
-    coarse-grained lock around the whole function.
-    """
-    if year is None:
-        year = date.today().year
-
-    duckdb_repo.init_db()
-
-    # Step 1: bootstrap import sources in a quick write txn, then commit
-    # before any Sheets HTTP work so we don't hold the DB writer slot
-    # while waiting on Google's API.
-    con = duckdb_repo.get_connection()
-    try:
-        con.execute("BEGIN")
-        try:
-            bootstrapped_sources = _ensure_import_sources(con)
-            con.execute("COMMIT")
-        except Exception:
-            duckdb_repo.best_effort_rollback(con, context="seed_from_sheet step 1")
-            raise
-    finally:
-        con.close()
-
-    # Step 2: pull categories from each registered sheet. This is pure HTTP
-    # against Google Sheets — no DB lock held.
-    read_con = duckdb_repo.get_connection()
-    try:
-        pairs = _collect_categories(read_con)
-    finally:
-        read_con.close()
-    if not pairs:
-        raise ValueError("No categories discovered from import_sources")
-
-    # Step 3: now that the slow Sheets I/O is done, take the writer slot
-    # again and apply the catalog rows. The mapping-table purge runs
-    # BEFORE BEGIN because of a DuckDB 1.5 FK-in-transaction limitation
-    # (see ``_purge_mapping_tables`` docstring).
-    con = duckdb_repo.get_connection()
-    try:
-        _purge_mapping_tables(con)
-        con.execute("BEGIN")
-        summary = seed_classification_catalog(con, year=year, discovered_pairs=pairs)
-        summary["bootstrapped_import_sources"] = bootstrapped_sources
-
-        # ``finalize`` runs inside the same write transaction so
-        # ``rebuild_config_from_sheets`` can restore ``import_sources``,
-        # validate coverage, and bump ``catalog_version`` atomically
-        # with the catalog rebuild. A failure in the hook rolls back
-        # the catalog changes — no partially-committed state leaks
-        # into the DB even when the sheet-backed import-sources list
-        # is malformed or the post-rebuild coverage check fails.
-        if finalize is not None:
-            extra = finalize(con)
-            if extra:
-                summary.update(extra)
-
-        con.execute("COMMIT")
-        logger.info("Seed complete: %s", summary)
-
-        # Only warn about the missed bump when the caller opted out
-        # of the ``finalize`` hook. With a hook, the caller is
-        # responsible for deciding whether to bump (and typically
-        # will, hash-gated).
-        if finalize is None and summary.get("mappings_created", 0) > 0:
-            logger.warning(
-                "import-config inserted %d new import_mapping row(s) without "
-                "bumping catalog_version; run `inv import-catalog` to force "
-                "PWA clients to refresh the catalog.",
-                summary["mappings_created"],
-            )
-        return summary
-    except Exception:
-        duckdb_repo.best_effort_rollback(con, context="seed_from_sheet step 3")
-        raise
-    finally:
-        con.close()
-
-
-def rebuild_config_from_sheets() -> dict:
-    """FK-safe in-place catalog sync from the configured sheets.
-
-    Never deletes the DB file. Ledger tables (``expenses``,
-    ``expense_tags``, ``sheet_logging_jobs``, ``income``) retain real
-    FKs into the catalog and are left completely untouched.
-
-    Sync steps (all inside one write transaction, driven by the
-    ``seed_from_sheet`` finalize hook):
-
-    * Preserve ``import_sources`` by snapshotting up front; the
-      snapshot is restored inside the same transaction as the catalog
-      rebuild so a post-rebuild validation failure rolls the catalog
-      back too, instead of leaving the DB half-committed.
-    * Run ``seed_classification_catalog``: deactivate every catalog
-      row, upsert the new taxonomy by natural key (stable ids
-      preserved, new ids for new vocabulary, retired rows stay
-      ``is_active=FALSE``), then rebuild mapping tables from scratch
-      against the current active ids.
-    * Restore the preserved ``import_sources`` rows.
-    * Validate that the latest configured year has import-mapping
-      coverage for every active category.
-    * Hash-gate and monotonically bump ``catalog_version``: the
-      pre-rebuild catalog hash is compared with the post-rebuild one;
-      when they match, the rebuild was a no-op and we keep the
-      existing version so PWA caches keep serving 304s.
-
-    Returns a summary dict including ``previous_catalog_version``
-    (value before the bump, never less than 1) and ``catalog_version``
-    (the new value).
-    """
-    duckdb_repo.init_db()
-
-    previous_version = 0
-    try:
-        con = duckdb_repo.get_connection()
-        try:
-            previous_version = duckdb_repo.get_catalog_version(con)
-        finally:
-            con.close()
-    except (duckdb.Error, OSError, RuntimeError) as exc:
-        # Only expected failure modes: DuckDB errors (file corruption,
-        # schema drift, locked DB), filesystem errors, and RuntimeError
-        # raised by get_catalog_version when app_metadata is missing.
-        # Anything else (KeyboardInterrupt, MemoryError) should propagate.
-        logger.warning(
-            "Could not read previous catalog_version (%s); defaulting to 0",
-            exc.__class__.__name__,
-        )
-        previous_version = 0
-
-    con = duckdb_repo.get_connection()
-    try:
-        preserved_sources = _load_existing_import_sources(con)
-        # Snapshot the catalog hash BEFORE ``seed_from_sheet`` mutates
-        # the catalog tables. We use the same canonical state that
-        # ``catalog_writer._commit_with_bump`` hashes, so the two
-        # write paths share a single definition of "observable
-        # catalog change". If a rebuild from the sheet is a genuine
-        # no-op (same hardcoded groups, same remote mappings), the
-        # hash survives unchanged and we skip the bump — this keeps
-        # PWA clients' ETag-validated ``GET /api/catalog`` returning
-        # 304 Not Modified across idempotent reseeds.
-        before_hash = catalog_writer.hash_catalog_state(con)
-    finally:
-        con.close()
-
-    def finalize(write_con: duckdb.DuckDBPyConnection) -> dict:
-        """Atomic post-rebuild steps (inside ``seed_from_sheet`` step-3 txn).
-
-        Restoring ``import_sources`` and bumping ``catalog_version``
-        MUST be in the same transaction as the catalog rebuild —
-        otherwise a validation failure here (e.g. the latest year
-        losing import-mapping coverage for some category) would leave
-        the catalog rebuilt but ``import_sources`` unrestored, and
-        the next ``import-config`` run would rediscover nothing.
-        """
-        _restore_import_sources(write_con, preserved_sources)
-        latest_year = _validate_latest_import_source(write_con)
-        _validate_import_coverage(write_con, latest_year)
-        effective_previous = max(previous_version, duckdb_repo.get_catalog_version(write_con))
-        after_hash = catalog_writer.hash_catalog_state(write_con)
-        if before_hash == after_hash:
-            # No observable catalog change — skip the bump. The
-            # PWA's cached snapshot is still valid; 304s on the
-            # next ``GET /api/catalog`` save bandwidth and keep
-            # the operator's offline queue unblocked.
-            new_version = effective_previous
-            logger.info(
-                "rebuild_config_from_sheets: catalog hash unchanged; keeping catalog_version=%d",
-                new_version,
-            )
-        else:
-            new_version = _bump_catalog_version(write_con, previous=effective_previous)
-        return {
-            "catalog_version": new_version,
-            "previous_catalog_version": effective_previous,
-            "latest_import_year": latest_year,
-            "catalog_version_changed": before_hash != after_hash,
-        }
-
-    summary = seed_from_sheet(finalize=finalize)
-    summary["preserved_import_sources"] = len(preserved_sources)
-
-    # Phase 2: make sure the ``map`` worksheet tab exists with a
-    # default-identity layout (one row per active category mapping
-    # name->name). Idempotent; safe on every reseed. Network failure
-    # here downgrades to a log warning — the catalog side is
-    # already committed and the operator can re-run reload-map later.
-    try:
-        sheet_mapping.ensure_default_map_tab()
-    except Exception:
-        logger.exception(
-            "ensure_default_map_tab failed; runtime 3D->2D mapping "
-            "may be empty until the operator creates the map tab manually",
-        )
-    return summary
+    latest_year: int,  # noqa: ARG001
+    cat_id_by_name: dict[str, int],  # noqa: ARG001
+) -> int:
+    """Deprecated no-op shim; runtime 3D->2D mapping lives in ``sheet_mapping``."""
+    logger.warning(
+        "_rebuild_logging_mapping_from_latest_year is a no-op in Phase 2; "
+        "runtime 3D->2D routing is owned by sheet_mapping.py (sheet_mapping table).",
+    )
+    return 0

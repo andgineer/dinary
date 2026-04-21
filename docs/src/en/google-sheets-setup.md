@@ -48,31 +48,58 @@ mv ~/Downloads/your-project-*.json ~/.config/gspread/service_account.json
 
 ## 6. Configure dinary-server
 
-Set these environment variables (in `.env` or your hosting's env config):
+Runtime Google Sheets settings live in `.deploy/.env` (environment variables):
 
 | Variable | Value |
 |----------|-------|
 | `DINARY_GOOGLE_SHEETS_CREDENTIALS_PATH` | path to `service_account.json` (default: `~/.config/gspread/service_account.json`) |
-| `DINARY_IMPORT_SOURCES_JSON` | JSON array describing the yearly source spreadsheets used by bootstrap import |
+| `DINARY_SHEET_LOGGING_SPREADSHEET` | optional spreadsheet ID or URL for append-only runtime logging (see section 7) |
+
+Bootstrap-import configuration has been moved out of `.env` into a dedicated file — see the next section.
 
 ### Bootstrap import sources
 
-`DINARY_IMPORT_SOURCES_JSON` is used by the historical import flow (`inv import-config`, `inv import-catalog`, `inv import-budget`, `inv import-budget-all`, `inv verify-bootstrap-import`, `inv verify-bootstrap-import-all`).
+The bootstrap import flow (`inv import-config`, `inv import-catalog`, `inv import-budget`, `inv import-budget-all`, `inv import-income`, `inv import-income-all`, `inv verify-bootstrap-import`, `inv verify-bootstrap-import-all`, `inv verify-income-equivalence-all`) reads the list of source spreadsheets from an **optional** file at `.deploy/import_sources.json` in the repo root. The file is gitignored — only the placeholder template at `.deploy.example/import_sources.json` is committed.
 
-Example:
+If you don't plan to run bootstrap import (e.g. you start from an empty DuckDB and enter expenses only through the PWA), skip this file entirely — the runtime works without it. Seed the runtime taxonomy with `inv bootstrap-catalog` in that case.
+
+To enable bootstrap import, copy the template and edit it:
 
 ```bash
-DINARY_IMPORT_SOURCES_JSON=[{"year":2026,"spreadsheet_id":"1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms","worksheet_name":"Sheet1","layout_key":"default"}]
+cp .deploy.example/import_sources.json .deploy/import_sources.json
+$EDITOR .deploy/import_sources.json
 ```
 
-Each row describes one source spreadsheet for one year. Common fields:
+The schema is a JSON array, one object per year:
 
-- `year` — budget year
-- `spreadsheet_id` — Google Sheets spreadsheet ID
-- `worksheet_name` — worksheet tab name for expense import
-- `layout_key` — sheet layout parser (`default`, `rub_6col`, etc.)
-- `income_worksheet_name` — optional worksheet tab for income import
-- `income_layout_key` — optional parser for income import
+```json
+[
+  {
+    "year": 2026,
+    "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
+    "worksheet_name": "Sheet1",
+    "layout_key": "default"
+  },
+  {
+    "year": 2019,
+    "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
+    "income_worksheet_name": "Balance",
+    "income_layout_key": "balance_rub"
+  }
+]
+```
+
+Per-object fields:
+
+- `year` — budget year.
+- `spreadsheet_id` — Google Sheets spreadsheet ID.
+- `worksheet_name` — worksheet tab for expense import (defaults to empty → first visible tab).
+- `layout_key` — sheet layout parser (`default`, `rub_6col`, `rub_2016`, `rub_2014`, `rub_2012`, `rub_fallback`); defaults by year.
+- `income_worksheet_name` — optional worksheet tab for income import.
+- `income_layout_key` — optional parser for income import (`balance_rub`, `balance_rub_rsd`, `balance_rsd`, `income_rsd`).
+- `notes` — optional free-form operator comment.
+
+`.deploy/import_sources.json` is the single source of truth for which years exist: `inv import-*` and `inv verify-*` compute their year list from this file (it used to live in a DuckDB table called `import_sources`; that table was removed in the 2026-04 reset and the config now lives next to the service-account JSON instead of inside derived DB state). Any `inv import-*` command invoked without the file raises a clear error pointing at the repo-root `imports/` directory, which documents the schema and workflows in full.
 
 ## 7. Sheet logging (optional)
 
@@ -92,10 +119,10 @@ Set `DINARY_SHEET_LOGGING_SPREADSHEET` to the spreadsheet ID or the full browser
 
 ```bash
 # Either a bare spreadsheet ID:
-DINARY_SHEET_LOGGING_SPREADSHEET=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms
+DINARY_SHEET_LOGGING_SPREADSHEET=YOUR_SPREADSHEET_ID_HERE
 
 # Or a full URL (the ID is extracted automatically):
-DINARY_SHEET_LOGGING_SPREADSHEET=https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms/edit
+DINARY_SHEET_LOGGING_SPREADSHEET=https://docs.google.com/spreadsheets/d/YOUR_SPREADSHEET_ID_HERE/edit
 ```
 
 The spreadsheet must be shared with the service account from step 4 (Editor role).

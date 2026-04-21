@@ -1,0 +1,4 @@
+[
+  {"year": 2026, "spreadsheet_id": "REPLACE_WITH_YOUR_SPREADSHEET_ID"},
+  {"year": 2019, "spreadsheet_id": "REPLACE_WITH_YOUR_SPREADSHEET_ID", "income_worksheet_name": "Balance", "income_layout_key": "balance_rub"}
+]

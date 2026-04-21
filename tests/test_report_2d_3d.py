@@ -5,6 +5,8 @@ import io
 import allure
 import pytest
 
+from dinary import config
+from dinary.config import ImportSourceRow
 from dinary.imports import report_2d_3d as report_module
 from dinary.imports.expense_import import (
     ParsedSheetRow,
@@ -34,16 +36,30 @@ def _tmp_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
 
 
+@pytest.fixture(autouse=True)
+def _stub_import_sources(monkeypatch):
+    """Stand in for ``.deploy/import_sources.json`` with a single 2024 row.
+
+    ``report_2d_3d._get_import_years`` calls ``read_import_sources``
+    to enumerate years in scope; without the stub it would see the
+    operator's real file (or an empty list) and break hermeticity.
+    """
+    rows = [
+        ImportSourceRow(
+            year=2024,
+            spreadsheet_id="sid",
+            worksheet_name="",
+            layout_key="default",
+        ),
+    ]
+    monkeypatch.setattr(config, "read_import_sources", lambda: list(rows))
+
+
 def _seed_catalog():
     """Seed a minimal catalog into ``dinary.duckdb`` for resolution tests."""
     duckdb_repo.init_db()
     con = duckdb_repo.get_connection()
     try:
-        con.execute(
-            "INSERT INTO import_sources"
-            " (year, spreadsheet_id, worksheet_name, layout_key, notes)"
-            " VALUES (2024, 'sid', '', 'default', NULL)",
-        )
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"
             " VALUES (1, 'g', 1, TRUE)",

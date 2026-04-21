@@ -55,9 +55,13 @@ A single DuckDB file holds both catalog and ledger tables:
 
 ```
 data/
-└── dinary.duckdb    # catalog (categories, groups, events, tags, *_mapping, import_sources,
+└── dinary.duckdb    # catalog (categories, groups, events, tags, *_mapping,
                      # exchange_rates, app_metadata) + ledger (expenses, expense_tags,
                      # sheet_logging_jobs, income)
+
+# Import sources are NOT a DuckDB table. They live as an operator-local
+# (gitignored) file at the repo root:
+#   .deploy/import_sources.json  # optional, consumed by ``inv import-*``
 ```
 
 The file path is derived from `settings.data_path` (env var `DINARY_DATA_PATH`), so tests and ad-hoc smoke runs can point at a throwaway file without touching production data. Migrations and `inv` operator tasks run against the same file; there is no longer a separate `config.duckdb` or per-year `budget_YYYY.duckdb`.
@@ -138,15 +142,13 @@ CREATE TABLE exchange_rates (
     PRIMARY KEY (currency, date)
 );
 
-CREATE TABLE import_sources (
-    year                  INTEGER PRIMARY KEY,
-    spreadsheet_id        TEXT NOT NULL,
-    worksheet_name        TEXT NOT NULL DEFAULT '',
-    layout_key            TEXT NOT NULL DEFAULT 'default',
-    notes                 TEXT,
-    income_worksheet_name TEXT DEFAULT '',
-    income_layout_key     TEXT DEFAULT ''
-);
+-- NOTE: ``import_sources`` is no longer a DuckDB table. The registry
+-- of per-year source sheets lives as an operator-local file at
+-- ``.deploy/import_sources.json`` (gitignored). The file is OPTIONAL
+-- and only consumed by ``inv import-*`` tasks; runtime (POST /api/expenses,
+-- sheet logging, map reload) never reads it. See
+-- ``dinary.config.read_import_sources`` and the repo-root ``imports/``
+-- directory for the schema + workflows.
 
 -- Maps legacy Google Sheets `(sheet_category, sheet_group)` rows to the 3D
 -- model. Used exclusively for bootstrap historical import (year=Y or
@@ -186,8 +188,20 @@ CREATE TABLE sheet_mapping (
     sheet_group    TEXT NOT NULL
 );
 
+-- Note: ``mapping_row_order`` deliberately has **no** FK to
+-- ``sheet_mapping(row_order)``. The reload path wipes both tables in
+-- a single transaction (``sheet_mapping._atomic_swap``), and DuckDB
+-- 1.5 mis-validates such a FK when child rows are deleted before
+-- their parents inside the same txn — the validator reflects only
+-- committed state, so the freshly-deleted child rows still registered
+-- as live references to ``sheet_mapping.row_order`` and the parent
+-- delete raised. The FK is therefore intentionally absent from
+-- ``0001_initial_schema.sql``; the full context lives in the NOTE
+-- comment there. Orphan rows are safe because
+-- ``logging_projection.sql`` reads tag filters via a COALESCE'd
+-- ``LIST`` subquery that returns an empty list for any orphan.
 CREATE TABLE sheet_mapping_tags (
-    mapping_row_order INTEGER NOT NULL REFERENCES sheet_mapping(row_order),
+    mapping_row_order INTEGER NOT NULL,
     tag_id            INTEGER NOT NULL REFERENCES tags(id),
     PRIMARY KEY (mapping_row_order, tag_id)
 );
@@ -333,7 +347,7 @@ Examples:
 
 `catalog_version` lives in the KV `app_metadata` table. Two write paths bump it, both routing their final write through `duckdb_repo.set_catalog_version`:
 
-1. **`inv import-catalog`** — reads the previous value (defaulting to `0` on a fresh DB) and drives `seed_config.rebuild_config_from_sheets`, which runs in three cursors on the singleton DuckDB engine: step 1 bootstraps `import_sources` in its own short `BEGIN`/`COMMIT` (so the writer slot isn't held across the slow Sheets API calls that follow); step 2 does read-only Sheets I/O with no DB lock; step 3 opens a single `BEGIN`, runs `seed_classification_catalog`, then invokes a `finalize` hook that restores the preserved `import_sources`, validates coverage, and — hash-gated against the pre-step-3 `hash_catalog_state` snapshot — writes `previous + 1` before `COMMIT`. The step-3 transaction is the atomic boundary: a validation failure in the hook rolls back the catalog rebuild too, instead of leaving the DB half-committed. A genuine no-op reseed (same hardcoded groups, same remote mappings) leaves the hash unchanged and skips the bump, so PWA ETag-validated `GET /api/catalog` keeps serving 304s.
+1. **`inv import-catalog`** — reads the previous value (defaulting to `0` on a fresh DB) and drives `imports.seed.rebuild_config_from_sheets`, which runs in two phases on the singleton DuckDB engine: phase 1 reads the operator-local `.deploy/import_sources.json` via `dinary.config.read_import_sources` (no DB lock, no network) and pulls category rows from each configured sheet (also no DB lock); phase 2 opens a single `BEGIN`, runs `seed_classification_catalog`, rebuilds `import_mapping` / `import_mapping_tags` from scratch, then invokes a `finalize` hook that validates coverage against the hardcoded taxonomy and — hash-gated against a pre-phase-2 `hash_catalog_state` snapshot — writes `previous + 1` before `COMMIT`. The phase-2 transaction is the atomic boundary: a validation failure in the hook rolls back the catalog rebuild too, instead of leaving the DB half-committed. A genuine no-op reseed (same hardcoded groups, same remote mappings) leaves the hash unchanged and skips the bump, so PWA ETag-validated `GET /api/catalog` keeps serving 304s. The old `import_sources` DuckDB table and its snapshot/restore dance are gone — the file-backed SoT removed both the in-transaction preserve step and the "configuration stored inside derived DB state" layering violation.
 2. **Admin API (`catalog_writer`)** — every `POST /api/admin/catalog/<kind>` and `PATCH /api/admin/catalog/<kind>/<id>` mutation runs through `src/dinary/services/catalog_writer.py`, which computes a sha256 of the canonical catalog state before and after the mutation and bumps `catalog_version` only if the hash changed. A no-op rewrite (re-adding an already-active name, renaming a row to its current name) does **not** bump.
 
 **Scope — what is and isn't part of `catalog_version`:** the hash canonicalises the shape of `category_groups`, `categories`, `events` (including `auto_tags`), and `tags`. It deliberately does **not** cover `sheet_mapping`/`sheet_mapping_tags` or `import_mapping`/`import_mapping_tags`. Runtime 3D→2D routing (the `map` tab, reloaded by `services/sheet_mapping.py`) and the derived per-year `import_mapping` rebuild (owned by `seed_classification_catalog`) are internal server state that the PWA never reads directly, so there is nothing for a client to invalidate when they change. Conversely, a pure `/api/admin/reload-map` or a no-op `inv import-config` that only refreshes mappings leaves `catalog_version` untouched, and the PWA's ETag-validated `GET /api/catalog` keeps serving `304 Not Modified`. If the mapping tables ever surface on an API the PWA reads, the hash definition in `catalog_writer.hash_catalog_state` is the single place to extend.
@@ -624,7 +638,7 @@ Workers must atomically claim a row before appending. Claim transitions the row 
 
 Sheet logging is **optional**. It is enabled by setting the `DINARY_SHEET_LOGGING_SPREADSHEET` environment variable to a Google Sheets spreadsheet ID or a full browser URL. When unset or empty, `POST /api/expenses` does not enqueue a queue row and the periodic drain runs over an empty table; no Google Sheets calls are made.
 
-The target spreadsheet is **independent of `import_sources`** — import sources configure the historical bootstrap import pipeline, while `DINARY_SHEET_LOGGING_SPREADSHEET` configures the optional runtime append-only logging. The logging worker always writes to the **first visible worksheet** of the configured spreadsheet.
+The target spreadsheet is **independent of `.deploy/import_sources.json`** — import sources configure the historical bootstrap import pipeline, while `DINARY_SHEET_LOGGING_SPREADSHEET` configures the optional runtime append-only logging. The logging worker always writes to the **first visible worksheet** of the configured spreadsheet.
 
 ### Logging projection rules
 
@@ -642,7 +656,7 @@ The `sheet_mapping` / `sheet_mapping_tags` tables are derived state; the source 
 - `ensure_fresh()` — the drain loop calls this once per sweep. Issues a Drive `files.get(fields=modifiedTime)` call (sub-second, no row data) and only re-parses the tab when the returned timestamp differs from the process-local cache. Network errors downgrade to a warning so an outage on the Drive side cannot stall draining whatever is already in the table.
 - `reload_now()` — the admin endpoint (`POST /api/admin/reload-map`) calls this unconditionally. Captures `modifiedTime` before **and** after the sheet read; if the timestamp shifts during the read, the new rows are still swapped into the DB (they're at least as fresh as what was there) but the cache is left untouched so the next `ensure_fresh()` tick picks up the post-edit version instead of treating a possibly-stale snapshot as steady state.
 
-Both swap `sheet_mapping` and `sheet_mapping_tags` inside a single DuckDB transaction so the drain worker never sees a half-populated map. `sheet_mapping.ensure_default_map_tab()` (called from `seed_config.rebuild_config_from_sheets` after the catalog-side transaction commits) lays down a default `map` tab on first boot generated from hard-coded tag/event routing rules plus the currently active catalog's category list, so the runtime fallback is never the *only* code path; operators can then curate deviations on the live tab and the default is regenerated only when the tab is missing or empty. Tag-driven rows in that default (the module-private `_TAG_RULES` list in `services/sheet_mapping.py`) are filtered against the active tag catalog at generation time: any rule whose tag is not an active `tags.name` is skipped with a WARN rather than emitted — otherwise a post-rename taxonomy would produce a template that trips `MapTabError` on first read. Both `ensure_fresh()` and `reload_now()` resolve `settings.sheet_logging_spreadsheet` through `config.spreadsheet_id_from_setting()` before hitting Sheets/Drive, so an operator env value that is a full browser URL (rather than a bare spreadsheet ID) is accepted transparently.
+Both swap `sheet_mapping` and `sheet_mapping_tags` inside a single DuckDB transaction so the drain worker never sees a half-populated map. To make that single transaction possible, `0001_initial_schema.sql` deliberately declares `sheet_mapping_tags.mapping_row_order` **without** a FK to `sheet_mapping.row_order` (see the NOTE comment in the migration): DuckDB 1.5's FK validator reflects only committed state, so `DELETE FROM sheet_mapping_tags; DELETE FROM sheet_mapping` inside one txn used to raise a spurious "child rows still reference parent" ConstraintException, which `ensure_fresh()` swallowed with an ERROR log and kept serving the stale in-DB mapping — silently ignoring every edit to the `map` tab until the service restarted. `sheet_mapping.ensure_default_map_tab()` (called from `imports.seed.rebuild_config_from_sheets` after the catalog-side transaction commits) lays down a default `map` tab on first boot: the module-private `_TAG_RULES` list (`services/sheet_mapping.py`) provides the generic tag → envelope rules, and `_CATEGORY_ENVELOPES` provides per-category envelope overrides for the handful of categories whose Конверт is not the resolver's default empty string (currently `"гигиена"` and `"ЗОЖ"`). Pure identity rows (`Расходы = category.name`, `Конверт = "*"`) are deliberately **not** emitted — the resolver's no-rule-matched fallback in `resolve_projection` / `logging_projection` already substitutes `category.name` for a missing `sheet_category`, so an identity row would only duplicate that fallback and bloat the tab. Both lists are filtered against the active catalog at generation time (any `_TAG_RULES` entry whose tag is not an active `tags.name`, or any `_CATEGORY_ENVELOPES` entry whose category is not an active `categories.name`, is skipped with a WARN rather than emitted), otherwise a post-rename taxonomy would produce a template that trips `MapTabError` on first read. Both `ensure_fresh()` and `reload_now()` resolve `settings.sheet_logging_spreadsheet` through `config.spreadsheet_id_from_setting()` before hitting Sheets/Drive, so an operator env value that is a full browser URL (rather than a bare spreadsheet ID) is accepted transparently.
 
 ### Sheet layout contract
 

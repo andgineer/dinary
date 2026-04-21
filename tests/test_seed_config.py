@@ -1,13 +1,27 @@
-"""Tests for the 3D-catalog seeding logic on the unified dinary.duckdb."""
+"""Tests for the 3D-catalog seeding logic on the unified dinary.duckdb.
 
-import json
+These exercise both halves of the post-split pipeline:
+
+* ``services.seed_config.bootstrap_catalog`` — the no-Sheets path that
+  populates the runtime taxonomy only.
+* ``imports.seed.seed_from_sheet`` / ``imports.seed.rebuild_config_from_sheets``
+  — the Google-Sheets-driven path that additionally populates
+  ``import_mapping`` from discovered pairs.
+"""
+
 from datetime import datetime
 from unittest.mock import patch
 
 import allure
 import pytest
 
-from dinary.config import settings
+from dinary import config
+from dinary.config import ImportSourceRow, settings
+from dinary.imports.seed import (
+    Category,
+    rebuild_config_from_sheets,
+    seed_from_sheet,
+)
 from dinary.services import duckdb_repo
 from dinary.services.seed_config import (
     ENTRY_GROUPS,
@@ -15,9 +29,7 @@ from dinary.services.seed_config import (
     PHASE1_TAGS,
     RUSSIA_TRIP_EVENT_NAME,
     SYNTHETIC_EVENT_PREFIX,
-    Category,
-    rebuild_config_from_sheets,
-    seed_from_sheet,
+    bootstrap_catalog,
 )
 
 SAMPLE_CATEGORIES = [
@@ -31,6 +43,15 @@ SAMPLE_CATEGORIES = [
     Category(name="обучение", group="профессиональное"),
 ]
 
+SAMPLE_IMPORT_SOURCES = [
+    ImportSourceRow(
+        year=2026,
+        spreadsheet_id="fake-id",
+        worksheet_name="Sheet1",
+        layout_key="default",
+    ),
+]
+
 
 @pytest.fixture(autouse=True)
 def _tmp_data_dir(tmp_path, monkeypatch):
@@ -40,30 +61,55 @@ def _tmp_data_dir(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _stub_settings(monkeypatch):
-    """Bootstrap a single import source so seed_from_sheet has something to read."""
+    """Provide a single import source row without touching the real JSON file.
+
+    Patches ``dinary.config.read_import_sources`` in every module that
+    imports it by name (``imports.seed`` and ``services.seed_config``
+    both re-import from ``dinary.config``, so a single patch on the
+    original module flows through to both callers).
+    """
     monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "")
     monkeypatch.setattr(
-        settings,
-        "import_sources_json",
-        json.dumps(
-            [
-                {
-                    "year": 2026,
-                    "spreadsheet_id": "fake-id",
-                    "worksheet_name": "Sheet1",
-                    "layout_key": "default",
-                },
-            ],
-        ),
+        config,
+        "read_import_sources",
+        lambda: list(SAMPLE_IMPORT_SOURCES),
     )
 
 
 def _patched_seed(year=2026):
     with patch(
-        "dinary.services.seed_config._load_categories_for_sheet",
+        "dinary.imports.seed._load_categories_for_sheet",
         return_value=SAMPLE_CATEGORIES,
     ):
         return seed_from_sheet(year=year)
+
+
+@allure.epic("Seed catalog")
+@allure.feature("bootstrap_catalog (runtime taxonomy only)")
+class TestBootstrapCatalog:
+    def test_bootstrap_creates_hardcoded_taxonomy_without_sheets(self):
+        """``bootstrap_catalog`` populates groups/cats/tags/events from hardcoded
+        constants — no Google Sheets round-trip, no ``import_mapping`` rows."""
+        summary = bootstrap_catalog()
+        assert summary["category_groups"] >= len(ENTRY_GROUPS)
+        assert summary["categories"] >= 1
+        assert summary["tags"] == len(PHASE1_TAGS)
+        assert summary["events"] >= 1
+
+        con = duckdb_repo.get_connection()
+        try:
+            mapping_count = con.execute("SELECT COUNT(*) FROM import_mapping").fetchone()[0]
+        finally:
+            con.close()
+        assert mapping_count == 0, (
+            "bootstrap_catalog must NOT populate import_mapping — that's "
+            "imports.seed's job and non-import users leave it empty"
+        )
+
+    def test_bootstrap_is_idempotent(self):
+        first = bootstrap_catalog()
+        second = bootstrap_catalog()
+        assert first == second
 
 
 @allure.epic("Seed catalog")
@@ -184,11 +230,11 @@ class TestRebuildConfigFromSheets:
 
         Multi-rebuild coverage lives in TestSeedFromSheet. The DuckDB
         FK-in-transaction quirk that used to block this is worked
-        around in ``seed_config._purge_mapping_tables`` (it must run
+        around in ``imports.seed._purge_mapping_tables`` (it must run
         outside a write transaction).
         """
         with patch(
-            "dinary.services.seed_config._load_categories_for_sheet",
+            "dinary.imports.seed._load_categories_for_sheet",
             return_value=SAMPLE_CATEGORIES,
         ):
             first = rebuild_config_from_sheets()
@@ -203,31 +249,13 @@ class TestRebuildConfigFromSheets:
         redownload the full catalog on the next fetch for no reason.
         """
         with patch(
-            "dinary.services.seed_config._load_categories_for_sheet",
+            "dinary.imports.seed._load_categories_for_sheet",
             return_value=SAMPLE_CATEGORIES,
         ):
             first = rebuild_config_from_sheets()
             second = rebuild_config_from_sheets()
         assert second["catalog_version"] == first["catalog_version"]
         assert second["catalog_version_changed"] is False
-
-    def test_preserves_import_sources(self):
-        """``rebuild_config_from_sheets`` preserves operator edits to
-        ``import_sources.notes`` across the rebuild."""
-        with patch(
-            "dinary.services.seed_config._load_categories_for_sheet",
-            return_value=SAMPLE_CATEGORIES,
-        ):
-            rebuild_config_from_sheets()
-
-        con = duckdb_repo.get_connection()
-        try:
-            row = con.execute(
-                "SELECT year, spreadsheet_id FROM import_sources WHERE year = 2026",
-            ).fetchone()
-        finally:
-            con.close()
-        assert row == (2026, "fake-id")
 
     def test_fk_safe_sync_preserves_expense_referenced_category(self):
         """``import-catalog`` (rebuild) runs after historical expenses
@@ -277,7 +305,7 @@ class TestRebuildConfigFromSheets:
         reduced_groups = [(title, [c for c in cats if c != "кафе"]) for title, cats in ENTRY_GROUPS]
         with (
             patch(
-                "dinary.services.seed_config._load_categories_for_sheet",
+                "dinary.imports.seed._load_categories_for_sheet",
                 return_value=reduced_sheet,
             ),
             patch(

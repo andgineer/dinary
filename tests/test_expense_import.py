@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 import allure
 import pytest
 
+from dinary import config
+from dinary.config import ImportSourceRow
 from dinary.imports import expense_import
 from dinary.imports.expense_import import import_year
 from dinary.services import duckdb_repo
@@ -15,6 +17,26 @@ from dinary.services import duckdb_repo
 def _tmp_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
     monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
+
+
+@pytest.fixture(autouse=True)
+def _stub_import_sources(monkeypatch):
+    """Stand in for ``.deploy/import_sources.json`` without touching disk.
+
+    Patches the loader in ``dinary.config`` so every caller
+    (``expense_import`` imports ``get_import_source`` by name) sees
+    the same single-row fixture. Keeps the test hermetic even when a
+    developer has a real ``.deploy/import_sources.json`` locally.
+    """
+    rows = [
+        ImportSourceRow(
+            year=2026,
+            spreadsheet_id="sheet-id",
+            worksheet_name="",
+            layout_key="default",
+        ),
+    ]
+    monkeypatch.setattr(config, "read_import_sources", lambda: list(rows))
 
 
 def _seed_catalog():
@@ -28,11 +50,6 @@ def _seed_catalog():
     duckdb_repo.init_db()
     con = duckdb_repo.get_connection()
     try:
-        con.execute(
-            "INSERT INTO import_sources"
-            " (year, spreadsheet_id, worksheet_name, layout_key, notes)"
-            " VALUES (2026, 'sheet-id', '', 'default', NULL)",
-        )
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"
             " VALUES (1, 'g', 1, TRUE)",

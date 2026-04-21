@@ -53,7 +53,6 @@ class TestInitialSchema:
             "events",
             "tags",
             "exchange_rates",
-            "import_sources",
             "import_mapping",
             "import_mapping_tags",
             "sheet_mapping",
@@ -61,6 +60,10 @@ class TestInitialSchema:
             "app_metadata",
         }
         assert expected.issubset(tables)
+        assert "import_sources" not in tables, (
+            "import_sources migrated out of DuckDB — the registry now "
+            "lives in .deploy/import_sources.json (see dinary.config)."
+        )
 
     def test_creates_expected_ledger_tables(self, fresh_db):
         con = duckdb.connect(str(fresh_db))

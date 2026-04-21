@@ -9,7 +9,6 @@ DROP TABLE IF EXISTS sheet_mapping_tags;
 DROP TABLE IF EXISTS sheet_mapping;
 DROP TABLE IF EXISTS import_mapping_tags;
 DROP TABLE IF EXISTS import_mapping;
-DROP TABLE IF EXISTS import_sources;
 DROP TABLE IF EXISTS exchange_rates;
 DROP TABLE IF EXISTS tags;
 DROP TABLE IF EXISTS events;

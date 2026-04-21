@@ -49,15 +49,13 @@ CREATE TABLE exchange_rates (
     PRIMARY KEY (currency, date)
 );
 
-CREATE TABLE import_sources (
-    year                  INTEGER PRIMARY KEY,
-    spreadsheet_id        TEXT NOT NULL,
-    worksheet_name        TEXT NOT NULL DEFAULT '',
-    layout_key            TEXT NOT NULL DEFAULT 'default',
-    notes                 TEXT,
-    income_worksheet_name TEXT DEFAULT '',
-    income_layout_key     TEXT DEFAULT ''
-);
+-- NOTE: ``import_sources`` used to live here as a per-year source
+-- registry. It has been moved out of DuckDB entirely — the operator's
+-- local file ``.deploy/import_sources.json`` is now the sole source of
+-- truth. The file is OPTIONAL and only consumed by ``inv import-*``
+-- tasks; runtime (POST /api/expenses, sheet logging, map reload)
+-- never reads it. See ``dinary.config.read_import_sources`` and the
+-- repo-root ``imports/`` directory.
 
 CREATE TABLE import_mapping (
     id             INTEGER PRIMARY KEY,
@@ -103,8 +101,29 @@ CREATE TABLE sheet_mapping (
     sheet_group    TEXT NOT NULL
 );
 
+-- NOTE: ``sheet_mapping_tags.mapping_row_order`` deliberately does NOT
+-- carry a FOREIGN KEY to ``sheet_mapping(row_order)``. ``sheet_mapping``
+-- and ``sheet_mapping_tags`` are a cache of the ``map`` Google Sheet
+-- tab, atomically wiped and repopulated by
+-- ``sheet_mapping._atomic_swap`` on every reload. The FK was originally
+-- added for data hygiene, but DuckDB 1.5 mis-validates it inside a
+-- transaction that first deletes the child rows and then the parent
+-- rows (the FK validator reflects only committed state, so the
+-- freshly-deleted ``sheet_mapping_tags`` rows still register as live
+-- references to ``sheet_mapping.row_order`` and the parent delete
+-- raises). That silently broke reloads: ``reload_now()`` aborted with
+-- a ConstraintException, the drain loop logged
+-- ``reload_now() failed; keeping cached mapping`` and kept serving
+-- the stale in-DB mapping, so edits to the ``map`` tab never took
+-- effect. Do not reinstate the FK "for data hygiene" — the cache is
+-- derived state owned by one module, orphans are harmless because
+-- ``logging_projection.sql`` reads tag filters via
+-- ``(SELECT LIST(tag_id) FROM sheet_mapping_tags WHERE mapping_row_order = m.row_order)``
+-- which naturally returns an empty list for any orphan, and every
+-- successful ``_atomic_swap`` reinserts both tables under one
+-- transaction so orphans cannot persist across a successful reload.
 CREATE TABLE sheet_mapping_tags (
-    mapping_row_order INTEGER NOT NULL REFERENCES sheet_mapping(row_order),
+    mapping_row_order INTEGER NOT NULL,
     tag_id            INTEGER NOT NULL REFERENCES tags(id),
     PRIMARY KEY (mapping_row_order, tag_id)
 );

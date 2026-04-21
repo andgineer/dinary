@@ -12,8 +12,9 @@ cd dinary-server
 mkdir -p ~/.config/gspread
 cp /path/to/your-key.json ~/.config/gspread/service_account.json
 
-cp .env.example .env
-# Отредактируйте .env при необходимости (логгинг в таблицу, путь к credentials и т.д.)
+mkdir -p .deploy
+cp .deploy.example/.env .deploy/.env
+# Отредактируйте .deploy/.env при необходимости (логгинг в таблицу, путь к credentials и т.д.)
 docker compose up -d
 ```
 

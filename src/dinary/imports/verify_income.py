@@ -8,7 +8,7 @@ against the DB.
 import logging
 from decimal import Decimal
 
-from dinary.config import settings
+from dinary.config import IMPORT_SOURCES_DOC_HINT, get_import_source, settings
 from dinary.imports.income_import import (
     INCOME_LAYOUTS,
     aggregate_from_sheet,
@@ -21,12 +21,34 @@ _TOLERANCE = Decimal("0.02")
 
 
 def verify_income_equivalence(year: int) -> dict:
-    """Compare DB income rows against the source Google Sheet."""
-    source = duckdb_repo.get_import_source(year)
+    """Compare DB income rows against the source Google Sheet.
+
+    Error messages for the "missing source" and "no income
+    worksheet" branches include a pointer to
+    ``.deploy/import_sources.json`` + the repo-root ``imports/``
+    directory so the operator knows where to register the year
+    without having to grep the code.
+    """
+    source = get_import_source(year)
     if source is None:
-        return {"year": year, "ok": False, "error": "no import source registered"}
+        return {
+            "year": year,
+            "ok": False,
+            "error": (
+                f"no entry for year {year} in .deploy/import_sources.json. "
+                f"{IMPORT_SOURCES_DOC_HINT}"
+            ),
+        }
     if not source.income_worksheet_name:
-        return {"year": year, "ok": False, "error": "no income worksheet registered"}
+        return {
+            "year": year,
+            "ok": False,
+            "error": (
+                f"year {year} in .deploy/import_sources.json has no "
+                "income_worksheet_name; add one to enable income import. "
+                f"{IMPORT_SOURCES_DOC_HINT}"
+            ),
+        }
 
     layout_key = source.income_layout_key
     if layout_key not in INCOME_LAYOUTS:

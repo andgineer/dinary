@@ -166,17 +166,6 @@ class ExistingExpenseRow:
 
 
 @dataclasses.dataclass(slots=True)
-class ImportSourceRow:
-    year: int
-    spreadsheet_id: str
-    worksheet_name: str
-    layout_key: str
-    notes: str | None
-    income_worksheet_name: str = ""
-    income_layout_key: str = ""
-
-
-@dataclasses.dataclass(slots=True)
 class IdNameRow:
     id: int
     name: str
@@ -335,21 +324,6 @@ def get_category_name(con: duckdb.DuckDBPyConnection, category_id: int) -> str |
         [category_id],
     ).fetchone()
     return str(row[0]) if row else None
-
-
-def get_import_source(year: int) -> ImportSourceRow | None:
-    con = get_connection()
-    try:
-        return fetchone_as(
-            ImportSourceRow,
-            con,
-            "SELECT year, spreadsheet_id, worksheet_name, layout_key, notes,"
-            " income_worksheet_name, income_layout_key"
-            " FROM import_sources WHERE year = ?",
-            [year],
-        )
-    finally:
-        con.close()
 
 
 # ---------------------------------------------------------------------------

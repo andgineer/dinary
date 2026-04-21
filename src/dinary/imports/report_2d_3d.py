@@ -21,6 +21,7 @@ from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
 
+from dinary.config import read_import_sources
 from dinary.imports.expense_import import (
     build_resolution_context,
     iter_parsed_sheet_rows,
@@ -157,11 +158,8 @@ def render_comments(comments: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _get_import_years(con) -> list[int]:
-    rows = con.execute(
-        "SELECT year FROM import_sources ORDER BY year",
-    ).fetchall()
-    return [r[0] for r in rows]
+def _get_import_years() -> list[int]:
+    return sorted(r.year for r in read_import_sources())
 
 
 @dataclasses.dataclass(slots=True)
@@ -268,7 +266,7 @@ def collect_detail_rows(
         stats = CollectStats()
     con = duckdb_repo.get_connection()
     try:
-        years_to_process = years if years is not None else _get_import_years(con)
+        years_to_process = years if years is not None else _get_import_years()
         all_details: list[DetailRow] = []
         for year in years_to_process:
             all_details.extend(_collect_year(con, year, stats))

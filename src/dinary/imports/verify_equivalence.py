@@ -21,6 +21,7 @@ import logging
 from collections import defaultdict
 from decimal import Decimal
 
+from dinary.config import IMPORT_SOURCES_DOC_HINT, get_import_source
 from dinary.imports.expense_import import (
     LAYOUTS,
     MONTHS_IN_YEAR,
@@ -42,9 +43,9 @@ _DIFF_TOLERANCE = Decimal("0.01")
 def _read_sheet_aggregates(
     year: int,
 ) -> dict[int, dict[tuple[str, str], dict]]:
-    source = duckdb_repo.get_import_source(year)
+    source = get_import_source(year)
     if source is None:
-        msg = f"import_sources is missing a row for year {year}"
+        msg = f".deploy/import_sources.json has no entry for year {year}. {IMPORT_SOURCES_DOC_HINT}"
         raise ValueError(msg)
     layout = LAYOUTS[source.layout_key]
 

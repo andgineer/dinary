@@ -67,7 +67,7 @@ on reactivate, because the caller's group selection is part of the
 Relationship to the seed path
 -----------------------------
 
-``seed_config.rebuild_config_from_sheets`` (the ``inv import-catalog``
+``imports.seed.rebuild_config_from_sheets`` (the ``inv import-catalog``
 entry point) does **not** flow through this module. It wraps its
 whole catalog rebuild in a single long transaction and calls
 ``seed_config._bump_catalog_version`` once at the end, which
@@ -199,7 +199,7 @@ def hash_catalog_state(con: duckdb.DuckDBPyConnection) -> str:
     """Return a hex sha256 over the canonical catalog state.
 
     Public re-export of ``_hash_state`` so write paths outside this
-    module (notably ``seed_config.rebuild_config_from_sheets``) can
+    module (notably ``imports.seed.rebuild_config_from_sheets``) can
     gate their ``catalog_version`` bump on the same invariant this
     module enforces: version only changes when the observable catalog
     state does. Using the same helper in both paths guarantees a

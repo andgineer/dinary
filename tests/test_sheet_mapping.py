@@ -375,6 +375,112 @@ class TestAtomicSwap:
             con.close()
         assert rows == [(2, "Car")]
 
+    def test_swap_survives_preexisting_tag_rows(self):
+        """Regression: when the previous swap inserted ``sheet_mapping_tags``
+        rows, a follow-up swap must successfully DELETE them and their
+        parent ``sheet_mapping`` rows. DuckDB 1.5 used to mis-validate
+        the FK ``sheet_mapping_tags.mapping_row_order -> sheet_mapping.row_order``
+        inside a single transaction (the validator reflects only
+        committed state, so the freshly-deleted child rows still
+        registered as live references), which silently aborted the
+        reload and left the in-DB mapping stale. The initial schema
+        (migration 0001) deliberately omits that FK to break the
+        deadlock; this test pins the fix by exercising the exact
+        sequence that used to trip it: swap with tags → swap without
+        tags, on the same cursor.
+        """
+        cats, events, tags = _catalog()
+        first = sheet_mapping.parse_rows(
+            [["еда", "*", "собака, аня", "Food", "dog+kid"]],
+            cat_id_by_name=cats,
+            event_id_by_name=events,
+            tag_id_by_name=tags,
+        )
+        second = sheet_mapping.parse_rows(
+            [["машина", "*", "путешествия", "Car", "путешествия"]],
+            cat_id_by_name=cats,
+            event_id_by_name=events,
+            tag_id_by_name=tags,
+        )
+        con = duckdb_repo.get_connection()
+        try:
+            sheet_mapping._atomic_swap(con, first)
+            first_tags = con.execute(
+                "SELECT mapping_row_order, tag_id FROM sheet_mapping_tags"
+                " ORDER BY mapping_row_order, tag_id",
+            ).fetchall()
+            sheet_mapping._atomic_swap(con, second)
+            rows = con.execute(
+                "SELECT category_id, sheet_category, sheet_group FROM sheet_mapping",
+            ).fetchall()
+            new_tags = con.execute(
+                "SELECT mapping_row_order, tag_id FROM sheet_mapping_tags"
+                " ORDER BY mapping_row_order, tag_id",
+            ).fetchall()
+        finally:
+            con.close()
+        assert first_tags == [(1, 1), (1, 2)]
+        assert rows == [(2, "Car", "путешествия")]
+        assert new_tags == [(1, 3)]
+
+
+@allure.epic("SheetMapping")
+@allure.feature("_default_template_rows")
+class TestDefaultTemplateRows:
+    """Pin the minimal-template contract.
+
+    Identity rows (Расходы = category name, Конверт = wildcard) are
+    NOT emitted: they would be indistinguishable from the resolver's
+    no-rule-matched fallback (`resolve_projection` / `logging_projection`
+    already substitute the category's canonical name for a missing
+    ``sheet_category``) and only bloat the `map` tab, making it harder
+    for the operator to see the rules that actually matter.
+    """
+
+    def test_emits_tag_rules_and_envelope_overrides_only(self):
+        category_names = ["еда", "гигиена", "ЗОЖ", "машина", "ghost-inactive-ignored"]
+        active_tag_names = {tag for tag, _ in sheet_mapping._TAG_RULES} | {"extra-unused-tag"}
+        rows = sheet_mapping._default_template_rows(
+            category_names,
+            active_tag_names=active_tag_names,
+        )
+        tag_rule_count = len(sheet_mapping._TAG_RULES)
+        override_rows = [r for r in rows if r[0] != sheet_mapping.WILDCARD]
+        # Overrides are emitted only for categories in the active
+        # catalog; their ``Расходы`` stays wildcard (the resolver
+        # fallback fills in the category name).
+        assert {(r[0], r[4]) for r in override_rows} == {
+            ("гигиена", "гигиена"),
+            ("ЗОЖ", "ЗОЖ"),
+        }
+        for r in override_rows:
+            assert r[3] == sheet_mapping.WILDCARD, (
+                "override rows must keep Расходы=* so the row stays"
+                " distinguishable from the fallback it would otherwise"
+                " duplicate"
+            )
+        assert len(rows) == tag_rule_count + len(override_rows)
+        # No "identity" row (cname, *, *, cname, *) must appear.
+        for r in rows:
+            is_identity = (
+                r[0] != sheet_mapping.WILDCARD and r[0] == r[3] and r[4] == sheet_mapping.WILDCARD
+            )
+            assert not is_identity, f"identity row leaked into template: {r}"
+
+    def test_inactive_envelope_override_is_dropped(self, caplog):
+        import logging
+
+        caplog.set_level(logging.WARNING, logger="dinary.services.sheet_mapping")
+        # ``гигиена`` is an envelope override but absent from the
+        # active catalog — the row must be skipped with a WARN rather
+        # than emitted (the parser would reject it as unknown anyway).
+        rows = sheet_mapping._default_template_rows(
+            ["еда"],
+            active_tag_names={tag for tag, _ in sheet_mapping._TAG_RULES},
+        )
+        assert all(r[0] != "гигиена" for r in rows)
+        assert any("гигиена" in m for m in caplog.messages)
+
 
 def _fake_worksheet(raw_rows_including_header):
     ws = MagicMock()

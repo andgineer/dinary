@@ -30,22 +30,30 @@ app currency (default `"RSD"`); the column is dimensionless at the schema
 level because the app-currency choice is a deployment-wide setting, not a
 per-row attribute.
 
-### `data/dinary.duckdb` — `import_sources`
+### `.deploy/import_sources.json` — operator-local source registry
 
-```sql
-CREATE TABLE import_sources (
-    year                  INTEGER PRIMARY KEY,
-    spreadsheet_id        TEXT NOT NULL,
-    worksheet_name        TEXT NOT NULL DEFAULT '',
-    layout_key            TEXT NOT NULL DEFAULT 'default',
-    notes                 TEXT,
-    income_worksheet_name TEXT DEFAULT '',
-    income_layout_key     TEXT DEFAULT ''
-);
+```json
+[
+  {
+    "year": 2022,
+    "spreadsheet_id": "…",
+    "worksheet_name": "Budget 2022",
+    "layout_key": "rub_fallback",
+    "income_worksheet_name": "Balance",
+    "income_layout_key": "balance_rub_rsd"
+  }
+]
 ```
 
-Same initial migration; the table carries both expense and income source
-metadata per year.
+The per-year source registry used to live as an `import_sources`
+DuckDB table; it now lives as a gitignored JSON file at
+`.deploy/import_sources.json`, loaded by
+`dinary.config.read_import_sources`. The file is OPTIONAL and only
+consumed by `inv import-*` tasks. One record per year carries both
+expense and income source metadata; the ``income_*`` fields are
+absent or empty for years without a structured income worksheet
+(e.g. 2012–2018). See the repo-root `imports/` directory for the
+full schema and workflow documentation.
 
 ## Layouts
 
@@ -66,7 +74,8 @@ The same column contains amounts in both currencies; the month determines which 
 
 ## Year → source mapping
 
-Registered in `import_sources`:
+Registered in `.deploy/import_sources.json` (one entry per year with
+an `income_worksheet_name` populated):
 
 | Year | Worksheet | Layout |
 |------|-----------|--------|
@@ -83,7 +92,7 @@ Years 2012–2018 have no income source — no structured income data in those s
 
 ## Import flow (`import_year_income`)
 
-1. Read `import_sources` for the year → get spreadsheet ID, worksheet, layout key.
+1. Read `.deploy/import_sources.json` via `dinary.config.get_import_source(year)` → spreadsheet ID, worksheet, layout key.
 2. Pre-fetch NBS middle rates for the 1st of each month for every currency
    the layout will need (source currency, EUR for legacy reports, and the
    app currency). Rates are held as `RSD per 1 unit of X` so an identity

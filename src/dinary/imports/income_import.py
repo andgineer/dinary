@@ -15,7 +15,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
-from dinary.config import settings
+from dinary.config import IMPORT_SOURCES_DOC_HINT, ImportSourceRow, get_import_source, settings
 from dinary.imports.expense_import import MONTHS_IN_YEAR
 from dinary.services import duckdb_repo
 from dinary.services.nbs import get_rate
@@ -180,7 +180,7 @@ def _prefetch_monthly_rates(
 
 def aggregate_from_sheet(
     year: int,
-    source: duckdb_repo.ImportSourceRow,
+    source: ImportSourceRow,
     layout: IncomeLayout,
 ) -> tuple[dict[int, Decimal], int]:
     """Read Income/Balance worksheet and return ``{month: app_total}`` and row count.
@@ -248,7 +248,7 @@ def aggregate_from_sheet(
     return dict(monthly_app), rows_aggregated
 
 
-def _resolve_layout(year: int, source: duckdb_repo.ImportSourceRow) -> IncomeLayout:
+def _resolve_layout(year: int, source: ImportSourceRow) -> IncomeLayout:
     layout_key = source.income_layout_key
     if layout_key not in INCOME_LAYOUTS:
         msg = f"Unknown income layout key: {layout_key!r} for year {year}"
@@ -267,13 +267,32 @@ def import_year_income(year: int) -> dict:
     Returns a dict that always carries ``year``, ``status``, and one of:
       * ``status="imported"``: success — ``rows_aggregated``,
         ``months_written``, ``total_app``, ``app_currency`` are populated.
-      * ``status="skipped"``: nothing to import — ``reason`` explains why.
+      * ``status="skipped"``: nothing to import — ``reason`` explains
+        why, including a pointer to ``.deploy/import_sources.json`` +
+        the repo-root ``imports/`` directory for the "no source
+        registered" case so the operator knows where to look without
+        having to trawl the code.
     """
-    source = duckdb_repo.get_import_source(year)
+    source = get_import_source(year)
     if source is None:
-        return {"year": year, "status": "skipped", "reason": "no import source registered"}
+        return {
+            "year": year,
+            "status": "skipped",
+            "reason": (
+                f"no entry for year {year} in .deploy/import_sources.json. "
+                f"{IMPORT_SOURCES_DOC_HINT}"
+            ),
+        }
     if not source.income_worksheet_name:
-        return {"year": year, "status": "skipped", "reason": "no income worksheet registered"}
+        return {
+            "year": year,
+            "status": "skipped",
+            "reason": (
+                f"year {year} in .deploy/import_sources.json has no "
+                "income_worksheet_name; add one to enable income import. "
+                f"{IMPORT_SOURCES_DOC_HINT}"
+            ),
+        }
 
     layout = _resolve_layout(year, source)
     monthly_app, rows_aggregated = aggregate_from_sheet(year, source, layout)

@@ -17,8 +17,9 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
 ```bash
 uv sync
 
-# Create .env from the example (one-time, .env is gitignored)
-cp .env.example .env
+# Create .deploy/.env from the template (one-time, .deploy/ is gitignored)
+mkdir -p .deploy
+cp .deploy.example/.env .deploy/.env
 
 uv run dinary
 ```
@@ -53,7 +54,7 @@ For a list of available scripts run:
 
 ### Deploy to Oracle Cloud
 
-Configure `.env` (see `.env.example`), then:
+Configure `.deploy/.env` (see `.deploy.example/.env`), then:
 
 ```bash
 inv setup    # one-time: install deps, clone, create systemd services, upload creds

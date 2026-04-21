@@ -521,9 +521,13 @@ _TAG_RULES: list[tuple[str, str]] = [
 ]
 
 
-# Per-category envelope overrides. ``WILDCARD`` means "inherit from an
-# earlier tag rule or fall back to blank"; anything else is a literal
-# Конверт value.
+# Per-category envelope overrides. Emitted only for categories whose
+# Конверт is not the resolver's default blank. ``Расходы`` is left as
+# ``WILDCARD`` because the "no rule matched" fallback in both
+# ``resolve_projection`` (sheet_mapping.py) and
+# ``logging_projection`` (duckdb_repo.py) already substitutes the
+# category's canonical name — so a literal ``cname`` here would just
+# be noise duplicating a fallback that is exercised by tests.
 _CATEGORY_ENVELOPES: dict[str, str] = {
     "гигиена": "гигиена",
     "ЗОЖ": "ЗОЖ",
@@ -542,13 +546,23 @@ def _default_template_rows(
        dropped with a WARN — a rename in the catalog without a
        corresponding ``_TAG_RULES`` update would otherwise emit a
        template that trips ``MapTabError`` on first read.
-    2. Per-category rules: Расходы equals the category name, Конверт
-       defaults to ``*`` unless the category has a well-known envelope.
+    2. Per-category envelope overrides, *one row per entry in*
+       ``_CATEGORY_ENVELOPES``: Расходы stays ``*`` (the resolver falls
+       back to ``category.name``), Конверт takes the override value.
+       Pure identity rows (Расходы = category, Конверт = ``*``) are
+       deliberately not emitted — they would be indistinguishable from
+       the resolver's no-rule-matched fallback and only bloat the tab.
 
     ``active_tag_names`` defaults to "skip filtering" so call sites
     that only have category names (tests, older call sites) keep
     working; callers that have the active catalog handy pass it in
     to get the filtered template.
+
+    ``category_names`` is consulted only to filter
+    ``_CATEGORY_ENVELOPES`` against the active catalog: an override
+    for a category that is no longer active is dropped with a WARN
+    rather than emitted (the parser would reject it as an unknown
+    category name anyway).
     """
     rows: list[list[str]] = []
     for tag, envelope in _TAG_RULES:
@@ -562,9 +576,18 @@ def _default_template_rows(
             )
             continue
         rows.append([WILDCARD, WILDCARD, tag, WILDCARD, envelope])
-    for cname in category_names:
-        envelope = _CATEGORY_ENVELOPES.get(cname, WILDCARD)
-        rows.append([cname, WILDCARD, WILDCARD, cname, envelope])
+    active_category_names = set(category_names)
+    for cname, envelope in _CATEGORY_ENVELOPES.items():
+        if cname not in active_category_names:
+            logger.warning(
+                "ensure_default_map_tab: skipping envelope override %r -> %r "
+                "because the category is not in the active catalog; "
+                "update sheet_mapping._CATEGORY_ENVELOPES after renaming categories",
+                cname,
+                envelope,
+            )
+            continue
+        rows.append([cname, WILDCARD, WILDCARD, WILDCARD, envelope])
     return rows
 
 

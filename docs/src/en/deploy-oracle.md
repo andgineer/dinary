@@ -79,28 +79,31 @@ Oracle VMs need a Virtual Cloud Network (VCN) with a public subnet and internet 
 !!! tip "ARM alternative"
     If ARM capacity is available, you can choose `Canonical Ubuntu 22.04 Minimal aarch64` + shape `VM.Standard.A1.Flex` (1 OCPU, 6 GB RAM). More RAM allows running Docker if desired. The rest of the setup is the same.
 
-## 4. Configure .env
+## 4. Configure .deploy/.env
 
-After the VM is created, copy the public IP from the Oracle dashboard and configure `.env` on the laptop:
+All per-instance configuration (everything that is not committed to the repo) lives under the `.deploy/` directory at the repo root. After the VM is created, copy the public IP from the Oracle dashboard and create `.deploy/.env` on the laptop:
 
 ```bash
-cp .env.example .env
+mkdir -p .deploy
+cp .deploy.example/.env .deploy/.env
 ```
 
-Edit `.env`:
+Edit `.deploy/.env`:
 
 ```
 DINARY_DEPLOY_HOST=ubuntu@<PUBLIC_IP>
 # DINARY_TUNNEL=tailscale  # tailscale (default) | cloudflare | none
-# DINARY_IMPORT_SOURCES_JSON=[{"year":2026,"spreadsheet_id":"YOUR_IMPORT_SPREADSHEET_ID","worksheet_name":"Sheet1","layout_key":"default"}]
 # DINARY_SHEET_LOGGING_SPREADSHEET=https://docs.google.com/spreadsheets/d/YOUR_ID/edit
 ```
 
-`inv setup` now syncs your local `.env` to the VM and runs `inv import-config` on
-the server. That means a working `DINARY_IMPORT_SOURCES_JSON` (and Sheets shared
-with the service account) is required on first setup; otherwise the VM bootstrap
-finishes the system packages / systemd work but fails when seeding
-`config.duckdb`.
+Optionally — only if you want to run bootstrap import on the server — also create `.deploy/import_sources.json` from the template:
+
+```bash
+cp .deploy.example/import_sources.json .deploy/import_sources.json
+$EDITOR .deploy/import_sources.json  # fill in real spreadsheet_id values
+```
+
+`inv setup` syncs the local `.deploy/.env` and (when present) `.deploy/import_sources.json` to the VM under `/home/ubuntu/dinary-server/.deploy/`, seeds the runtime taxonomy via `inv bootstrap-catalog`, and — only when `import_sources.json` is present — runs `inv import-config` afterwards. Deployments that don't need bootstrap import work with just `.deploy/.env`; the VM bootstrap completes cleanly without `import_sources.json`. Schema and workflows for imports live in the `imports/` directory at the repo root.
 
 Verify SSH access:
 
@@ -121,10 +124,10 @@ This single command performs everything on the VM via SSH:
 - Installs system packages (python3, git)
 - Installs uv (Python package manager)
 - Clones the repo and installs dependencies
-- Syncs your local `.env` to the VM
+- Syncs your local `.deploy/.env` (and `.deploy/import_sources.json` when present) to the VM
 - Uploads `~/.config/gspread/service_account.json` to the VM
 - Creates and starts a `dinary` systemd service
-- Seeds `config.duckdb` from the configured import-source spreadsheets
+- Seeds the runtime taxonomy into `dinary.duckdb` via `inv bootstrap-catalog`, and runs `inv import-config` only when `.deploy/import_sources.json` exists
 - Sets up the tunnel (Tailscale by default, or Cloudflare — depending on `DINARY_TUNNEL`)
 
 ### Tailscale (default)
@@ -141,7 +144,7 @@ After login, enable Funnel in the [admin console](https://login.tailscale.com/ad
 
 ### Cloudflare
 
-Set `DINARY_TUNNEL=cloudflare` in `.env` before running `inv setup`. During setup, `cloudflared tunnel login` will prompt you to authenticate in the browser. Requires a domain managed by Cloudflare DNS — see [Cloudflare Tunnel & Access](cloudflare-setup.md).
+Set `DINARY_TUNNEL=cloudflare` in `.deploy/.env` before running `inv setup`. During setup, `cloudflared tunnel login` will prompt you to authenticate in the browser. Requires a domain managed by Cloudflare DNS — see [Cloudflare Tunnel & Access](cloudflare-setup.md).
 
 ### No tunnel
 

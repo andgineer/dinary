@@ -8,8 +8,11 @@ the sheet becomes append-only.
 The importer:
 
   * resolves ``(sheet_category, sheet_group, year)`` against
-    ``import_mapping`` (year-scoped first, year=0 fallback) — the catalog
-    is pre-baked by ``seed_config.seed_classification_catalog``;
+    ``import_mapping`` (year-scoped first, year=0 fallback) — the
+    runtime catalog is pre-baked by
+    ``services.seed_config.seed_classification_catalog`` and the
+    per-year ``import_mapping`` rows are rebuilt by
+    ``imports.seed._rebuild_import_mapping``;
   * applies a small set of per-row heuristics that depend on data only
     available at import time (housing keywords, DIY routing, RUB→EUR
     fallback, "kto" beneficiary column);
@@ -32,7 +35,18 @@ import logging
 from datetime import date, datetime
 from decimal import Decimal
 
-from dinary.config import settings
+from dinary.config import (
+    IMPORT_SOURCES_DOC_HINT,
+    get_import_source,
+    read_import_sources,
+    settings,
+)
+from dinary.imports.seed import (
+    VACATION_ENVELOPES,
+    canonical_category_for_source,
+    event_name_for_source,
+    tags_for_source,
+)
 from dinary.services import duckdb_repo, sheet_mapping
 from dinary.services.nbs import get_rate
 from dinary.services.seed_config import (
@@ -41,11 +55,7 @@ from dinary.services.seed_config import (
     RELOCATION_EVENT_NAME,
     RUSSIA_TRIP_EVENT_NAME,
     SYNTHETIC_EVENT_PREFIX,
-    VACATION_ENVELOPES,
     VACATION_EVENT_YEAR_TO,
-    canonical_category_for_source,
-    event_name_for_source,
-    tags_for_source,
 )
 from dinary.services.sheets import (
     HEADER_ROWS,
@@ -1079,22 +1089,16 @@ def iter_parsed_sheet_rows(year: int, *, con=None):
     If *con* is provided, ``_prefetch_monthly_rates`` reuses it
     instead of opening a fresh cursor on the single DB.
     """
-    source = duckdb_repo.get_import_source(year)
+    source = get_import_source(year)
     if source is None:
-        own_con = con is None
-        if own_con:
-            con = duckdb_repo.get_connection()
-        try:
-            available = [
-                r[0]
-                for r in con.execute(
-                    "SELECT year FROM import_sources ORDER BY year",
-                ).fetchall()
-            ]
-        finally:
-            if own_con:
-                con.close()
-        msg = f"year {year} not in import_sources. Available years: {available}"
+        available = [r.year for r in read_import_sources()]
+        if not available:
+            msg = (
+                f"year {year} not in import sources and .deploy/import_sources.json "
+                f"is empty or missing. {IMPORT_SOURCES_DOC_HINT}"
+            )
+        else:
+            msg = f"year {year} not in import sources. Available years: {available}"
         raise ValueError(msg)
     layout = LAYOUTS[source.layout_key]
     monthly_rates = _prefetch_monthly_rates(year, layout, con=con)

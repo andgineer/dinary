@@ -20,7 +20,8 @@ allure-results/
 allure-report/
 dist/
 credentials.json
-.env
+/.env
+/.deploy/
 node_modules/
 data/
 _static/

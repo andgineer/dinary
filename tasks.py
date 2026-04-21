@@ -41,7 +41,7 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/dinary-server
-EnvironmentFile=/home/ubuntu/dinary-server/.env
+EnvironmentFile=/home/ubuntu/dinary-server/.deploy/.env
 ExecStart=/home/ubuntu/.local/bin/uv run uvicorn dinary.main:app --host {host} --port 8000
 Restart=always
 RestartSec=5
@@ -68,9 +68,70 @@ WantedBy=multi-user.target
 
 VALID_TUNNELS = ("tailscale", "cloudflare", "none")
 
+LOCAL_ENV_PATH = ".deploy/.env"
+LOCAL_ENV_EXAMPLE_PATH = ".deploy.example/.env"
+LOCAL_IMPORT_SOURCES_PATH = ".deploy/import_sources.json"
+REMOTE_DEPLOY_DIR = "/home/ubuntu/dinary-server/.deploy"
+REMOTE_ENV_PATH = f"{REMOTE_DEPLOY_DIR}/.env"
+REMOTE_LEGACY_ENV_PATH = "/home/ubuntu/dinary-server/.env"
+REMOTE_IMPORT_SOURCES_PATH = f"{REMOTE_DEPLOY_DIR}/import_sources.json"
+
 
 def _env():
-    return dotenv_values(".env")
+    """Read runtime env vars from ``.deploy/.env`` (the post-refactor canonical path).
+
+    The legacy top-level ``.env`` is deliberately no longer consulted:
+    it was removed in the same change that introduced
+    ``.deploy/.env``, and keeping a silent fallback would make
+    mis-scoped env vars hard to spot. ``.env.example`` has also been
+    deleted in favour of ``.deploy.example/.env``.
+
+    Sanity checks beyond "file exists" — the file must also be
+    non-empty and not byte-equal to ``.deploy.example/.env``. Both
+    failure modes are operator mistakes that would otherwise propagate
+    silently: an empty ``.deploy/.env`` produces "No DINARY_* settings
+    found" deep inside ``_sync_remote_env``, and an unedited copy of
+    the template ships placeholder values (``ubuntu@<PUBLIC_IP>``) to
+    prod, which then fail at SSH time with an opaque DNS error. Fail
+    fast here with an actionable message instead.
+    """
+    local_path = Path(LOCAL_ENV_PATH)
+    if not local_path.exists():
+        print(
+            f"Missing {LOCAL_ENV_PATH}. Copy {LOCAL_ENV_EXAMPLE_PATH} to {LOCAL_ENV_PATH} "
+            "and fill in DINARY_DEPLOY_HOST / DINARY_TUNNEL / any sheet-logging "
+            "settings you need."
+        )
+        sys.exit(1)
+    local_bytes = local_path.read_bytes()
+    if not local_bytes.strip():
+        print(
+            f"{LOCAL_ENV_PATH} is empty. Fill in DINARY_DEPLOY_HOST / DINARY_TUNNEL / "
+            "any sheet-logging settings you need (see "
+            f"{LOCAL_ENV_EXAMPLE_PATH} for the template)."
+        )
+        sys.exit(1)
+    example_path = Path(LOCAL_ENV_EXAMPLE_PATH)
+    if example_path.exists() and local_bytes == example_path.read_bytes():
+        print(
+            f"{LOCAL_ENV_PATH} is byte-equal to {LOCAL_ENV_EXAMPLE_PATH}; the "
+            "template still has placeholder values (e.g. ubuntu@<PUBLIC_IP>) "
+            "that would ship to prod and break the deploy. Edit "
+            f"{LOCAL_ENV_PATH} with your real values before continuing."
+        )
+        sys.exit(1)
+    return dotenv_values(LOCAL_ENV_PATH)
+
+
+def _bind_host(tunnel: str) -> str:
+    """Return the ``--host`` value ``uvicorn`` should bind to.
+
+    Tunnel ``none`` exposes the service directly on the public
+    interface; ``tailscale`` / ``cloudflare`` front it so we stay on
+    loopback. Shared by ``setup`` and ``deploy`` so both paths render
+    the same ``DINARY_SERVICE`` unit file.
+    """
+    return "0.0.0.0" if tunnel == "none" else "127.0.0.1"  # noqa: S104
 
 
 def _host():
@@ -103,10 +164,25 @@ def _write_remote_file(c, path, content):
     c.run(f"ssh {_host()} 'echo {b64} | base64 -d | sudo tee {path} > /dev/null'")
 
 
-def _create_service(c, name, content):
+def _render_service(c, name, content):
+    """Install / refresh a systemd unit file without restarting the service.
+
+    Used by ``deploy`` so the unit-file content always reflects
+    ``DINARY_SERVICE`` / ``CLOUDFLARED_SERVICE`` as they live in this
+    repo (``git pull`` never touches ``/etc/systemd/system/*``), while
+    the restart stays gated by the existing ``--no-restart`` flag
+    further down the pipeline. ``daemon-reload`` here is what lets the
+    follow-up ``systemctl restart`` pick up the new
+    ``EnvironmentFile=`` / ``ExecStart=`` lines.
+    """
     _write_remote_file(c, f"/etc/systemd/system/{name}.service", content)
     _ssh_sudo(c, "systemctl daemon-reload")
     _ssh_sudo(c, f"systemctl enable {name}")
+
+
+def _create_service(c, name, content):
+    """Render a systemd unit and restart it (used during ``inv setup``)."""
+    _render_service(c, name, content)
     _ssh_sudo(c, f"systemctl restart {name}")
 
 
@@ -132,12 +208,11 @@ def _systemd_quote(value: str | None) -> str:
 
 
 def _sync_remote_env(c):
-    """Sync all DINARY_* settings from local .env to the server (idempotent).
+    """Sync all DINARY_* settings from local .deploy/.env to the server (idempotent).
 
     Skips deploy-only keys (DINARY_DEPLOY_HOST, DINARY_TUNNEL) that are
     only meaningful on the operator's machine. Values are quoted using
-    systemd's ``EnvironmentFile=`` syntax so JSON blobs (e.g.
-    ``DINARY_IMPORT_SOURCES_JSON``) and base64-encoded credentials
+    systemd's ``EnvironmentFile=`` syntax so base64-encoded credentials
     survive the transfer intact. The remote file is also chowned to
     ``ubuntu`` so the systemd unit (``User=ubuntu``) can read it.
     """
@@ -149,11 +224,32 @@ def _sync_remote_env(c):
         if k.startswith("DINARY_") and k not in skip
     ]
     if not lines:
-        print("No DINARY_* settings found in local .env")
+        print(f"No DINARY_* settings found in local {LOCAL_ENV_PATH}")
         sys.exit(1)
-    remote_path = "/home/ubuntu/dinary-server/.env"
-    _write_remote_file(c, remote_path, "".join(lines))
-    _ssh_sudo(c, f"chown ubuntu:ubuntu {remote_path} && chmod 600 {remote_path}")
+    _ssh(c, f"mkdir -p {REMOTE_DEPLOY_DIR}")
+    _write_remote_file(c, REMOTE_ENV_PATH, "".join(lines))
+    _ssh_sudo(c, f"chown ubuntu:ubuntu {REMOTE_ENV_PATH} && chmod 600 {REMOTE_ENV_PATH}")
+
+
+def _sync_remote_import_sources(c):
+    """Upload optional ``.deploy/import_sources.json`` to the server.
+
+    Skipped silently when the local file is absent — non-import
+    deployments have no source list. Present uploads overwrite the
+    remote copy so operator edits always round-trip through the
+    repo-local file (single source of truth).
+    """
+    if not Path(LOCAL_IMPORT_SOURCES_PATH).exists():
+        print(f"No {LOCAL_IMPORT_SOURCES_PATH} locally; skipping import-sources sync.")
+        return
+    _ssh(c, f"mkdir -p {REMOTE_DEPLOY_DIR}")
+    content = Path(LOCAL_IMPORT_SOURCES_PATH).read_text(encoding="utf-8")
+    _write_remote_file(c, REMOTE_IMPORT_SOURCES_PATH, content)
+    _ssh_sudo(
+        c,
+        f"chown ubuntu:ubuntu {REMOTE_IMPORT_SOURCES_PATH} "
+        f"&& chmod 600 {REMOTE_IMPORT_SOURCES_PATH}",
+    )
 
 
 def _setup_tailscale(c):
@@ -284,8 +380,11 @@ def setup(c):
     print("=== Ensuring data/ directory ===")
     _ssh(c, "mkdir -p ~/dinary-server/data")
 
-    print("=== Syncing .env to server ===")
+    print("=== Syncing .deploy/.env to server ===")
     _sync_remote_env(c)
+
+    print("=== Syncing .deploy/import_sources.json to server (if present) ===")
+    _sync_remote_import_sources(c)
 
     print("=== Uploading credentials ===")
     _ssh(c, "mkdir -p ~/.config/gspread")
@@ -293,13 +392,22 @@ def setup(c):
         f"scp ~/.config/gspread/service_account.json {host}:~/.config/gspread/service_account.json"
     )
 
-    bind_host = "0.0.0.0" if tunnel == "none" else "127.0.0.1"
+    bind_host = _bind_host(tunnel)
     print(f"=== Creating dinary service (bind {bind_host}) ===")
     service = DINARY_SERVICE.format(host=bind_host)
     _create_service(c, "dinary", service)
 
-    print("=== Importing catalog seed data from Google Sheets ===")
-    import_config(c)
+    print("=== Bootstrapping runtime catalog (no Google Sheets required) ===")
+    bootstrap_catalog(c)
+
+    if Path(LOCAL_IMPORT_SOURCES_PATH).exists():
+        print("=== Importing catalog from Google Sheets (import_sources.json present) ===")
+        import_config(c)
+    else:
+        print(
+            "=== Skipping import-config (no .deploy/import_sources.json locally). ===\n"
+            "=== Runtime catalog is populated; /api/expenses will work. ==="
+        )
 
     if tunnel == "tailscale":
         _setup_tailscale(c)
@@ -322,12 +430,31 @@ def deploy(c, ref="", no_restart=False):
     `inv stop` followed by `rm -f ~/dinary-server/data/*.duckdb` +
     `inv migrate` + `inv import-catalog --yes` which rebuilds the single DB
     anyway.
+
+    Pipeline (ordering matters — see ``.plans/architecture.md`` and the
+    original inline-fk-drop-and-reset-db plan for the constraints):
+
+    * ``_sync_remote_env`` writes to
+      ``~/dinary-server/.deploy/.env`` via ``sudo tee``, which does
+      not ``mkdir -p`` — ``_sync_remote_env`` itself now runs
+      ``mkdir -p`` first.
+    * We re-render ``/etc/systemd/system/dinary.service`` every
+      deploy so ``EnvironmentFile=`` always matches the canonical
+      ``.deploy/.env`` path. ``git pull`` never touches the unit
+      file, so without this the old unit (pointing at the legacy
+      top-level ``.env``) would survive the deploy and the
+      post-deploy ``systemctl restart`` would start dinary with an
+      unresolved ``EnvironmentFile``.
+    * Legacy ``~/dinary-server/.env`` is removed *after* the unit
+      has been rewritten so systemd is never left with a dangling
+      ``EnvironmentFile`` pointer.
     """
     print("=== Pre-deploy backup ===")
     ts = _dt.now().strftime("%Y%m%d-%H%M%S")
     backup_dir = f"backups/pre-deploy-{ts}"
     os.makedirs(backup_dir, exist_ok=True)
     host = _host()
+    tunnel = _tunnel()
     c.run(f"scp -r {host}:~/dinary-server/data/ {backup_dir}/", warn=True)
 
     print("=== Deploying dinary-server ===")
@@ -346,8 +473,18 @@ def deploy(c, ref="", no_restart=False):
     print("=== Ensuring data/ directory ===")
     _ssh(c, "mkdir -p ~/dinary-server/data")
 
-    print("=== Syncing .env to server ===")
+    print("=== Syncing .deploy/.env to server ===")
     _sync_remote_env(c)
+
+    print("=== Syncing .deploy/import_sources.json to server (if present) ===")
+    _sync_remote_import_sources(c)
+
+    bind_host = _bind_host(tunnel)
+    print(f"=== Re-rendering dinary systemd unit (bind {bind_host}) ===")
+    _render_service(c, "dinary", DINARY_SERVICE.format(host=bind_host))
+
+    print("=== Cleaning up legacy ~/dinary-server/.env (if present) ===")
+    _ssh(c, f"rm -f {REMOTE_LEGACY_ENV_PATH}")
 
     if not no_restart:
         print("=== Applying schema migrations ===")
@@ -357,6 +494,8 @@ def deploy(c, ref="", no_restart=False):
             "uv run python -c 'from dinary.services import duckdb_repo; duckdb_repo.init_db(); "
             'print("Migrated data/dinary.duckdb")\'',
         )
+        print("=== Bootstrapping runtime catalog (idempotent) ===")
+        bootstrap_catalog(c)
 
     print("=== Building _static/ with version ===")
     _ssh(c, "cd ~/dinary-server && source ~/.local/bin/env && uv run inv build-static")
@@ -422,13 +561,40 @@ def ssh(c):
     c.run(f"ssh {_host()}", pty=True)
 
 
-@task(name="import-config")
-def import_config(c):
-    """Seed the catalog (non-destructive) from the configured source sheets."""
+@task(name="bootstrap-catalog")
+def bootstrap_catalog(c):
+    """Populate runtime catalog (groups/categories/tags/events) from hardcoded taxonomy.
+
+    Non-destructive and idempotent. Required for every deployment —
+    non-import users rely on this as their only catalog-population
+    path, and the import flow (``inv import-catalog``) implicitly
+    re-runs the same logic as its first step.
+
+    Does NOT touch Google Sheets, ``import_mapping``, or
+    ``sheet_mapping``. Does NOT bump ``catalog_version`` unless the
+    hardcoded taxonomy actually changed from what's already on disk.
+    """
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.seed_config import seed_from_sheet; "
+        "from dinary.services.seed_config import bootstrap_catalog; "
+        "import json; print(json.dumps(bootstrap_catalog()))'",
+    )
+
+
+@task(name="import-config")
+def import_config(c):
+    """Seed the catalog from the configured source sheets (non-destructive).
+
+    Requires ``.deploy/import_sources.json`` to exist locally AND on
+    the server (uploaded via ``_sync_remote_import_sources`` during
+    ``inv deploy`` / ``inv setup``). Fails loud with a pointer to the
+    repo-root ``imports/`` directory when the file is missing or empty.
+    """
+    _ssh(
+        c,
+        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "from dinary.imports.seed import seed_from_sheet; "
         "import json; print(json.dumps(seed_from_sheet()))'",
     )
 
@@ -520,7 +686,7 @@ def import_catalog(c, yes=False):
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.seed_config import rebuild_config_from_sheets; "
+        "from dinary.imports.seed import rebuild_config_from_sheets; "
         "import json; print(json.dumps(rebuild_config_from_sheets()))'",
     )
 
@@ -552,33 +718,29 @@ def import_budget(c, year="", yes=False):
 
 @task(name="import-budget-all")
 def import_budget_all(c, yes=False):
-    """DESTRUCTIVE: Re-import every year registered in ``import_sources``.
+    """DESTRUCTIVE: Re-import every year registered in ``.deploy/import_sources.json``.
 
-    Iterates the years registered in ``data/dinary.duckdb.import_sources``
-    (in ascending order) and re-imports each one via ``import_year``, which
-    deletes just that year's expense rows before re-importing. Intended for
-    use inside the coordinated reset flow after ``import-catalog --yes``.
+    Iterates positive-year entries from the server-side
+    ``.deploy/import_sources.json`` (in ascending order) and
+    re-imports each one via ``import_year``, which deletes just that
+    year's expense rows before re-importing. Intended for use inside
+    the coordinated reset flow after ``import-catalog --yes``.
     """
     if not _require_yes(
         yes,
         "WARNING: import-budget-all will DELETE every expense row for every "
-        "year registered in import_sources and re-import each year from the "
-        "Google Sheet. Other ledger data (income, sheet logging queue) is "
-        "preserved; within each affected year nothing is preserved.",
+        "year registered in .deploy/import_sources.json and re-import each year "
+        "from the Google Sheet. Other ledger data (income, sheet logging queue) "
+        "is preserved; within each affected year nothing is preserved.",
     ):
         return
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services import duckdb_repo; "
+        "from dinary.config import read_import_sources; "
         "from dinary.imports.expense_import import import_year; "
         "import json; "
-        "duckdb_repo.init_db(); "
-        "con = duckdb_repo.get_connection(); "
-        "years = [r[0] for r in con.execute("
-        "\"SELECT year FROM import_sources WHERE year > 0 ORDER BY year\""
-        ").fetchall()]; "
-        "con.close(); "
+        "years = sorted(r.year for r in read_import_sources() if r.year > 0); "
         "[print(json.dumps({\"year\": y, **import_year(y)})) for y in years]'",
     )
 
@@ -604,7 +766,7 @@ def verify_bootstrap_import(c, year=""):
 
 @task(name="verify-bootstrap-import-all")
 def verify_bootstrap_import_all(c):
-    """Run verify-bootstrap-import for every year registered in import_sources.
+    """Run verify-bootstrap-import for every positive-year entry in ``.deploy/import_sources.json``.
 
     Used by the coordinated reset flow so verification covers every rebuilt
     year, not just the current calendar year. Exits non-zero if any single
@@ -613,15 +775,10 @@ def verify_bootstrap_import_all(c):
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services import duckdb_repo; "
+        "from dinary.config import read_import_sources; "
         "from dinary.imports.verify_equivalence import verify_bootstrap_import; "
         "import json, sys; "
-        "duckdb_repo.init_db(); "
-        "con = duckdb_repo.get_connection(); "
-        "years = [r[0] for r in con.execute("
-        "\"SELECT year FROM import_sources WHERE year > 0 ORDER BY year\""
-        ").fetchall()]; "
-        "con.close(); "
+        "years = sorted(r.year for r in read_import_sources() if r.year > 0); "
         "results = [{**verify_bootstrap_import(y), \"year\": y} for y in years]; "
         "print(json.dumps(results, indent=2, ensure_ascii=False)); "
         "sys.exit(0 if all(r[\"ok\"] for r in results) else 1)'",
@@ -658,15 +815,13 @@ def import_income_all(c, yes=False):
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services import duckdb_repo; "
+        "from dinary.config import read_import_sources; "
         "from dinary.imports.income_import import import_year_income; "
         "import json; "
-        "duckdb_repo.init_db(); "
-        "con = duckdb_repo.get_connection(); "
-        "years = [r[0] for r in con.execute("
-        "\"SELECT year FROM import_sources WHERE income_worksheet_name != \\x27\\x27 ORDER BY year\""
-        ").fetchall()]; "
-        "con.close(); "
+        "years = sorted("
+        "r.year for r in read_import_sources() "
+        "if r.year > 0 and r.income_worksheet_name"
+        "); "
         "[print(json.dumps(import_year_income(y))) for y in years]'",
     )
 
@@ -700,15 +855,13 @@ def verify_income_equivalence_all(c):
     _ssh(
         c,
         "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services import duckdb_repo; "
+        "from dinary.config import read_import_sources; "
         "from dinary.imports.verify_income import verify_income_equivalence; "
         "import json, sys; "
-        "duckdb_repo.init_db(); "
-        "con = duckdb_repo.get_connection(); "
-        "years = [r[0] for r in con.execute("
-        "\"SELECT year FROM import_sources WHERE income_worksheet_name != \\x27\\x27 ORDER BY year\""
-        ").fetchall()]; "
-        "con.close(); "
+        "years = sorted("
+        "r.year for r in read_import_sources() "
+        "if r.year > 0 and r.income_worksheet_name"
+        "); "
         "results = [{**verify_income_equivalence(y), \"year\": y} for y in years]; "
         "print(json.dumps(results, indent=2, ensure_ascii=False)); "
         "sys.exit(0 if all(r[\"ok\"] for r in results) else 1)'",
