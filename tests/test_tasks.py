@@ -22,7 +22,7 @@ _tasks = importlib.util.module_from_spec(_spec)
 sys.modules["_dinary_tasks"] = _tasks
 _spec.loader.exec_module(_tasks)
 _systemd_quote = _tasks._systemd_quote
-_remote_report_cmd = _tasks._remote_report_cmd
+_remote_snapshot_cmd = _tasks._remote_snapshot_cmd
 
 
 @allure.epic("Deploy")
@@ -63,48 +63,64 @@ class TestSystemdQuote:
 
 @allure.epic("Deploy")
 @allure.feature("Remote report snapshot wrapper")
-class TestRemoteReportCmd:
+class TestRemoteSnapshotCmd:
     """``inv report-income --remote`` / ``inv report-expenses --remote``
-    cannot open the primary prod DuckDB file directly — the running
-    uvicorn worker holds an exclusive single-writer lock on it
-    (DuckDB 1.x). ``_remote_report_cmd`` wraps the report invocation
-    in a snapshot-copy prologue so the read-only report runs
-    against an isolated ``/tmp`` copy instead. These tests pin the
-    exact shape of the emitted command so a future refactor cannot
-    silently drop the snapshot step and revive the
+    / ``inv import-report-2d-3d --remote`` cannot open the primary
+    prod DuckDB file directly — the running uvicorn worker holds an
+    exclusive single-writer lock on it (DuckDB 1.x).
+    ``_remote_snapshot_cmd`` wraps the report invocation in a
+    snapshot-copy prologue so the read-only module runs against an
+    isolated ``/tmp`` copy instead. These tests pin the exact shape
+    of the emitted command so a future refactor cannot silently drop
+    the snapshot step and revive the
     ``IOException: Could not set lock`` failure mode reported by
     the operator.
     """
 
     def test_copies_primary_db_to_tmp_snapshot(self):
-        cmd = _remote_report_cmd("income", [])
+        cmd = _remote_snapshot_cmd("dinary.reports.income", [])
         assert "cp /home/ubuntu/dinary-server/data/dinary.duckdb ${SNAP}" in cmd
 
     def test_copies_wal_sidecar_when_present(self):
         """The WAL sidecar may not exist (fresh install, post-checkpoint),
         so the copy must be tolerant of a missing file — otherwise
         ``set -e`` would abort on every clean install."""
-        cmd = _remote_report_cmd("income", [])
+        cmd = _remote_snapshot_cmd("dinary.reports.income", [])
         assert "cp /home/ubuntu/dinary-server/data/dinary.duckdb.wal" in cmd
         assert "2>/dev/null || true" in cmd
 
     def test_points_data_path_at_snapshot_not_primary_db(self):
-        cmd = _remote_report_cmd("expenses", ["--csv"])
+        cmd = _remote_snapshot_cmd("dinary.reports.expenses", ["--csv"])
         assert "DINARY_DATA_PATH=${SNAP}" in cmd
         # Belt-and-suspenders: the emitted command must NEVER point the
         # report module at the live, locked primary file.
         assert "DINARY_DATA_PATH=/home/ubuntu/dinary-server/data/dinary.duckdb " not in cmd
 
     def test_passes_flags_through_to_module(self):
-        cmd = _remote_report_cmd("expenses", ["--year", "2026", "--csv"])
+        cmd = _remote_snapshot_cmd(
+            "dinary.reports.expenses",
+            ["--year", "2026", "--csv"],
+        )
         assert "uv run python -m dinary.reports.expenses --year 2026 --csv" in cmd
 
     def test_flagless_invocation_has_no_trailing_space(self):
-        cmd = _remote_report_cmd("income", [])
+        cmd = _remote_snapshot_cmd("dinary.reports.income", [])
         assert "uv run python -m dinary.reports.income" in cmd
         # Avoid a trailing space that would render as an empty argv
         # token in the remote shell.
         assert "dinary.reports.income " not in cmd or "dinary.reports.income --" in cmd
+
+    def test_accepts_non_reports_module_paths(self):
+        """The same wrapper serves ``inv import-report-2d-3d --remote``
+        (which lives under ``dinary.imports.*``, not ``dinary.reports.*``).
+        Regression pin: the earlier ``_remote_report_cmd`` hardcoded
+        the ``dinary.reports.`` prefix and could not be reused for the
+        2D→3D diagnostic."""
+        cmd = _remote_snapshot_cmd(
+            "dinary.imports.report_2d_3d",
+            ["--json"],
+        )
+        assert "uv run python -m dinary.imports.report_2d_3d --json" in cmd
 
     def test_snapshot_is_pid_scoped_for_parallel_runs(self):
         """Two operators running ``inv report-income --remote`` at the
@@ -112,7 +128,7 @@ class TestRemoteReportCmd:
         expands to the remote shell PID and is how we keep them
         isolated without coordinating via a lock file.
         """
-        cmd = _remote_report_cmd("income", [])
+        cmd = _remote_snapshot_cmd("dinary.reports.income", [])
         assert "$$" in cmd
         assert "/tmp/dinary-report-snapshot-$$" in cmd
 
@@ -122,7 +138,7 @@ class TestRemoteReportCmd:
         is registered before the ``cp`` so even an interrupt between
         registration and completion cannot orphan the file.
         """
-        cmd = _remote_report_cmd("income", [])
+        cmd = _remote_snapshot_cmd("dinary.reports.income", [])
         assert 'trap "rm -f ${SNAP} ${SNAP}.wal" EXIT' in cmd
         # trap must come BEFORE the first cp so an interrupt between
         # the copy and the trap-registration cannot leak.
@@ -136,7 +152,7 @@ class TestRemoteReportCmd:
         ``DINARY_DATA_PATH=${SNAP}`` would run against a missing /
         empty file and emit a confusing "DB not found" downstream.
         """
-        cmd = _remote_report_cmd("income", [])
+        cmd = _remote_snapshot_cmd("dinary.reports.income", [])
         assert cmd.startswith("set -e; ")
 
 
@@ -436,6 +452,29 @@ class TestImportReport2d3dTransport:
         out = capsys.readouterr().out
         assert "\ufffd" not in out
         assert "путешествия" in out
+
+    def test_remote_uses_snapshot_wrapper_not_live_db(self, _spy_transports):
+        """The server process holds an exclusive DuckDB lock on
+        ``data/dinary.duckdb``; a read-only report that opens the same
+        path fails with ``IOException: Could not set lock``. The
+        ``import-report-2d-3d --remote`` flow must go through the
+        same ``/tmp`` snapshot wrapper as ``inv report-*``.
+        """
+        _spy_transports.ssh_bytes_payload = self._sample_payload()
+        c = MagicMock()
+        self._run(c, remote=True)
+
+        cmd = _spy_transports.ssh_bytes_cmd or ""
+        # Snapshot wrapper invariants: must copy the live DB aside,
+        # run the report against the snapshot, and set up the trap
+        # before the copy.
+        assert "SNAP=/tmp/dinary-report-snapshot-$$" in cmd
+        assert "cp /home/ubuntu/dinary-server/data/dinary.duckdb ${SNAP}" in cmd
+        assert "DINARY_DATA_PATH=${SNAP}" in cmd
+        assert 'trap "rm -f ${SNAP} ${SNAP}.wal" EXIT' in cmd
+        assert cmd.index("trap") < cmd.index(
+            "cp /home/ubuntu/dinary-server/data/dinary.duckdb ${SNAP}"
+        )
 
     def test_remote_csv_renders_locally(self, _spy_transports, capsys):
         _spy_transports.ssh_bytes_payload = self._sample_payload()

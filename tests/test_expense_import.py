@@ -116,7 +116,7 @@ def _mock_prefetch_rates(_year, _layout, *, con=None):
     one_to_one = {
         "rate_src": Decimal("1"),
         "rate_eur": Decimal("1"),
-        "rate_app": Decimal("1"),
+        "rate_acc": Decimal("1"),
     }
     return {m: one_to_one for m in range(1, 13)}
 

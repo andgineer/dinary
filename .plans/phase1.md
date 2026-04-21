@@ -7,10 +7,13 @@
 > `budget_YYYY.duckdb`) was collapsed into a single `data/dinary.duckdb`,
 > the global `expense_id_registry` table was removed and idempotency
 > moved to a `client_expense_id` UUID with a plain `UNIQUE` constraint,
-> `expenses.amount` now stores the configured app currency instead of
-> EUR, `POST /api/expenses` no longer echoes the server-side expense id,
+> `POST /api/expenses` no longer echoes the server-side expense id,
 > and `inv import-catalog` became FK-safe (toggles `is_active` instead
-> of wiping catalog rows). For the current architecture see
+> of wiping catalog rows). A subsequent refinement split the currency
+> model into `settings.app_currency` (PWA display / input, default
+> `RSD`) and `settings.accounting_currency` (DB storage + reports,
+> default `EUR`); `expenses.amount` and `income.amount` are now both
+> in the accounting currency. For the current architecture see
 > [`.plans/architecture.md`](architecture.md). Treat everything below as
 > historical reference.
 >

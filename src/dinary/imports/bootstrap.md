@@ -118,9 +118,9 @@ inv import-income-all --yes
 
 Only years whose entry has `income_worksheet_name` are imported;
 years without structured income data (e.g. 2012–2018) are skipped.
-Income amounts are stored in the configured app currency
-(`DINARY_APP_CURRENCY`, default `RSD`) using NBS middle rates for
-the 1st of each month. See [`.plans/income.md`](../../../.plans/income.md)
+Income amounts are stored in the configured accounting currency
+(`DINARY_ACCOUNTING_CURRENCY`, default `EUR`) using NBS middle rates
+for the 1st of each month. See [`.plans/income.md`](../../../.plans/income.md)
 for the full layout reference (`balance_rub`, `balance_rub_rsd`,
 `balance_rsd`, `income_rsd`) and the mid-2022 RUB→RSD transition.
 
@@ -139,8 +139,8 @@ inv report-2d-3d
   `(category_id, event_id, tag set)` for every non-skipped legacy
   row.
 - `verify-income-equivalence` re-aggregates the income worksheet in
-  the app currency and compares month-by-month to DuckDB's `income`
-  table with a ±0.02 tolerance.
+  the accounting currency and compares month-by-month to DuckDB's
+  `income` table with a ±0.02 tolerance.
 - `report-2d-3d` renders a cross-year grid of every legacy
   `(sheet_category, sheet_group)` pair against its resolved 3D
   tuple — useful for spotting mapping gaps before a production

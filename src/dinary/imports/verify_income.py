@@ -1,8 +1,9 @@
 """Verify imported income against Google Sheets source data.
 
-Re-reads the Income/Balance worksheet, aggregates app-currency totals
-per month using the same layout logic as ``import_income``, and compares
-against the DB.
+Re-reads the Income/Balance worksheet, aggregates accounting-currency
+(``settings.accounting_currency``, EUR by default) totals per month
+using the same layout logic as ``import_income``, and compares against
+the DB.
 """
 
 import logging
@@ -75,9 +76,9 @@ def verify_income_equivalence(year: int) -> dict:
     return {
         "year": year,
         "ok": len(month_diffs) == 0,
-        "app_currency": settings.app_currency,
-        "total_sheet_app": float(total_sheet),
-        "total_db_app": float(total_db),
+        "accounting_currency": settings.accounting_currency,
+        "total_sheet_acc": float(total_sheet),
+        "total_db_acc": float(total_db),
         "months_in_sheet": len(sheet_monthly),
         "months_in_db": len(db_monthly),
         "month_diffs": month_diffs,
@@ -98,8 +99,8 @@ def _compare_months(
             diffs.append(
                 {
                     "month": month,
-                    "sheet_app": float(s),
-                    "db_app": float(d),
+                    "sheet_acc": float(s),
+                    "db_acc": float(d),
                     "diff": float(diff),
                 },
             )

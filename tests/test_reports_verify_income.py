@@ -13,9 +13,9 @@ def _passing_result(year: int = 2024, *, total: float = 1200.0) -> dict:
     return {
         "year": year,
         "ok": True,
-        "app_currency": "RSD",
-        "total_sheet_app": total,
-        "total_db_app": total,
+        "accounting_currency": "EUR",
+        "total_sheet_acc": total,
+        "total_db_acc": total,
         "months_in_sheet": 12,
         "months_in_db": 12,
         "month_diffs": [],
@@ -26,13 +26,13 @@ def _failing_result(year: int = 2024) -> dict:
     return {
         "year": year,
         "ok": False,
-        "app_currency": "RSD",
-        "total_sheet_app": 1200.0,
-        "total_db_app": 1180.0,
+        "accounting_currency": "EUR",
+        "total_sheet_acc": 1200.0,
+        "total_db_acc": 1180.0,
         "months_in_sheet": 12,
         "months_in_db": 12,
         "month_diffs": [
-            {"month": 6, "sheet_app": 100.0, "db_app": 80.0, "diff": 20.0},
+            {"month": 6, "sheet_acc": 100.0, "db_acc": 80.0, "diff": 20.0},
         ],
     }
 
@@ -51,7 +51,7 @@ class TestRenderSingle:
         out = buf.getvalue()
         assert "year 2024" in out
         assert "OK" in out
-        assert "RSD" in out
+        assert "EUR" in out
         # month_diffs is empty — table should not render at all.
         assert "Month diffs" not in out
 

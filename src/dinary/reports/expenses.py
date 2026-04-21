@@ -315,7 +315,7 @@ def render(  # noqa: PLR0913 — all args are cosmetic format knobs dispatched i
     else:
         render_rich(
             rows,
-            currency=settings.app_currency,
+            currency=settings.accounting_currency,
             title_suffix=_title_suffix(year, month),
             stream=out,
         )

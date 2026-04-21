@@ -46,9 +46,9 @@ def _render_month_diffs(console: Console, result: dict) -> None:
     """Render the per-month diff table if ``month_diffs`` is non-empty.
 
     The verifier compares totals aggregated per month, so each diff
-    row has (month, sheet_app, db_app, diff). Row count is added to
-    the title so the operator sees "2 row(s)" at a glance without
-    counting lines.
+    row has (month, sheet_acc, db_acc, diff) in the accounting
+    currency. Row count is added to the title so the operator sees
+    "2 row(s)" at a glance without counting lines.
     """
     rows = result.get("month_diffs") or []
     if not rows:
@@ -64,8 +64,8 @@ def _render_month_diffs(console: Console, result: dict) -> None:
     for row in rows:
         table.add_row(
             str(row.get("month", "")),
-            _fmt_amount(row.get("sheet_app")),
-            _fmt_amount(row.get("db_app")),
+            _fmt_amount(row.get("sheet_acc")),
+            _fmt_amount(row.get("db_acc")),
             _fmt_amount(row.get("diff")),
         )
     console.print(table)
@@ -109,13 +109,13 @@ def render_single(
         )
         return
 
-    sheet_total = result.get("total_sheet_app")
-    db_total = result.get("total_db_app")
+    sheet_total = result.get("total_sheet_acc")
+    db_total = result.get("total_db_acc")
     diff = None
     if isinstance(sheet_total, int | float) and isinstance(db_total, int | float):
         diff = abs(sheet_total - db_total)
 
-    currency = result.get("app_currency", "")
+    currency = result.get("accounting_currency", "")
     summary_lines = [
         f"Status:           {_status_markup(ok)}",
         f"Currency:         {currency}",
@@ -177,14 +177,14 @@ def render_batch(
                 "[bold red]ERROR[/bold red]",
             )
             continue
-        sheet_total = r.get("total_sheet_app")
-        db_total = r.get("total_db_app")
+        sheet_total = r.get("total_sheet_acc")
+        db_total = r.get("total_db_acc")
         diff: object = ""
         if isinstance(sheet_total, int | float) and isinstance(db_total, int | float):
             diff = abs(sheet_total - db_total)
         summary.add_row(
             str(r.get("year", "?")),
-            str(r.get("app_currency", "")),
+            str(r.get("accounting_currency", "")),
             f"{r.get('months_in_sheet', 0)} / {r.get('months_in_db', 0)}",
             _fmt_amount(sheet_total),
             _fmt_amount(db_total),

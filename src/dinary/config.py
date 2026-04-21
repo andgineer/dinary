@@ -324,7 +324,22 @@ class Settings(BaseSettings):
     google_sheets_credentials_path: Path = _GSPREAD_DEFAULT
     sheet_logging_spreadsheet: str = ""
 
+    # PWA / API user-facing default currency: the currency the UI
+    # works in and the fallback for ``POST /api/expenses`` requests
+    # that omit ``currency``. Typical ``expenses.currency_original``
+    # matches this value, since users type amounts in ``app_currency``.
     app_currency: str = "RSD"
+
+    # Canonical accounting currency: ``expenses.amount`` and
+    # ``income.amount`` always live in this currency, and every
+    # ``inv report-*`` total is rendered in it. Source amounts from
+    # sheets / QR / PWA are recorded verbatim in
+    # ``expenses.amount_original`` + ``currency_original``; the
+    # NBS-anchored conversion to ``accounting_currency`` is what
+    # lives in ``amount``. The PWA default (``app_currency``) stays
+    # RSD because the user types in dinars; this setting is what the
+    # DB is denominated in.
+    accounting_currency: str = "EUR"
     data_path: str = "data/dinary.duckdb"
 
     sheet_logging_drain_interval_sec: float = 300.0

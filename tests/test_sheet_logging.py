@@ -1,6 +1,7 @@
 """Tests for the queue-based sheet logging layer on the unified dinary.duckdb."""
 
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import allure
@@ -77,6 +78,185 @@ def setup() -> int:
         con.close()
     assert pk_row is not None
     return int(pk_row[0])
+
+
+def _expense_row(
+    *,
+    amount: Decimal,
+    amount_original: Decimal,
+    currency_original: str,
+) -> duckdb_repo.ExpenseRow:
+    """Minimal ``ExpenseRow`` factory for pure-helper tests.
+
+    ``_derive_rsd_for_sheet`` only reads ``amount``, ``amount_original``
+    and ``currency_original``; the rest exists solely to satisfy the
+    dataclass slots.
+    """
+    return duckdb_repo.ExpenseRow(
+        id=1,
+        client_expense_id="x",
+        datetime=datetime(2026, 4, 14, 10),
+        amount=amount,
+        amount_original=amount_original,
+        currency_original=currency_original,
+        category_id=1,
+        event_id=None,
+        comment=None,
+        sheet_category=None,
+        sheet_group=None,
+    )
+
+
+@allure.epic("SheetLogging")
+@allure.feature("_derive_rsd_for_sheet")
+class TestDeriveRsdForSheet:
+    """Column B on the Sheets mirror is RSD-denominated (the sheet's
+    native "original" currency post-Apr-2022). DB rows are stored in
+    ``settings.accounting_currency`` (EUR by default). The helper must
+    bridge that gap without ever writing a wrong-currency amount.
+    """
+
+    _DATE = date(2026, 4, 14)
+
+    def test_rsd_input_returns_amount_original_verbatim(self):
+        """PWA default path: operator typed in RSD, so ``amount_original``
+        is already the correct sheet value. No rate lookup, no rounding
+        drift — bit-identical to what the user saw in the app."""
+        row = _expense_row(
+            amount=Decimal("12.82"),
+            amount_original=Decimal("1500.00"),
+            currency_original="RSD",
+        )
+        with patch("dinary.services.sheet_logging.get_rate") as mock_rate:
+            out = sheet_logging._derive_rsd_for_sheet(
+                con=None,
+                expense=row,
+                eur_rsd_rate=Decimal("117.0"),
+                expense_date=self._DATE,
+            )
+        assert out == 1500.0
+        # RSD shortcut must not consult NBS rates at all, even if
+        # ``eur_rsd_rate`` happens to be present.
+        mock_rate.assert_not_called()
+
+    def test_eur_accounting_converts_via_supplied_eur_rsd_rate(
+        self,
+        monkeypatch,
+    ):
+        """Default setup: ``accounting_currency=EUR``, expense stored
+        in EUR, operator typed in some non-RSD currency. Helper must
+        use the already-fetched EUR/RSD column-H rate — no second
+        ``get_rate`` call."""
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        row = _expense_row(
+            amount=Decimal("10.00"),
+            amount_original=Decimal("12.00"),
+            currency_original="USD",
+        )
+        with patch("dinary.services.sheet_logging.get_rate") as mock_rate:
+            out = sheet_logging._derive_rsd_for_sheet(
+                con=None,
+                expense=row,
+                eur_rsd_rate=Decimal("117.0"),
+                expense_date=self._DATE,
+            )
+        assert out == 1170.00
+        mock_rate.assert_not_called()
+
+    def test_eur_accounting_without_rate_returns_none(self, monkeypatch):
+        """``eur_rsd_rate=None`` means NBS had no rate for the expense
+        date. Helper must signal failure (``None``) so the caller
+        requeues the job — never silently write 0 or a stale value."""
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        row = _expense_row(
+            amount=Decimal("10.00"),
+            amount_original=Decimal("12.00"),
+            currency_original="USD",
+        )
+        out = sheet_logging._derive_rsd_for_sheet(
+            con=None,
+            expense=row,
+            eur_rsd_rate=None,
+            expense_date=self._DATE,
+        )
+        assert out is None
+
+    def test_rsd_accounting_returns_amount_directly(self, monkeypatch):
+        """Edge case: ``accounting_currency=RSD`` (the pre-split legacy
+        setup). ``expenses.amount`` is already RSD, so the helper just
+        forwards it. Keeps backwards compatibility for anyone who
+        overrides the default."""
+        monkeypatch.setattr(settings, "accounting_currency", "RSD")
+        row = _expense_row(
+            amount=Decimal("1500.00"),
+            amount_original=Decimal("12.00"),
+            currency_original="EUR",
+        )
+        with patch("dinary.services.sheet_logging.get_rate") as mock_rate:
+            out = sheet_logging._derive_rsd_for_sheet(
+                con=None,
+                expense=row,
+                eur_rsd_rate=None,
+                expense_date=self._DATE,
+            )
+        assert out == 1500.0
+        mock_rate.assert_not_called()
+
+    def test_exotic_accounting_currency_fetches_cross_rate(
+        self,
+        monkeypatch,
+    ):
+        """If someone configures an accounting currency that is neither
+        EUR nor RSD, the helper must resolve the cross-rate on demand
+        via ``get_rate(date, accounting_currency)``. This is the only
+        branch that issues a fresh NBS lookup."""
+        monkeypatch.setattr(settings, "accounting_currency", "USD")
+        row = _expense_row(
+            amount=Decimal("10.00"),
+            amount_original=Decimal("10.00"),
+            currency_original="USD",
+        )
+        with patch(
+            "dinary.services.sheet_logging.get_rate",
+            return_value=Decimal("108.50"),
+        ) as mock_rate:
+            out = sheet_logging._derive_rsd_for_sheet(
+                con=None,
+                expense=row,
+                eur_rsd_rate=Decimal("117.0"),
+                expense_date=self._DATE,
+            )
+        assert out == 1085.00
+        mock_rate.assert_called_once()
+        call_args = mock_rate.call_args
+        assert call_args.args[1] == self._DATE
+        assert call_args.args[2] == "USD"
+
+    def test_exotic_accounting_currency_without_rate_returns_none(
+        self,
+        monkeypatch,
+    ):
+        """``get_rate`` raises ``ValueError``/``OSError`` when NBS has
+        no data for the requested date. The helper must trap both and
+        return ``None`` so the drain loop requeues instead of blowing
+        up."""
+        monkeypatch.setattr(settings, "accounting_currency", "USD")
+        row = _expense_row(
+            amount=Decimal("10.00"),
+            amount_original=Decimal("10.00"),
+            currency_original="USD",
+        )
+        with patch(
+            "dinary.services.sheet_logging.get_rate",
+            side_effect=ValueError("no rate"),
+        ):
+            out = sheet_logging._derive_rsd_for_sheet(
+                con=None,
+                expense=row,
+                eur_rsd_rate=Decimal("117.0"),
+                expense_date=self._DATE,
+            )
+        assert out is None
 
 
 @allure.epic("SheetLogging")

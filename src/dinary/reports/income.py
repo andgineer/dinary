@@ -214,7 +214,7 @@ def render(
     elif as_csv:
         render_csv(rows, stream=out)
     else:
-        render_rich(rows, currency=settings.app_currency, stream=out)
+        render_rich(rows, currency=settings.accounting_currency, stream=out)
 
 
 def run(

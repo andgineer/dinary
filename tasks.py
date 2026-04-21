@@ -1078,11 +1078,12 @@ def import_report_2d_3d(
         c.run(cmd)
         return
 
-    remote_cmd = (
-        "cd ~/dinary-server && source ~/.local/bin/env && "
-        f"uv run python -m dinary.imports.report_2d_3d {' '.join(_build_flags(force_json=True))}"
+    # Same snapshot wrapper the ``inv report-*`` tasks use: the live
+    # DB is held under an exclusive DuckDB lock by the service, so the
+    # report module runs against a ``/tmp`` copy instead.
+    raw = _ssh_capture_bytes(
+        _remote_snapshot_cmd("dinary.imports.report_2d_3d", _build_flags(force_json=True))
     )
-    raw = _ssh_capture_bytes(remote_cmd)
 
     # ``--json --remote`` is the pipe-into-jq case: forward the
     # server's bytes verbatim so stdout is exactly what the remote
@@ -1099,8 +1100,9 @@ def import_report_2d_3d(
 _REMOTE_DB_PATH = "/home/ubuntu/dinary-server/data/dinary.duckdb"
 
 
-def _remote_report_cmd(module: str, flags: list[str]) -> str:
-    """Build the remote shell command for ``inv report-<module> --remote``.
+def _remote_snapshot_cmd(module_path: str, flags: list[str]) -> str:
+    """Build a remote shell command that runs a read-only report module
+    against a ``/tmp`` snapshot of the live DB.
 
     DuckDB 1.x holds a single-writer exclusive file lock on the
     primary DB file, so a second process — even one opened
@@ -1123,8 +1125,12 @@ def _remote_report_cmd(module: str, flags: list[str]) -> str:
     Unique per-invocation snapshot path: ``$$`` expands to the
     remote shell's PID so two parallel ``inv report-*`` runs from
     separate laptops cannot stomp on the same ``/tmp`` file.
+
+    ``module_path`` is the full dotted path (``dinary.reports.income``,
+    ``dinary.imports.report_2d_3d``, ...) so the same wrapper serves
+    both ``inv report-*`` and ``inv import-report-2d-3d --remote``.
     """
-    report = f"uv run python -m dinary.reports.{module}"
+    report = f"uv run python -m {module_path}"
     if flags:
         report = f"{report} {' '.join(flags)}"
     # ``set -e`` propagates a failed ``cp`` as a non-zero exit so the
@@ -1202,7 +1208,7 @@ def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> Non
       a single process fetches from ``data/dinary.duckdb`` and
       renders.
     * Remote: the same module runs on the server in ``--json`` mode
-      via the SSH snapshot wrapper (see :func:`_remote_report_cmd`
+      via the SSH snapshot wrapper (see :func:`_remote_snapshot_cmd`
       for why the DuckDB snapshot is needed), the JSON bytes come
       back through :func:`_ssh_capture_bytes`, and the module's
       ``render`` runs on the local terminal.
@@ -1225,7 +1231,7 @@ def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> Non
     # The remote always runs in JSON mode. ``--csv`` / ``--json``
     # the operator passed are handled locally (below).
     remote_flags = [*filter_flags, "--json"]
-    raw = _ssh_capture_bytes(_remote_report_cmd(module, remote_flags))
+    raw = _ssh_capture_bytes(_remote_snapshot_cmd(f"dinary.reports.{module}", remote_flags))
 
     # ``--json --remote`` is the "pipe into jq" case: forward the
     # server's bytes verbatim so stdout is exactly what the remote

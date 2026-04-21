@@ -2,7 +2,7 @@
 
 > **Scope.** This document is the deep-dive reference for the historical
 > income import only. Everything cross-cutting (the single-file DuckDB
-> model, `settings.app_currency` storage semantics, the unified
+> model, `settings.accounting_currency` storage semantics, the unified
 > `0001_initial_schema.sql` migration stream, FK-safe catalog sync,
 > etc.) is owned by [architecture.md](architecture.md) and must be
 > consulted first. If this file and `architecture.md` ever disagree,
@@ -16,7 +16,7 @@
 CREATE TABLE income (
     year   INTEGER NOT NULL,
     month  INTEGER NOT NULL,
-    amount DECIMAL(12,2) NOT NULL,          -- settings.app_currency (default RSD)
+    amount DECIMAL(12,2) NOT NULL,          -- settings.accounting_currency (default EUR)
     PRIMARY KEY (year, month),
     CHECK (month BETWEEN 1 AND 12)
 );
@@ -26,9 +26,10 @@ Defined in `src/dinary/migrations/0001_initial_schema.sql` alongside every
 other ledger and catalog table — the per-year `budget_YYYY.duckdb` /
 `config.duckdb` split was removed in the single-file reset, so there is
 exactly one migration stream. `income.amount` is stored in the configured
-app currency (default `"RSD"`); the column is dimensionless at the schema
-level because the app-currency choice is a deployment-wide setting, not a
-per-row attribute.
+accounting currency (default `"EUR"`, i.e. the value of
+`settings.accounting_currency`); the column is dimensionless at the schema
+level because the accounting-currency choice is a deployment-wide setting,
+not a per-row attribute.
 
 ### `.deploy/import_sources.json` — operator-local source registry
 
@@ -94,31 +95,30 @@ Years 2012–2018 have no income source — no structured income data in those s
 
 1. Read `.deploy/import_sources.json` via `dinary.config.get_import_source(year)` → spreadsheet ID, worksheet, layout key.
 2. Pre-fetch NBS middle rates for the 1st of each month for every currency
-   the layout will need (source currency, EUR for legacy reports, and the
-   app currency). Rates are held as `RSD per 1 unit of X` so an identity
-   entry (RSD itself, or the app currency when it is RSD) is just
-   `Decimal(1)`. This runs inside a short-lived writer cursor so the
-   subsequent sheet loop does not hold the DuckDB write slot across
-   HTTP round-trips.
+   the layout will need (source currency and the accounting currency).
+   Rates are held as `RSD per 1 unit of X` so an identity entry (RSD
+   itself, or the accounting currency when it is RSD) is just `Decimal(1)`.
+   This runs inside a short-lived writer cursor so the subsequent sheet
+   loop does not hold the DuckDB write slot across HTTP round-trips.
 3. Open the Google Sheet via `gspread`, read all rows from the income
    worksheet.
 4. For each row after `header_rows`:
    - Parse date → extract `(year, month)`. Skip rows where year ≠ target.
    - Parse amount (handles `$`, spaces, commas).
    - Determine currency (base or transition based on month).
-   - Convert to the app currency via the pre-fetched rates
-     (`amount_original * rate_src / rate_app`). Missing rate → skip row
-     with a warning.
+   - Convert to the accounting currency via the pre-fetched rates
+     (`amount * rate_src / rate_acc`). Missing rate → skip row with a
+     warning.
 5. Aggregate by month.
 6. In a single DuckDB transaction: `DELETE FROM income WHERE year = ?`
    then insert one row per `(year, month)`.
 
 ## Verification (`verify_income_equivalence`)
 
-Re-reads the sheet, re-aggregates in the app currency, and compares
-month-by-month against DB with a ±0.02 tolerance. The result dict uses
-`total_sheet_app`, `total_db_app`, and `app_currency` (not the pre-reset
-`*_eur` keys).
+Re-reads the sheet, re-aggregates in the accounting currency (EUR by
+default), and compares month-by-month against DB with a ±0.02
+tolerance. The result dict uses `total_sheet_acc`, `total_db_acc`,
+and `accounting_currency`.
 
 ## Invoke tasks
 
@@ -130,12 +130,11 @@ All destructive income-import tasks require explicit `--yes` confirmation:
 
 ## Historical results (2026-04, EUR snapshot)
 
-The table below is the original import log taken before the single-file
-reset switched storage to the app currency; it is kept for reference
-since the sheet source values themselves have not changed. The current
-DB values are the same totals re-expressed in RSD (via the same NBS
-middle rates) and should be re-checked with
-`inv verify-income-equivalence-all` after any re-import.
+The table below is the import log at the time income was last fully
+re-imported against the EUR accounting currency (the current default).
+It should be re-checked with `inv verify-income-equivalence-all` after
+any re-import, and after any change to `settings.accounting_currency`
+(which would shift every stored row and invalidate these totals).
 
 | Year | Months | Total EUR |
 |------|--------|-----------|

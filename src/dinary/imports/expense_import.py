@@ -293,21 +293,22 @@ def _prefetch_monthly_rates(
 ) -> dict[int, dict[str, Decimal]]:
     """Pre-fetch NBS rates for every month in ``year``, keyed by month.
 
-    Stored keys (all as ``RSD per 1 unit of X``, i.e. NBS middle rates):
+    Stored keys (all as ``RSD per 1 unit of X``, i.e. NBS middle rates;
+    RSD is the NBS anchor, so its rate is ``Decimal(1)`` by convention):
 
-      * ``rate_src`` — source currency for the layout+month;
-        ``Decimal(1)`` when the source is "RSD".
-      * ``rate_eur`` — always present, used by the legacy housing
-        heuristic (threshold expressed in EUR) and the 2D→3D report.
-      * ``rate_app`` — the configured app currency
-        (``settings.app_currency``); ``Decimal(1)`` when app is "RSD".
+      * ``rate_src`` — source currency for the layout+month.
+      * ``rate_eur`` — always present, used by the housing heuristic
+        (threshold expressed in EUR) and the 2D→3D report.
+      * ``rate_acc`` — the accounting currency
+        (``settings.accounting_currency``, EUR by default). Used as
+        the target rate for ``expenses.amount``.
 
     ``con`` is the single shared ``data/dinary.duckdb`` cursor. Passing
     it is purely an optimization for long-running callers (the 2D-to-3D
     report) to avoid one extra ``cursor()`` round-trip per year. When
     ``con`` is ``None`` we cut a fresh cursor ourselves.
     """
-    app_currency = settings.app_currency.upper()
+    accounting_currency = settings.accounting_currency.upper()
     own_con = con is None
     if own_con:
         con = duckdb_repo.get_connection()
@@ -318,13 +319,15 @@ def _prefetch_monthly_rates(
             rate_date = date(year, month, 1)
             rate_src = Decimal(1) if currency == "RSD" else get_rate(con, rate_date, currency)
             rate_eur = Decimal(1) if currency == "EUR" else get_rate(con, rate_date, "EUR")
-            rate_app = (
-                Decimal(1) if app_currency == "RSD" else get_rate(con, rate_date, app_currency)
+            rate_acc = (
+                Decimal(1)
+                if accounting_currency == "RSD"
+                else get_rate(con, rate_date, accounting_currency)
             )
             rates[month] = {
                 "rate_src": rate_src,
                 "rate_eur": rate_eur,
-                "rate_app": rate_app,
+                "rate_acc": rate_acc,
             }
         return rates
     finally:
@@ -357,12 +360,13 @@ def _read_amounts_for_row(
     month: int,
     monthly_rates: dict[int, dict[str, Decimal]],
 ) -> tuple[float, str, float, float] | None:
-    """Return ``(amount_original, currency_original, amount_app, amount_eur)``.
+    """Return ``(amount_original, currency_original, amount_acc, amount_eur)``.
 
-    * ``amount_app`` is the value stored in ``expenses.amount`` (the app
-      currency, ``settings.app_currency``).
+    * ``amount_acc`` is the value stored in ``expenses.amount``
+      (``settings.accounting_currency``, EUR by default).
     * ``amount_eur`` is retained for the housing heuristic (threshold
-      expressed in EUR) and the 2D→3D diagnostic report.
+      expressed in EUR) and the 2D→3D diagnostic report. When the
+      accounting currency is EUR, it is bit-identical to ``amount_acc``.
     """
     amount_original = parse_display_amount(_cell(row_display, layout.col_amount))
     currency_original = resolve_currency(year, month, layout)
@@ -383,10 +387,10 @@ def _read_amounts_for_row(
 
     rates = monthly_rates[month]
     original_dec = Decimal(str(amount_original))
-    amount_app = _convert_to(
+    amount_acc = _convert_to(
         original_dec,
         rate_src=rates["rate_src"],
-        rate_target=rates["rate_app"],
+        rate_target=rates["rate_acc"],
     )
     amount_eur = _convert_to(
         original_dec,
@@ -396,7 +400,7 @@ def _read_amounts_for_row(
     return (
         amount_original,
         currency_original,
-        float(amount_app),
+        float(amount_acc),
         float(amount_eur),
     )
 
@@ -1072,8 +1076,8 @@ class ParsedSheetRow:
     beneficiary_raw: str
     amount_original: float
     currency_original: str
-    # Amount stored in ``expenses.amount`` (settings.app_currency).
-    amount_app: float
+    # Amount stored in ``expenses.amount`` (settings.accounting_currency).
+    amount_acc: float
     # Amount in EUR, used by the housing heuristic threshold
     # (200 EUR for "аренда/релокация") and by the 2D→3D report.
     amount_eur: float
@@ -1131,7 +1135,7 @@ def iter_parsed_sheet_rows(year: int, *, con=None):
         )
         if amounts is None:
             continue
-        amount_original, currency_original, amount_app, amount_eur = amounts
+        amount_original, currency_original, amount_acc, amount_eur = amounts
 
         comment = _cell(row_display, layout.col_comment)
         beneficiary_raw = (
@@ -1148,7 +1152,7 @@ def iter_parsed_sheet_rows(year: int, *, con=None):
             beneficiary_raw=beneficiary_raw,
             amount_original=amount_original,
             currency_original=currency_original,
-            amount_app=amount_app,
+            amount_acc=amount_acc,
             amount_eur=amount_eur,
         )
 
@@ -1290,7 +1294,7 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
                     con,
                     client_expense_id=None,
                     expense_datetime=expense_dt,
-                    amount=parsed.amount_app,
+                    amount=parsed.amount_acc,
                     amount_original=parsed.amount_original,
                     currency_original=parsed.currency_original,
                     category_id=category_id,

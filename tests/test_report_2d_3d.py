@@ -472,7 +472,7 @@ class TestCollectDetailRows:
                 beneficiary_raw="",
                 amount_original=45.0,
                 currency_original="EUR",
-                amount_app=0.0,
+                amount_acc=0.0,
                 amount_eur=45.0,
             )
             yield ParsedSheetRow(
@@ -485,7 +485,7 @@ class TestCollectDetailRows:
                 beneficiary_raw="",
                 amount_original=30.0,
                 currency_original="EUR",
-                amount_app=0.0,
+                amount_acc=0.0,
                 amount_eur=30.0,
             )
 
@@ -521,7 +521,7 @@ class TestCollectDetailRows:
                 beneficiary_raw="",
                 amount_original=10.0,
                 currency_original="EUR",
-                amount_app=0.0,
+                amount_acc=0.0,
                 amount_eur=10.0,
             )
 
@@ -550,7 +550,7 @@ class TestCollectDetailRows:
                 beneficiary_raw="",
                 amount_original=10.0,
                 currency_original="EUR",
-                amount_app=0.0,
+                amount_acc=0.0,
                 amount_eur=10.0,
             )
 
@@ -601,7 +601,7 @@ class TestCollectDetailRows:
                 beneficiary_raw="",
                 amount_original=45.0,
                 currency_original="EUR",
-                amount_app=0.0,
+                amount_acc=0.0,
                 amount_eur=45.0,
             )
 
@@ -644,7 +644,7 @@ class TestCollectDetailRows:
                 beneficiary_raw="",
                 amount_original=45.0,
                 currency_original="EUR",
-                amount_app=0.0,
+                amount_acc=0.0,
                 amount_eur=45.0,
             )
 

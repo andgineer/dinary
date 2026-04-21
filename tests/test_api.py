@@ -97,7 +97,7 @@ def _tmp_duckdb(tmp_path, monkeypatch):
 
 
 def _mock_convert(con, amount, from_ccy, to_ccy, rate_date):
-    """Identity FX stub: keep ``amount_app`` equal to ``amount_original``."""
+    """Identity FX stub: keep stored ``amount`` equal to ``amount_original``."""
     return Decimal(str(amount)), Decimal(1)
 
 
@@ -607,7 +607,7 @@ class TestPostExpense:
     ):
         """The response must echo what the caller submitted in
         ``amount``/``currency`` as ``amount_original``/
-        ``currency_original`` — never expose the app-currency
+        ``currency_original`` — never expose the accounting-currency
         projection."""
         resp = client.post(
             "/api/expenses",
@@ -648,24 +648,29 @@ class TestPostExpense:
         assert resp.status_code == 200, resp.text
         assert resp.json()["currency_original"] == settings.app_currency
 
-    def test_non_identity_fx_stores_amount_in_app_currency(self, client):
-        """POST with a non-app currency must convert via ``convert`` and
-        write the app-currency value into ``expenses.amount`` while the
-        response still echoes the original amount/currency."""
+    def test_non_identity_fx_stores_amount_in_accounting_currency(self, client):
+        """POST with a currency that differs from the accounting currency
+        must convert via ``convert`` and write the accounting-currency
+        value into ``expenses.amount``, while the response still echoes
+        the original amount/currency. The PWA default input currency
+        (``app_currency`` = RSD) becomes the source here so the stored
+        ``amount`` ends up in EUR (the accounting currency)."""
 
-        def _eur_to_rsd(_con, amount, from_ccy, to_ccy, _rate_date):
-            # 1 EUR = 117 RSD; only called for non-app currencies.
-            assert from_ccy.upper() == "EUR"
-            assert to_ccy.upper() == settings.app_currency.upper()
-            return Decimal(str(amount)) * Decimal("117"), Decimal("117")
+        def _rsd_to_eur(_con, amount, from_ccy, to_ccy, _rate_date):
+            # 117 RSD = 1 EUR; only called for non-accounting currencies.
+            assert from_ccy.upper() == "RSD"
+            assert to_ccy.upper() == settings.accounting_currency.upper()
+            return (Decimal(str(amount)) / Decimal("117")).quantize(
+                Decimal("0.01"),
+            ), Decimal("117")
 
-        with patch("dinary.api.expenses.convert", side_effect=_eur_to_rsd):
+        with patch("dinary.api.expenses.convert", side_effect=_rsd_to_eur):
             resp = client.post(
                 "/api/expenses",
                 json={
                     "client_expense_id": "e_fx",
-                    "amount": 10.0,
-                    "currency": "EUR",
+                    "amount": 1170.0,
+                    "currency": "RSD",
                     "category_id": 1,
                     "comment": "",
                     "date": "2026-04-15",
@@ -675,10 +680,10 @@ class TestPostExpense:
         data = resp.json()
         assert data["status"] == "ok"
         # Response echoes what the caller sent, not the projected value.
-        assert Decimal(data["amount_original"]) == Decimal("10.0")
-        assert data["currency_original"] == "EUR"
+        assert Decimal(data["amount_original"]) == Decimal("1170.0")
+        assert data["currency_original"] == "RSD"
 
-        # The stored ``amount`` is in app currency (10 * 117 = 1170).
+        # The stored ``amount`` is in accounting currency (1170 / 117 = 10 EUR).
         con = duckdb_repo.get_connection()
         try:
             row = con.execute(
@@ -688,9 +693,9 @@ class TestPostExpense:
         finally:
             con.close()
         assert row is not None
-        assert Decimal(str(row[0])) == Decimal("1170.00")
-        assert Decimal(str(row[1])) == Decimal("10.00")
-        assert row[2] == "EUR"
+        assert Decimal(str(row[0])) == Decimal("10.00")
+        assert Decimal(str(row[1])) == Decimal("1170.00")
+        assert row[2] == "RSD"
 
     @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
     def test_conflict_on_modified_category(self, _mock_convert_fn, client):

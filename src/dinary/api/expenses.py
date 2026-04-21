@@ -42,7 +42,9 @@ router = APIRouter()
 class ExpenseRequest(BaseModel):
     client_expense_id: str = Field(min_length=1)
     amount: Decimal = Field(gt=Decimal(0))
-    currency: str | None = None  # defaults to settings.app_currency
+    # Defaults to settings.app_currency (the PWA input currency); the
+    # server converts to settings.accounting_currency before storing.
+    currency: str | None = None
     category_id: int
     event_id: int | None = None
     tag_ids: list[int] = Field(default_factory=list)
@@ -84,13 +86,13 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
         _validate_event(con, req)
         _validate_tags(con, req)
 
-        amount_app = req.amount
-        if currency.upper() != settings.app_currency.upper():
-            amount_app, _rate = convert(
+        amount_acc = req.amount
+        if currency.upper() != settings.accounting_currency.upper():
+            amount_acc, _rate = convert(
                 con,
                 req.amount,
                 currency,
-                settings.app_currency,
+                settings.accounting_currency,
                 req.date,
             )
 
@@ -128,7 +130,7 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
         # happy-path compare — a double compare would drift over time,
         # and the ON CONFLICT path is already atomic against concurrent
         # POSTs sharing the same ``client_expense_id``.
-        amount_app_f = float(amount_app)
+        amount_acc_f = float(amount_acc)
         amount_orig_f = float(req.amount)
         comment = req.comment or ""
         try:
@@ -136,7 +138,7 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
                 con,
                 client_expense_id=req.client_expense_id,
                 expense_datetime=expense_dt,
-                amount=amount_app_f,
+                amount=amount_acc_f,
                 amount_original=amount_orig_f,
                 currency_original=currency,
                 category_id=req.category_id,
@@ -161,7 +163,7 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
                 con,
                 client_expense_id=req.client_expense_id,
                 expense_datetime=expense_dt,
-                amount=amount_app_f,
+                amount=amount_acc_f,
                 amount_original=amount_orig_f,
                 currency_original=currency,
                 category_id=req.category_id,

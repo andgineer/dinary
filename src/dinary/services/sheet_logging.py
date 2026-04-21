@@ -12,7 +12,8 @@ import asyncio
 import enum
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 import gspread
 
@@ -141,6 +142,49 @@ def _reset_backoff() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _derive_rsd_for_sheet(
+    con,
+    expense: duckdb_repo.ExpenseRow,
+    eur_rsd_rate: Decimal | None,
+    expense_date: date,
+) -> float | None:
+    """Return the RSD amount to write into sheet column B.
+
+    The sheet's column B is RSD-denominated for every post-April-2022
+    row (the only rows runtime appends ever touch). Strategy:
+
+    * If the operator typed the expense in RSD (the PWA default), use
+      ``amount_original`` verbatim — bit-identical to what they saw.
+    * Otherwise, convert ``expense.amount`` (stored in
+      ``settings.accounting_currency``) to RSD via NBS rates for the
+      expense date. For the default EUR accounting currency that's
+      just the EUR/RSD rate already fetched for column H. For any
+      other accounting currency (``RSD`` itself or an exotic
+      override) we resolve the cross-rate on demand.
+
+    Returns ``None`` iff a needed rate is unavailable; the caller
+    then requeues the job for the next sweep.
+    """
+    currency_original = (expense.currency_original or "").upper()
+    if currency_original == "RSD":
+        return float(expense.amount_original)
+
+    accounting_currency = settings.accounting_currency.upper()
+    if accounting_currency == "RSD":
+        return float(expense.amount)
+
+    if accounting_currency == "EUR":
+        if eur_rsd_rate is None:
+            return None
+        return float((expense.amount * eur_rsd_rate).quantize(Decimal("0.01")))
+
+    try:
+        rate = get_rate(con, expense_date, accounting_currency)
+    except (ValueError, OSError):
+        return None
+    return float((expense.amount * rate).quantize(Decimal("0.01")))
+
+
 def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
     expense_pk: int,
     *,
@@ -223,20 +267,45 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
                     logger.exception("Failed to release claim for pk=%d", expense_pk)
             raise
 
-        # Fetch EUR/RSD exchange rate for column H. Column B stores the
-        # app-currency (RSD) amount, column C is the EUR projection via
-        # =B/H, so H must be the RSD-per-1-EUR rate for the expense date
-        # regardless of what currency the expense was originally in.
-        # Reuse the already-open cursor ``con`` — the singleton engine
-        # allows unlimited cursors on the same connection, so opening a
-        # second one here was just noise.
+        # Fetch EUR/RSD exchange rate for column H. Column B stores
+        # the original-currency (RSD) amount, column C is the EUR
+        # projection via ``=B/H``, so H must be the RSD-per-1-EUR rate
+        # for the expense date regardless of what the expense was
+        # originally priced in. Reuse the already-open cursor ``con``
+        # — the singleton engine allows unlimited cursors on the same
+        # connection, so opening a second one here was just noise.
         expense_date = expense.datetime.date()
+        rate: Decimal | None = None
         rate_str: str | None = None
         try:
             rate = get_rate(con, expense_date, "EUR")
             rate_str = str(rate)
         except (ValueError, OSError):
+            rate = None
             rate_str = None
+
+        # Column B is always the RSD amount (the sheet's native
+        # "original" currency post-Apr-2022). When the operator typed
+        # in RSD — the PWA default — we write ``amount_original``
+        # verbatim for bit-fidelity. For any other input currency we
+        # derive RSD from the stored ``accounting_currency`` amount
+        # (EUR by default) and the NBS rate for the expense date.
+        amount_rsd = _derive_rsd_for_sheet(con, expense, rate, expense_date)
+        if amount_rsd is None:
+            logger.warning(
+                "Skip sheet append for pk=%d: no NBS rate on %s to convert "
+                "%s %s to RSD; will retry on next sweep",
+                expense_pk,
+                expense_date,
+                expense.amount,
+                settings.accounting_currency,
+            )
+            if claim_token is not None:
+                try:
+                    duckdb_repo.release_logging_claim(con, expense_pk, claim_token)
+                except Exception:
+                    logger.exception("Failed to release claim for pk=%d", expense_pk)
+            return DrainResult.FAILED
 
         try:
             wrote_new_row = _append_row_to_sheet(
@@ -246,7 +315,7 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
                 month=expense.datetime.month,
                 sheet_category=sheet_category,
                 sheet_group=sheet_group,
-                amount=float(expense.amount),
+                amount=amount_rsd,
                 comment=expense.comment or "",
                 expense_date=expense_date,
                 rate=rate_str,
