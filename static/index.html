@@ -36,36 +36,44 @@
     <div class="form-group">
       <label for="group">Envelope
         <button id="add-group-btn" class="btn-inline" type="button" title="Новая группа">+ Новый</button>
+        <button id="toggle-inactive-group" class="btn-inline btn-inactive-toggle" type="button">Показать неактивные</button>
       </label>
       <select id="group">
         <option value="">— loading —</option>
       </select>
+      <div id="inactive-group-list" class="inactive-list" hidden></div>
     </div>
 
     <div class="form-group">
       <label for="category">Category
         <button id="add-category-btn" class="btn-inline" type="button" title="Новая категория">+ Новый</button>
+        <button id="toggle-inactive-category" class="btn-inline btn-inactive-toggle" type="button">Показать неактивные</button>
       </label>
       <select id="category">
         <option value="">— select group first —</option>
       </select>
       <div id="add-category-hint" class="form-hint" hidden>Сначала выберите группу</div>
+      <div id="inactive-category-list" class="inactive-list" hidden></div>
     </div>
 
     <div class="form-group">
       <label for="event">Event
         <button id="add-event-btn" class="btn-inline" type="button" title="Новое событие">+ Новый</button>
+        <button id="toggle-inactive-event" class="btn-inline btn-inactive-toggle" type="button">Показать неактивные</button>
       </label>
       <select id="event">
         <option value="">— без события —</option>
       </select>
+      <div id="inactive-event-list" class="inactive-list" hidden></div>
     </div>
 
     <div class="form-group">
       <label>Tags
         <button id="add-tag-btn" class="btn-inline" type="button" title="Новый тэг">+ Новый</button>
+        <button id="toggle-inactive-tag" class="btn-inline btn-inactive-toggle" type="button">Показать неактивные</button>
       </label>
       <div id="tags" class="tags-list"></div>
+      <div id="inactive-tag-list" class="inactive-list" hidden></div>
     </div>
 
     <div class="form-group">

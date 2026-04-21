@@ -328,6 +328,58 @@ textarea {
   color: #fff;
 }
 
+.inactive-list {
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg);
+  border-radius: 8px;
+  border: 1px dashed var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+}
+
+.inactive-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.inactive-name {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.inactive-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.inactive-activate {
+  font-size: 0.7rem;
+}
+
+.inactive-delete {
+  font-size: 0.7rem;
+  color: #fca5a5;
+  background: transparent;
+  border: 1px solid #7f1d1d;
+}
+
+.inactive-delete:hover:not(:disabled) {
+  background: #7f1d1d;
+  color: #fee2e2;
+}
+
+.btn-inactive-toggle {
+  margin-left: 0.4rem;
+}
+
 @media (min-width: 600px) {
   main { padding: 2rem; }
 }

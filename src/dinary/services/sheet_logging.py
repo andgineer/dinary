@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 import gspread
 
 from dinary.config import settings, spreadsheet_id_from_setting
-from dinary.services import duckdb_repo, runtime_map
+from dinary.services import duckdb_repo, sheet_mapping
 from dinary.services.nbs import get_rate
 from dinary.services.sheets import (
     append_expense_atomic,
@@ -187,33 +187,32 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
             marker_key = expense.client_expense_id
 
             tag_ids = duckdb_repo.get_expense_tags(con, expense_pk)
-            event_name = duckdb_repo.get_event_name(con, expense.event_id)
 
             projection = duckdb_repo.logging_projection(
                 con,
                 category_id=expense.category_id,
-                event_name=event_name,
+                event_id=expense.event_id,
                 tag_ids=tag_ids,
             )
             if projection is None:
-                # No runtime_mapping rule matched. Fall back to the
-                # guaranteed category-name landing pair so the expense
-                # still goes to a predictable cell in the sheet.
-                cat_name = duckdb_repo.get_category_name(con, expense.category_id)
-                if cat_name is None:
-                    logger.error(
-                        "Logging projection: unknown category_id=%d for expense pk=%d",
-                        expense.category_id,
-                        expense_pk,
-                    )
-                    duckdb_repo.poison_logging_job(
-                        con,
-                        expense_pk,
-                        f"No runtime_mapping fallback possible for "
-                        f"category_id={expense.category_id}",
-                    )
-                    return DrainResult.POISONED
-                projection = (cat_name, "")
+                # ``logging_projection`` only returns ``None`` when the
+                # expense points at an unknown ``category_id`` — it
+                # otherwise applies the category-name / empty-group
+                # fallback per column itself. An unknown category is
+                # unrecoverable at drain time (we cannot invent a
+                # landing cell), so poison the job and let the operator
+                # fix the catalog upstream.
+                logger.error(
+                    "Logging projection: unknown category_id=%d for expense pk=%d",
+                    expense.category_id,
+                    expense_pk,
+                )
+                duckdb_repo.poison_logging_job(
+                    con,
+                    expense_pk,
+                    f"No sheet_mapping fallback possible for category_id={expense.category_id}",
+                )
+                return DrainResult.POISONED
 
             sheet_category, sheet_group = projection
         except Exception:
@@ -379,10 +378,10 @@ def drain_pending() -> dict:  # noqa: C901, PLR0912, PLR0915
         _reset_backoff()
         return summary
 
-    # Lazy runtime-map refresh: cheap modifiedTime check via Drive API;
+    # Lazy sheet-mapping refresh: cheap modifiedTime check via Drive API;
     # only reparses the map tab when it actually changed. Failures here
     # downgrade to a warning and we drain with the cached mapping.
-    runtime_map.ensure_fresh()
+    sheet_mapping.ensure_fresh()
 
     attempts = 0
     cap_reached = False

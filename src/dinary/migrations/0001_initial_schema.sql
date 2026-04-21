@@ -1,5 +1,6 @@
 -- Unified schema for data/dinary.duckdb.
--- Replaces the former config.duckdb + budget_YYYY.duckdb split.
+-- Replaces the former config.duckdb + budget_YYYY.duckdb split and absorbs
+-- the phase-2 runtime mapping tables under their final name `sheet_mapping`.
 
 -- =========================================================================
 -- Catalog tables (formerly in config.duckdb)
@@ -21,13 +22,18 @@ CREATE TABLE categories (
     sheet_group TEXT
 );
 
+-- ``auto_tags`` is a JSON array of tag names (e.g. '["отпуск"]'). When a
+-- runtime expense attaches an event, the listed tags are unioned into the
+-- expense's tag set both at POST time and during historical import. Empty
+-- array (default) means the event contributes no automatic tags.
 CREATE TABLE events (
     id                  INTEGER PRIMARY KEY,
     name                TEXT UNIQUE NOT NULL,
     date_from           DATE NOT NULL,
     date_to             DATE NOT NULL,
     auto_attach_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    is_active           BOOLEAN NOT NULL DEFAULT TRUE
+    is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+    auto_tags           TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE tags (
@@ -69,18 +75,38 @@ CREATE TABLE import_mapping_tags (
     PRIMARY KEY (mapping_id, tag_id)
 );
 
-CREATE TABLE logging_mapping (
-    id             INTEGER PRIMARY KEY,
-    category_id    INTEGER NOT NULL REFERENCES categories(id),
+-- ``sheet_mapping`` is the ordered, five-column runtime map that projects a
+-- 3D expense (category, event, tags) onto the 2D sheet columns
+-- (Расходы, Конверт). Evaluated top-to-bottom by ``row_order``:
+--
+--   * ``category_id IS NULL`` / ``event_id IS NULL`` mean "wildcard" (any).
+--     A row with explicit ids only matches when every id matches.
+--   * ``sheet_mapping_tags`` is a required-set filter: the row matches only
+--     when every listed tag is present on the expense.
+--   * ``sheet_category`` / ``sheet_group`` carry two semantically distinct
+--     states: literal ``'*'`` ("don't decide, inherit from a later row" —
+--     the map-tab parser also normalises empty / whitespace-only cells
+--     to ``'*'``, so the two surface shapes mean the same thing) and any
+--     other value (explicit assignment — including the empty string,
+--     though that would have to be inserted directly into the table
+--     since the parser can never produce it). The resolver takes the
+--     first non-``*`` value per column independently.
+--
+-- Final fallbacks (applied only when no row assigned a value for a column):
+-- ``sheet_category`` defaults to the category's canonical name;
+-- ``sheet_group`` defaults to the empty string.
+CREATE TABLE sheet_mapping (
+    row_order      INTEGER PRIMARY KEY,
+    category_id    INTEGER REFERENCES categories(id),
     event_id       INTEGER REFERENCES events(id),
     sheet_category TEXT NOT NULL,
-    sheet_group    TEXT NOT NULL DEFAULT ''
+    sheet_group    TEXT NOT NULL
 );
 
-CREATE TABLE logging_mapping_tags (
-    mapping_id INTEGER NOT NULL REFERENCES logging_mapping(id),
-    tag_id     INTEGER NOT NULL REFERENCES tags(id),
-    PRIMARY KEY (mapping_id, tag_id)
+CREATE TABLE sheet_mapping_tags (
+    mapping_row_order INTEGER NOT NULL REFERENCES sheet_mapping(row_order),
+    tag_id            INTEGER NOT NULL REFERENCES tags(id),
+    PRIMARY KEY (mapping_row_order, tag_id)
 );
 
 CREATE TABLE app_metadata (

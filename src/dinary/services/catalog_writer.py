@@ -20,9 +20,22 @@ cached catalog in the background.
 
 Integrity rules enforced here (never at SQL level):
 
-* Cannot soft-delete a category / event / tag referenced by any
-  ``expenses`` row — surfaces as ``CatalogInUseError`` with usage
-  count so admin API can translate to 409.
+* ``delete_category`` / ``delete_event`` / ``delete_tag`` auto-degrade
+  to soft-delete (``is_active=FALSE``) when the row is still
+  referenced by any ``expenses`` row or mapping table; no 409 is
+  raised — the caller inspects ``DeleteResult.status`` instead.
+* ``edit_category`` / ``edit_event`` / ``edit_tag`` treat a referenced
+  row like any other: any subset of columns, including
+  ``is_active=FALSE`` combined with a rename or ``group_id`` move, is
+  allowed. DuckDB's FK engine enforces referential integrity on
+  ``DELETE`` only — ``UPDATE`` of non-key columns on a row that still
+  has incoming references is accepted, so no extra guard is needed
+  here to stay FK-safe.
+* ``delete_group`` refuses when the group still has any child
+  categories (active or inactive) — surfaces as
+  ``CatalogInUseError`` with the child-category count so admin API
+  can translate to 409. Same for ``edit_group`` with
+  ``is_active=FALSE`` while child categories still point at it.
 * Cannot rename to a name already in use (409).
 * Cannot set a category's ``group_id`` to an inactive or missing
   group (422).
@@ -69,7 +82,9 @@ can intercept them uniformly.
 """
 
 import hashlib
+import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal
@@ -77,6 +92,7 @@ from typing import Literal
 import duckdb
 
 from dinary.services import duckdb_repo
+from dinary.services.sheet_mapping import decode_auto_tags_value
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +100,27 @@ logger = logging.getLogger(__name__)
 CatalogKind = Literal["category_group", "category", "event", "tag"]
 
 AddStatus = Literal["created", "reactivated", "noop"]
+
+#: ``hard`` = row physically removed; ``soft`` = row flipped to
+#: ``is_active=FALSE`` because it's still referenced by the ledger and
+#: removing it would orphan historical rows. The admin API surfaces
+#: the distinction so the PWA can tell the operator "still available
+#: under Show inactive" vs "gone for good".
+DeleteStatus = Literal["hard", "soft"]
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteResult:
+    """Return value of ``delete_*`` helpers.
+
+    ``status`` reports whether the row was physically removed or
+    soft-retired (``is_active=FALSE``). ``usage_count`` is the number
+    of referencing ledger rows observed at decision time — zero for
+    the hard-delete branch, >0 for the soft-delete branch.
+    """
+
+    status: DeleteStatus
+    usage_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,15 +150,33 @@ class CatalogWriteError(Exception):
 
 
 class CatalogInUseError(CatalogWriteError):
-    """Soft-delete blocked because the row is still referenced by expenses."""
+    """Delete or deactivate blocked because the row is still referenced.
+
+    Only raised for ``category_group``: ``usage_count`` counts child
+    categories (active or inactive). A group with any children cannot
+    be deleted or deactivated until the categories are relocated or
+    removed.
+
+    Categories / events / tags do *not* raise this — ``delete_*`` on a
+    referenced row auto-degrades to soft-delete (see
+    ``DeleteResult.status``) and ``edit_*`` on a referenced row
+    accepts any column mix including ``is_active=FALSE`` combined with
+    rename / ``group_id`` move. The former is a policy choice ("retire
+    but keep pointable"); the latter is safe because DuckDB enforces FK
+    constraints on ``DELETE`` only, not on ``UPDATE`` of non-key
+    columns.
+    """
 
     http_status = 409
 
     def __init__(self, kind: CatalogKind, row_id: int, usage_count: int) -> None:
-        super().__init__(
-            f"{kind} id={row_id} is still referenced by {usage_count} expense row(s); "
-            "rename it instead of deactivating, or retire the referencing expenses first",
-        )
+        if kind == "category_group":
+            detail = f"still has {usage_count} child categor{'y' if usage_count == 1 else 'ies'}"
+            hint = "relocate or delete the categories first"
+        else:
+            detail = f"still referenced by {usage_count} expense row(s)"
+            hint = "retire the referencing expenses first"
+        super().__init__(f"{kind} id={row_id} is {detail}; {hint}")
         self.kind = kind
         self.row_id = row_id
         self.usage_count = usage_count
@@ -186,11 +241,13 @@ def _canonical_state(con: duckdb.DuckDBPyConnection) -> bytes:
         )
 
     for row in con.execute(
-        "SELECT id, name, date_from, date_to, auto_attach_enabled, is_active"
+        "SELECT id, name, date_from, date_to, auto_attach_enabled, is_active,"
+        " COALESCE(auto_tags, '[]')"
         " FROM events ORDER BY id",
     ).fetchall():
         parts.append(
-            f"e|{row[0]}|{row[1]}|{row[2]}|{row[3]}|{int(bool(row[4]))}|{int(bool(row[5]))}",
+            f"e|{row[0]}|{row[1]}|{row[2]}|{row[3]}|{int(bool(row[4]))}|"
+            f"{int(bool(row[5]))}|{row[6]}",
         )
 
     for row in con.execute(
@@ -265,12 +322,126 @@ def _tag_usage_count(con: duckdb.DuckDBPyConnection, tag_id: int) -> int:
 
 
 def _group_usage_count(con: duckdb.DuckDBPyConnection, group_id: int) -> int:
-    """Number of active categories pointing at this group."""
+    """Active child count for observability in ``edit_group``.
+
+    Distinct from ``_group_child_category_count`` (used by
+    ``delete_group``) which counts *all* children, active or not. The
+    distinction is intentional:
+
+    * ``edit_group(is_active=False)`` asks "is this group still
+      relevant to the operator?" — an inactive category is already
+      hidden from new expenses, so it should not block flipping the
+      parent inactive.
+    * ``delete_group`` asks "is it safe to physically remove this row?"
+      — FK from ``categories.group_id`` does not care about
+      ``is_active`` so any surviving category row, active or not, will
+      cause a constraint violation.
+    """
     row = con.execute(
         "SELECT COUNT(*) FROM categories WHERE group_id = ? AND is_active",
         [group_id],
     ).fetchone()
     return int(row[0]) if row else 0
+
+
+# ---------------------------------------------------------------------------
+# Mapping-reference helpers (hard-delete FK protection)
+#
+# ``delete_*`` must force a soft delete whenever the row is referenced
+# by any FK-bearing table, not just by ``expenses`` / ``expense_tags``.
+# The ``sheet_mapping`` + ``import_mapping`` families also carry FKs
+# into ``categories`` / ``events`` / ``tags``; if a mapping row points
+# at the target, ``DELETE`` would violate the constraint at COMMIT.
+#
+# The counts returned by these helpers are *not* surfaced in the
+# ``usage_count`` field of ``DeleteResult`` — the API contract there
+# says "how many expenses reference this", which is what the UI needs
+# to phrase "used by N expenses". Mapping references are an
+# implementation detail of the delete safety check.
+# ---------------------------------------------------------------------------
+
+
+def _category_mapping_reference_count(
+    con: duckdb.DuckDBPyConnection,
+    category_id: int,
+) -> int:
+    row = con.execute(
+        "SELECT "
+        " (SELECT COUNT(*) FROM sheet_mapping WHERE category_id = ?) "
+        " + (SELECT COUNT(*) FROM import_mapping WHERE category_id = ?)",
+        [category_id, category_id],
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _event_mapping_reference_count(
+    con: duckdb.DuckDBPyConnection,
+    event_id: int,
+) -> int:
+    row = con.execute(
+        "SELECT "
+        " (SELECT COUNT(*) FROM sheet_mapping WHERE event_id = ?) "
+        " + (SELECT COUNT(*) FROM import_mapping WHERE event_id = ?)",
+        [event_id, event_id],
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _tag_mapping_reference_count(
+    con: duckdb.DuckDBPyConnection,
+    tag_id: int,
+) -> int:
+    """Mapping-table reference count for a tag.
+
+    Includes ``sheet_mapping_tags`` + ``import_mapping_tags`` (both FK
+    into ``tags``) **and** ``events.auto_tags`` — which is denormalised
+    JSON of tag *names*, not ids, so DuckDB's FK engine won't catch it.
+    Counting the name reference here means hard-delete refuses while
+    any event still lists the tag, keeping the runtime auto-attach
+    contract ("event carrying this tag in ``auto_tags`` unions it
+    into every attached expense") well-defined.
+    """
+    tag_name_row = con.execute(
+        "SELECT name FROM tags WHERE id = ?",
+        [tag_id],
+    ).fetchone()
+    tag_name = str(tag_name_row[0]) if tag_name_row else None
+    auto_tag_refs = 0
+    if tag_name is not None:
+        auto_tag_refs = _events_auto_tags_reference_count(con, tag_name)
+    row = con.execute(
+        "SELECT "
+        " (SELECT COUNT(*) FROM sheet_mapping_tags WHERE tag_id = ?) "
+        " + (SELECT COUNT(*) FROM import_mapping_tags WHERE tag_id = ?)",
+        [tag_id, tag_id],
+    ).fetchone()
+    mapping_refs = int(row[0]) if row else 0
+    return mapping_refs + auto_tag_refs
+
+
+def _events_auto_tags_reference_count(
+    con: duckdb.DuckDBPyConnection,
+    tag_name: str,
+) -> int:
+    """Count events whose ``auto_tags`` JSON array contains ``tag_name``.
+
+    DuckDB does not enforce JSON-array semantics, so we load + decode
+    every non-empty ``auto_tags`` payload and check membership in
+    Python. The table is small (one row per historical year plus a
+    handful of explicit events) so scanning is cheap. Decoding goes
+    through ``decode_auto_tags_value`` so the null/malformed handling
+    stays in lockstep with every other reader of ``events.auto_tags``.
+    """
+    rows = con.execute(
+        "SELECT id, auto_tags FROM events"
+        " WHERE auto_tags IS NOT NULL AND auto_tags != '' AND auto_tags != '[]'",
+    ).fetchall()
+    count = 0
+    for event_id, raw in rows:
+        decoded = decode_auto_tags_value(raw, context=f"event_id={int(event_id)}")
+        if tag_name in decoded:
+            count += 1
+    return count
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +651,7 @@ def add_category(
         raise
 
 
-def edit_category(  # noqa: PLR0913, C901
+def edit_category(  # noqa: PLR0912, PLR0913, C901
     con: duckdb.DuckDBPyConnection,
     category_id: int,
     *,
@@ -493,9 +664,16 @@ def edit_category(  # noqa: PLR0913, C901
     """Atomic PATCH for ``categories``.
 
     All parameters optional. Validations (not-found, conflict,
-    inactive-group, in-use) run *before* any UPDATE, so a failed
-    validation never leaves the row half-edited even if the caller
-    PATCHes multiple columns at once.
+    inactive-group) run *before* any UPDATE, so a failed validation
+    never leaves the row half-edited even if the caller PATCHes
+    multiple columns at once.
+
+    ``is_active=False`` always succeeds on a known row (soft-retire).
+    The in-use guard was intentionally dropped: ``DELETE`` on the same
+    row already flips ``is_active=False`` when the ledger still
+    references it, and having PATCH refuse the same end-state with 409
+    was a confusing asymmetry. Operators use PATCH to flip the flag
+    either direction; DELETE is for "actually try to remove the row".
     """
     con.execute("BEGIN")
     try:
@@ -518,10 +696,6 @@ def edit_category(  # noqa: PLR0913, C901
                 )
         if group_id is not None:
             _require_active_group(con, group_id)
-        if is_active is False:
-            usage = _category_usage_count(con, category_id)
-            if usage > 0:
-                raise CatalogInUseError("category", category_id, usage)
         # --- then apply ---
         if name is not None:
             con.execute(
@@ -577,31 +751,51 @@ def set_category_active(
 # ---------------------------------------------------------------------------
 
 
-def add_event(
+def _encode_auto_tags(auto_tags: list[str] | tuple[str, ...] | None) -> str:
+    """Encode an ``auto_tags`` list for storage on ``events.auto_tags``.
+
+    ``None`` means "caller did not supply a value" and is the empty
+    array on INSERT. Caller-supplied empty list is also stored as
+    ``'[]'`` (explicit "no auto-tags").
+    """
+    names = list(auto_tags) if auto_tags is not None else []
+    return json.dumps(names, ensure_ascii=False)
+
+
+def add_event(  # noqa: PLR0913
     con: duckdb.DuckDBPyConnection,
     *,
     name: str,
     date_from: date,
     date_to: date,
     auto_attach_enabled: bool = False,
+    auto_tags: list[str] | tuple[str, ...] | None = None,
 ) -> AddResult:
     """Create a new event, or reactivate-in-place if the name exists.
 
     Reactivate behaviour: ``date_from`` / ``date_to`` /
-    ``auto_attach_enabled`` on the existing row are left untouched.
-    To change those, use ``edit_event``.
+    ``auto_attach_enabled`` / ``auto_tags`` on the existing row are
+    left untouched. To change those, use ``edit_event``.
 
-    Date-range validation (``date_from <= date_to``) runs only on the
-    INSERT branch. On reactivate we discard the caller's dates anyway,
-    so rejecting an already-named event because the operator happened
-    to type today's date in both widgets in the wrong order would
-    surface a confusing 422 for a path that never applies them. The
-    row's stored range stayed well-formed at write time and is not
-    being mutated here.
+    Input validation (``date_from <= date_to``, ``auto_tags`` names
+    resolve to active tags) runs regardless of whether we insert or
+    reactivate. The reactivate path discards the caller's values, but
+    the API contract is "supply a valid body" on every call — an
+    invalid body surfaces here as 422 instead of being silently
+    ignored. This keeps ``add_event`` symmetric with ``edit_event``
+    (which rejects the same inputs) and prevents the operator from
+    mistaking "the caller sent garbage which got dropped" for
+    "reactivated with the new values".
     """
+    if date_from > date_to:
+        raise CatalogWriteError(
+            f"event date_from ({date_from}) must be <= date_to ({date_to})",
+            http_status=422,
+        )
     con.execute("BEGIN")
     try:
         before = _hash_state(con)
+        _require_known_tag_names(con, auto_tags or ())
         existing = con.execute(
             "SELECT id, is_active FROM events WHERE name = ?",
             [name],
@@ -621,18 +815,19 @@ def add_event(
             )
             status: AddStatus = "reactivated" if bumped else "noop"
             return AddResult(id=eid, status=status)
-        if date_from > date_to:
-            # Validated only here (fresh-insert branch) because the
-            # reactivate path above never reads these values.
-            raise CatalogWriteError(
-                f"event date_from ({date_from}) must be <= date_to ({date_to})",
-                http_status=422,
-            )
         eid = _next_id(con, "events")
         con.execute(
-            "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled, is_active)"
-            " VALUES (?, ?, ?, ?, ?, TRUE)",
-            [eid, name, date_from, date_to, auto_attach_enabled],
+            "INSERT INTO events"
+            " (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
+            " VALUES (?, ?, ?, ?, ?, TRUE, ?)",
+            [
+                eid,
+                name,
+                date_from,
+                date_to,
+                auto_attach_enabled,
+                _encode_auto_tags(auto_tags),
+            ],
         )
         _commit_with_bump(con, before, context=f"add_event(name={name!r})")
         return AddResult(id=eid, status="created")
@@ -641,7 +836,7 @@ def add_event(
         raise
 
 
-def edit_event(  # noqa: PLR0913, C901
+def edit_event(  # noqa: PLR0912, PLR0913, C901
     con: duckdb.DuckDBPyConnection,
     event_id: int,
     *,
@@ -649,16 +844,19 @@ def edit_event(  # noqa: PLR0913, C901
     date_from: date | None = None,
     date_to: date | None = None,
     auto_attach_enabled: bool | None = None,
+    auto_tags: list[str] | tuple[str, ...] | None = None,
     is_active: bool | None = None,
 ) -> None:
     """Atomic PATCH for ``events``.
 
-    All parameters optional. Validations (not-found, conflict,
-    post-patch date range, in-use) run *before* any UPDATE so a
-    failed validation never leaves the row half-edited. The date
-    range check is evaluated against the composite "current row
-    merged with patch values" so patching only one of ``date_from``
-    / ``date_to`` is still validated correctly.
+    All parameters optional. ``auto_tags=None`` means "leave column
+    alone"; an empty list explicitly clears it. Validations
+    (not-found, conflict, post-patch date range, in-use, unknown
+    auto_tag names) run *before* any UPDATE so a failed validation
+    never leaves the row half-edited. The date range check is
+    evaluated against the composite "current row merged with patch
+    values" so patching only one of ``date_from`` / ``date_to`` is
+    still validated correctly.
     """
     con.execute("BEGIN")
     try:
@@ -671,7 +869,6 @@ def edit_event(  # noqa: PLR0913, C901
             raise CatalogNotFoundError(f"event id={event_id} not found")
         new_from = date_from if date_from is not None else row[1]
         new_to = date_to if date_to is not None else row[2]
-        # --- validate all inputs first ---
         if new_from > new_to:
             raise CatalogWriteError(
                 f"event date_from ({new_from}) must be <= date_to ({new_to})",
@@ -686,11 +883,11 @@ def edit_event(  # noqa: PLR0913, C901
                 raise CatalogConflictError(
                     f"event name {name!r} already in use by id={int(conflict[0])}",
                 )
-        if is_active is False:
-            usage = _event_usage_count(con, event_id)
-            if usage > 0:
-                raise CatalogInUseError("event", event_id, usage)
-        # --- then apply ---
+        # ``is_active=False`` is always allowed (soft-retire). See the
+        # ``edit_category`` docstring for the rationale — PATCH and
+        # DELETE must not disagree on the same end-state.
+        if auto_tags is not None:
+            _require_known_tag_names(con, auto_tags)
         if name is not None:
             con.execute("UPDATE events SET name = ? WHERE id = ?", [name, event_id])
         if date_from is not None:
@@ -707,6 +904,11 @@ def edit_event(  # noqa: PLR0913, C901
             con.execute(
                 "UPDATE events SET auto_attach_enabled = ? WHERE id = ?",
                 [bool(auto_attach_enabled), event_id],
+            )
+        if auto_tags is not None:
+            con.execute(
+                "UPDATE events SET auto_tags = ? WHERE id = ?",
+                [_encode_auto_tags(auto_tags), event_id],
             )
         if is_active is not None:
             con.execute(
@@ -735,6 +937,10 @@ def set_event_active(
 
 def add_tag(con: duckdb.DuckDBPyConnection, *, name: str) -> AddResult:
     """Create a new tag, or reactivate-in-place if the name exists."""
+    # Name validation is a pure string check — run it before we open a
+    # transaction so an invalid name does not cost a BEGIN/ROLLBACK
+    # round-trip. Kept consistent with ``edit_tag``.
+    _validate_tag_name(name)
     con.execute("BEGIN")
     try:
         before = _hash_state(con)
@@ -775,17 +981,32 @@ def edit_tag(
 ) -> None:
     """Atomic PATCH for ``tags``.
 
-    All parameters optional. Validations (not-found, conflict,
-    in-use) run *before* any UPDATE so a failed validation never
-    leaves the row half-edited.
+    All parameters optional. Validations (not-found, conflict) run
+    *before* any UPDATE so a failed validation never leaves the row
+    half-edited. ``is_active=False`` always succeeds on a known row
+    (soft-retire); see ``edit_category`` docstring for the rationale.
+
+    Rename cascade into ``events.auto_tags``: the auto-tag column is
+    a denormalised JSON array of tag *names*, not ids. A rename that
+    leaves ``events.auto_tags`` untouched would silently break the
+    auto-attach contract (the event would reference a name that no
+    longer exists as an active tag). We rewrite every event row whose
+    ``auto_tags`` mentions the old name so the invariant "every name
+    in ``auto_tags`` resolves to an active tag" is preserved
+    atomically inside this same transaction.
     """
+    # Run the pure-string name check before BEGIN so a malformed name
+    # does not cost a transaction (mirrors ``add_tag``).
+    if name is not None:
+        _validate_tag_name(name)
     con.execute("BEGIN")
     try:
         before = _hash_state(con)
-        row = con.execute("SELECT id FROM tags WHERE id = ?", [tag_id]).fetchone()
+        row = con.execute("SELECT id, name FROM tags WHERE id = ?", [tag_id]).fetchone()
         if row is None:
             raise CatalogNotFoundError(f"tag id={tag_id} not found")
-        # --- validate all inputs first ---
+        old_name = str(row[1])
+        # --- DB-state validations ---
         if name is not None:
             conflict = con.execute(
                 "SELECT id FROM tags WHERE name = ? AND id != ?",
@@ -795,13 +1016,11 @@ def edit_tag(
                 raise CatalogConflictError(
                     f"tag name {name!r} already in use by id={int(conflict[0])}",
                 )
-        if is_active is False:
-            usage = _tag_usage_count(con, tag_id)
-            if usage > 0:
-                raise CatalogInUseError("tag", tag_id, usage)
         # --- then apply ---
         if name is not None:
             con.execute("UPDATE tags SET name = ? WHERE id = ?", [name, tag_id])
+            if name != old_name:
+                _rename_tag_in_events_auto_tags(con, old_name=old_name, new_name=name)
         if is_active is not None:
             con.execute(
                 "UPDATE tags SET is_active = ? WHERE id = ?",
@@ -811,6 +1030,40 @@ def edit_tag(
     except Exception:
         duckdb_repo.best_effort_rollback(con, context="catalog_writer.edit_tag")
         raise
+
+
+def _rename_tag_in_events_auto_tags(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    old_name: str,
+    new_name: str,
+) -> None:
+    """Rewrite every ``events.auto_tags`` payload that references ``old_name``.
+
+    Called from ``edit_tag`` when the ``tags.name`` column changes.
+    Preserves array order (so authoring order semantics from
+    ``resolve_event_auto_tag_ids`` stay intact) and idempotently
+    dedups ``new_name`` if it already happened to be in the same
+    array. Empty / malformed payloads are left alone — the generic
+    reader (``decode_auto_tags_value``) already treats them as empty.
+    """
+    rows = con.execute(
+        "SELECT id, auto_tags FROM events"
+        " WHERE auto_tags IS NOT NULL AND auto_tags != '' AND auto_tags != '[]'",
+    ).fetchall()
+    for event_id, raw in rows:
+        decoded = decode_auto_tags_value(raw, context=f"event_id={int(event_id)}")
+        if old_name not in decoded:
+            continue
+        renamed: list[str] = []
+        for value in decoded:
+            candidate = new_name if value == old_name else value
+            if candidate not in renamed:
+                renamed.append(candidate)
+        con.execute(
+            "UPDATE events SET auto_tags = ? WHERE id = ?",
+            [json.dumps(renamed, ensure_ascii=False), int(event_id)],
+        )
 
 
 def set_tag_active(
@@ -842,3 +1095,228 @@ def _require_active_group(con: duckdb.DuckDBPyConnection, group_id: int) -> None
             f"category_group id={group_id} is inactive; reactivate it first",
             http_status=422,
         )
+
+
+#: Characters rejected inside tag names. Tag names flow through the
+#: ``map`` tab's comma/whitespace-separated tags cell and through
+#: ``events.auto_tags`` (a JSON array of bare names), so whitespace
+#: would split a single tag into two lookups and a comma would do
+#: the same; both look like honest typos but silently route expenses
+#: into the wrong envelope. Reject them at write time.
+_DISALLOWED_TAG_NAME_RE = re.compile(r"[,\s]")
+
+
+def _validate_tag_name(name: str) -> None:
+    if _DISALLOWED_TAG_NAME_RE.search(name):
+        raise CatalogWriteError(
+            f"tag name {name!r} contains whitespace or ','; the map tab uses "
+            "these as separators so they cannot appear inside a single name",
+            http_status=422,
+        )
+
+
+def _require_known_tag_names(
+    con: duckdb.DuckDBPyConnection,
+    names: list[str] | tuple[str, ...],
+) -> None:
+    """422 if any name is not a known active tag.
+
+    ``events.auto_tags`` is a denormalised name array (keeping a
+    ``tag_id`` array would require a second catalog table just for
+    events). We therefore validate at write time that every name
+    resolves to an active ``tags`` row so the runtime / historical
+    write paths don't silently drop typos.
+    """
+    unique = sorted({str(n) for n in names})
+    if not unique:
+        return
+    placeholders = ",".join(["?"] * len(unique))
+    rows = con.execute(
+        f"SELECT name FROM tags WHERE is_active AND name IN ({placeholders})",  # noqa: S608
+        unique,
+    ).fetchall()
+    found = {str(r[0]) for r in rows}
+    missing = [n for n in unique if n not in found]
+    if missing:
+        raise CatalogWriteError(
+            f"auto_tags references unknown / inactive tag name(s) {missing}; "
+            "create the tag first or use its active name",
+            http_status=422,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Delete endpoints (soft/hard semantics)
+# ---------------------------------------------------------------------------
+#
+# Hard-delete iff the row has no ledger references; otherwise flip
+# ``is_active=FALSE`` and report ``soft`` so the caller can surface
+# "still available under Show inactive" in the UI.
+#
+# ``category_groups`` use a different definition of "referenced":
+# ledger rows FK into categories, not groups, so a group is removable
+# iff no category (active OR inactive) points at it. That keeps
+# "retire this unused group" safe while still refusing "hard-remove a
+# group whose inactive categories might be reactivated later".
+
+
+def _group_child_category_count(
+    con: duckdb.DuckDBPyConnection,
+    group_id: int,
+) -> int:
+    """Total categories (active or inactive) pointing at this group.
+
+    Used by ``delete_group`` to gate physical removal: a non-zero
+    count means the ``categories.group_id`` FK would reject the
+    ``DELETE``, so the operator has to relocate or delete the
+    children first.
+    """
+    row = con.execute(
+        "SELECT COUNT(*) FROM categories WHERE group_id = ?",
+        [group_id],
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def delete_group(
+    con: duckdb.DuckDBPyConnection,
+    group_id: int,
+) -> DeleteResult:
+    """Hard-delete a category group iff it has no (active or inactive)
+    categories referencing it; raise 409 otherwise.
+
+    Unlike the other catalog kinds, soft-deleting a group while
+    categories still point at it leaves orphaned ``is_active=TRUE``
+    categories attached to an inactive group — the API refuses that
+    combination outright and forces the operator to relocate (or
+    delete) the categories first.
+    """
+    con.execute("BEGIN")
+    try:
+        before = _hash_state(con)
+        row = con.execute(
+            "SELECT id FROM category_groups WHERE id = ?",
+            [group_id],
+        ).fetchone()
+        if row is None:
+            raise CatalogNotFoundError(f"category_group id={group_id} not found")
+        child_count = _group_child_category_count(con, group_id)
+        if child_count > 0:
+            raise CatalogInUseError("category_group", group_id, child_count)
+        con.execute("DELETE FROM category_groups WHERE id = ?", [group_id])
+        _commit_with_bump(con, before, context=f"delete_group(id={group_id})")
+        return DeleteResult(status="hard", usage_count=0)
+    except Exception:
+        duckdb_repo.best_effort_rollback(con, context="catalog_writer.delete_group")
+        raise
+
+
+def delete_category(
+    con: duckdb.DuckDBPyConnection,
+    category_id: int,
+) -> DeleteResult:
+    """Hard-delete iff nothing references this category; otherwise flip
+    ``is_active=FALSE``.
+
+    "Nothing references" means no ``expenses`` row *and* no
+    ``sheet_mapping`` / ``import_mapping`` row points at it. Mapping
+    references would otherwise trip the FK constraint at COMMIT time
+    even when the ledger is clean.
+    """
+    con.execute("BEGIN")
+    try:
+        before = _hash_state(con)
+        row = con.execute(
+            "SELECT id, is_active FROM categories WHERE id = ?",
+            [category_id],
+        ).fetchone()
+        if row is None:
+            raise CatalogNotFoundError(f"category id={category_id} not found")
+        usage = _category_usage_count(con, category_id)
+        mapping_refs = _category_mapping_reference_count(con, category_id)
+        if usage == 0 and mapping_refs == 0:
+            con.execute("DELETE FROM categories WHERE id = ?", [category_id])
+            _commit_with_bump(con, before, context=f"delete_category(hard id={category_id})")
+            return DeleteResult(status="hard", usage_count=0)
+        con.execute(
+            "UPDATE categories SET is_active = FALSE WHERE id = ?",
+            [category_id],
+        )
+        _commit_with_bump(con, before, context=f"delete_category(soft id={category_id})")
+        return DeleteResult(status="soft", usage_count=usage)
+    except Exception:
+        duckdb_repo.best_effort_rollback(con, context="catalog_writer.delete_category")
+        raise
+
+
+def delete_event(
+    con: duckdb.DuckDBPyConnection,
+    event_id: int,
+) -> DeleteResult:
+    """Hard-delete iff nothing references this event; otherwise flip
+    ``is_active=FALSE``.
+
+    See ``delete_category`` for the expanded "nothing references"
+    definition — mapping rows must also be absent.
+    """
+    con.execute("BEGIN")
+    try:
+        before = _hash_state(con)
+        row = con.execute(
+            "SELECT id FROM events WHERE id = ?",
+            [event_id],
+        ).fetchone()
+        if row is None:
+            raise CatalogNotFoundError(f"event id={event_id} not found")
+        usage = _event_usage_count(con, event_id)
+        mapping_refs = _event_mapping_reference_count(con, event_id)
+        if usage == 0 and mapping_refs == 0:
+            con.execute("DELETE FROM events WHERE id = ?", [event_id])
+            _commit_with_bump(con, before, context=f"delete_event(hard id={event_id})")
+            return DeleteResult(status="hard", usage_count=0)
+        con.execute(
+            "UPDATE events SET is_active = FALSE WHERE id = ?",
+            [event_id],
+        )
+        _commit_with_bump(con, before, context=f"delete_event(soft id={event_id})")
+        return DeleteResult(status="soft", usage_count=usage)
+    except Exception:
+        duckdb_repo.best_effort_rollback(con, context="catalog_writer.delete_event")
+        raise
+
+
+def delete_tag(
+    con: duckdb.DuckDBPyConnection,
+    tag_id: int,
+) -> DeleteResult:
+    """Hard-delete iff nothing references this tag; otherwise flip
+    ``is_active=FALSE``.
+
+    "Nothing references" covers ``expense_tags``, ``sheet_mapping_tags``
+    and ``import_mapping_tags`` — any surviving row would trip the FK
+    constraint at COMMIT.
+    """
+    con.execute("BEGIN")
+    try:
+        before = _hash_state(con)
+        row = con.execute(
+            "SELECT id FROM tags WHERE id = ?",
+            [tag_id],
+        ).fetchone()
+        if row is None:
+            raise CatalogNotFoundError(f"tag id={tag_id} not found")
+        usage = _tag_usage_count(con, tag_id)
+        mapping_refs = _tag_mapping_reference_count(con, tag_id)
+        if usage == 0 and mapping_refs == 0:
+            con.execute("DELETE FROM tags WHERE id = ?", [tag_id])
+            _commit_with_bump(con, before, context=f"delete_tag(hard id={tag_id})")
+            return DeleteResult(status="hard", usage_count=0)
+        con.execute(
+            "UPDATE tags SET is_active = FALSE WHERE id = ?",
+            [tag_id],
+        )
+        _commit_with_bump(con, before, context=f"delete_tag(soft id={tag_id})")
+        return DeleteResult(status="soft", usage_count=usage)
+    except Exception:
+        duckdb_repo.best_effort_rollback(con, context="catalog_writer.delete_tag")
+        raise

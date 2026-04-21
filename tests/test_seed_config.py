@@ -134,19 +134,20 @@ class TestSeedFromSheet:
             con.close()
         assert count > 0
 
-    def test_seed_does_not_populate_runtime_mapping(self):
+    def test_seed_does_not_populate_sheet_mapping(self):
         """Runtime 3D->2D routing moved out of seed in Phase 2. Seed now
-        leaves ``runtime_mapping`` empty; it's owned by ``runtime_map.py``
-        and populated from the hand-curated ``map`` worksheet tab."""
+        leaves ``sheet_mapping`` empty; it's owned by
+        ``sheet_mapping.py`` and populated from the hand-curated ``map``
+        worksheet tab."""
         _patched_seed()
 
         con = duckdb_repo.get_connection()
         try:
             runtime_count = con.execute(
-                "SELECT COUNT(*) FROM runtime_mapping",
+                "SELECT COUNT(*) FROM sheet_mapping",
             ).fetchone()[0]
             runtime_tags_count = con.execute(
-                "SELECT COUNT(*) FROM runtime_mapping_tags",
+                "SELECT COUNT(*) FROM sheet_mapping_tags",
             ).fetchone()[0]
         finally:
             con.close()

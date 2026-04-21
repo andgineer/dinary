@@ -94,16 +94,32 @@ CREATE TABLE categories (
     sheet_group TEXT
 );
 
--- Events stay first-class for trips/camps/relocation. `auto_attach_enabled`
--- is a hint for the future receipt-processing pipeline, not for current
--- server behavior; stored expenses are never silently re-attached.
+-- Events stay first-class for trips/camps/relocation.
+-- `auto_attach_enabled` opts the event into the PWA's "auto-select
+-- the active event for this expense's date" affordance (the PWA
+-- picks the shortest matching active event and the operator can
+-- override). `auto_tags` is a denormalised JSON array of tag names
+-- the runtime and the bootstrap importer union into the expense's
+-- effective tag set whenever the expense is attached to the event;
+-- tags referenced from `auto_tags` are prevented from being
+-- hard-deleted even if no expense row references them directly
+-- (the delete-time reference count in `catalog_writer` walks every
+-- `events.auto_tags` payload), and a PATCH rename of a tag cascades
+-- into every `events.auto_tags` entry that names it so renumbering
+-- a tag does not orphan the auto-attach pipeline.
 CREATE TABLE events (
     id                  INTEGER PRIMARY KEY,
     name                TEXT UNIQUE NOT NULL,
     date_from           DATE NOT NULL,
     date_to             DATE NOT NULL,
     auto_attach_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    is_active           BOOLEAN NOT NULL DEFAULT TRUE
+    is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+    -- ``auto_tags`` is a JSON array of tag names stored in a plain
+    -- TEXT column; DuckDB's JSON extension is not required, we just
+    -- round-trip the array through ``json.dumps`` / ``json.loads``.
+    -- ``NOT NULL DEFAULT '[]'`` keeps every row in a readable state
+    -- without null-handling at the call sites.
+    auto_tags           TEXT NOT NULL DEFAULT '[]'
 );
 
 -- Phase-1 fixed flat tag dictionary; PWA hardcodes the same list. Tags
@@ -135,8 +151,8 @@ CREATE TABLE import_sources (
 -- Maps legacy Google Sheets `(sheet_category, sheet_group)` rows to the 3D
 -- model. Used exclusively for bootstrap historical import (year=Y or
 -- year=0 fallback). Runtime sheet logging uses the separate
--- `runtime_mapping` table (Phase 2, migration 0002) sourced from a
--- hand-curated `map` worksheet tab — see "Catalog sync" below.
+-- `sheet_mapping` table sourced from a hand-curated `map` worksheet
+-- tab — see "Catalog sync" below.
 CREATE TABLE import_mapping (
     id             INTEGER PRIMARY KEY,
     year           INTEGER NOT NULL DEFAULT 0,
@@ -153,24 +169,25 @@ CREATE TABLE import_mapping_tags (
     PRIMARY KEY (mapping_id, tag_id)
 );
 
--- Runtime 3D -> 2D projection for `POST /api/expenses`. Rows are
--- evaluated in `row_order ASC`, first-match-wins. `event_pattern` is
--- an fnmatch-style glob against the expense's event name (empty
--- string matches "any event or no event"). Rebuilt from the
--- hand-curated `map` worksheet tab — see `src/dinary/services/
--- runtime_map.py`. `category_id` is the only FK into `categories`;
--- there is intentionally no direct FK to `events` because
--- `event_pattern` is a glob, not an id.
-CREATE TABLE runtime_mapping (
+-- Runtime 3D -> 2D projection for expense logging. Evaluated in
+-- `row_order ASC` with **first non-`*` wins per column independently**:
+-- each row contributes a `(sheet_category, sheet_group)` pair where
+-- either cell may be the literal `'*'` meaning "inherit from a later
+-- row". `category_id` / `event_id` `NULL` mean wildcard (match any).
+-- Tags filter is a subset check: the row's `sheet_mapping_tags` set
+-- must be a subset of the expense's tag-id set. Rebuilt from the
+-- hand-curated `map` worksheet tab — see
+-- `src/dinary/services/sheet_mapping.py`.
+CREATE TABLE sheet_mapping (
     row_order      INTEGER PRIMARY KEY,
-    category_id    INTEGER NOT NULL REFERENCES categories(id),
-    event_pattern  TEXT NOT NULL,
+    category_id    INTEGER REFERENCES categories(id),
+    event_id       INTEGER REFERENCES events(id),
     sheet_category TEXT NOT NULL,
-    sheet_group    TEXT NOT NULL DEFAULT ''
+    sheet_group    TEXT NOT NULL
 );
 
-CREATE TABLE runtime_mapping_tags (
-    mapping_row_order INTEGER NOT NULL REFERENCES runtime_mapping(row_order),
+CREATE TABLE sheet_mapping_tags (
+    mapping_row_order INTEGER NOT NULL REFERENCES sheet_mapping(row_order),
     tag_id            INTEGER NOT NULL REFERENCES tags(id),
     PRIMARY KEY (mapping_row_order, tag_id)
 );
@@ -283,7 +300,8 @@ Examples:
 - `event` is an optional single-valued dimension for trips, camps, business trips, relocation, and other bounded contexts.
 - Each event has `date_from`, `date_to`, and `auto_attach_enabled`.
 - **Attachment is decided before insert; stored rows are never auto-re-attached.** `expenses` is the committed ledger, not a staging area.
-- Phase 2: the PWA surfaces a date-filtered event dropdown (±30 days of the expense date) and `POST /api/expenses` accepts an optional `event_id`. The historical sheet import still populates `event_id` from `import_mapping`. The sheet-logging drain worker does not originate `event_id`; it only reads the resolved event *name* when projecting an expense through `runtime_mapping`.
+- Phase 2: the PWA surfaces a date-filtered event dropdown (±30 days of the expense date) and `POST /api/expenses` accepts an optional `event_id`. The historical sheet import still populates `event_id` from `import_mapping`. The sheet-logging drain worker does not originate `event_id`; it reads `expense.event_id` directly when projecting an expense through `sheet_mapping`.
+- Events carry an `auto_tags` JSON array: tags attached to the event automatically flow into the expense's `tag_ids` (both at `POST /api/expenses` time and during historical import). Vacation events seed `auto_tags = ["отпуск", "путешествия"]` so either tag alone still routes the expense to the "путешествия" envelope via the default `map` tab's tag-driven rows (the module-private `_TAG_RULES` list in `src/dinary/services/sheet_mapping.py`).
 - Future receipt-processing pipeline (out of scope for Phase 1) will use `auto_attach_enabled` and overlap rules:
   - exactly one auto-attach-enabled event covers the date → suggest/attach;
   - more than one covers the date → user or rule must pick;
@@ -293,7 +311,7 @@ Examples:
 ### Tag Semantics
 
 - Tags are flat labels, many-to-many with expenses, and replace both the former `beneficiary` and `sphere_of_life` axes.
-- The initial tag set is the distinct labels referenced by `import_mapping_tags` plus the hardcoded `PHASE1_TAGS` list in `seed_config.py`; after that the set grows/shrinks via the Admin API (`POST /api/admin/catalog/tags`, `PATCH /api/admin/catalog/tags/{id}`). The PWA discovers tags via `GET /api/catalog` and supports a multi-select on the expense form.
+- The initial tag set is the hardcoded `PHASE1_TAGS` list in `seed_config.py`; `import_mapping_tags` rows reference those same tags by id (the seed ordering upserts `tags` before building the mapping rebuild), so they never contribute extra names. After the first `inv import-catalog`, the set grows/shrinks via the Admin API (`POST /api/admin/catalog/tags`, `PATCH /api/admin/catalog/tags/{id}`). The PWA discovers tags via `GET /api/catalog` and supports a multi-select on the expense form.
 - `POST /api/expenses` validates `tag_ids[]` against the tag table; unknown ids are rejected with 422, and inactive ids survive only on an idempotent replay whose stored tag set matches exactly.
 - No `tag_type`, no hierarchy, no namespaces — tags remain a flat, user-extensible label dictionary.
 
@@ -307,7 +325,7 @@ Examples:
 
 **`expenses` is a committed ledger.** Once a row is written, its `(category_id, event_id, tag set)` is the final decision. There is no silent re-attach/re-detach. Any future receipt queue, raw receipt storage, AI suggestions, or user-resolution tasks will live in *separate* pipeline tables — not as intermediate states overloaded onto `expenses`.
 
-**Catalog vocabulary is user-editable from the PWA (Phase 2).** Groups, categories, events, and tags are all mutable via the Admin API (`POST`/`PATCH /api/admin/catalog/*`) through `catalog_writer`. Retired rows are soft-deleted (`is_active = FALSE`) so `expenses.*_id` FKs stay walkable; `GET /api/catalog` filters them out for the PWA dropdowns. `inv import-catalog` remains the bulk seeding path from the legacy sheet.
+**Catalog vocabulary is user-editable from the PWA (Phase 2).** Groups, categories, events, and tags are all mutable via the Admin API (`POST`/`PATCH`/`DELETE /api/admin/catalog/*`) through `catalog_writer`. Retired rows are soft-deleted (`is_active = FALSE`) so `expenses.*_id` FKs stay walkable; `GET /api/catalog` returns both active and inactive rows (with an `is_active` flag) and the PWA filters them out of the dropdowns by default, offering a per-picker "Показать неактивные" toggle that also exposes "Активировать" / "Удалить" affordances. `inv import-catalog` remains the bulk seeding path from the legacy sheet.
 
 **`sheet_category` / `sheet_group` are import provenance, not runtime metadata.** Imported rows populate the pair together (with `sheet_group=''` when the legacy row had no envelope); runtime rows leave both NULL. The async append worker does not read these columns.
 
@@ -315,18 +333,36 @@ Examples:
 
 `catalog_version` lives in the KV `app_metadata` table. Two write paths bump it, both routing their final write through `duckdb_repo.set_catalog_version`:
 
-1. **`inv import-catalog`** — reads the previous value (defaulting to `0` on a fresh DB), runs `seed_classification_catalog` in one long transaction, and writes `previous + 1`.
+1. **`inv import-catalog`** — reads the previous value (defaulting to `0` on a fresh DB) and drives `seed_config.rebuild_config_from_sheets`, which runs in three cursors on the singleton DuckDB engine: step 1 bootstraps `import_sources` in its own short `BEGIN`/`COMMIT` (so the writer slot isn't held across the slow Sheets API calls that follow); step 2 does read-only Sheets I/O with no DB lock; step 3 opens a single `BEGIN`, runs `seed_classification_catalog`, then invokes a `finalize` hook that restores the preserved `import_sources`, validates coverage, and — hash-gated against the pre-step-3 `hash_catalog_state` snapshot — writes `previous + 1` before `COMMIT`. The step-3 transaction is the atomic boundary: a validation failure in the hook rolls back the catalog rebuild too, instead of leaving the DB half-committed. A genuine no-op reseed (same hardcoded groups, same remote mappings) leaves the hash unchanged and skips the bump, so PWA ETag-validated `GET /api/catalog` keeps serving 304s.
 2. **Admin API (`catalog_writer`)** — every `POST /api/admin/catalog/<kind>` and `PATCH /api/admin/catalog/<kind>/<id>` mutation runs through `src/dinary/services/catalog_writer.py`, which computes a sha256 of the canonical catalog state before and after the mutation and bumps `catalog_version` only if the hash changed. A no-op rewrite (re-adding an already-active name, renaming a row to its current name) does **not** bump.
+
+**Scope — what is and isn't part of `catalog_version`:** the hash canonicalises the shape of `category_groups`, `categories`, `events` (including `auto_tags`), and `tags`. It deliberately does **not** cover `sheet_mapping`/`sheet_mapping_tags` or `import_mapping`/`import_mapping_tags`. Runtime 3D→2D routing (the `map` tab, reloaded by `services/sheet_mapping.py`) and the derived per-year `import_mapping` rebuild (owned by `seed_classification_catalog`) are internal server state that the PWA never reads directly, so there is nothing for a client to invalidate when they change. Conversely, a pure `/api/admin/reload-map` or a no-op `inv import-config` that only refreshes mappings leaves `catalog_version` untouched, and the PWA's ETag-validated `GET /api/catalog` keeps serving `304 Not Modified`. If the mapping tables ever surface on an API the PWA reads, the hash definition in `catalog_writer.hash_catalog_state` is the single place to extend.
 
 `GET /api/catalog` sets a weak ETag `W/"catalog-v<N>"` on the HTTP `ETag` response header (the body does **not** duplicate it — the value is a pure function of `catalog_version` and is derived client-side). The PWA stores the response in `localStorage["catalog"]` keyed by version and revalidates with `If-None-Match`. `POST /api/expenses` also echoes the current version so the PWA can detect staleness after each expense without a dedicated catalog round-trip.
 
+**Admin API authentication:** Phase-2 intentionally does **not** gate
+`/api/admin/*` or `/api/admin/catalog/*` on any credential. The
+earlier `DINARY_ADMIN_API_TOKEN` header-check was removed along with
+the single-file DB refactor because a shared static token was both
+annoying (PWA users had to type it on every add-tag modal) and
+weaker than the network layer we already rely on (`dinary-server is
+only reachable through Cloudflare Access or a Tailscale tailnet
+— see "Deployment notes"). A proper app-level auth layer (session
+cookies or OIDC) is listed under the open items and will replace
+the current trust-the-network stance before the service is exposed
+publicly. Until then, **any** request that reaches `/api/admin/*`
+is accepted; this is safe in the current single-user deployment
+and deliberately unsafe anywhere else.
+
 **Admin API write semantics:**
 
-* `add_*` on a name already in use: if the existing row is inactive, it is reactivated with its other columns (sort_order / date_from / date_to / auto_attach_enabled / sheet_name / sheet_group) preserved — to change those, the caller uses `edit_*`. On reactivation, `add_category` does apply the caller's `group_id` because it is part of the "where am I putting this" intent of the add. Response includes `status ∈ {"created", "reactivated", "noop"}`.
-* `edit_*` is atomic within a single transaction: validations (not-found, name conflict, inactive-group, in-use guard, post-patch `date_from <= date_to`) all run **before** any UPDATE, so a failed validation never leaves the row half-edited.
-* Retire guards: a category / event / tag still referenced by any `expenses` (or `expense_tags`) row cannot be soft-deleted; 409 `CatalogInUseError`.
+* `add_*` on a name already in use: if the existing row is inactive, it is reactivated with its other columns (sort_order / date_from / date_to / auto_attach_enabled / sheet_name / sheet_group / auto_tags) preserved — to change those, the caller uses `edit_*`. On reactivation, `add_category` does apply the caller's `group_id` because it is part of the "where am I putting this" intent of the add. Response includes `status ∈ {"created", "reactivated", "noop"}`. The reactivate branch still validates the caller's body (`date_from <= date_to` for events, `auto_tags` names resolve to active tags) even though the values are discarded: an invalid body surfaces as 422, not as a silently-ignored 200. This keeps `add_event` symmetric with `edit_event` and prevents "PWA sent garbage, server dropped it under a successful reactivate" failure modes.
+* `edit_*` is atomic within a single transaction: validations (not-found, name conflict, inactive-group, in-use guard, post-patch `date_from <= date_to`) all run **before** any UPDATE, so a failed validation never leaves the row half-edited. `edit_tag(name=...)` additionally cascades the rename into every `events.auto_tags` JSON array that references the old name (inside the same transaction), so the auto-attach pipeline keeps working without the operator having to touch each event by hand; without the cascade, `resolve_event_auto_tag_ids` would log "unknown/inactive tag name" WARNs and silently drop the renamed tag from every new expense created under that event.
+* `DELETE /api/admin/catalog/<kind>/<id>` applies hard-vs-soft based on **all** FK-bearing tables, not just the ledger: a category / event / tag is hard-deleted only when no `expenses`/`expense_tags` row **and** no `sheet_mapping`/`sheet_mapping_tags`/`import_mapping`/`import_mapping_tags` row references it; otherwise it is soft-deleted (`is_active = FALSE`) to keep the FK graph consistent. `usage_count` in the response still reflects the ledger count only (that is what the PWA phrases as "used by N expenses"); mapping references are an implementation detail of the hard-delete safety check.
+* Groups are special: `DELETE /api/admin/catalog/groups/<id>` refuses (409) while any category — active or inactive — still points at it, because leaving an active category under an inactive group would be a semantic lie. Operators soft- or hard-delete the child categories first.
+* Retire guards via `edit_*(is_active=False)` still apply: flipping a category / event / tag inactive while it is in use by an expense succeeds (soft), while flipping a group inactive while it still has *active* child categories is refused (observability, not FK safety — children must be retired first).
 
-The seed path and the admin path are not unified yet — `seed_from_sheet` uses its own bulk SQL inside one outer transaction that `catalog_writer`'s per-mutation `BEGIN/COMMIT` cannot nest inside. Both paths funnel their final version write through `duckdb_repo.set_catalog_version`, so any future audit hook can intercept them uniformly.
+The seed path and the admin path are not unified yet — `seed_from_sheet` runs its step-3 bulk SQL in one outer transaction (see "Catalog versioning" path 1) that `catalog_writer`'s per-mutation `BEGIN`/`COMMIT` cannot nest inside. Both paths funnel their final version write through `duckdb_repo.set_catalog_version`, so any future audit hook can intercept them uniformly.
 
 ### Catalog sync (FK-safe in-place)
 
@@ -335,12 +371,12 @@ The seed path and the admin path are not unified yet — `seed_from_sheet` uses 
 1. Loads every row already in `categories` / `category_groups` / `events` / `tags` into an in-memory map keyed by natural key (`name`) and stable `id`.
 2. For each entity present in the sheet-driven vocabulary, `UPDATE` the existing row in place (preserving the `id`) with `is_active = TRUE` plus the latest `group_id` / `date_from` / `date_to` / `sort_order`; `INSERT` any genuinely new natural keys.
 3. For each entity **not** present in the new vocabulary, set `is_active = FALSE`. The row stays in the table so `expenses.category_id` (etc.) remains walkable.
-4. Rebuild the `import_mapping` / `import_mapping_tags` tables from scratch. These have no ledger FKs pointing at them, so a plain wipe-and-reseed is safe; `_purge_mapping_tables` runs outside a write transaction because DuckDB 1.5's FK validation does not currently allow a transaction to both mass-deactivate and re-activate FK-referenced rows.
+4. Rebuild the `import_mapping` / `import_mapping_tags` tables from scratch. These have no ledger FKs pointing at them, so a plain wipe-and-reseed is safe; `_purge_mapping_tables` runs in auto-commit *outside* the main write transaction because DuckDB 1.5 does not see intra-transaction `DELETE`s in the FK index — a `DELETE FROM import_mapping_tags` followed by `DELETE FROM import_mapping` inside a single `BEGIN`/`COMMIT` raises FK violation on the second statement (the first delete's rows still look FK-referenced from the second delete's perspective). Running each `DELETE` in its own implicit transaction sidesteps the limitation; losing transactional atomicity on the purge is acceptable because the mapping tables are pure derived state (a crashed rebuild leaves them empty, which is the same state a fresh migration would produce and the very next seed run repopulates).
 5. Bump `catalog_version`.
 
-The Phase-1 `logging_mapping` / `logging_mapping_tags` tables have been replaced by `runtime_mapping` / `runtime_mapping_tags` (Phase 2 migration `0002`). These are no longer derived from historical sheet data but from a hand-curated `map` worksheet tab in the logging spreadsheet, reloaded lazily via `runtime_map.ensure_fresh()` (Drive API `modifiedTime` check) and eagerly via `POST /api/admin/reload-map`.
+Runtime 3D -> 2D projection lives in the `sheet_mapping` / `sheet_mapping_tags` tables. These are not derived from historical sheet data but from a hand-curated `map` worksheet tab in the logging spreadsheet, reloaded lazily via `sheet_mapping.ensure_fresh()` (Drive API `modifiedTime` check) and eagerly via `POST /api/admin/reload-map`.
 
-`GET /api/catalog` filters on `is_active = TRUE` for both the category and its group (and the active flag on events / tags), so retired vocabulary disappears from the PWA immediately while the ledger stays self-consistent.
+`GET /api/catalog` returns **every** catalog row (active and inactive) and stamps each with an `is_active` flag so the PWA can filter client-side and expose a per-picker "Показать неактивные" toggle plus an "Активировать" action (`PATCH /api/admin/catalog/<kind>/<id>` with `{"is_active": true}`). This keeps retired vocabulary reachable on demand without polluting the default UI.
 
 ### Cross-year references
 
@@ -592,21 +628,21 @@ The target spreadsheet is **independent of `import_sources`** — import sources
 
 ### Logging projection rules
 
-The drain worker maps `(expense.category_id, expense.event_id, expense tag set)` to a target `(sheet_category, sheet_group)` by walking `runtime_mapping` in `row_order ASC`:
+The drain worker maps `(expense.category_id, expense.event_id, expense tag set)` to a target `(sheet_category, sheet_group)` by walking `sheet_mapping` in `row_order ASC`:
 
-- **Lookup order**: for each row whose `category_id` matches the expense, evaluate the event glob against the resolved event **name** (empty `event_pattern` matches any event and also the no-event case) and verify the row's `runtime_mapping_tags` set is a subset of the expense's tag-id set. The first row that matches wins.
-- **Guaranteed fallback**: if no `runtime_mapping` row matches the expense, the drain falls back to `(sheet_category=categories.name, sheet_group='')` so every expense lands in a predictable cell regardless of map-tab coverage. The "unknown category_id" case (a category soft-deleted after the expense was inserted) poisons the queue row because the fallback can't name the target.
-- The lookup is deterministic (first-match by `row_order`, which mirrors the row order in the `map` worksheet), so operators can reason about output by reading the tab top-down.
-- This is **best-effort placement, not a round-trip guarantee**. Tag combinations that don't match any row fall through to the category-name fallback.
+- **Match filter**: a row is a candidate when all three hold: `category_id` matches the expense or is `NULL` (wildcard), `event_id` matches or is `NULL`, and the row's `sheet_mapping_tags` set is a subset of the expense's tag-id set.
+- **Column resolver**: `sheet_category` and `sheet_group` are resolved independently — the first non-`'*'` value encountered in `row_order ASC` among the matching candidates wins for each column. A row that contributes a literal `'*'` in a column defers to later rows for that column only.
+- **Guaranteed per-column fallback**: `duckdb_repo.logging_projection` applies the fallback itself, independently per column: if the resolver didn't pick a `sheet_category` it uses `categories.name`; if it didn't pick a `sheet_group` it uses the empty string. A partial match (e.g. a tag rule rewrote only `sheet_group`) keeps the resolved column and only substitutes the missing one. The function returns `None` exclusively when the expense's `category_id` itself is not in the catalog — the one state where no sensible target can be synthesized. The drain loop translates that `None` into a poison-queue signal (there is no landing cell to use).
+- The lookup is deterministic (row_order mirrors the row order in the `map` worksheet), so operators can reason about output by reading the tab top-down.
 
-### `runtime_mapping` refresh model
+### `sheet_mapping` refresh model
 
-The `runtime_mapping` / `runtime_mapping_tags` tables are derived state; the source of truth is the `map` worksheet tab in the logging spreadsheet. `src/dinary/services/runtime_map.py` owns two refresh entry points:
+The `sheet_mapping` / `sheet_mapping_tags` tables are derived state; the source of truth is the `map` worksheet tab in the logging spreadsheet. `src/dinary/services/sheet_mapping.py` owns two refresh entry points:
 
 - `ensure_fresh()` — the drain loop calls this once per sweep. Issues a Drive `files.get(fields=modifiedTime)` call (sub-second, no row data) and only re-parses the tab when the returned timestamp differs from the process-local cache. Network errors downgrade to a warning so an outage on the Drive side cannot stall draining whatever is already in the table.
 - `reload_now()` — the admin endpoint (`POST /api/admin/reload-map`) calls this unconditionally. Captures `modifiedTime` before **and** after the sheet read; if the timestamp shifts during the read, the new rows are still swapped into the DB (they're at least as fresh as what was there) but the cache is left untouched so the next `ensure_fresh()` tick picks up the post-edit version instead of treating a possibly-stale snapshot as steady state.
 
-Both swap `runtime_mapping` and `runtime_mapping_tags` inside a single DuckDB transaction so the drain worker never sees a half-populated map. `ensure_default_map_tab()` lays down a `category_name -> (category_name, '')` default tab on first boot so the runtime fallback is never the *only* code path; operators can then curate deviations on the live tab.
+Both swap `sheet_mapping` and `sheet_mapping_tags` inside a single DuckDB transaction so the drain worker never sees a half-populated map. `sheet_mapping.ensure_default_map_tab()` (called from `seed_config.rebuild_config_from_sheets` after the catalog-side transaction commits) lays down a default `map` tab on first boot generated from hard-coded tag/event routing rules plus the currently active catalog's category list, so the runtime fallback is never the *only* code path; operators can then curate deviations on the live tab and the default is regenerated only when the tab is missing or empty. Tag-driven rows in that default (the module-private `_TAG_RULES` list in `services/sheet_mapping.py`) are filtered against the active tag catalog at generation time: any rule whose tag is not an active `tags.name` is skipped with a WARN rather than emitted — otherwise a post-rename taxonomy would produce a template that trips `MapTabError` on first read. Both `ensure_fresh()` and `reload_now()` resolve `settings.sheet_logging_spreadsheet` through `config.spreadsheet_id_from_setting()` before hitting Sheets/Drive, so an operator env value that is a full browser URL (rather than a bare spreadsheet ID) is accepted transparently.
 
 ### Sheet layout contract
 
@@ -617,7 +653,7 @@ The sheet logging worker writes to a flat-table layout (one tab holds **every ye
 | A | First day of the expense's month, written as `YYYY-MM-DD` with `USER_ENTERED` so Google stores a date serial. Google **displays** it as `"Apr-1"` etc. (year is dropped from the formatted view but kept in the underlying value). |
 | B | Sum-formula in RSD — extended in place by `append_expense_atomic` (`=460+373+...`). |
 | C | EUR conversion formula `=IF(H{r}="","",B{r}/H{r})`. |
-| D, E | `sheet_category`, `sheet_group` resolved by the drain loop via `runtime_mapping` (fallback: `categories.name`, `''`). |
+| D, E | `sheet_category`, `sheet_group` resolved by the drain loop via `sheet_mapping` (fallback: `categories.name`, `''`). |
 | F | Free-text comment, semicolon-separated when multiple expenses share a row. |
 | G | Month number 1..12 (literal, no formula). Used for fast month-block scans. |
 | H | Manual EUR↔RSD rate cell. The worker only writes here when it's empty (set-if-missing). |
@@ -647,15 +683,17 @@ Request shape (Phase 2 — 3D, id-based):
 
 - `client_expense_id` — required, client-generated UUID (the PWA uses `crypto.randomUUID()`). Idempotency key. There is no server-side `expense_id`-to-client plumbing; the server's integer PK is internal.
 - `category_id` — required integer FK into `categories`. Unknown id → `422 Unknown category_id`. Known-but-inactive → `422` for a truly-new POST, but accepted for an idempotent replay where the stored row has the same `category_id`. This keeps an offline PWA retry against a category that was deactivated after the original POST from being silently dropped.
-- `event_id` — optional integer FK into `events`. Same unknown/inactive semantics as `category_id`; inactive events survive only on a replay whose stored `event_id` matches. The PWA only sends non-NULL when the operator explicitly picked an event from the dropdown (±30-day active window) — untouched expenses go in with `event_id=NULL`.
+- `event_id` — optional integer FK into `events`. Same unknown/inactive semantics as `category_id`; inactive events survive only on a replay whose stored `event_id` matches. The PWA only sends non-NULL when the operator explicitly picked an event from the dropdown (±30-day active window) or when the auto-attach affordance filled it in from an `auto_attach_enabled` event whose date range contains the expense date — untouched expenses go in with `event_id=NULL`.
 - `tag_ids[]` — optional list of integer FKs into `tags`. Unknown ids → `422`; inactive ids survive only on a replay whose stored tag set is *exactly* the same set. Tag names are never sent over the wire.
+
+When `event_id` is set, the server unions the event's `auto_tags` (JSON array of tag names resolved to active tag ids) into `tag_ids[]` before storage and before the idempotency comparison. The `POST /api/expenses` handler deduplicates the client-supplied ids (preserving order, first-seen wins) and appends the event's auto-tag ids in the order they were authored on `events.auto_tags` (`sheet_mapping.resolve_event_auto_tag_ids` returns the names in `dict.fromkeys(...)` insertion order, dropping unknown/inactive names with a WARN rather than silently). The canonical sort into a single `(id ASC)` tuple happens one layer down, in `duckdb_repo.insert_expense`, which is also where the idempotency comparison lives. End-to-end this means replay comparisons are order-independent: "client sent `[T1]`, auto-attached `[T2]`" and "client sent `[T2, T1]`, event auto-tags empty" both normalise to the same `(T1, T2)` tuple by the time they hit the `ON CONFLICT` compare. The bootstrap importer applies the same normalisation for historical rows via `_union_event_auto_tags` (`imports/expense_import.py`).
 - `date`, `amount`, `comment` — as usual. `amount` is in `settings.app_currency`.
 - `currency` — optional. When omitted (the PWA never sends it), the server defaults to `settings.app_currency` and writes `amount = amount_original` with identity FX. When set to something other than the app currency, the server converts via NBS at the expense date.
 
 The server validates `(category_id, event_id, tag_ids[])` up front against the catalog tables (both presence and active-state) so an idempotent replay for an expense whose vocabulary has since been retired is distinguishable from a fresh attempt to use retired vocabulary. After validation, the handler delegates the whole dup/conflict decision to a single `INSERT ... ON CONFLICT (client_expense_id) DO NOTHING RETURNING id` in `duckdb_repo.insert_expense`. There is no happy-path pre-lookup — the ON CONFLICT path is itself the duplicate check, so exactly one piece of code decides "same UUID + same body = duplicate, same UUID + different body = conflict" (we intentionally avoid a second compare on the handler side to prevent it drifting from the storage-layer compare):
 
-- **Fresh insert**: the `RETURNING id` comes back non-NULL. The same transaction also inserts `expense_tags` rows for each `tag_id` and, when `DINARY_SHEET_LOGGING_SPREADSHEET` is set, one `sheet_logging_jobs` row. `sheet_category` / `sheet_group` are always `NULL` for runtime rows — they're populated lazily by the drain loop from `runtime_mapping`.
-- **Idempotent replay**: the `UNIQUE` conflict path re-reads the committed row and compares `(amount, amount_original, currency_original, category_id, event_id, comment, datetime, sheet_category, sheet_group, tag_ids)` against the request. Match → `200 duplicate`. Mismatch → `409 conflict` — same UUID + different data is treated as a client/data-corruption bug.
+- **Fresh insert**: the `RETURNING id` comes back non-NULL. The same transaction also inserts `expense_tags` rows for each `tag_id` and, when `DINARY_SHEET_LOGGING_SPREADSHEET` is set, one `sheet_logging_jobs` row. `sheet_category` / `sheet_group` are always `NULL` for runtime rows — they're populated lazily by the drain loop from `sheet_mapping`.
+- **Idempotent replay**: the `UNIQUE` conflict path re-reads the committed row and compares `(amount, amount_original, currency_original, category_id, event_id, comment, datetime, sheet_category, sheet_group, tag_ids)` against the request. Match → `200 duplicate`. Mismatch → `409 conflict` — same UUID + different data is treated as a client/data-corruption bug. The 409 `detail` string appends a compact per-column diff produced by `duckdb_repo.describe_expense_conflict` (e.g. `tag_ids: stored=[1,2] incoming=[1,2,3]`), so the common "narrow race" case — an operator edited `events.auto_tags` between the original POST and the PWA's offline-queue replay, which surfaces as a `tag_ids`-only diff — is distinguishable on the client from a real body-drift conflict without the PWA having to guess.
 
 The response echoes only `(status, month, category_id, amount_original, currency_original, catalog_version)`; there is no server-assigned expense id in the body. The PWA consumes `catalog_version` to invalidate its catalog cache and skip unnecessary `GET /api/catalog` calls.
 
@@ -875,8 +913,8 @@ Detailed plan: [phase1.md](phase1.md) (historical; frozen before the single-file
 
 - Single `data/dinary.duckdb` file with the **3D classification schema** (`category`, `event`, `tags[]`) from day one. No per-year partitioning, no separate config DB. One migration stream at `src/dinary/migrations/0001_initial_schema.sql`.
 - Catalog tables carry `is_active`; `inv import-catalog` mutates them in place (FK-safe), never wipes them, so historical ledger FKs stay valid.
-- `import_mapping` + `import_mapping_tags` decompose legacy Google Sheets `(sheet_category, sheet_group)` pairs into 3D assignments for one-time bootstrap import. Runtime sheet logging uses the separate `runtime_mapping` / `runtime_mapping_tags` tables (sourced from the `map` worksheet tab) for 3D → 2D projection.
-- **PWA contract**: sends `client_expense_id` (UUID) + `category` (string) + `date` + `amount` + `comment`. `currency` is optional and defaults to `settings.app_currency`. `tag_ids[]`, `event_id`, and a server-side expense id in the response are explicitly **not** part of the Phase-1 surface.
+- `import_mapping` + `import_mapping_tags` decompose legacy Google Sheets `(sheet_category, sheet_group)` pairs into 3D assignments for one-time bootstrap import. Runtime sheet logging uses the separate `sheet_mapping` / `sheet_mapping_tags` tables (sourced from the `map` worksheet tab) for 3D → 2D projection.
+- **PWA contract (Phase 1, superseded by Phase 2)**: sent `client_expense_id` (UUID) + `category` (string) + `date` + `amount` + `comment`; `currency` optional (default `settings.app_currency`); `tag_ids[]`, `event_id`, and a server-side expense id in the response were explicitly **not** part of the Phase-1 surface. The current on-the-wire contract is the id-based Phase-2 shape documented in "POST /api/expenses (consolidated contract)" above — this bullet is retained only to record what Phase 1 actually shipped before the 3D + auto-tags migration.
 - DuckDB-backed expense ingestion with idempotent dedup via `expenses.client_expense_id UNIQUE` plus a payload comparison on replay (resolved `category_id`, not raw label). Same UUID + matching payload → `200 duplicate`; same UUID + different payload → `409 conflict`.
 - `expenses.amount` is stored in `settings.app_currency` (default `"RSD"`); `amount_original`/`currency_original` preserve the audit value. Historical imports convert to the app currency via RSD-anchored NBS rates.
 - Historical data import (2012–present) imported via destructive `inv import-budget` / `inv import-budget-all` and verified via `inv verify-bootstrap-import` / `inv verify-bootstrap-import-all`. Bootstrap-imported rows populate `sheet_category` / `sheet_group` as audit provenance and carry `client_expense_id = NULL`.
@@ -949,4 +987,4 @@ Each phase is independently useful.
 
 - **Cross-year events**: events (e.g. a trip) can span a year boundary (start in December, end in January). With the single-file model this is trivially just `SELECT ... WHERE event_id = ?` — no ATTACH, no union. The open question is whether reporting should default to the event's full span or to a calendar-year slice for year-over-year comparisons; the data model imposes no constraint either way.
 - **Archiving cold years**: the single-file model removed the ability to physically detach an old year, which was a stated motivation for the per-year layout. For the projected dataset size this is not a capacity issue, but if a future use case needs to freeze / audit a specific year, the expected answer is a `COPY ... TO '<year>.parquet' (FORMAT parquet)` dump plus a ranged `DELETE`, not re-introducing per-year DB files.
-- **`categories.sheet_name` / `categories.sheet_group`**: these columns are declared in the initial schema as a hook for a future receipt-ingestion pipeline that projects raw-receipt classifications directly into the logging sheet without going through `runtime_mapping`. They are still unreferenced by the drain worker (which consults `runtime_mapping` first, falling back to `categories.name`); revisit in a later phase whether to project them into the `map` tab defaults.
+- **`categories.sheet_name` / `categories.sheet_group`**: these columns are declared in the initial schema as a hook for a future receipt-ingestion pipeline that projects raw-receipt classifications directly into the logging sheet without going through `sheet_mapping`. They are still unreferenced by the drain worker (which consults `sheet_mapping` first, falling back to `categories.name`); revisit in a later phase whether to project them into the `map` tab defaults.

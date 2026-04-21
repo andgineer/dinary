@@ -13,6 +13,10 @@ The importer:
   * applies a small set of per-row heuristics that depend on data only
     available at import time (housing keywords, DIY routing, RUB→EUR
     fallback, "kto" beneficiary column);
+  * unions ``events.auto_tags`` into the row's ``tag_ids`` once an event
+    has been attached — same invariant as ``POST /api/expenses``, so
+    every historical vacation row ends up carrying both ``отпуск`` and
+    ``путешествия`` without relying on the legacy sheet tag columns;
   * inserts one expense row + tags + provenance pair into
     ``data/dinary.duckdb`` with ``enqueue_logging=False`` (rows are
     already in the sheet — re-uploading them is a bug) and
@@ -29,7 +33,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from dinary.config import settings
-from dinary.services import duckdb_repo
+from dinary.services import duckdb_repo, sheet_mapping
 from dinary.services.nbs import get_rate
 from dinary.services.seed_config import (
     BUSINESS_TRIP_EVENT_LAST_YEAR,
@@ -37,6 +41,8 @@ from dinary.services.seed_config import (
     RELOCATION_EVENT_NAME,
     RUSSIA_TRIP_EVENT_NAME,
     SYNTHETIC_EVENT_PREFIX,
+    VACATION_ENVELOPES,
+    VACATION_EVENT_YEAR_TO,
     canonical_category_for_source,
     event_name_for_source,
     tags_for_source,
@@ -552,6 +558,32 @@ def _resolve_dimensions(  # noqa: C901, PLR0913, PLR0912
                 event_id = business_trip_event_id
             elif ev_name.startswith(SYNTHETIC_EVENT_PREFIX):
                 event_id = travel_event_id
+        elif year > VACATION_EVENT_YEAR_TO:
+            source_lower = source_type.lower().strip()
+            envelope_lower = source_envelope.lower().strip()
+            is_vacation_row = source_lower == "отпуск" or envelope_lower in VACATION_ENVELOPES
+            if is_vacation_row:
+                # ``seed_config`` only pre-creates synthetic vacation
+                # events through ``VACATION_EVENT_YEAR_TO``; rows past
+                # that cut-over need a manually-created event so
+                # ``auto_tags`` (``отпуск`` / ``путешествия``) can
+                # attach. If nobody created one yet the row goes in
+                # without any vacation tag — warn loudly so the
+                # importer run flags this as an action item instead of
+                # silently losing analytics value.
+                logger.warning(
+                    "Vacation-shaped row in year %d has no synthetic "
+                    "event (post-%d cut-over) — create a manual "
+                    "event via PWA / Admin API before re-running "
+                    "import or the row will lose "
+                    "'отпуск'/'путешествия' auto_tags. "
+                    "source_type=%r source_envelope=%r comment=%r",
+                    year,
+                    VACATION_EVENT_YEAR_TO,
+                    source_type,
+                    source_envelope,
+                    comment,
+                )
 
     # Relocation tag implies the relocation event when we don't already have one.
     if event_id is None and tag_ids and relocation_event_id is not None:
@@ -623,6 +655,34 @@ class RowResolution:
     tag_ids: tuple[int, ...]
     tag_names: tuple[str, ...]
     resolution_kind: str
+
+
+def _union_event_auto_tags(
+    con,
+    *,
+    event_id: int | None,
+    tag_ids: list[int] | tuple[int, ...],
+) -> list[int]:
+    """Return ``tag_ids`` with the event's ``auto_tags`` ids unioned in.
+
+    Historical imports go through ``_resolve_dimensions`` and
+    ``resolve_row_to_3d``, both of which build a ``tag_ids`` set from
+    the (sheet_category, sheet_group, beneficiary) axes. Once an
+    event has been attached, this helper folds in the event's
+    ``auto_tags`` so post-2025 vacations land with ``отпуск`` AND
+    ``путешествия`` even when the row's sheet axes never said so —
+    matching the runtime ``POST /api/expenses`` behaviour. Order is
+    preserved for the original ``tag_ids`` (stable under rerun) and
+    extras are appended in sorted id order.
+    """
+    existing = list(dict.fromkeys(int(t) for t in tag_ids))
+    if event_id is None:
+        return existing
+    extras = sheet_mapping.resolve_event_auto_tag_ids(con, event_id)
+    for tid in extras:
+        if tid not in existing:
+            existing.append(tid)
+    return existing
 
 
 def _resolve_tag_names(con, tag_ids: list[int] | tuple[int, ...]) -> tuple[str, ...]:
@@ -757,17 +817,35 @@ def resolve_row_to_3d(  # noqa: PLR0913
     if postfix is not None:
         category_id, fix_event_id = postfix
         category_name = _category_name_for_id(con, category_id)
-        if fix_event_id is not None:
+        if fix_event_id is not None and fix_event_id != event_id:
+            # Mirror ``_apply_post_import_fixes_body``: the event_id is
+            # being rewritten to ``fix_event_id``, so strip the old
+            # event's ``auto_tags`` that the new event does not carry.
+            # Without this, the report would show a tag set the DB
+            # will never actually contain after the postfix runs.
+            new_auto_ids = set(
+                sheet_mapping.resolve_event_auto_tag_ids(con, fix_event_id),
+            )
+            old_auto_ids = (
+                set(sheet_mapping.resolve_event_auto_tag_ids(con, event_id))
+                if event_id is not None
+                else set()
+            )
+            stale = old_auto_ids - new_auto_ids
+            if stale:
+                tag_ids = [tid for tid in tag_ids if tid not in stale]
             event_id = fix_event_id
         kind_parts.append("postfix")
+
+    final_tag_ids = _union_event_auto_tags(con, event_id=event_id, tag_ids=tag_ids)
 
     return RowResolution(
         category_id=category_id,
         category_name=category_name,
         event_id=event_id,
         event_name=_event_name_from_id(con, event_id),
-        tag_ids=tuple(tag_ids),
-        tag_names=_resolve_tag_names(con, tag_ids),
+        tag_ids=tuple(final_tag_ids),
+        tag_names=_resolve_tag_names(con, final_tag_ids),
         resolution_kind="+".join(kind_parts),
     )
 
@@ -835,6 +913,45 @@ def _apply_post_import_fixes_body(
     if year == RUSSIA_TRIP_FIX_YEAR:
         transport_category_id = _resolve_category_id(con, "транспорт")
         if transport_category_id is not None and russia_trip_event_id is not None:
+            # Snapshot the old (event_id, expense_id) pairs BEFORE the
+            # UPDATE so we can strip the previous event's ``auto_tags``
+            # from each affected expense. Without this step the helper
+            # is additive only: if ``resolve_row_to_3d`` originally
+            # attached the row to ``отпуск-2026`` with
+            # ``{отпуск, путешествия}``, rewriting to
+            # ``russia-trip-2026`` would leave those tags behind while
+            # also adding whatever the new event carries, producing a
+            # tag set that no runtime path would ever write.
+            old_pairs = con.execute(
+                """
+                SELECT id, event_id
+                FROM expenses
+                WHERE YEAR(datetime) = 2026
+                  AND LOWER(COALESCE(comment, '')) = 'билеты в россию август 2026'
+                """,
+            ).fetchall()
+            new_auto_tag_ids = set(
+                sheet_mapping.resolve_event_auto_tag_ids(
+                    con,
+                    russia_trip_event_id,
+                ),
+            )
+            for expense_id, old_event_id in old_pairs:
+                if old_event_id is None or old_event_id == russia_trip_event_id:
+                    continue
+                stale_tag_ids = [
+                    tid
+                    for tid in sheet_mapping.resolve_event_auto_tag_ids(
+                        con,
+                        old_event_id,
+                    )
+                    if tid not in new_auto_tag_ids
+                ]
+                for tid in stale_tag_ids:
+                    con.execute(
+                        "DELETE FROM expense_tags WHERE expense_id = ? AND tag_id = ?",
+                        [expense_id, tid],
+                    )
             con.execute(
                 """
                 UPDATE expenses
@@ -844,6 +961,22 @@ def _apply_post_import_fixes_body(
                 """,
                 [transport_category_id, russia_trip_event_id],
             )
+            # Re-union the target event's ``auto_tags`` into every
+            # rewritten row. ``ON CONFLICT DO NOTHING`` keeps the
+            # helper idempotent if ``expense_tags`` already carries
+            # the tag (e.g. a second run of ``inv import``).
+            for auto_id in sorted(new_auto_tag_ids):
+                con.execute(
+                    """
+                    INSERT INTO expense_tags (expense_id, tag_id)
+                    SELECT e.id, ?
+                    FROM expenses e
+                    WHERE YEAR(e.datetime) = 2026
+                      AND LOWER(COALESCE(e.comment, '')) = 'билеты в россию август 2026'
+                    ON CONFLICT DO NOTHING
+                    """,
+                    [auto_id],
+                )
     logger.info("Applied post-import fixes for %d", year)
 
 
@@ -1074,6 +1207,12 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
                         errors += 1
                         continue
                     tag_ids = sorted(set(tag_ids) | set(extra_ids))
+
+            tag_ids = _union_event_auto_tags(
+                con,
+                event_id=event_id,
+                tag_ids=tag_ids,
+            )
 
             months_seen.add(parsed.month)
             expense_dt = datetime(year, parsed.month, 1, 12, 0, 0)

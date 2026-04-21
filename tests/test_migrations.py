@@ -56,8 +56,8 @@ class TestInitialSchema:
             "import_sources",
             "import_mapping",
             "import_mapping_tags",
-            "runtime_mapping",
-            "runtime_mapping_tags",
+            "sheet_mapping",
+            "sheet_mapping_tags",
             "app_metadata",
         }
         assert expected.issubset(tables)

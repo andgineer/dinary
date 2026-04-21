@@ -30,21 +30,22 @@ The sync algorithm:
    fresh ``id = max(id)+1``.
 4. Rebuild the ``import_mapping(_tags)`` table from scratch by
    DELETE + INSERT. Runtime 3D->2D routing for sheet logging now lives
-   in the separate ``runtime_mapping`` table, populated exclusively
+   in the separate ``sheet_mapping`` table, populated exclusively
    from the hand-curated ``map`` tab in the logging spreadsheet (see
-   ``runtime_map.py``); this seed pipeline no longer writes to it.
+   ``sheet_mapping.py``); this seed pipeline no longer writes to it.
 5. Bump ``app_metadata.catalog_version``.
 """
 
 import dataclasses
 import json
 import logging
+from collections.abc import Callable
 from datetime import date
 
 import duckdb
 
 from dinary.config import settings
-from dinary.services import catalog_writer, duckdb_repo, runtime_map
+from dinary.services import catalog_writer, duckdb_repo, sheet_mapping
 from dinary.services.sheets import HEADER_ROWS, _cell, get_sheet
 from dinary.services.sql_loader import fetchall_as, load_sql
 
@@ -90,6 +91,12 @@ TAXONOMY_CATEGORIES: frozenset[str] = frozenset(
 
 #: Phase-1 fixed tag dictionary. Beneficiary + sphere-of-life axes from the
 #: 4D model collapse into this flat list. The PWA hardcodes the same set.
+#:
+#: Vacation events auto-attach BOTH "отпуск" and "путешествия" — the two
+#: tags are treated as equivalent triggers for the "путешествия" envelope
+#: in the default ``map`` tab, but kept separate so downstream analytics
+#: can distinguish "explicitly a vacation event" from "general travel
+#: spend classified by tag alone".
 PHASE1_TAGS: list[str] = [
     # beneficiary tags
     "собака",
@@ -100,7 +107,14 @@ PHASE1_TAGS: list[str] = [
     "релокация",
     "профессиональное",
     "дача",
+    "отпуск",
+    "путешествия",
 ]
+
+#: Tag names auto-attached by vacation events (both runtime POSTs and
+#: historical imports). Kept as a module-level constant so seed,
+#: historical import, and runtime writes agree on the same set.
+VACATION_AUTO_TAGS: list[str] = ["отпуск", "путешествия"]
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +138,14 @@ RELOCATION_EVENT_TO = date(2030, 12, 31)
 HISTORICAL_YEAR_FROM = 2012
 HISTORICAL_YEAR_TO = 2030
 
+#: Last year for which we pre-create a synthetic "отпуск-YYYY" event.
+#: Post-2026 vacations are entered manually (the operator creates an
+#: explicit event with a human-readable name like "Доломиты Апрель").
+#: The 2026 placeholder we do seed ends at ``VACATION_EVENT_2026_END``
+#: — real 2026 vacations past that cut-over become manual events too.
+VACATION_EVENT_YEAR_TO = 2026
+VACATION_EVENT_2026_END = date(2026, 4, 20)
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ExplicitEvent:
@@ -132,12 +154,18 @@ class ExplicitEvent:
     Lives in the catalog (``events`` table in ``dinary.duckdb``) so
     ``catalog_version`` reflects its presence; ``imports/expense_import.py``
     looks events up by name and never mutates the catalog directly.
+
+    ``auto_tags`` is a list of tag names that must also exist in the
+    catalog (``PHASE1_TAGS``); both the runtime ``POST /api/expenses``
+    path and the historical importer union these tags into the
+    expense's tag set whenever the event is attached.
     """
 
     name: str
     date_from: date
     date_to: date
     auto_attach_enabled: bool = False
+    auto_tags: tuple[str, ...] = ()
 
 
 #: Name of the one-off "Russia trip" event. Re-exported so
@@ -153,6 +181,7 @@ EXPLICIT_EVENTS: list[ExplicitEvent] = [
         name=RUSSIA_TRIP_EVENT_NAME,
         date_from=date(2026, 8, 1),
         date_to=date(2026, 8, 31),
+        auto_tags=tuple(VACATION_AUTO_TAGS),
     ),
 ]
 
@@ -536,9 +565,18 @@ _KOMANDIROVKA_CATEGORY_BY_ENVELOPE: dict[str, str] = {
     "школа": "обучение",
 }
 
-_VACATION_ENVELOPES: frozenset[str] = frozenset(
+#: Legacy ``source_envelope`` values that mark a row as a vacation
+#: expense for the synthetic-event derivation in
+#: ``event_name_for_source`` (and for the post-cut-over warning in
+#: ``imports/expense_import.py``). Public because both the importer
+#: and the historical report need to share the exact same set.
+VACATION_ENVELOPES: frozenset[str] = frozenset(
     {"путешествия", "sim-travel", "отпуск", "travel"},
 )
+
+# Back-compat alias — internal callers still reference the private
+# name. Keep until those call sites are updated in-tree.
+_VACATION_ENVELOPES = VACATION_ENVELOPES
 
 
 def canonical_category_for_source(  # noqa: C901, PLR0911, PLR0912
@@ -666,9 +704,9 @@ def event_name_for_source(source_type: str, source_envelope: str, year: int) -> 
     """
     source_lower = source_type.lower().strip()
     envelope_lower = source_envelope.lower().strip()
-    if source_lower == "отпуск":
+    if source_lower == "отпуск" and year <= VACATION_EVENT_YEAR_TO:
         return f"{SYNTHETIC_EVENT_PREFIX}{year}"
-    if envelope_lower in _VACATION_ENVELOPES:
+    if envelope_lower in _VACATION_ENVELOPES and year <= VACATION_EVENT_YEAR_TO:
         return f"{SYNTHETIC_EVENT_PREFIX}{year}"
     is_komandirovka = source_lower == "командировка" or envelope_lower == "командировка"
     if is_komandirovka and year <= BUSINESS_TRIP_EVENT_LAST_YEAR:
@@ -910,22 +948,32 @@ def _upsert_event(  # noqa: PLR0913
     date_from: date,
     date_to: date,
     auto_attach_enabled: bool,
+    auto_tags: tuple[str, ...] | list[str] = (),
 ) -> int:
-    """UPSERT an event by natural key (name); return its stable id."""
+    """UPSERT an event by natural key (name); return its stable id.
+
+    ``auto_tags`` is stored as a JSON array on ``events.auto_tags``.
+    The names must match active ``tags.name`` rows at write time
+    (runtime + historical write paths look them up by name); this
+    helper does not validate that — seed explicitly orders tag
+    upserts before event upserts so the invariant holds.
+    """
+    auto_tags_json = json.dumps(list(auto_tags), ensure_ascii=False)
     row = con.execute("SELECT id FROM events WHERE name = ?", [name]).fetchone()
     if row is not None:
         eid = int(row[0])
         con.execute(
             "UPDATE events SET date_from = ?, date_to = ?, auto_attach_enabled = ?,"
-            " is_active = TRUE WHERE id = ?",
-            [date_from, date_to, auto_attach_enabled, eid],
+            " auto_tags = ?, is_active = TRUE WHERE id = ?",
+            [date_from, date_to, auto_attach_enabled, auto_tags_json, eid],
         )
         return eid
     eid = _next_id(con, "events")
     con.execute(
-        "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled, is_active)"
-        " VALUES (?, ?, ?, ?, ?, TRUE)",
-        [eid, name, date_from, date_to, auto_attach_enabled],
+        "INSERT INTO events"
+        " (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
+        " VALUES (?, ?, ?, ?, ?, TRUE, ?)",
+        [eid, name, date_from, date_to, auto_attach_enabled, auto_tags_json],
     )
     return eid
 
@@ -968,7 +1016,7 @@ def _purge_mapping_tables(con: duckdb.DuckDBPyConnection) -> None:
     """
     con.execute("DELETE FROM import_mapping_tags")
     con.execute("DELETE FROM import_mapping")
-    # runtime_mapping(_tags) are owned by runtime_map.py; seed never touches them.
+    # sheet_mapping(_tags) are owned by sheet_mapping.py; seed never touches them.
 
 
 def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
@@ -1032,16 +1080,27 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
     for r in fetchall_as(duckdb_repo.IdNameRow, con, load_sql("seed_load_categories.sql")):
         cat_id_by_name.setdefault(r.name, r.id)
 
-    # 3. events (stable ids by name)
+    # 4. tags (stable ids by name). Upserted BEFORE events so that
+    # auto_tags names stored on ``events.auto_tags`` reliably resolve
+    # to live ``tags.name`` rows on every subsequent lookup.
+    tag_id_by_name: dict[str, int] = {}
+    for tag_name in PHASE1_TAGS:
+        tag_id_by_name[tag_name] = _upsert_tag(con, name=tag_name)
+
+    # 3. events (stable ids by name). Moved below tags so vacation
+    # ``auto_tags`` references a guaranteed-active tag row.
     event_id_by_name: dict[str, int] = {}
-    for y in range(HISTORICAL_YEAR_FROM, HISTORICAL_YEAR_TO + 1):
+    vacation_auto_tags = tuple(VACATION_AUTO_TAGS)
+    for y in range(HISTORICAL_YEAR_FROM, VACATION_EVENT_YEAR_TO + 1):
         name = f"{SYNTHETIC_EVENT_PREFIX}{y}"
+        date_to_value = VACATION_EVENT_2026_END if y == VACATION_EVENT_YEAR_TO else date(y, 12, 31)
         event_id_by_name[name] = _upsert_event(
             con,
             name=name,
             date_from=date(y, 1, 1),
-            date_to=date(y, 12, 31),
+            date_to=date_to_value,
             auto_attach_enabled=True,
+            auto_tags=vacation_auto_tags,
         )
     for y in range(HISTORICAL_YEAR_FROM, BUSINESS_TRIP_EVENT_LAST_YEAR + 1):
         name = f"{BUSINESS_TRIP_EVENT_PREFIX}{y}"
@@ -1066,12 +1125,8 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
             date_from=ev.date_from,
             date_to=ev.date_to,
             auto_attach_enabled=ev.auto_attach_enabled,
+            auto_tags=ev.auto_tags,
         )
-
-    # 4. tags (stable ids by name)
-    tag_id_by_name: dict[str, int] = {}
-    for tag_name in PHASE1_TAGS:
-        tag_id_by_name[tag_name] = _upsert_tag(con, name=tag_name)
 
     # 5-8. Mapping rebuild. Tables were wiped in step 0, so we insert
     # fresh rows here with sequential ids; the (year, sheet_category,
@@ -1194,8 +1249,8 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
             insert_mapping(latest_year, cat_name, "", cat_name, (), None)
 
     # Runtime 3D->2D mapping used to be rebuilt here from the latest-year
-    # import_mapping rows. Phase 2 replaced that with ``runtime_mapping``,
-    # owned exclusively by ``runtime_map.py`` and sourced from a
+    # import_mapping rows. Phase 2 replaced that with ``sheet_mapping``,
+    # owned exclusively by ``sheet_mapping.py`` and sourced from a
     # hand-curated ``map`` worksheet tab. Seed never writes to it — the
     # drain loop pulls a fresh copy on its own schedule.
 
@@ -1210,7 +1265,7 @@ def seed_classification_catalog(  # noqa: C901, PLR0915, PLR0912
 
 # Deprecated: kept as a public no-op shim for back-compat with old
 # callers / tests that still import the symbol. Runtime 3D->2D mapping
-# moved to ``runtime_map.py`` (``runtime_mapping`` table, hand-curated
+# moved to ``sheet_mapping.py`` (``sheet_mapping`` table, hand-curated
 # ``map`` worksheet). This function intentionally does nothing and
 # returns zero so any accidental call site fails loudly in review
 # rather than silently diverging from the new source of truth.
@@ -1223,7 +1278,7 @@ def _rebuild_logging_mapping_from_latest_year(
     """Deprecated no-op shim. See module docstring."""
     logger.warning(
         "_rebuild_logging_mapping_from_latest_year is a no-op in Phase 2; "
-        "runtime 3D->2D routing is owned by runtime_map.py (runtime_mapping table).",
+        "runtime 3D->2D routing is owned by sheet_mapping.py (sheet_mapping table).",
     )
     return 0
 
@@ -1241,7 +1296,7 @@ def _validate_latest_import_source(con: duckdb.DuckDBPyConnection) -> int:
     layout_key from KNOWN_LAYOUT_KEYS). Runtime sheet logging is no
     longer involved here — it has its own separate spreadsheet config
     (DINARY_SHEET_LOGGING_SPREADSHEET) and its own table
-    (runtime_mapping, owned by runtime_map.py).
+    (sheet_mapping, owned by sheet_mapping.py).
     """
     row = con.execute(
         "SELECT MAX(year) FROM import_sources WHERE year > 0",
@@ -1280,8 +1335,8 @@ def _validate_import_coverage(con: duckdb.DuckDBPyConnection, latest_year: int) 
 
     This protects the bootstrap import pipeline (which needs year-scoped
     import_mapping coverage). Runtime sheet logging uses the separate
-    ``runtime_mapping`` table driven by the hand-curated ``map`` worksheet
-    (see ``runtime_map.py``), so a gap here does not break runtime logging.
+    ``sheet_mapping`` table driven by the hand-curated ``map`` worksheet
+    (see ``sheet_mapping.py``), so a gap here does not break runtime logging.
     """
     rows = con.execute(
         "SELECT c.name FROM categories c"
@@ -1320,18 +1375,34 @@ def _bump_catalog_version(con: duckdb.DuckDBPyConnection, *, previous: int) -> i
 # ---------------------------------------------------------------------------
 
 
-def seed_from_sheet(year: int | None = None) -> dict:
+def seed_from_sheet(
+    year: int | None = None,
+    *,
+    finalize: Callable[[duckdb.DuckDBPyConnection], dict] | None = None,
+) -> dict:
     """Seed the catalog from the configured sheets.
 
     Idempotent: re-runnable on top of an existing DB. Used both for the
     fresh-bootstrap path and for incremental seeding during dev.
 
-    NOTE: this path does NOT bump ``app_metadata.catalog_version``. By
-    design only ``inv import-catalog`` touches the version (so PWA
-    clients don't get invalidated by every routine ``import-config``
-    run). When this function adds new mappings on top of an existing
-    catalog, it logs a warning so the operator knows the PWA caches
-    will not refresh until the next ``inv import-catalog``.
+    ``finalize``: optional hook invoked *inside* step 3's transaction,
+    after ``seed_classification_catalog`` has applied the catalog
+    changes but *before* we COMMIT. Any dict it returns is merged
+    into the summary. The hook exists so
+    ``rebuild_config_from_sheets`` can restore ``import_sources``,
+    validate coverage, and bump ``catalog_version`` atomically with
+    the catalog rebuild — a failure in any of those steps must roll
+    back the catalog rebuild too, not leave the DB half-committed.
+
+    NOTE: this path does NOT bump ``app_metadata.catalog_version`` on
+    its own. By design only ``inv import-catalog`` touches the
+    version (so PWA clients don't get invalidated by every routine
+    ``import-config`` run). The ``finalize`` hook (used by
+    ``rebuild_config_from_sheets``) is what opts into the bump. When
+    this function adds new mappings on top of an existing catalog
+    without a ``finalize`` hook, it logs a warning so the operator
+    knows the PWA caches will not refresh until the next ``inv
+    import-catalog``.
 
     CONCURRENCY: the function uses three sequential cursors on the
     single ``dinary.duckdb`` connection (write sources -> read sources
@@ -1387,10 +1458,26 @@ def seed_from_sheet(year: int | None = None) -> dict:
         summary = seed_classification_catalog(con, year=year, discovered_pairs=pairs)
         summary["bootstrapped_import_sources"] = bootstrapped_sources
 
+        # ``finalize`` runs inside the same write transaction so
+        # ``rebuild_config_from_sheets`` can restore ``import_sources``,
+        # validate coverage, and bump ``catalog_version`` atomically
+        # with the catalog rebuild. A failure in the hook rolls back
+        # the catalog changes — no partially-committed state leaks
+        # into the DB even when the sheet-backed import-sources list
+        # is malformed or the post-rebuild coverage check fails.
+        if finalize is not None:
+            extra = finalize(con)
+            if extra:
+                summary.update(extra)
+
         con.execute("COMMIT")
         logger.info("Seed complete: %s", summary)
 
-        if summary.get("mappings_created", 0) > 0:
+        # Only warn about the missed bump when the caller opted out
+        # of the ``finalize`` hook. With a hook, the caller is
+        # responsible for deciding whether to bump (and typically
+        # will, hash-gated).
+        if finalize is None and summary.get("mappings_created", 0) > 0:
             logger.warning(
                 "import-config inserted %d new import_mapping row(s) without "
                 "bumping catalog_version; run `inv import-catalog` to force "
@@ -1405,65 +1492,6 @@ def seed_from_sheet(year: int | None = None) -> dict:
         con.close()
 
 
-def _finalize_rebuild_transaction(
-    *,
-    preserved_sources: list,
-    previous_version: int,
-    before_hash: str,
-) -> dict:
-    """Run the post-``seed_from_sheet`` transaction: restore sources,
-    validate, and hash-gate the ``catalog_version`` bump.
-
-    Split out of ``rebuild_config_from_sheets`` to keep that function
-    under the ruff PLR0915 "too many statements" ceiling. Returns the
-    summary fragment merged into the outer summary dict:
-
-    * ``catalog_version`` — the post-bump (or unchanged) version.
-    * ``previous_catalog_version`` — the max of the caller's snapshot
-      and the pre-transaction DB value (handles the rare case where
-      the caller couldn't read it at the top of the outer function).
-    * ``latest_import_year`` — validated latest year from
-      ``import_sources``.
-    * ``catalog_version_changed`` — ``True`` if the hash differed and
-      the bump actually happened.
-    """
-    con = duckdb_repo.get_connection()
-    try:
-        con.execute("BEGIN")
-        try:
-            _restore_import_sources(con, preserved_sources)
-            latest_year = _validate_latest_import_source(con)
-            _validate_import_coverage(con, latest_year)
-            effective_previous = max(previous_version, duckdb_repo.get_catalog_version(con))
-            after_hash = catalog_writer.hash_catalog_state(con)
-            if before_hash == after_hash:
-                # No observable catalog change — skip the bump. The
-                # PWA's cached snapshot is still valid; 304s on the
-                # next ``GET /api/catalog`` save bandwidth and keep
-                # the operator's offline queue unblocked.
-                new_version = effective_previous
-                logger.info(
-                    "rebuild_config_from_sheets: catalog hash unchanged; "
-                    "keeping catalog_version=%d",
-                    new_version,
-                )
-            else:
-                new_version = _bump_catalog_version(con, previous=effective_previous)
-            con.execute("COMMIT")
-        except Exception:
-            duckdb_repo.best_effort_rollback(con, context="rebuild_config_from_sheets commit")
-            raise
-    finally:
-        con.close()
-
-    return {
-        "catalog_version": new_version,
-        "previous_catalog_version": effective_previous,
-        "latest_import_year": latest_year,
-        "catalog_version_changed": before_hash != after_hash,
-    }
-
-
 def rebuild_config_from_sheets() -> dict:
     """FK-safe in-place catalog sync from the configured sheets.
 
@@ -1471,19 +1499,25 @@ def rebuild_config_from_sheets() -> dict:
     ``expense_tags``, ``sheet_logging_jobs``, ``income``) retain real
     FKs into the catalog and are left completely untouched.
 
-    Sync steps (all inside one write transaction):
+    Sync steps (all inside one write transaction, driven by the
+    ``seed_from_sheet`` finalize hook):
 
-    * Preserve ``import_sources`` by snapshotting then restoring; this
-      guards against hardcodes accidentally wiping the operator's
-      configured source list.
+    * Preserve ``import_sources`` by snapshotting up front; the
+      snapshot is restored inside the same transaction as the catalog
+      rebuild so a post-rebuild validation failure rolls the catalog
+      back too, instead of leaving the DB half-committed.
     * Run ``seed_classification_catalog``: deactivate every catalog
       row, upsert the new taxonomy by natural key (stable ids
       preserved, new ids for new vocabulary, retired rows stay
       ``is_active=FALSE``), then rebuild mapping tables from scratch
       against the current active ids.
+    * Restore the preserved ``import_sources`` rows.
     * Validate that the latest configured year has import-mapping
       coverage for every active category.
-    * Monotonically bump ``catalog_version``.
+    * Hash-gate and monotonically bump ``catalog_version``: the
+      pre-rebuild catalog hash is compared with the post-rebuild one;
+      when they match, the rebuild was a no-op and we keep the
+      existing version so PWA caches keep serving 304s.
 
     Returns a summary dict including ``previous_catalog_version``
     (value before the bump, never less than 1) and ``catalog_version``
@@ -1513,9 +1547,9 @@ def rebuild_config_from_sheets() -> dict:
     try:
         preserved_sources = _load_existing_import_sources(con)
         # Snapshot the catalog hash BEFORE ``seed_from_sheet`` mutates
-        # (and commits) the catalog tables. We use the same canonical
-        # state that ``catalog_writer._commit_with_bump`` hashes, so
-        # the two write paths share a single definition of "observable
+        # the catalog tables. We use the same canonical state that
+        # ``catalog_writer._commit_with_bump`` hashes, so the two
+        # write paths share a single definition of "observable
         # catalog change". If a rebuild from the sheet is a genuine
         # no-op (same hardcoded groups, same remote mappings), the
         # hash survives unchanged and we skip the bump — this keeps
@@ -1525,15 +1559,42 @@ def rebuild_config_from_sheets() -> dict:
     finally:
         con.close()
 
-    summary = seed_from_sheet()
-    summary["preserved_import_sources"] = len(preserved_sources)
+    def finalize(write_con: duckdb.DuckDBPyConnection) -> dict:
+        """Atomic post-rebuild steps (inside ``seed_from_sheet`` step-3 txn).
 
-    bump = _finalize_rebuild_transaction(
-        preserved_sources=preserved_sources,
-        previous_version=previous_version,
-        before_hash=before_hash,
-    )
-    summary.update(bump)
+        Restoring ``import_sources`` and bumping ``catalog_version``
+        MUST be in the same transaction as the catalog rebuild —
+        otherwise a validation failure here (e.g. the latest year
+        losing import-mapping coverage for some category) would leave
+        the catalog rebuilt but ``import_sources`` unrestored, and
+        the next ``import-config`` run would rediscover nothing.
+        """
+        _restore_import_sources(write_con, preserved_sources)
+        latest_year = _validate_latest_import_source(write_con)
+        _validate_import_coverage(write_con, latest_year)
+        effective_previous = max(previous_version, duckdb_repo.get_catalog_version(write_con))
+        after_hash = catalog_writer.hash_catalog_state(write_con)
+        if before_hash == after_hash:
+            # No observable catalog change — skip the bump. The
+            # PWA's cached snapshot is still valid; 304s on the
+            # next ``GET /api/catalog`` save bandwidth and keep
+            # the operator's offline queue unblocked.
+            new_version = effective_previous
+            logger.info(
+                "rebuild_config_from_sheets: catalog hash unchanged; keeping catalog_version=%d",
+                new_version,
+            )
+        else:
+            new_version = _bump_catalog_version(write_con, previous=effective_previous)
+        return {
+            "catalog_version": new_version,
+            "previous_catalog_version": effective_previous,
+            "latest_import_year": latest_year,
+            "catalog_version_changed": before_hash != after_hash,
+        }
+
+    summary = seed_from_sheet(finalize=finalize)
+    summary["preserved_import_sources"] = len(preserved_sources)
 
     # Phase 2: make sure the ``map`` worksheet tab exists with a
     # default-identity layout (one row per active category mapping
@@ -1541,7 +1602,7 @@ def rebuild_config_from_sheets() -> dict:
     # here downgrades to a log warning — the catalog side is
     # already committed and the operator can re-run reload-map later.
     try:
-        runtime_map.ensure_default_map_tab()
+        sheet_mapping.ensure_default_map_tab()
     except Exception:
         logger.exception(
             "ensure_default_map_tab failed; runtime 3D->2D mapping "

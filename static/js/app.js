@@ -4,8 +4,19 @@
  * Phase 2 form layout:
  *   amount -> group -> category -> event -> tags (multi) -> comment -> date -> save
  *
- * + Новый modals live in ``catalog-add.js`` and refresh the in-memory
+ * "+ Новый" modals live in ``catalog-add.js`` and refresh the in-memory
  * snapshot on success.
+ *
+ * Defaults and auto-attach:
+ *
+ *   - On first paint we default to (group "еда", category "еда") when
+ *     both rows are present and active; otherwise we leave the current
+ *     browser default (first option of each dropdown).
+ *   - Selecting a date where an ``auto_attach_enabled`` event is
+ *     active auto-populates the Event dropdown with the shortest such
+ *     event. Once the operator touches the Event dropdown manually we
+ *     remember the override (``userEventOverride``) and stop auto-
+ *     selecting for the rest of the form's lifetime.
  */
 const APP_VERSION = "__VERSION__";
 
@@ -14,13 +25,28 @@ import {
   postExpense,
 } from "./api.js";
 import {
+  deleteCategory,
+  deleteEvent,
+  deleteGroup,
+  deleteTag,
   findCategoryById,
+  findCategoryByName,
+  findGroupByName,
+  getAutoAttachEventsOn,
+  getInactiveCategoriesByGroup,
+  getInactiveEventsInWindow,
+  getInactiveGroups,
+  getInactiveTags,
   getLastError,
   loadCatalog,
   populateCategoryDropdown,
   populateEventDropdown,
   populateGroupDropdown,
   populateTagsList,
+  reactivateCategory,
+  reactivateEvent,
+  reactivateGroup,
+  reactivateTag,
   readSelectedTagIds,
 } from "./catalog.js";
 import {
@@ -33,6 +59,23 @@ import { enqueue, getAll, remove, count } from "./offline-queue.js";
 import { startScanning, stop as stopScanner } from "./qr-scanner.js";
 
 const $ = (sel) => document.querySelector(sel);
+
+const DEFAULT_GROUP_NAME = "еда";
+const DEFAULT_CATEGORY_NAME = "еда";
+
+// Per-picker flags. We keep them at module scope because the pickers
+// are re-populated from scratch on every catalog refresh and we want
+// the operator's choice to survive those refreshes.
+const _showInactive = {
+  group: false,
+  category: false,
+  event: false,
+  tag: false,
+};
+
+// Once the operator picks an event by hand we stop auto-selecting on
+// subsequent date changes. Reset on successful save (new form).
+let _userEventOverride = false;
 
 function parseReceiptUrl(url) {
   const vl = new URL(url).searchParams.get("vl");
@@ -95,10 +138,6 @@ async function flushQueue() {
   let observedVersion = -1;
   const items = await getAll();
   for (const item of items) {
-    // Defensive migration: Phase 2 items carry ``category_id`` (a number).
-    // A pre-v2 entry that somehow survived the IndexedDB upgrade only
-    // has ``category`` / ``group`` *names* and would 422 on every
-    // flush cycle, wedging the queue. Drop it and surface once.
     if (typeof item.category_id !== "number") {
       console.warn("Dropping pre-v2 queue item (no category_id):", item);
       await remove(item.id);
@@ -106,10 +145,6 @@ async function flushQueue() {
       continue;
     }
 
-    // ``enqueue`` stamps ``client_expense_id`` at write time (v2+ schema)
-    // and the ``upgrade`` callback drops any v1 leftovers, so a v2 item
-    // in the queue always carries its own idempotency key. No runtime
-    // fallback is needed here.
     const clientExpenseId = item.client_expense_id;
 
     try {
@@ -188,8 +223,6 @@ async function submitExpense() {
     category_id: categoryId,
     event_id: eventId,
     tag_ids: tagIds,
-    // Denormalised labels so the queue modal can render without touching
-    // the catalog snapshot.
     category_name: findCategoryById(categoryId)?.name || "",
     comment,
     date,
@@ -202,10 +235,6 @@ async function submitExpense() {
     await enqueue(entry);
     await updateQueueBadge();
   } catch (e) {
-    // Enqueue failed before the expense was durable — must not show
-    // the success animation, must not reset the form, must not
-    // schedule a flush. Re-enable the Save button so the user can
-    // retry and return early.
     showToast(`Save failed: ${e.message}`, "error");
     btn.disabled = false;
     return;
@@ -231,6 +260,9 @@ function resetForm() {
   for (const cb of $("#tags").querySelectorAll("input[type=checkbox]")) {
     cb.checked = false;
   }
+  _userEventOverride = false;
+  applyDefaultGroupAndCategory();
+  rerenderEventDropdownForDate();
   $("#amount").focus();
 }
 
@@ -272,6 +304,7 @@ function handleQrResult(text) {
     $("#amount").value = parsed.amount;
     $("#date").value = parsed.date;
     showToast(`Receipt: ${parsed.amount} RSD, ${parsed.date}`, "success");
+    rerenderEventDropdownForDate();
     $("#group").focus();
   } catch {
     showToast("Could not read receipt", "error");
@@ -364,36 +397,43 @@ function startRetryTimer() {
 }
 
 function refreshAddCategoryButton() {
-  // The "+ Новая категория" modal requires a selected group because
-  // ``catalog_writer.add_category`` needs a group_id. Rather than
-  // opening the modal and erroring after the user types a name,
-  // disable the trigger until a group is chosen.
   const btn = $("#add-category-btn");
   if (!btn) return;
   const hasGroup = Boolean($("#group").value);
   btn.disabled = !hasGroup;
   btn.title = hasGroup ? "Новая категория" : "Сначала выберите группу";
-  // Also toggle the always-visible hint below the category dropdown
-  // so mobile users (who have no hover-tooltip affordance) actually
-  // see *why* the trigger is disabled.
   const hint = $("#add-category-hint");
   if (hint) hint.hidden = hasGroup;
 }
 
+// ---------------------------------------------------------------------------
+// Default (group, category) application
+// ---------------------------------------------------------------------------
+
+function applyDefaultGroupAndCategory() {
+  const groupSelect = $("#group");
+  const catSelect = $("#category");
+  const group = findGroupByName(DEFAULT_GROUP_NAME);
+  if (group && Array.from(groupSelect.options).some((o) => o.value === String(group.id))) {
+    groupSelect.value = String(group.id);
+    populateCategoryDropdown(catSelect, group.id);
+    const cat = findCategoryByName(DEFAULT_CATEGORY_NAME, { groupId: group.id });
+    if (cat && Array.from(catSelect.options).some((o) => o.value === String(cat.id))) {
+      catSelect.value = String(cat.id);
+    }
+  }
+  refreshAddCategoryButton();
+}
+
+// ---------------------------------------------------------------------------
+// Event dropdown (date-anchored + auto-attach)
+// ---------------------------------------------------------------------------
+
 function rerenderEventDropdownForDate() {
-  // Feed the current value of the date picker into the catalog's
-  // ±30-day event filter so back- or forward-dating an expense surfaces
-  // the events active around *that* date rather than around the
-  // day the page happened to load.
   const dateStr = $("#date").value || undefined;
   const previous = $("#event").value;
   populateEventDropdown($("#event"), dateStr);
   if (previous) {
-    // Preserve the operator's selection if the event is still in
-    // range after the date change; otherwise fall through to "none"
-    // *and* tell the operator — a silent drop lets them submit with
-    // "нет события" attached when they thought a specific event was
-    // selected.
     const stillThere = Array.from($("#event").options).some(
       (o) => o.value === previous,
     );
@@ -401,18 +441,200 @@ function rerenderEventDropdownForDate() {
       $("#event").value = previous;
     } else {
       showToast("Выбранное событие вне диапазона дат — сброшено", "info");
+      _userEventOverride = false;
     }
+  }
+  if (!_userEventOverride) {
+    applyAutoAttachEventForDate(dateStr);
+  }
+  renderInactiveList("event");
+}
+
+function applyAutoAttachEventForDate(dateStr) {
+  // Pick the shortest auto-attach event active on ``dateStr``. If
+  // nothing matches, clear the current selection (because a previous
+  // auto-selection may have survived a date change into a no-trip
+  // window). Never touch the dropdown when the user has explicitly
+  // chosen an event.
+  const selectEl = $("#event");
+  const matches = getAutoAttachEventsOn(dateStr || today());
+  if (matches.length === 0) {
+    selectEl.value = "";
+    return;
+  }
+  const pick = matches[0];
+  if (Array.from(selectEl.options).some((o) => o.value === String(pick.id))) {
+    selectEl.value = String(pick.id);
+    return;
+  }
+  // The auto-attach resolver found an event whose date range covers
+  // ``dateStr`` but the ±30d dropdown window in
+  // ``populateEventDropdown`` is not wide enough to include it. This
+  // is a configuration smell — a long-running event (e.g. a
+  // year-long vacation) paired with an expense date far from today.
+  // Surfacing it via console.warn keeps the auto-selection honest
+  // instead of silently leaving the field blank.
+  console.warn(
+    "auto-attach event not in dropdown window",
+    {
+      date: dateStr,
+      picked: { id: pick.id, name: pick.name, from: pick.dateFrom, to: pick.dateTo },
+      dropdownSize: selectEl.options.length,
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Per-picker "Показать неактивные" toggle + reactivation list
+// ---------------------------------------------------------------------------
+
+const INACTIVE_CONFIG = {
+  group: {
+    containerId: "inactive-group-list",
+    toggleId: "toggle-inactive-group",
+    list: () => getInactiveGroups(),
+    label: (g) => g.name,
+    reactivate: (id) => reactivateGroup(id),
+    remove: (id) => deleteGroup(id),
+    kindNoun: "группа",
+  },
+  category: {
+    containerId: "inactive-category-list",
+    toggleId: "toggle-inactive-category",
+    list: () => getInactiveCategoriesByGroup(getSelectedGroupId()),
+    label: (c) => c.name,
+    reactivate: (id) => reactivateCategory(id),
+    remove: (id) => deleteCategory(id),
+    kindNoun: "категория",
+  },
+  event: {
+    containerId: "inactive-event-list",
+    toggleId: "toggle-inactive-event",
+    list: () => getInactiveEventsInWindow($("#date").value || today()),
+    label: (e) => `${e.name} (${e.date_from}..${e.date_to})`,
+    reactivate: (id) => reactivateEvent(id),
+    remove: (id) => deleteEvent(id),
+    kindNoun: "событие",
+  },
+  tag: {
+    containerId: "inactive-tag-list",
+    toggleId: "toggle-inactive-tag",
+    list: () => getInactiveTags(),
+    label: (t) => t.name,
+    reactivate: (id) => reactivateTag(id),
+    remove: (id) => deleteTag(id),
+    kindNoun: "тэг",
+  },
+};
+
+function renderInactiveList(kind) {
+  const cfg = INACTIVE_CONFIG[kind];
+  const container = document.getElementById(cfg.containerId);
+  if (!container) return;
+  const toggle = document.getElementById(cfg.toggleId);
+  if (!_showInactive[kind]) {
+    container.hidden = true;
+    container.innerHTML = "";
+    if (toggle) toggle.textContent = "Показать неактивные";
+    return;
+  }
+  if (toggle) toggle.textContent = "Скрыть неактивные";
+  const items = cfg.list();
+  container.hidden = false;
+  container.innerHTML = "";
+  if (items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "inactive-empty";
+    empty.textContent = "— нет неактивных —";
+    container.appendChild(empty);
+    return;
+  }
+  for (const it of items) {
+    const row = document.createElement("div");
+    row.className = "inactive-row";
+    const name = document.createElement("span");
+    name.className = "inactive-name";
+    name.textContent = cfg.label(it);
+    row.appendChild(name);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-inline inactive-activate";
+    btn.textContent = "Активировать";
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        await cfg.reactivate(it.id);
+        rerenderCatalogControls();
+      } catch (e) {
+        showToast(`Не удалось активировать: ${e.message}`, "error");
+        btn.disabled = false;
+      }
+    };
+    row.appendChild(btn);
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn-inline inactive-delete";
+    delBtn.textContent = "Удалить";
+    delBtn.title = "Удалить окончательно если не используется";
+    delBtn.onclick = async () => {
+      if (!window.confirm(`Удалить «${cfg.label(it)}» окончательно?`)) return;
+      delBtn.disabled = true;
+      btn.disabled = true;
+      try {
+        const snap = await cfg.remove(it.id);
+        if (snap?.delete_status === "soft") {
+          const n = snap.usage_count ?? 0;
+          showToast(
+            `Не удалено: ещё используется в ${n} расходах. Осталось скрытым.`,
+            "info",
+          );
+        } else if (snap?.delete_status === "hard") {
+          showToast("Удалено окончательно", "success");
+        }
+        rerenderCatalogControls();
+      } catch (e) {
+        showToast(`Не удалось удалить: ${e.message}`, "error");
+        delBtn.disabled = false;
+        btn.disabled = false;
+      }
+    };
+    row.appendChild(delBtn);
+    container.appendChild(row);
+  }
+}
+
+function wireInactiveToggles() {
+  for (const kind of Object.keys(INACTIVE_CONFIG)) {
+    const toggle = document.getElementById(INACTIVE_CONFIG[kind].toggleId);
+    if (!toggle) continue;
+    toggle.addEventListener("click", () => {
+      _showInactive[kind] = !_showInactive[kind];
+      renderInactiveList(kind);
+    });
+  }
+}
+
+function rerenderInactiveLists() {
+  for (const kind of Object.keys(INACTIVE_CONFIG)) {
+    renderInactiveList(kind);
   }
 }
 
 function rerenderCatalogControls() {
   const currentGroup = $("#group").value;
   populateGroupDropdown($("#group"));
-  if (currentGroup) $("#group").value = currentGroup;
+  if (currentGroup) {
+    if (Array.from($("#group").options).some((o) => o.value === currentGroup)) {
+      $("#group").value = currentGroup;
+    }
+  } else {
+    applyDefaultGroupAndCategory();
+  }
   populateCategoryDropdown($("#category"), $("#group").value);
   rerenderEventDropdownForDate();
   populateTagsList($("#tags"));
   refreshAddCategoryButton();
+  rerenderInactiveLists();
 }
 
 async function init() {
@@ -423,14 +645,23 @@ async function init() {
   if (catErr) {
     showToast(`Catalog: ${catErr.message}`, "error");
   }
-  rerenderCatalogControls();
+  populateGroupDropdown($("#group"));
+  applyDefaultGroupAndCategory();
+  rerenderEventDropdownForDate();
+  populateTagsList($("#tags"));
+  refreshAddCategoryButton();
+  rerenderInactiveLists();
 
   $("#group").addEventListener("change", (e) => {
     populateCategoryDropdown($("#category"), e.target.value);
     refreshAddCategoryButton();
+    renderInactiveList("category");
   });
 
   $("#date").addEventListener("change", rerenderEventDropdownForDate);
+  $("#event").addEventListener("change", () => {
+    _userEventOverride = true;
+  });
 
   $("#save-btn").addEventListener("click", submitExpense);
   $("#qr-btn").addEventListener("click", handleQrScan);
@@ -458,24 +689,19 @@ async function init() {
   $("#add-event-btn").addEventListener("click", () =>
     openAddEvent((newId) => {
       rerenderEventDropdownForDate();
-      if (newId) $("#event").value = String(newId);
+      if (newId) {
+        $("#event").value = String(newId);
+        _userEventOverride = true;
+      }
     }),
   );
   $("#add-tag-btn").addEventListener("click", () =>
     openAddTag(() => populateTagsList($("#tags"))),
   );
 
-  // Surface ``AddResult.status`` from the catalog-add flow. "created"
-  // is unremarkable (no toast); "reactivated" and "noop" tell the
-  // operator that typing the same name didn't insert a brand-new row,
-  // so they don't later wonder why the dropdown still has only one
-  // entry (noop) or why a retired item came back with stale dates
-  // (reactivated — they'd need to PATCH it via a future edit UI).
+  wireInactiveToggles();
+
   document.addEventListener("dinary:catalog-add-result", (e) => {
-    // ``message`` is pre-rendered by ``catalog-add.js`` so the Russian
-    // grammatical agreement matches the entity kind. Templates are
-    // only provided for ``reactivated`` / ``noop``; ``created`` is
-    // deliberately silent (it's the unsurprising happy path).
     const { message } = e.detail || {};
     if (message) showToast(message, "info");
   });

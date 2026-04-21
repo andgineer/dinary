@@ -155,7 +155,11 @@ class TestReactivatePreserves:
 @allure.epic("CatalogWriter")
 @allure.feature("Integrity rules")
 class TestIntegrityRules:
-    def test_cannot_soft_delete_referenced_category(self, fresh_db):
+    def test_soft_retire_referenced_category_is_allowed(self, fresh_db):
+        """``set_category_active(False)`` on a referenced category is
+        allowed (soft-retire). This mirrors the ``DELETE`` endpoint's
+        soft-delete behaviour so PATCH and DELETE don't disagree on
+        the same end-state; see ``edit_category`` docstring."""
         con = duckdb_repo.get_connection()
         try:
             _seed_minimal(con)
@@ -174,10 +178,13 @@ class TestIntegrityRules:
                 tag_ids=[],
                 enqueue_logging=False,
             )
-            with pytest.raises(catalog_writer.CatalogInUseError):
-                catalog_writer.set_category_active(con, 1, active=False)
+            catalog_writer.set_category_active(con, 1, active=False)
+            row = con.execute(
+                "SELECT is_active FROM categories WHERE id = 1",
+            ).fetchone()
         finally:
             con.close()
+        assert bool(row[0]) is False
 
     def test_cannot_rename_into_existing_name(self, fresh_db):
         con = duckdb_repo.get_connection()
@@ -205,12 +212,20 @@ class TestIntegrityRules:
         finally:
             con.close()
 
-    def test_add_event_reactivate_ignores_inverted_incoming_dates(self, fresh_db):
-        """Reactivating an existing-but-inactive event must not reject
-        inverted ``date_from``/``date_to`` on the incoming payload,
-        because those values are discarded on the reactivate branch.
-        The stored row's range stayed well-formed at the time it was
-        originally created."""
+    def test_add_event_reactivate_still_validates_inverted_incoming_dates(self, fresh_db):
+        """Reactivating an existing-but-inactive event must 422 on an
+        inverted ``date_from``/``date_to`` body, even though the
+        reactivate branch never actually applies those values to the
+        stored row.
+
+        Rationale: ``add_event`` treats the request body as an assertion
+        of intent ("I want an event with these fields"), and honouring a
+        body we know is invalid would let an operator ship garbage under
+        a valid-looking 200 response. Keeping validation symmetric with
+        ``edit_event`` also means the PWA sees the same 422 whether it
+        hits the add-or-reactivate path or the dedicated edit endpoint.
+        Stored fields stay frozen on reactivate (see docstring) — the
+        caller must use ``edit_event`` to actually change them."""
         con = duckdb_repo.get_connection()
         try:
             con.execute(
@@ -218,23 +233,22 @@ class TestIntegrityRules:
                 " (id, name, date_from, date_to, auto_attach_enabled, is_active)"
                 " VALUES (1, 'отпуск-2024', '2024-06-01', '2024-06-30', FALSE, FALSE)",
             )
-            # Dates here are deliberately inverted and would 422 on a
-            # fresh insert — but this path never applies them.
-            result = catalog_writer.add_event(
-                con,
-                name="отпуск-2024",
-                date_from=date(2030, 1, 2),
-                date_to=date(2030, 1, 1),
-            )
+            with pytest.raises(catalog_writer.CatalogWriteError):
+                catalog_writer.add_event(
+                    con,
+                    name="отпуск-2024",
+                    date_from=date(2030, 1, 2),
+                    date_to=date(2030, 1, 1),
+                )
+            # Row remains unchanged (inactive, original dates intact).
             row = con.execute(
                 "SELECT date_from, date_to, is_active FROM events WHERE id = 1",
             ).fetchone()
         finally:
             con.close()
-        assert result.status == "reactivated"
         assert row[0].isoformat() == "2024-06-01"
         assert row[1].isoformat() == "2024-06-30"
-        assert bool(row[2]) is True
+        assert bool(row[2]) is False
 
     def test_add_category_active_cross_group_is_conflict(self, fresh_db):
         """Calling add_category on a name that is already active in a
@@ -345,33 +359,25 @@ class TestAtomicPatch:
         # Single PATCH -> single version bump, not two.
         assert v1 == v0 + 1
 
-    def test_edit_category_rolls_back_on_inuse_failure(self, fresh_db):
-        """Renaming a row and simultaneously trying to deactivate it
-        while it's still referenced must not commit the rename."""
+    def test_edit_category_rolls_back_on_conflict(self, fresh_db):
+        """Renaming a row into a name that already exists must fail
+        and must not commit any other column change in the same PATCH
+        — the writer validates all inputs before any UPDATE so a
+        partial commit is not possible."""
         con = duckdb_repo.get_connection()
         try:
             _seed_minimal(con)
-            duckdb_repo.insert_expense(
-                con,
-                client_expense_id="pin",
-                expense_datetime=_DT,
-                amount=1.0,
-                amount_original=1.0,
-                currency_original="RSD",
-                category_id=1,
-                event_id=None,
-                comment="",
-                sheet_category=None,
-                sheet_group=None,
-                tag_ids=[],
-                enqueue_logging=False,
+            # Sibling row the rename would collide with.
+            con.execute(
+                "INSERT INTO categories (id, name, group_id, is_active)"
+                " VALUES (2, 'drink', 1, TRUE)",
             )
             v0 = duckdb_repo.get_catalog_version(con)
-            with pytest.raises(catalog_writer.CatalogInUseError):
+            with pytest.raises(catalog_writer.CatalogConflictError):
                 catalog_writer.edit_category(
                     con,
                     1,
-                    name="should-not-stick",
+                    name="drink",
                     is_active=False,
                 )
             v1 = duckdb_repo.get_catalog_version(con)
@@ -380,8 +386,8 @@ class TestAtomicPatch:
             ).fetchone()
         finally:
             con.close()
-        # Rename must have been rolled back because the deactivate
-        # failed in the same transaction.
+        # Rename rejected -> the sibling is_active=False toggle in the
+        # same call must not have landed either.
         assert row[0] == "food"
         assert bool(row[1]) is True
         assert v1 == v0
@@ -417,7 +423,11 @@ class TestAtomicPatch:
 @allure.epic("CatalogWriter")
 @allure.feature("Tag usage guard")
 class TestTagUsage:
-    def test_cannot_deactivate_tag_used_by_expense(self, fresh_db):
+    def test_soft_retire_tag_used_by_expense_is_allowed(self, fresh_db):
+        """Soft-retiring a tag still referenced by an expense is
+        allowed (matches PATCH/DELETE symmetry). The expense keeps
+        its tag_id row intact; the tag simply stops appearing in
+        active-only pickers and auto-attach unions."""
         con = duckdb_repo.get_connection()
         try:
             _seed_minimal(con)
@@ -437,7 +447,8 @@ class TestTagUsage:
                 tag_ids=[1],
                 enqueue_logging=False,
             )
-            with pytest.raises(catalog_writer.CatalogInUseError):
-                catalog_writer.set_tag_active(con, 1, active=False)
+            catalog_writer.set_tag_active(con, 1, active=False)
+            row = con.execute("SELECT is_active FROM tags WHERE id = 1").fetchone()
         finally:
             con.close()
+        assert bool(row[0]) is False

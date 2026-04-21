@@ -2,9 +2,9 @@
  * "+ Новый" inline add-only modals for catalog entities.
  *
  * One tiny modal shell reused for all four kinds (group, category,
- * event, tag). The admin API is token-protected — if no admin token
- * is set in localStorage the modal offers a first-run prompt to
- * paste it.
+ * event, tag). Admin endpoints are currently unauthenticated — the
+ * shared-token prompt was removed pending a real auth layer; until
+ * then network ACLs are the only gate.
  */
 
 import {
@@ -12,19 +12,8 @@ import {
   adminAddEvent,
   adminAddGroup,
   adminAddTag,
-  hasAdminToken,
-  setAdminToken,
 } from "./api.js";
 import { replaceSnapshot } from "./catalog.js";
-
-function ensureAdminToken() {
-  if (hasAdminToken()) return true;
-  // eslint-disable-next-line no-alert
-  const token = prompt("Paste the admin API token (one-time setup):");
-  if (!token) return false;
-  setAdminToken(token.trim());
-  return hasAdminToken();
-}
 
 function buildModal(title) {
   const overlay = document.createElement("div");
@@ -87,6 +76,22 @@ function showError(errEl, msg) {
   errEl.style.display = "";
 }
 
+// Mirrors ``_DISALLOWED_TAG_NAME_RE`` in ``catalog_writer.py``: the
+// ``map`` worksheet splits tag lists on whitespace/commas, so neither
+// may appear inside a single tag name. We reject them client-side so
+// the operator sees the error immediately instead of after a 422
+// round-trip. The server still validates — this is purely a UX
+// shortcut.
+const TAG_NAME_DISALLOWED = /[,\s]/;
+
+function validateTagName(name) {
+  if (!name) return "Введите название";
+  if (TAG_NAME_DISALLOWED.test(name)) {
+    return "Тэг не может содержать пробелы или запятые";
+  }
+  return null;
+}
+
 // Per-kind toast templates. Russian has three grammatical genders; the
 // app.js handler used to splice the bare kind noun into a generic
 // template (``Восстановлена неактивная ${kind}``) which produced
@@ -145,7 +150,6 @@ async function runSubmit(modal, submitFn, kind) {
 }
 
 export function openAddGroup(onAdded) {
-  if (!ensureAdminToken()) return;
   const modal = buildModal("Новая группа");
   modal.body.innerHTML = `
     <label style="display:block;margin-bottom:.5rem">
@@ -165,7 +169,6 @@ export function openAddGroup(onAdded) {
 }
 
 export function openAddCategory(groupId, onAdded) {
-  if (!ensureAdminToken()) return;
   const modal = buildModal("Новая категория");
   modal.body.innerHTML = `
     <label style="display:block;margin-bottom:.5rem">
@@ -191,7 +194,6 @@ export function openAddCategory(groupId, onAdded) {
 }
 
 export function openAddEvent(onAdded) {
-  if (!ensureAdminToken()) return;
   const today = new Date().toISOString().slice(0, 10);
   const modal = buildModal("Новое событие");
   modal.body.innerHTML = `
@@ -207,10 +209,25 @@ export function openAddEvent(onAdded) {
       <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">По</div>
       <input class="f-to" type="date" value="${today}" style="width:100%;padding:.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#fff">
     </label>
+    <label style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem">
+      <input class="f-auto-attach" type="checkbox" style="width:1rem;height:1rem">
+      <span style="font-size:.85rem">Авто-подстановка по дате расхода</span>
+    </label>
+    <label style="display:block;margin-bottom:.25rem">
+      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">
+        Авто-теги (через запятую)
+      </div>
+      <input class="f-auto-tags" type="text" placeholder="например: отпуск, путешествия" style="width:100%;padding:.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#fff">
+      <div style="font-size:.7rem;color:#64748b;margin-top:.25rem">
+        Прикрепляются автоматически к расходу при выборе события.
+      </div>
+    </label>
   `;
   const nameEl = modal.body.querySelector(".f-name");
   const fromEl = modal.body.querySelector(".f-from");
   const toEl = modal.body.querySelector(".f-to");
+  const autoAttachEl = modal.body.querySelector(".f-auto-attach");
+  const autoTagsEl = modal.body.querySelector(".f-auto-tags");
   nameEl.focus();
   modal.submitBtn.onclick = async () => {
     const name = nameEl.value.trim();
@@ -219,6 +236,22 @@ export function openAddEvent(onAdded) {
       return showError(modal.errEl, "Укажите обе даты");
     if (fromEl.value > toEl.value)
       return showError(modal.errEl, "Дата начала должна быть <= дате конца");
+    const autoTagsRaw = autoTagsEl.value;
+    const autoTags = autoTagsRaw
+      .split(/[,\s]+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    // Individual tokens can only be invalid if the split above
+    // produced something empty (already filtered) or contained the
+    // separators themselves (impossible by construction). Still, we
+    // sanity-check each entry in case the regex ever changes: it's
+    // cheap and keeps the client/server contract honest.
+    for (const t of autoTags) {
+      const tagErr = validateTagName(t);
+      if (tagErr) {
+        return showError(modal.errEl, `Авто-тег "${t}": ${tagErr}`);
+      }
+    }
     const snap = await runSubmit(
       modal,
       () =>
@@ -226,6 +259,8 @@ export function openAddEvent(onAdded) {
           name,
           date_from: fromEl.value,
           date_to: toEl.value,
+          auto_attach_enabled: autoAttachEl.checked,
+          auto_tags: autoTags.length > 0 ? autoTags : null,
         }),
       "событие",
     );
@@ -235,7 +270,6 @@ export function openAddEvent(onAdded) {
 }
 
 export function openAddTag(onAdded) {
-  if (!ensureAdminToken()) return;
   const modal = buildModal("Новый тэг");
   modal.body.innerHTML = `
     <label style="display:block;margin-bottom:.5rem">
@@ -247,7 +281,8 @@ export function openAddTag(onAdded) {
   nameEl.focus();
   modal.submitBtn.onclick = async () => {
     const name = nameEl.value.trim();
-    if (!name) return showError(modal.errEl, "Введите название");
+    const err = validateTagName(name);
+    if (err) return showError(modal.errEl, err);
     const snap = await runSubmit(modal, () => adminAddTag({ name }), "тэг");
     if (snap) onAdded?.(snap.new_id, snap);
   };

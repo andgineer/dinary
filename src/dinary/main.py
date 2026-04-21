@@ -15,7 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from dinary import __version__
 from dinary.api import admin_catalog, catalog, expenses, qr
 from dinary.config import settings
-from dinary.services import duckdb_repo, runtime_map, sheet_logging
+from dinary.services import duckdb_repo, sheet_logging, sheet_mapping
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _BUILT_STATIC = _PROJECT_ROOT / "_static"
@@ -94,19 +94,19 @@ async def _drain_loop() -> None:
         sheet_logging.clear_wake_channel()
 
 
-async def _warm_runtime_map() -> None:
-    """Preload ``runtime_mapping`` from the ``map`` tab at startup.
+async def _warm_sheet_mapping() -> None:
+    """Preload ``sheet_mapping`` from the ``map`` tab at startup.
 
     Moves the ~1s Drive+Sheets round-trip off the first-expense hot
     path. Skipped when the drain loop itself is disabled (interval
     <= 0 — the test fixture uses this to avoid network I/O in
     lifespan) or when sheet-logging is unconfigured, or when the
     operator explicitly disabled the warm-up via
-    ``warm_runtime_map_timeout_sec <= 0``.
+    ``warm_sheet_mapping_timeout_sec <= 0``.
 
-    Bounded by ``settings.warm_runtime_map_timeout_sec`` so a slow or
-    unreachable Google backend cannot wedge the lifespan startup and
-    delay ``/api/health`` from answering (a long startup starves
+    Bounded by ``settings.warm_sheet_mapping_timeout_sec`` so a slow
+    or unreachable Google backend cannot wedge the lifespan startup
+    and delay ``/api/health`` from answering (a long startup starves
     Railway's health probe). On timeout or any other failure we log
     and continue — the drain loop's ``ensure_fresh`` will retry on
     its own schedule, and the cached mapping (from the last
@@ -122,29 +122,30 @@ async def _warm_runtime_map() -> None:
         return
     if not sheet_logging.is_sheet_logging_enabled():
         return
-    timeout = settings.warm_runtime_map_timeout_sec
+    timeout = settings.warm_sheet_mapping_timeout_sec
     if timeout <= 0:
         return
     log = logging.getLogger(__name__)
     try:
         summary = await asyncio.wait_for(
-            asyncio.to_thread(runtime_map.reload_now),
+            asyncio.to_thread(sheet_mapping.reload_now),
             timeout=timeout,
         )
-        log.info("runtime_map preloaded at startup: %s", summary)
+        log.info("sheet_mapping preloaded at startup: %s", summary)
     except TimeoutError:
         log.warning(
-            "runtime_map preload timed out after %.1fs; drain loop will retry on its own schedule",
+            "sheet_mapping preload timed out after %.1fs; "
+            "drain loop will retry on its own schedule",
             timeout,
         )
     except Exception:
-        log.exception("runtime_map preload failed; drain loop will retry")
+        log.exception("sheet_mapping preload failed; drain loop will retry")
 
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     duckdb_repo.init_db()
-    await _warm_runtime_map()
+    await _warm_sheet_mapping()
     drain_task = asyncio.create_task(_drain_loop(), name="sheet-logging-drain")
     try:
         yield

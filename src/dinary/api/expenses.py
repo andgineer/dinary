@@ -3,9 +3,16 @@
 Phase 2 API: the PWA sends a 3D payload using catalog primary keys
 (``category_id``, optional ``event_id``, list of ``tag_ids``). The
 server stores the raw IDs on the ledger; 3D->2D resolution for the
-sheet happens lazily in the drain loop from ``runtime_mapping``, so a
+sheet happens lazily in the drain loop from ``sheet_mapping``, so a
 change to the ``map`` worksheet retroactively affects unlogged
 expenses (but never rewrites already-logged rows).
+
+When ``event_id`` is supplied, any tag names listed on
+``events.auto_tags`` are resolved to live tag ids and **unioned** into
+the expense's stored ``tag_ids`` — so vacation events auto-tag every
+attached expense with ``отпуск`` and ``путешествия`` (routing the
+expense into the "путешествия" envelope via the ``map`` tab) without
+the PWA having to replicate that logic client-side.
 
 Errors:
 
@@ -25,7 +32,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from dinary.config import settings
-from dinary.services import duckdb_repo
+from dinary.services import duckdb_repo, sheet_mapping
 from dinary.services.nbs import convert
 from dinary.services.sheet_logging import is_sheet_logging_enabled, notify_new_work
 
@@ -89,6 +96,30 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
 
         expense_dt = datetime.combine(req.date, datetime.min.time())
 
+        # Union event.auto_tags into the submitted tag set. This is the
+        # runtime-write counterpart to the historical importer, which
+        # applies the same union at import time; keeping both paths in
+        # sync means the "vacation expense always carries both отпуск
+        # and путешествия" invariant holds regardless of which path
+        # created the row.
+        #
+        # Idempotency caveat: ``insert_expense`` compares the stored
+        # ``tag_ids`` against ``effective_tag_ids`` on ON CONFLICT. If
+        # the operator edits ``events.auto_tags`` between the original
+        # POST and a replay carrying the same ``client_expense_id`` +
+        # ``req.tag_ids``, the recomputed union can differ and the
+        # replay gets 409 conflict instead of 200 duplicate. That's a
+        # narrow race (the auto_tags edit would have to land between
+        # a failed POST and the retry) and the safer of the two
+        # failure modes — surfacing it tells the operator their
+        # vocabulary changed mid-flight rather than silently writing
+        # the older tag set.
+        effective_tag_ids: list[int] = list(dict.fromkeys(int(t) for t in req.tag_ids))
+        if req.event_id is not None:
+            for auto_id in sheet_mapping.resolve_event_auto_tag_ids(con, req.event_id):
+                if auto_id not in effective_tag_ids:
+                    effective_tag_ids.append(auto_id)
+
         # ``insert_expense`` is the single source of truth for the
         # duplicate-vs-conflict decision: it runs the INSERT with
         # ``ON CONFLICT DO NOTHING`` and, on conflict, compares the full
@@ -97,33 +128,55 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
         # happy-path compare — a double compare would drift over time,
         # and the ON CONFLICT path is already atomic against concurrent
         # POSTs sharing the same ``client_expense_id``.
+        amount_app_f = float(amount_app)
+        amount_orig_f = float(req.amount)
+        comment = req.comment or ""
         try:
             result = duckdb_repo.insert_expense(
                 con,
                 client_expense_id=req.client_expense_id,
                 expense_datetime=expense_dt,
-                amount=float(amount_app),
-                amount_original=float(req.amount),
+                amount=amount_app_f,
+                amount_original=amount_orig_f,
                 currency_original=currency,
                 category_id=req.category_id,
                 event_id=req.event_id,
-                comment=req.comment or "",
+                comment=comment,
                 sheet_category=None,
                 sheet_group=None,
-                tag_ids=list(req.tag_ids),
+                tag_ids=effective_tag_ids,
                 enqueue_logging=is_sheet_logging_enabled(),
             )
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from None
 
         if result == "conflict":
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"client_expense_id {req.client_expense_id!r} already exists "
-                    "with different data"
-                ),
+            # Re-run the stored-vs-incoming compare so the 409 body
+            # names the columns that differ. The common "narrow race"
+            # case — the operator edited ``events.auto_tags`` between
+            # the original POST and a replay — lands here as a
+            # tag_ids-only diff, which lets the client distinguish it
+            # from a real body-drift conflict without guessing.
+            diff = duckdb_repo.describe_expense_conflict(
+                con,
+                client_expense_id=req.client_expense_id,
+                expense_datetime=expense_dt,
+                amount=amount_app_f,
+                amount_original=amount_orig_f,
+                currency_original=currency,
+                category_id=req.category_id,
+                event_id=req.event_id,
+                comment=comment,
+                sheet_category=None,
+                sheet_group=None,
+                tag_ids=effective_tag_ids,
             )
+            detail = (
+                f"client_expense_id {req.client_expense_id!r} already exists with different data"
+            )
+            if diff:
+                detail = f"{detail}: {diff}"
+            raise HTTPException(status_code=409, detail=detail)
 
         catalog_version = duckdb_repo.get_catalog_version(con)
     finally:

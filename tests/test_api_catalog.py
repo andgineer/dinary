@@ -3,8 +3,10 @@
 The PWA relies on two invariants:
 
 1. The snapshot shape (``category_groups``, ``categories``,
-   ``events``, ``tags``) matches exactly one primary-key-carrying item
-   per row; groups with ``is_active=FALSE`` are hidden.
+   ``events``, ``tags``) matches exactly one primary-key-carrying
+   item per row; **every** row is returned (active and inactive) and
+   carries an ``is_active`` flag so the PWA can filter client-side
+   and expose per-picker "Показать неактивные" toggles.
 2. ``If-None-Match`` matching the current ETag returns 304 with
    empty body; a mismatch returns the full payload plus a new
    ``ETag`` header. The ETag rides on the HTTP header only — the
@@ -62,15 +64,20 @@ class TestCatalogGet:
         assert resp.status_code == 200
         data = resp.json()
         assert "catalog_version" in data
-        # ETag lives on the HTTP header, not in the body.
         assert "etag" not in data
         assert resp.headers["ETag"].startswith('W/"catalog-v')
-        group_names = {g["name"] for g in data["category_groups"]}
-        assert group_names == {"Food"}  # inactive group hidden
-        cat_names = {c["name"] for c in data["categories"]}
-        assert cat_names == {"food"}  # inactive cat hidden
+        # Every row is surfaced, active and inactive alike; PWA
+        # filters client-side so it can toggle "Показать неактивные".
+        groups = {g["name"]: g["is_active"] for g in data["category_groups"]}
+        assert groups == {"Food": True, "RetiredGroup": False}
+        cats = {c["name"]: c["is_active"] for c in data["categories"]}
+        assert cats == {"food": True, "retired": False}
         assert [t["name"] for t in data["tags"]] == ["tag_a"]
-        assert [e["name"] for e in data["events"]] == ["evt"]
+        events = data["events"]
+        assert [e["name"] for e in events] == ["evt"]
+        assert events[0]["auto_attach_enabled"] is True
+        assert events[0]["is_active"] is True
+        assert events[0]["auto_tags"] == []
 
     def test_304_on_matching_etag(self, client):
         first = client.get("/api/catalog")

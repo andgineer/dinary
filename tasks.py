@@ -500,7 +500,7 @@ def import_catalog(c, yes=False):
     integer ids are preserved. Vocabulary no longer present in the
     seed files is marked ``is_active=FALSE``. The ``import_mapping``
     table is rebuilt from scratch against the current active taxonomy
-    ids; the runtime ``runtime_mapping`` table is owned by the
+    ids; the runtime ``sheet_mapping`` table is owned by the
     ``map`` worksheet tab and is not touched here.
 
     Bumps ``app_metadata.catalog_version`` by +1 only when the

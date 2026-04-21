@@ -1,9 +1,13 @@
-"""Admin HTTP surface: catalog CRUD + runtime-map reload.
+"""Admin HTTP surface: catalog CRUD + sheet-mapping reload.
 
-All endpoints are token-protected via ``DINARY_ADMIN_API_TOKEN``. An
-empty token means the admin API is disabled entirely: every endpoint
-responds with ``503`` so a production deployment without the token
-can't be mutated through the PWA.
+Authentication is a **deliberate TODO**. The prior ``DINARY_ADMIN_API_TOKEN``
+gate was removed because it was shared across every operator and bypassed
+by the PWA on every request anyway (the UI stored it in localStorage and
+replayed it verbatim). A proper authorization layer (OAuth / session /
+per-user API key — to be decided) will land alongside multi-user support;
+until then every admin endpoint is reachable by any caller that can reach
+the server. Deployments must put the service behind a private network or
+reverse-proxy ACL.
 
 Write helpers live in ``catalog_writer.py``; this module is a thin
 HTTP veneer that:
@@ -16,18 +20,23 @@ HTTP veneer that:
 * Returns the *full* catalog snapshot + fresh ETag so the PWA can
   swap its cached catalog in one round-trip, without a follow-up
   ``GET /api/catalog``.
+
+DELETE endpoints apply soft/hard semantics: the row is physically
+removed iff no ledger rows reference it; otherwise it is flipped to
+``is_active=FALSE`` and the response carries ``delete_status="soft"``
+plus ``usage_count`` so the PWA can tell the operator "still available
+under Show inactive (N historical references)".
 """
 
-import hmac
 import logging
 from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, Header, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from dinary.config import settings
-from dinary.services import catalog_writer, duckdb_repo, runtime_map
+from dinary.config import settings, spreadsheet_id_from_setting
+from dinary.services import catalog_writer, duckdb_repo, sheet_mapping
 
 from .catalog import (
     CategoryGroupItem,
@@ -43,38 +52,6 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
-# Auth
-# ---------------------------------------------------------------------------
-
-
-def _require_admin_token(authorization: str | None) -> None:
-    """Accept ``Authorization: Bearer <token>`` matching ``settings.admin_api_token``.
-
-    Disabled (token empty) => 503 for every endpoint.
-    Missing / malformed header => 401.
-    Wrong token => 403.
-    """
-    expected = settings.admin_api_token
-    if not expected:
-        raise HTTPException(
-            status_code=503,
-            detail="admin API disabled (DINARY_ADMIN_API_TOKEN empty)",
-        )
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail="missing Bearer token",
-        )
-    token = authorization[len("Bearer ") :].strip()
-    # Constant-time compare so an attacker cannot brute-force the token
-    # byte-by-byte via response-time differences. ``compare_digest``
-    # handles unequal-length inputs internally (it still runs in
-    # constant time, just returns ``False`` fast).
-    if not hmac.compare_digest(token, expected):
-        raise HTTPException(status_code=403, detail="invalid admin token")
-
-
-# ---------------------------------------------------------------------------
 # Request bodies
 # ---------------------------------------------------------------------------
 
@@ -84,6 +61,7 @@ class EventAddBody(BaseModel):
     date_from: date
     date_to: date
     auto_attach_enabled: bool = False
+    auto_tags: list[str] | None = None
 
 
 class EventPatchBody(BaseModel):
@@ -91,6 +69,7 @@ class EventPatchBody(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
     auto_attach_enabled: bool | None = None
+    auto_tags: list[str] | None = None
     is_active: bool | None = None
 
 
@@ -130,6 +109,7 @@ class GroupPatchBody(BaseModel):
 
 
 AddStatusLiteral = Literal["created", "reactivated", "noop"]
+DeleteStatusLiteral = Literal["hard", "soft"]
 
 
 class AdminCatalogResponse(BaseModel):
@@ -150,11 +130,14 @@ class AdminCatalogResponse(BaseModel):
     * ``"noop"`` — a row already existed and was already active;
       nothing changed and ``catalog_version`` was not bumped.
 
-    PATCH routes leave ``status`` unset.
+    PATCH routes leave ``status`` unset. DELETE routes leave
+    ``status`` unset but set ``delete_status`` + ``usage_count``.
     """
 
     new_id: int | None = None
     status: AddStatusLiteral | None = None
+    delete_status: DeleteStatusLiteral | None = None
+    usage_count: int | None = None
     catalog_version: int
     category_groups: list[CategoryGroupItem]
     categories: list[CategoryItem]
@@ -171,30 +154,28 @@ def _wrap_catalog_error(exc: catalog_writer.CatalogWriteError) -> HTTPException:
     return HTTPException(status_code=exc.http_status, detail=str(exc))
 
 
-def _snapshot_response(
+def _snapshot_response(  # noqa: PLR0913
     con,
     response: Response,
     new_id: int | None = None,
     status: AddStatusLiteral | None = None,
+    delete_status: DeleteStatusLiteral | None = None,
+    usage_count: int | None = None,
 ) -> AdminCatalogResponse:
     """Build the full catalog snapshot response every admin write returns.
 
     Takes the caller's already-open DuckDB connection so a single
-    request uses exactly one DB connection (write + snapshot). Opening
-    a second connection per request added latency without any
-    isolation benefit — the catalog_writer commits before we build
-    the snapshot, so reusing the connection sees the freshly-committed
-    rows and cannot read a stale view.
-
-    Also stamps the ``ETag`` response header so PWA clients can
-    keep the admin-response path and the ``GET /api/catalog`` path
-    on the same cache key. The PWA derives the ETag locally from
-    ``catalog_version`` anyway, but emitting it here keeps raw HTTP
-    tooling (curl, proxies) in sync.
+    request uses exactly one DB connection (write + snapshot).
     """
     snapshot = build_catalog_snapshot(con)
     response.headers["ETag"] = _etag_for(snapshot["catalog_version"])
-    return AdminCatalogResponse(new_id=new_id, status=status, **snapshot)
+    return AdminCatalogResponse(
+        new_id=new_id,
+        status=status,
+        delete_status=delete_status,
+        usage_count=usage_count,
+        **snapshot,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +187,7 @@ def _snapshot_response(
 def add_group(
     body: GroupAddBody,
     response: Response,
-    authorization: str | None = Header(default=None),
 ) -> AdminCatalogResponse:
-    _require_admin_token(authorization)
     con = duckdb_repo.get_connection()
     try:
         try:
@@ -229,9 +208,7 @@ def edit_group(
     group_id: int,
     body: GroupPatchBody,
     response: Response,
-    authorization: str | None = Header(default=None),
 ) -> AdminCatalogResponse:
-    _require_admin_token(authorization)
     con = duckdb_repo.get_connection()
     try:
         try:
@@ -249,6 +226,27 @@ def edit_group(
         con.close()
 
 
+@router.delete("/api/admin/catalog/groups/{group_id}", response_model=AdminCatalogResponse)
+def delete_group(
+    group_id: int,
+    response: Response,
+) -> AdminCatalogResponse:
+    con = duckdb_repo.get_connection()
+    try:
+        try:
+            result = catalog_writer.delete_group(con, group_id)
+        except catalog_writer.CatalogWriteError as exc:
+            raise _wrap_catalog_error(exc) from None
+        return _snapshot_response(
+            con,
+            response,
+            delete_status=result.status,
+            usage_count=result.usage_count,
+        )
+    finally:
+        con.close()
+
+
 # ---------------------------------------------------------------------------
 # Categories
 # ---------------------------------------------------------------------------
@@ -258,9 +256,7 @@ def edit_group(
 def add_category(
     body: CategoryAddBody,
     response: Response,
-    authorization: str | None = Header(default=None),
 ) -> AdminCatalogResponse:
-    _require_admin_token(authorization)
     con = duckdb_repo.get_connection()
     try:
         try:
@@ -283,9 +279,7 @@ def edit_category(
     category_id: int,
     body: CategoryPatchBody,
     response: Response,
-    authorization: str | None = Header(default=None),
 ) -> AdminCatalogResponse:
-    _require_admin_token(authorization)
     con = duckdb_repo.get_connection()
     try:
         try:
@@ -305,6 +299,30 @@ def edit_category(
         con.close()
 
 
+@router.delete(
+    "/api/admin/catalog/categories/{category_id}",
+    response_model=AdminCatalogResponse,
+)
+def delete_category(
+    category_id: int,
+    response: Response,
+) -> AdminCatalogResponse:
+    con = duckdb_repo.get_connection()
+    try:
+        try:
+            result = catalog_writer.delete_category(con, category_id)
+        except catalog_writer.CatalogWriteError as exc:
+            raise _wrap_catalog_error(exc) from None
+        return _snapshot_response(
+            con,
+            response,
+            delete_status=result.status,
+            usage_count=result.usage_count,
+        )
+    finally:
+        con.close()
+
+
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
@@ -314,9 +332,7 @@ def edit_category(
 def add_event(
     body: EventAddBody,
     response: Response,
-    authorization: str | None = Header(default=None),
 ) -> AdminCatalogResponse:
-    _require_admin_token(authorization)
     con = duckdb_repo.get_connection()
     try:
         try:
@@ -326,6 +342,7 @@ def add_event(
                 date_from=body.date_from,
                 date_to=body.date_to,
                 auto_attach_enabled=body.auto_attach_enabled,
+                auto_tags=body.auto_tags,
             )
         except catalog_writer.CatalogWriteError as exc:
             raise _wrap_catalog_error(exc) from None
@@ -339,9 +356,7 @@ def edit_event(
     event_id: int,
     body: EventPatchBody,
     response: Response,
-    authorization: str | None = Header(default=None),
 ) -> AdminCatalogResponse:
-    _require_admin_token(authorization)
     con = duckdb_repo.get_connection()
     try:
         try:
@@ -352,11 +367,33 @@ def edit_event(
                 date_from=body.date_from,
                 date_to=body.date_to,
                 auto_attach_enabled=body.auto_attach_enabled,
+                auto_tags=body.auto_tags,
                 is_active=body.is_active,
             )
         except catalog_writer.CatalogWriteError as exc:
             raise _wrap_catalog_error(exc) from None
         return _snapshot_response(con, response)
+    finally:
+        con.close()
+
+
+@router.delete("/api/admin/catalog/events/{event_id}", response_model=AdminCatalogResponse)
+def delete_event(
+    event_id: int,
+    response: Response,
+) -> AdminCatalogResponse:
+    con = duckdb_repo.get_connection()
+    try:
+        try:
+            result = catalog_writer.delete_event(con, event_id)
+        except catalog_writer.CatalogWriteError as exc:
+            raise _wrap_catalog_error(exc) from None
+        return _snapshot_response(
+            con,
+            response,
+            delete_status=result.status,
+            usage_count=result.usage_count,
+        )
     finally:
         con.close()
 
@@ -370,9 +407,7 @@ def edit_event(
 def add_tag(
     body: TagAddBody,
     response: Response,
-    authorization: str | None = Header(default=None),
 ) -> AdminCatalogResponse:
-    _require_admin_token(authorization)
     con = duckdb_repo.get_connection()
     try:
         try:
@@ -389,9 +424,7 @@ def edit_tag(
     tag_id: int,
     body: TagPatchBody,
     response: Response,
-    authorization: str | None = Header(default=None),
 ) -> AdminCatalogResponse:
-    _require_admin_token(authorization)
     con = duckdb_repo.get_connection()
     try:
         try:
@@ -408,18 +441,34 @@ def edit_tag(
         con.close()
 
 
+@router.delete("/api/admin/catalog/tags/{tag_id}", response_model=AdminCatalogResponse)
+def delete_tag(
+    tag_id: int,
+    response: Response,
+) -> AdminCatalogResponse:
+    con = duckdb_repo.get_connection()
+    try:
+        try:
+            result = catalog_writer.delete_tag(con, tag_id)
+        except catalog_writer.CatalogWriteError as exc:
+            raise _wrap_catalog_error(exc) from None
+        return _snapshot_response(
+            con,
+            response,
+            delete_status=result.status,
+            usage_count=result.usage_count,
+        )
+    finally:
+        con.close()
+
+
 # ---------------------------------------------------------------------------
-# Runtime map reload
+# Sheet-mapping reload
 # ---------------------------------------------------------------------------
 
 
 class ReloadMapResponse(BaseModel):
-    """Runtime-map reload result.
-
-    Success is encoded by HTTP 200 alone — any failure raises
-    ``HTTPException`` before we reach this model, so a dedicated
-    ``status: Literal["ok"]`` field would only ever carry that one
-    value and was removed as noise.
+    """Sheet-mapping reload result.
 
     ``modified_time_cached`` is always ``True`` on the admin path
     (we skip the lost-update second GET there) but the field is
@@ -434,23 +483,17 @@ class ReloadMapResponse(BaseModel):
 
 
 @router.post("/api/admin/reload-map", response_model=ReloadMapResponse)
-def reload_map(
-    authorization: str | None = Header(default=None),
-) -> ReloadMapResponse:
-    _require_admin_token(authorization)
-    if not settings.sheet_logging_spreadsheet:
-        # Consistent with the rest of the admin surface: missing
-        # server-side configuration is "service not available", not
-        # "bad request".
+def reload_map() -> ReloadMapResponse:
+    # Normalise first so a whitespace-only or malformed env value fails
+    # the same 503 as an empty one, instead of being passed through to
+    # ``reload_now`` and surfacing as a confusing Drive 404.
+    if spreadsheet_id_from_setting(settings.sheet_logging_spreadsheet) is None:
         raise HTTPException(
             status_code=503,
             detail="sheet_logging_spreadsheet not configured; reload-map unavailable",
         )
     try:
-        # ``check_after=False`` halves the Drive metadata GETs on this
-        # hot admin button (see ``reload_now`` docstring for the
-        # correctness argument).
-        summary = runtime_map.reload_now(check_after=False)
-    except runtime_map.MapTabError as exc:
+        summary = sheet_mapping.reload_now(check_after=False)
+    except sheet_mapping.MapTabError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return ReloadMapResponse(**summary)

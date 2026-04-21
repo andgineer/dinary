@@ -2,51 +2,31 @@
  * API client — thin fetch wrapper with relative URLs.
  *
  * Phase 2:
- *  - ``postExpense`` now sends a 3D body with catalog primary keys
+ *  - ``postExpense`` sends a 3D body with catalog primary keys
  *    (category_id, event_id, tag_ids). The server resolves 3D->2D at
- *    drain time from runtime_mapping (the curated ``map`` worksheet
+ *    drain time from ``sheet_mapping`` (the curated ``map`` worksheet
  *    tab), so the client no longer picks a sheet target.
- *  - ``fetchCatalog`` hits the single /api/catalog endpoint. It wraps
- *    a localStorage cache keyed by catalog_version and round-trips
- *    with If-None-Match => 304 on every refresh. The steady state is
- *    zero catalog GETs per expense because POST /api/expenses returns
- *    the current catalog_version and callers only refetch when the
- *    server-side version differs.
- *  - Admin mutations (add group/category/event/tag) go through the
- *    ``Authorization: Bearer <token>`` flow. The token lives in
- *    localStorage["admin_api_token"]; empty => admin UI hidden.
+ *  - ``fetchCatalog`` hits the single ``/api/catalog`` endpoint. It
+ *    wraps a localStorage cache keyed by catalog_version and
+ *    round-trips with If-None-Match => 304 on every refresh. Steady
+ *    state is zero catalog GETs per expense because POST /api/expenses
+ *    returns the current catalog_version and callers only refetch
+ *    when the server-side version differs.
+ *  - Admin mutations (add / edit / delete / reactivate group /
+ *    category / event / tag) currently have no authentication —
+ *    the shared-token gate was removed pending a real authorization
+ *    layer (see ``dinary.api.admin_catalog`` module docstring).
+ *    Deployments must put the server behind network ACLs until then.
  */
 
 const CATALOG_CACHE_KEY = "dinary:catalog:v1";
-const ADMIN_TOKEN_KEY = "dinary:admin_token";
 
-// Mirror of ``dinary.api.catalog._etag_for``. The server no longer
-// ships an ``etag`` field in the catalog response body; the value is
-// a pure function of ``catalog_version``, so the client derives it
-// locally every time it needs to send ``If-None-Match``. Any change
-// to the server-side format must stay in lockstep with this helper.
+// Mirror of ``dinary.api.catalog._etag_for``. The value is a pure
+// function of ``catalog_version`` so the client can derive it locally
+// when sending ``If-None-Match``. Any change on the server must stay
+// in lockstep with this helper.
 function etagFor(catalogVersion) {
   return `W/"catalog-v${catalogVersion}"`;
-}
-
-function getAdminToken() {
-  return localStorage.getItem(ADMIN_TOKEN_KEY) || "";
-}
-
-export function hasAdminToken() {
-  return getAdminToken().length > 0;
-}
-
-export function setAdminToken(token) {
-  if (token) localStorage.setItem(ADMIN_TOKEN_KEY, token);
-  else localStorage.removeItem(ADMIN_TOKEN_KEY);
-}
-
-function adminHeaders() {
-  const token = getAdminToken();
-  const h = { "Content-Type": "application/json" };
-  if (token) h["Authorization"] = `Bearer ${token}`;
-  return h;
 }
 
 export async function postExpense({
@@ -111,10 +91,6 @@ function readCachedCatalog() {
     const raw = localStorage.getItem(CATALOG_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    // ``catalog_version`` is the one required field — ``etag`` used
-    // to live here too but is now derived client-side via
-    // ``etagFor``, so an absent etag field is no longer an
-    // invalidation signal.
     if (
       !parsed ||
       typeof parsed !== "object" ||
@@ -130,14 +106,6 @@ function readCachedCatalog() {
 
 function writeCachedCatalog(snapshot) {
   try {
-    // Always normalise through ``toCatalogSnapshot`` so the cache has
-    // exactly the fields ``GET /api/catalog`` returns, regardless of
-    // whether the caller handed us a GET body or an
-    // ``AdminCatalogResponse`` (which carries admin-only
-    // ``new_id`` / ``status``). Centralising the strip here means
-    // any future ``writeCachedCatalog`` caller is safe by default —
-    // the earlier cache-leak bug went unnoticed precisely because
-    // the strip lived at a higher layer than the actual write.
     localStorage.setItem(
       CATALOG_CACHE_KEY,
       JSON.stringify(toCatalogSnapshot(snapshot)),
@@ -176,9 +144,6 @@ export function cachedCatalogVersion() {
 }
 
 export function replaceCachedCatalog(snapshot) {
-  // Thin alias around ``writeCachedCatalog``; the admin-field strip
-  // lives inside ``writeCachedCatalog`` so every write path is safe
-  // without the caller having to remember which helper to use.
   writeCachedCatalog(snapshot);
 }
 
@@ -186,48 +151,27 @@ export function replaceCachedCatalog(snapshot) {
 // Admin catalog mutations
 // ---------------------------------------------------------------------------
 
-async function postAdmin(path, body) {
-  const resp = await fetch(path, {
-    method: "POST",
-    headers: adminHeaders(),
-    body: JSON.stringify(body),
-  });
+async function adminRequest(path, { method, body } = { method: "GET" }) {
+  const init = { method, headers: { "Content-Type": "application/json" } };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  const resp = await fetch(path, init);
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
-    // 401 / 403 means the token in localStorage is missing or wrong.
-    // Clear it so the next add-modal call re-prompts the operator
-    // instead of replaying the same bad token forever. 503 means the
-    // admin API is disabled server-side (empty DINARY_ADMIN_API_TOKEN);
-    // we keep whatever the user pasted, since the server-side config
-    // is the problem, not the token.
-    if (resp.status === 401 || resp.status === 403) {
-      setAdminToken("");
-    }
     const e = new Error(err.detail || `HTTP ${resp.status}`);
     e.status = resp.status;
     throw e;
   }
   const snapshot = await resp.json();
-  // Admin responses include the full post-mutation snapshot plus two
-  // admin-only fields (``new_id``, ``status``); ``writeCachedCatalog``
-  // strips those internally so the localStorage cache has the same
-  // shape as a ``GET /api/catalog`` body. We still return the full
-  // response to the caller so the PWA can surface ``status`` and
-  // ``new_id`` (e.g. focusing the freshly-added option in a dropdown).
   writeCachedCatalog(snapshot);
   return snapshot;
 }
 
 function toCatalogSnapshot(adminResponse) {
-  // Keep in sync with ``build_catalog_snapshot`` on the server: the
-  // admin response envelope wraps the same dict-of-lists plus two
-  // admin-only fields (``new_id``, ``status``) that the PWA cache
-  // doesn't need. Destructure by the *server's* key names
-  // (``category_groups`` — not ``groups``) so the cached snapshot
-  // has the shape ``catalog.js::getGroups()`` et al. expect.
-  // ``etag`` is no longer part of the server response body; the
-  // PWA derives it from ``catalog_version`` via ``etagFor`` at the
-  // exact moment it needs to send ``If-None-Match``.
+  // Keep in sync with ``build_catalog_snapshot`` on the server. The
+  // admin envelope wraps the same dict-of-lists plus admin-only
+  // fields (``new_id`` / ``status`` / ``delete_status`` /
+  // ``usage_count``); we strip them here so the localStorage cache
+  // mirrors exactly the ``GET /api/catalog`` shape.
   const {
     catalog_version,
     category_groups,
@@ -239,27 +183,126 @@ function toCatalogSnapshot(adminResponse) {
 }
 
 export async function adminAddGroup({ name, sort_order }) {
-  return postAdmin("/api/admin/catalog/groups", { name, sort_order: sort_order ?? null });
-}
-
-export async function adminAddCategory({ name, group_id, sheet_name, sheet_group }) {
-  return postAdmin("/api/admin/catalog/categories", {
-    name,
-    group_id,
-    sheet_name: sheet_name ?? null,
-    sheet_group: sheet_group ?? null,
+  return adminRequest("/api/admin/catalog/groups", {
+    method: "POST",
+    body: { name, sort_order: sort_order ?? null },
   });
 }
 
-export async function adminAddEvent({ name, date_from, date_to, auto_attach_enabled }) {
-  return postAdmin("/api/admin/catalog/events", {
-    name,
-    date_from,
-    date_to,
-    auto_attach_enabled: auto_attach_enabled ?? false,
+export async function adminAddCategory({ name, group_id, sheet_name, sheet_group }) {
+  return adminRequest("/api/admin/catalog/categories", {
+    method: "POST",
+    body: {
+      name,
+      group_id,
+      sheet_name: sheet_name ?? null,
+      sheet_group: sheet_group ?? null,
+    },
+  });
+}
+
+export async function adminAddEvent({
+  name,
+  date_from,
+  date_to,
+  auto_attach_enabled,
+  auto_tags,
+}) {
+  return adminRequest("/api/admin/catalog/events", {
+    method: "POST",
+    body: {
+      name,
+      date_from,
+      date_to,
+      auto_attach_enabled: auto_attach_enabled ?? false,
+      auto_tags: auto_tags ?? null,
+    },
   });
 }
 
 export async function adminAddTag({ name }) {
-  return postAdmin("/api/admin/catalog/tags", { name });
+  return adminRequest("/api/admin/catalog/tags", {
+    method: "POST",
+    body: { name },
+  });
+}
+
+// PATCH helpers used by the reactivate-in-picker affordance. The body
+// carries only the fields the caller wants to change; server-side
+// ``edit_*`` treats ``null`` / missing as "leave alone".
+
+export async function adminPatchGroup(group_id, body) {
+  return adminRequest(`/api/admin/catalog/groups/${group_id}`, {
+    method: "PATCH",
+    body,
+  });
+}
+
+export async function adminPatchCategory(category_id, body) {
+  return adminRequest(`/api/admin/catalog/categories/${category_id}`, {
+    method: "PATCH",
+    body,
+  });
+}
+
+export async function adminPatchEvent(event_id, body) {
+  return adminRequest(`/api/admin/catalog/events/${event_id}`, {
+    method: "PATCH",
+    body,
+  });
+}
+
+export async function adminPatchTag(tag_id, body) {
+  return adminRequest(`/api/admin/catalog/tags/${tag_id}`, {
+    method: "PATCH",
+    body,
+  });
+}
+
+// Convenience reactivation helpers: one PATCH flipping ``is_active``.
+
+export async function adminReactivateGroup(group_id) {
+  return adminPatchGroup(group_id, { is_active: true });
+}
+
+export async function adminReactivateCategory(category_id) {
+  return adminPatchCategory(category_id, { is_active: true });
+}
+
+export async function adminReactivateEvent(event_id) {
+  return adminPatchEvent(event_id, { is_active: true });
+}
+
+export async function adminReactivateTag(tag_id) {
+  return adminPatchTag(tag_id, { is_active: true });
+}
+
+// DELETE helpers. Server decides hard vs soft based on whether the row
+// is still referenced by expenses or any mapping table; the caller
+// just asks for "remove" and inspects ``delete_status`` / ``usage_count``
+// on the returned snapshot to phrase the toast ("удалено" vs
+// "скрыто — ещё используется в N расходах").
+
+export async function adminDeleteGroup(group_id) {
+  return adminRequest(`/api/admin/catalog/groups/${group_id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function adminDeleteCategory(category_id) {
+  return adminRequest(`/api/admin/catalog/categories/${category_id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function adminDeleteEvent(event_id) {
+  return adminRequest(`/api/admin/catalog/events/${event_id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function adminDeleteTag(tag_id) {
+  return adminRequest(`/api/admin/catalog/tags/${tag_id}`, {
+    method: "DELETE",
+  });
 }

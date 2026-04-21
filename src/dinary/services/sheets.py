@@ -149,7 +149,7 @@ def _drive_credentials() -> Credentials:
 def drive_get_modified_time(spreadsheet_id: str) -> str:
     """Return the spreadsheet's ``modifiedTime`` as an RFC3339 UTC string.
 
-    Used by ``runtime_map.ensure_fresh()`` as a cheap staleness check:
+    Used by ``sheet_mapping.ensure_fresh()`` as a cheap staleness check:
     the drain loop calls this before every batch of sheet-logging
     jobs, and only re-parses the ``map`` tab when the returned
     timestamp differs from the one cached from the previous parse.

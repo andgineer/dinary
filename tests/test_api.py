@@ -310,6 +310,68 @@ class TestPostExpense:
             con.close()
         assert tags == [1, 2]
 
+    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    def test_event_auto_tags_unioned_into_expense(self, _mock_convert_fn, client):
+        """POST ``/api/expenses`` must union ``events.auto_tags`` into
+        the stored tag set so runtime writes carry the same invariant
+        the historical importer applies: attaching a vacation event to
+        an expense guarantees both ``отпуск`` and ``путешествия`` show
+        up regardless of what the client submitted. This mirrors the
+        importer's ``_union_event_auto_tags`` behaviour and is the
+        main "same-invariant-on-both-paths" contract tests around
+        ``events.auto_tags`` rely on.
+        """
+        con = duckdb_repo.get_connection()
+        try:
+            con.execute(
+                "UPDATE events SET auto_tags = ? WHERE id = 1",
+                ['["собака"]'],
+            )
+        finally:
+            con.close()
+
+        resp = client.post(
+            "/api/expenses",
+            json={
+                "client_expense_id": "e_auto",
+                "amount": 12.0,
+                "currency": "RSD",
+                "category_id": 1,
+                "event_id": 1,
+                "tag_ids": [2],
+                "comment": "",
+                "date": "2026-04-15",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        con = duckdb_repo.get_connection()
+        try:
+            row = con.execute(
+                "SELECT id FROM expenses WHERE client_expense_id = 'e_auto'",
+            ).fetchone()
+            assert row is not None
+            stored = sorted(duckdb_repo.get_expense_tags(con, int(row[0])))
+        finally:
+            con.close()
+        assert stored == [1, 2]
+
+        replay = client.post(
+            "/api/expenses",
+            json={
+                "client_expense_id": "e_auto",
+                "amount": 12.0,
+                "currency": "RSD",
+                "category_id": 1,
+                "event_id": 1,
+                "tag_ids": [2],
+                "comment": "",
+                "date": "2026-04-15",
+            },
+        )
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["status"] == "duplicate"
+
     def test_unknown_event_id_returns_422(self, client):
         resp = client.post(
             "/api/expenses",

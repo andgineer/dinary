@@ -52,8 +52,8 @@ def setup() -> int:
             " VALUES (2026, 'sheet-id', 'Sheet1', 'default', NULL)",
         )
         con.execute(
-            "INSERT INTO runtime_mapping (row_order, category_id, event_pattern,"
-            " sheet_category, sheet_group) VALUES (1, 1, '', 'Food', 'Essentials')",
+            "INSERT INTO sheet_mapping (row_order, category_id, event_id,"
+            " sheet_category, sheet_group) VALUES (1, 1, NULL, 'Food', 'Essentials')",
         )
     finally:
         con.close()
@@ -158,8 +158,8 @@ class TestDrainPendingPoisonsUnresolvedCategory:
     ):
         con = duckdb_repo.get_connection()
         try:
-            con.execute("DELETE FROM runtime_mapping_tags")
-            con.execute("DELETE FROM runtime_mapping")
+            con.execute("DELETE FROM sheet_mapping_tags")
+            con.execute("DELETE FROM sheet_mapping")
         finally:
             con.close()
 
@@ -284,7 +284,7 @@ class TestDrainPendingPoisonsNullClientExpenseId:
 @allure.epic("SheetLogging")
 @allure.feature("drain_pending (category fallback)")
 class TestDrainPendingCategoryFallback:
-    """When ``runtime_mapping`` has no matching row for the expense's
+    """When ``sheet_mapping`` has no matching row for the expense's
     category, the worker must fall back to the category name as the
     sheet category, with an empty sheet group."""
 
@@ -302,8 +302,8 @@ class TestDrainPendingCategoryFallback:
     ):
         con = duckdb_repo.get_connection()
         try:
-            con.execute("DELETE FROM runtime_mapping_tags")
-            con.execute("DELETE FROM runtime_mapping")
+            con.execute("DELETE FROM sheet_mapping_tags")
+            con.execute("DELETE FROM sheet_mapping")
         finally:
             con.close()
 

@@ -5,7 +5,6 @@ callers via ``get_connection()``. No ATTACH, no per-year files.
 """
 
 import dataclasses
-import fnmatch
 import logging
 import uuid
 from datetime import datetime, timedelta
@@ -194,8 +193,19 @@ class CategoryListRow:
 
 @dataclasses.dataclass(slots=True)
 class LoggingProjectionCandidateRow:
+    """A single ``sheet_mapping`` candidate row with its required tag set.
+
+    ``category_id`` / ``event_id`` are ``None`` for wildcard rows (match
+    any category / any event respectively). ``sheet_category`` /
+    ``sheet_group`` carry either a literal target or the ``'*'``
+    wildcard sentinel ("don't decide here"); the Python resolver in
+    ``logging_projection`` picks the first non-wildcard value per
+    column scanning rows in ``row_order`` ASC.
+    """
+
     row_order: int
-    event_pattern: str
+    category_id: int | None
+    event_id: int | None
     sheet_category: str
     sheet_group: str
     tag_ids: list[int]
@@ -327,17 +337,6 @@ def get_category_name(con: duckdb.DuckDBPyConnection, category_id: int) -> str |
     return str(row[0]) if row else None
 
 
-def get_event_name(con: duckdb.DuckDBPyConnection, event_id: int | None) -> str | None:
-    """Return the event name for ``event_id`` (or None if id is None / missing)."""
-    if event_id is None:
-        return None
-    row = con.execute(
-        "SELECT name FROM events WHERE id = ?",
-        [event_id],
-    ).fetchone()
-    return str(row[0]) if row else None
-
-
 def get_import_source(year: int) -> ImportSourceRow | None:
     con = get_connection()
     try:
@@ -396,56 +395,75 @@ def get_mapping_tag_ids(
 # ---------------------------------------------------------------------------
 
 
+_PROJECTION_WILDCARD = "*"
+
+
 def logging_projection(
     con: duckdb.DuckDBPyConnection,
     *,
     category_id: int,
-    event_name: str | None,
+    event_id: int | None,
     tag_ids: list[int] | set[int] | tuple[int, ...],
 ) -> tuple[str, str] | None:
-    """Resolve ``(category_id, event_name, tag set)`` to ``(sheet_category, sheet_group)``.
+    """Resolve ``(category_id, event_id, tag set)`` to ``(sheet_category, sheet_group)``.
 
-    Sources from ``runtime_mapping`` (owned by the ``map`` worksheet tab
-    and ``runtime_map.py``). First-match-wins by ``row_order`` ASC:
+    Sources from ``sheet_mapping`` (owned by the ``map`` worksheet tab
+    and ``sheet_mapping.py``). Semantics: scan rows in ``row_order``
+    ASC, keep only rows whose ``category_id`` / ``event_id`` / required
+    tag set is compatible with the expense, and per output column pick
+    the first non-``'*'`` value we see. ``NULL`` on ``category_id`` /
+    ``event_id`` is a wildcard (matches anything including no event);
+    ``'*'`` on ``sheet_category`` / ``sheet_group`` means "don't
+    decide here".
 
-    * ``category_id`` must match (SQL ``WHERE``).
-    * ``event_pattern`` is an fnmatch-style glob against
-      ``event_name or ''``. Empty pattern matches any event (including
-      no event).
-    * ``tag_ids`` required by the row must be a subset of the expense's
-      tag set. Extra tags on the expense are ignored; rows with a
-      stricter tag set win first by virtue of lower ``row_order``
-      (the map-tab author orders more-specific rules above generic
-      catch-alls).
+    Fallbacks are applied per column independently: if the resolver
+    did not pick a ``sheet_category`` we fall back to the category's
+    canonical name; if it did not pick a ``sheet_group`` we fall back
+    to the empty string. This keeps any partial resolution ("tag
+    rewrote only the envelope column") instead of discarding both
+    columns when one side stays wildcard.
 
-    Returns ``None`` when no ``runtime_mapping`` row matches (or the
-    category has no rows at all). The architectural "guaranteed
-    category-name fallback" lives in the caller
-    (``sheet_logging._drain_one_job``), not here — this function is
-    strictly a mapping-table lookup so callers can tell "no mapping"
-    apart from "explicit mapping resolved".
+    Returns ``None`` only when ``category_id`` itself is not in the
+    catalog — that is the one condition the caller cannot recover
+    from and must translate into a "poison this job" signal.
+
+    NOTE: ``sheet_mapping.resolve_projection`` implements the same
+    "first non-``*`` wins per column" rule over pure ``MapRow``
+    objects; the two helpers intentionally stay separate so this
+    function can run directly against the DB without materializing
+    every row. Any change to the matching rule must be mirrored in
+    both places.
     """
     expense_tag_set = {int(t) for t in tag_ids}
-    event_key = event_name or ""
+    category_fallback = get_category_name(con, category_id)
+    if category_fallback is None:
+        return None
     candidates = fetchall_as(
         LoggingProjectionCandidateRow,
         con,
         load_sql("logging_projection.sql"),
         [category_id],
     )
-    if not candidates:
-        return None
 
+    resolved_category: str | None = None
+    resolved_group: str | None = None
     for cand in candidates:
-        pattern = cand.event_pattern or ""
-        if pattern and not fnmatch.fnmatchcase(event_key, pattern):
+        if cand.event_id is not None and cand.event_id != event_id:
             continue
         required_tags = {int(t) for t in cand.tag_ids}
         if not required_tags.issubset(expense_tag_set):
             continue
-        return (cand.sheet_category, cand.sheet_group)
+        if resolved_category is None and cand.sheet_category != _PROJECTION_WILDCARD:
+            resolved_category = cand.sheet_category
+        if resolved_group is None and cand.sheet_group != _PROJECTION_WILDCARD:
+            resolved_group = cand.sheet_group
+        if resolved_category is not None and resolved_group is not None:
+            break
 
-    return None
+    return (
+        resolved_category if resolved_category is not None else category_fallback,
+        resolved_group if resolved_group is not None else "",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +520,107 @@ def lookup_existing_expense(
 
 
 InsertExpenseResult = Literal["created", "duplicate", "conflict"]
+
+
+#: Names of the stored/incoming tuple components, kept 1:1 with the
+#: ``stored = (...)`` / ``incoming = (...)`` order inside
+#: ``insert_expense``. Used by ``_format_expense_diff`` to produce
+#: human-readable conflict diffs for the 409 response body and server
+#: logs.
+_EXPENSE_DIFF_FIELDS: tuple[str, ...] = (
+    "amount",
+    "amount_original",
+    "currency_original",
+    "category_id",
+    "event_id",
+    "comment",
+    "datetime",
+    "sheet_category",
+    "sheet_group",
+    "tag_ids",
+)
+
+
+def _format_expense_diff(stored: tuple, incoming: tuple) -> str:
+    """Return a compact list of the columns that differ between stored + incoming.
+
+    The 409 caller surfaces the result to the PWA so an operator
+    replaying an offline queue can tell the real-conflict case
+    ("different amount / comment") from the narrow race on
+    ``events.auto_tags`` edits ("different tag_ids only"). Values are
+    repr'd to stay grep-able.
+    """
+    diffs: list[str] = []
+    for field, a, b in zip(_EXPENSE_DIFF_FIELDS, stored, incoming, strict=True):
+        if a != b:
+            diffs.append(f"{field}: stored={a!r} incoming={b!r}")
+    return "; ".join(diffs) if diffs else "(no field difference observed)"
+
+
+def describe_expense_conflict(  # noqa: PLR0913
+    con: duckdb.DuckDBPyConnection,
+    *,
+    client_expense_id: str,
+    expense_datetime: datetime,
+    amount: float,
+    amount_original: float,
+    currency_original: str,
+    category_id: int,
+    event_id: int | None,
+    comment: str,
+    sheet_category: str | None,
+    sheet_group: str | None,
+    tag_ids: list[int],
+) -> str | None:
+    """Re-run the stored-vs-incoming compare and return a human-readable diff.
+
+    Called from ``api/expenses.py`` on the conflict path so the 409
+    body can tell the operator which fields changed (most often only
+    ``tag_ids`` when an ``events.auto_tags`` edit landed mid-retry).
+    Returns ``None`` when the stored row has vanished between the
+    conflict signal and this lookup — a degenerate state that should
+    not happen in practice but we guard against rather than crash.
+    """
+    existing = fetchone_as(
+        ExistingExpenseRow,
+        con,
+        load_sql("get_existing_expense.sql"),
+        [client_expense_id],
+    )
+    if existing is None:
+        return None
+    existing_tag_ids = sorted(
+        int(r[0])
+        for r in con.execute(
+            "SELECT tag_id FROM expense_tags WHERE expense_id = ?",
+            [existing.id],
+        ).fetchall()
+    )
+    stored = (
+        existing.amount,
+        existing.amount_original,
+        existing.currency_original,
+        existing.category_id,
+        existing.event_id,
+        existing.comment,
+        existing.datetime,
+        existing.sheet_category,
+        existing.sheet_group,
+        existing_tag_ids,
+    )
+    incoming = (
+        Decimal(str(amount)),
+        Decimal(str(amount_original)),
+        currency_original,
+        category_id,
+        event_id,
+        comment,
+        expense_datetime,
+        sheet_category,
+        sheet_group,
+        sorted(int(t) for t in tag_ids),
+    )
+    return _format_expense_diff(stored, incoming)
 
 
 def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
@@ -737,6 +856,11 @@ def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
 
         if stored == incoming:
             return "duplicate"
+        logger.info(
+            "insert_expense conflict for client_expense_id=%r: diff=%s",
+            client_expense_id,
+            _format_expense_diff(stored, incoming),
+        )
         return "conflict"
 
     except Exception:
