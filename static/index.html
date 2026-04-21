@@ -17,20 +17,26 @@
 
 <header>
   <h1>Dinary <span id="header-version"></span></h1>
-  <span class="queue-badge" aria-label="Queued entries count"></span>
+  <div class="header-right">
+    <span class="offline-hint" style="display:none">Offline</span>
+    <span class="queue-badge" aria-label="Queued entries count"></span>
+  </div>
 </header>
 
 <main>
-  <div class="card">
-      <button id="qr-btn" class="btn btn-secondary" type="button">Scan QR</button>
-    <span class="offline-hint" style="display:none">Offline — will sync later</span>
-    <video id="qr-video" style="display:none; width:100%; border-radius:8px"></video>
-  </div>
+  <video id="qr-video" style="display:none; width:100%; border-radius:8px; margin-bottom:1rem"></video>
 
   <div class="card">
-    <div class="form-group">
-      <label for="amount">Amount (RSD)</label>
-      <input id="amount" type="text" inputmode="decimal" placeholder="0" autocomplete="off">
+    <div class="form-grid form-grid-amount-date">
+      <div class="form-group">
+        <label for="amount">Amount (RSD)</label>
+        <input id="amount" type="text" inputmode="decimal" placeholder="0" autocomplete="off">
+      </div>
+
+      <div class="form-group">
+        <label for="date">Date</label>
+        <input id="date" type="date">
+      </div>
     </div>
 
     <div class="form-group">
@@ -80,15 +86,15 @@
       <label for="comment">Comment</label>
       <textarea id="comment" rows="2" placeholder="Optional note"></textarea>
     </div>
-
-    <div class="form-group">
-      <label for="date">Date</label>
-      <input id="date" type="date">
-    </div>
-
-    <button id="save-btn" class="btn btn-primary" type="button">Save</button>
   </div>
 </main>
+
+<footer class="action-bar">
+  <div class="action-bar-inner">
+    <button id="qr-btn" class="btn btn-secondary action-qr" type="button" aria-label="Scan QR">QR</button>
+    <button id="save-btn" class="btn btn-primary action-save" type="button">Save</button>
+  </div>
+</footer>
 
 <div id="queue-modal" class="modal" style="display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:1rem">
   <div class="modal-content" style="background:var(--surface,#16213e);border-radius:12px;padding:1.25rem;width:100%;max-width:420px;max-height:80vh;overflow-y:auto">
