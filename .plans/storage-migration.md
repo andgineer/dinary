@@ -542,6 +542,104 @@ Concrete steps:
      the durable source of truth; do not promise instant fallback once
      the new primary has diverged.
 
+### Phase 1.9 — provision VM 2 (replica)
+
+Target shape in the Oracle Cloud Always Free tier:
+
+- Instance: `VM.Standard.E2.1.Micro` (1 OCPU, 1 GiB RAM — the only
+  shape actually available under "Always Free" on most regions once
+  A1.Flex capacity is gone).
+- Image: `Canonical-Ubuntu-22.04-Minimal` (same minimal variant as
+  VM 1; shrinks the attack surface and matches VM 1's patch cadence
+  profile).
+- Boot volume: 50 GiB (leaves headroom for LTX history + OS; the
+  actual replica payload is under 1 GiB even with aggressive
+  retention).
+- Network: **same VCN as VM 1**, placed in the **same public subnet
+  `10.0.0.0/24`** with a public IPv4 assigned. We deliberately do
+  **not** use a separate private subnet — the public IP is closed
+  off at the sshd layer by `inv ssh-tailscale-only` immediately after
+  bootstrap, so defense-in-depth vs. a private subnet is marginal
+  against the cost of the extra NAT Gateway + route table + bastion
+  plumbing. This matches VM 1's topology exactly, so both machines
+  are operationally interchangeable from the operator's perspective.
+- Hostname (OCI): any unique label — the operator-facing handle is
+  the Tailscale MagicDNS name, not the OCI instance name.
+- SSH key: the same operator key that is authorised on VM 1
+  (`~/.ssh/id_ed25519.pub` on the laptop). Reusing the key keeps the
+  list of credentials to rotate small and means `inv setup-replica`
+  can land on VM 2 with the operator's regular SSH identity.
+
+Tailscale must be brought up on VM 2 manually (one-off step):
+
+```
+ssh ubuntu@<vm2-public-ip>
+curl -fsSL https://tailscale.com/install.sh | sudo sh
+sudo tailscale up --hostname=dinary-replica --ssh=false
+# click the login URL and approve the device in the tailnet admin
+```
+
+We do not automate the OAuth flow. An auth key would eliminate the
+browser click but we would have to either ship it through `.deploy/.env`
+(broadens the blast radius of an env leak) or keep it alongside a
+password manager (still an extra long-lived credential to rotate).
+For a step that runs once per replica-VM lifetime, the manual OAuth
+click is cheaper than either alternative.
+
+Once Tailscale is up, set `DINARY_REPLICA_HOST=ubuntu@dinary-replica`
+(MagicDNS) in `.deploy/.env` and run `inv setup-replica` from the
+operator laptop. The task wraps the four idempotent shell blocks:
+
+1. `apt-get install -y unattended-upgrades` (CVE coverage without
+   `inv deploy` ever touching this host).
+2. `/var/lib/litestream` at mode `0750`, owned by `ubuntu:ubuntu` —
+   matches the SFTP login identity Litestream uses from VM 1, and
+   the path referenced as the replica URL in `/etc/litestream.yml`.
+3. 1 GiB `/swapfile` (same `_build_setup_swap_script` used by VM 1 —
+   an `apt-get upgrade` on 956 MiB of RAM is an OOM candidate without
+   it).
+4. `inv ssh-tailscale-only` applied on VM 2 — binds sshd to the
+   Tailscale IPv4 + loopback, closes public TCP/22.
+
+`inv setup-replica` is idempotent: each step short-circuits on
+re-apply, so a partial rollout can be finished by simply re-running
+the task. The only non-idempotent manual step is the initial
+`tailscale up` above.
+
+**Current production state (April 2026): step 4 is intentionally
+reverted.** After applying `inv ssh-tailscale-only` on both VM 1 and
+VM 2, the resulting topology made every ingress path — SSH, the API
+served through Tailscale Serve, the Litestream SFTP stream —
+depend on the same tailnet tunnel. A single `tailscaled` crash or a
+regional Tailscale coordination-server blip would simultaneously
+kill operator access and the PWA's data plane, with no independent
+break-glass because the `ubuntu` user has no password set in
+`/etc/shadow` and therefore the Oracle Cloud Serial Console cannot
+authenticate. The trade-off was judged worse than the risk
+`ssh-tailscale-only` was supposed to remove (public SSH brute-force
+noise, not actual compromise — key-only auth already defeats
+brute-force). The drop-in
+`/etc/ssh/sshd_config.d/10-tailscale-only.conf` was removed on both
+hosts, sshd listens on `0.0.0.0:22` again, and `fail2ban`
+(`backend=systemd`, 1 d initial ban, doubling up to 30 d) absorbs
+the log noise and auto-bans the repeat offenders. The
+`inv setup-replica` task still emits step 4 so a future re-bootstrap
+starts from the conservative "closed" state; operators who want the
+open-public posture delete the drop-in with a one-line `ssh ubuntu@
+<replica> 'sudo rm /etc/ssh/sshd_config.d/10-tailscale-only.conf &&
+sudo systemctl reload ssh'` as the tail of the setup run.
+
+The replica bootstrap deliberately does **not**:
+
+- Install Python, `uv`, or the `dinary` codebase — the replica runs
+  no application, only the SFTP daemon that Litestream pushes to.
+- Install or configure `litestream` itself — Litestream runs on the
+  *primary* (VM 1), pushing to VM 2 as a plain SFTP endpoint. Only
+  VM 1 needs `litestream-setup`.
+- Open a tunnel to the public internet for the replica — there is
+  no HTTP service to expose. The only ingress is SFTP over SSH, and
+  that is already reachable over the tailnet via `ubuntu@dinary-replica`.
+
 ### Phase 2 — Litestream steady state on VM 1 → VM 2
 
 - Precondition: Phase 1.5 has already produced a validated
@@ -689,65 +787,42 @@ SQLite tool" during disaster recovery. So the cron materializes a
 clean single-file `.db` via `litestream restore`, uploads it, and
 throws the temp file away.
 
-#### 3.5.a Primary: VM 2 daily snapshot to cloud drive(s)
+#### 3.5.a Primary: VM 2 daily snapshot to Yandex.Disk — IMPLEMENTED
 
-Add on VM 2 (once-only setup):
+Shipped as `inv setup-replica-backup` + `inv restore-from-yadisk`. See
+[`docs/src/en/operations.md`](../docs/src/en/operations.md#off-site-backup-yandexdisk-daily-gfs-retention)
+("Off-site backup: Yandex.Disk" and "Point-in-time restore from
+Yandex.Disk") for the operator-facing runbook. Key deviations from
+the original draft above:
 
-1. Install `rclone` (`apt install rclone` — small, no deps).
-2. Configure remotes. The cleanest zero-OAuth path is Yandex Disk
-   over WebDAV:
-   - Generate an app-password in the Yandex account UI.
-   - `rclone config` → new remote, type `webdav`, url
-     `https://webdav.yandex.com`, vendor `other`, user + the
-     app-password. No browser round-trip.
-   For OneDrive / Google Drive, do the OAuth step on the laptop
-   (which has a browser): run `rclone config` locally, complete the
-   browser flow, then `scp ~/.config/rclone/rclone.conf
-   vm2:~/.config/rclone/rclone.conf`. VM 2 then uses the refresh
-   token headlessly forever.
-3. Create `/home/ubuntu/bin/dinary-cloud-snapshot.sh`:
+- **GFS retention, not 30-day flat.** 7 daily / 4 weekly / 12
+  monthly / all yearly indefinitely. On a 10-year horizon this is
+  ~29 files total, ~9 MB on disk — orders of magnitude cheaper
+  than the 30×30 MB = 900 MB/destination math in the original
+  draft. Rationale: user explicitly rejected the flat 30-day
+  window as "ой, почему самый старый бэкап — месячной давности".
+- **Yandex.Disk only (not multi-remote).** Keeps the bootstrap
+  story single-OAuth and the bash pipeline small. Nothing prevents
+  adding more `rclone` remotes later.
+- **zstd -19 compression.** An uncompressed ~1 MB `dinary.db`
+  compresses to ~300 KB; the `.db.zst` filename makes the format
+  obvious to anyone browsing the Yandex folder.
+- **systemd oneshot + timer, not crontab.** Matches the rest of
+  the prod systemd-native tooling (`dinary.service`,
+  `litestream.service`). `Persistent=true` closes the
+  reboot-on-the-hour retention-gap footgun cron could not.
+- **`rclone config` stays manual.** User confirmed that the
+  one-time interactive OAuth browser click is acceptable friction
+  and explicitly asked for rclone itself to be pre-installed so
+  disaster-recovery does not hit `apt install` in a stressed
+  terminal; `inv setup` and `inv setup-replica-backup` now both install
+  rclone themselves.
 
-   ```bash
-   #!/bin/bash
-   set -euo pipefail
-
-   # VM 2-local path where Litestream stores replica segments for VM 1.
-   REPLICA_CONFIG=/etc/litestream-dinary-source.yml
-   TMPFILE=$(mktemp -p /tmp dinary-snap-XXXXXX.db)
-   DATE=$(date +%F)
-
-   trap 'rm -f "$TMPFILE" "$TMPFILE"-wal "$TMPFILE"-shm' EXIT
-
-   # Reconstruct a single consistent .db file from the replica history.
-   # -o writes a clean file; no WAL sidecar needed after restore.
-   litestream restore -o "$TMPFILE" -config "$REPLICA_CONFIG"
-
-   # Integrity check before uploading (cheap, ~100 ms on our size).
-   sqlite3 "$TMPFILE" 'PRAGMA integrity_check;' | grep -q '^ok$'
-
-   # Upload to every configured remote. Names chosen so each remote
-   # gets a dated file it can retain/prune independently.
-   TARGETS=(yandex:dinary-backups onedrive:dinary-backups gdrive:dinary-backups)
-   for t in "${TARGETS[@]}"; do
-     rclone copyto "$TMPFILE" "$t/dinary-$DATE.db"
-     # Keep 30 daily snapshots per destination.
-     rclone delete "$t" --min-age 30d --include 'dinary-*.db'
-   done
-   ```
-
-4. Crontab entry:
-
-   ```
-   0 3 * * * /home/ubuntu/bin/dinary-cloud-snapshot.sh \
-       >> /var/log/dinary-cloud-snapshot.log 2>&1
-   ```
-
-Retention math: 30 files × ~30 MB = ~900 MB per destination. Fits
-comfortably in the free tier of every mainstream cloud drive.
-
-For a single-user setup one cloud destination is usually enough;
-the multi-remote loop is for users who want defense-in-depth across
-provider failures.
+The pure-string builders (`_build_backup_script`,
+`_build_backup_retention_script`, `_build_backup_service_unit`,
+`_build_backup_timer_unit`) in `tasks.py` are the authoritative
+source for what runs on VM 2; the operations doc summarizes the
+operator-facing surface.
 
 #### 3.5.b Optional: laptop additional snapshot
 

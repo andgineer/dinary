@@ -6,7 +6,9 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from datetime import datetime as _dt
+from datetime import timezone as _timezone
 from pathlib import Path
 
 from dinary.__about__ import __version__
@@ -115,6 +117,41 @@ REMOTE_LITESTREAM_CONFIG_PATH = "/etc/litestream.yml"
 # diff that cannot get out of sync with the asset filenames.
 LITESTREAM_VERSION = "0.5.1"
 
+REPLICA_LITESTREAM_DIR = "/var/lib/litestream"
+
+# Directory Litestream materializes inside REPLICA_LITESTREAM_DIR for
+# our single ``dinary.db``. Matches the trailing segment of the
+# ``path:`` field in .deploy/litestream.yml — a silent drift here
+# would make ``inv setup-replica-backup`` restore from the wrong replica tree.
+REPLICA_DB_NAME = "dinary"
+
+# Off-site backup to Yandex.Disk (see docs/src/en/operations.md,
+# section "Off-site backup: Yandex.Disk"). Everything on the replica
+# is managed by ``inv setup-replica-backup``; the restore side is
+# ``inv restore-from-yadisk`` (local-only, runs in cwd).
+BACKUP_SCRIPT_PATH = "/usr/local/bin/dinary-backup"
+BACKUP_RETENTION_SCRIPT_PATH = "/usr/local/bin/dinary-backup-retention"
+BACKUP_SERVICE_PATH = "/etc/systemd/system/dinary-backup.service"
+BACKUP_TIMER_PATH = "/etc/systemd/system/dinary-backup.timer"
+BACKUP_RCLONE_REMOTE = "yandex"
+# Nested under ``Backup/`` because the operator's Yandex.Disk already
+# has a ``Backup`` folder used by other tools — keeping dinary under a
+# leaf ``dinary/`` avoids colliding with ad-hoc human uploads in the
+# same namespace and matches the existing filesystem convention.
+# ``rclone mkdir`` is idempotent and will create the ``dinary`` leaf
+# inside the existing ``Backup`` parent on first run.
+BACKUP_RCLONE_PATH = "Backup/dinary"
+BACKUP_FILENAME_PREFIX = "dinary-"
+BACKUP_FILENAME_SUFFIX = ".db.zst"
+
+# GFS retention. Closed years are immutable, so ``yearly`` is kept
+# indefinitely — every closed-year snapshot is ~300 KB compressed and
+# any drift between two yearly snapshots of the same closed year is a
+# corruption signal worth retaining forever.
+BACKUP_RETENTION_DAILY = 7
+BACKUP_RETENTION_WEEKLY = 4
+BACKUP_RETENTION_MONTHLY = 12
+
 
 def _litestream_install_script(version: str = LITESTREAM_VERSION) -> str:
     """Return the shell snippet that installs Litestream on the VM.
@@ -216,6 +253,25 @@ def _host():
     return host
 
 
+def _replica_host():
+    """Read the Litestream replica host (VM2) from ``.deploy/.env``.
+
+    Separate from :func:`_host` because the replica is a distinct VM
+    with its own MagicDNS/Tailscale identity, owns no Python app, and
+    must never receive ``inv deploy``. Keeping the two hosts in
+    independent env vars makes it impossible for a typo in one to
+    accidentally target the other.
+    """
+    host = _env().get("DINARY_REPLICA_HOST")
+    if not host:
+        print(
+            "Set DINARY_REPLICA_HOST in .deploy/.env  "
+            "(e.g. ubuntu@dinary-replica)"
+        )
+        sys.exit(1)
+    return host
+
+
 def _tunnel():
     tunnel = (_env().get("DINARY_TUNNEL") or "tailscale").lower()
     if tunnel not in VALID_TUNNELS:
@@ -227,6 +283,17 @@ def _tunnel():
 def _ssh(c, cmd):
     b64 = base64.b64encode(cmd.encode()).decode()
     c.run(f"ssh {_host()} 'echo {b64} | base64 -d | bash'")
+
+
+def _ssh_replica(c, cmd):
+    """Run *cmd* on the Litestream replica (VM2) via SSH.
+
+    Mirrors :func:`_ssh` but targets :func:`_replica_host` so the
+    replica bootstrap path cannot be silently redirected at the app
+    server, and vice versa.
+    """
+    b64 = base64.b64encode(cmd.encode()).decode()
+    c.run(f"ssh {_replica_host()} 'echo {b64} | base64 -d | bash'")
 
 
 def _ssh_sudo(c, cmd):
@@ -306,6 +373,20 @@ def _ssh_json(c, cmd):
 def _write_remote_file(c, path, content):
     b64 = base64.b64encode(content.encode()).decode()
     c.run(f"ssh {_host()} 'echo {b64} | base64 -d | sudo tee {path} > /dev/null'")
+
+
+def _write_remote_replica_file(c, path, content):
+    """Like :func:`_write_remote_file` but targets the replica (VM2).
+
+    Mirror of the app-server helper, split so the replica-bootstrap
+    path cannot be silently redirected at VM1 (and vice versa). Used
+    by :func:`setup_replica_backup` to install ``/usr/local/bin/dinary-backup``
+    and the paired systemd units on the replica.
+    """
+    b64 = base64.b64encode(content.encode()).decode()
+    c.run(
+        f"ssh {_replica_host()} 'echo {b64} | base64 -d | sudo tee {path} > /dev/null'"
+    )
 
 
 def _render_service(c, name, content):
@@ -618,7 +699,7 @@ def setup(c, lock_ssh_to_tailnet=False):
     print("=== Installing system packages ===")
     _ssh_sudo(
         c,
-        "apt update && sudo apt install -y python3 python3-pip git curl sqlite3",
+        "apt update && sudo apt install -y python3 python3-pip git curl sqlite3 rclone",
     )
 
     print("=== Provisioning swap file ===")
@@ -868,6 +949,724 @@ def setup_swap(c, size_gb=1):
     size = int(size_gb)
     script = _build_setup_swap_script(size_gb=size)
     _ssh(c, script)
+
+
+def _build_setup_replica_packages_script() -> str:
+    """Emit the apt step of the replica bootstrap.
+
+    Kept as a pure helper so tests can pin the observable contract
+    (non-interactive apt, explicit ``unattended-upgrades`` install)
+    without mocking SSH.
+
+    ``DEBIAN_FRONTEND=noninteractive`` is required: without it
+    ``apt-get install`` on a fresh Ubuntu cloud image can block on a
+    postfix / grub debconf prompt that the replica never answers,
+    turning the bootstrap into a silent hang.
+    """
+    return (
+        "sudo bash <<'DINARY_REPLICA_PKG_EOF'\n"
+        "set -euo pipefail\n"
+        "export DEBIAN_FRONTEND=noninteractive\n"
+        "apt-get update -qq\n"
+        "apt-get install -y -qq unattended-upgrades\n"
+        "DINARY_REPLICA_PKG_EOF\n"
+    )
+
+
+def _build_setup_replica_litestream_dir_script() -> str:
+    """Emit the ``/var/lib/litestream`` provisioning step.
+
+    Pinned via :data:`REPLICA_LITESTREAM_DIR` so the ``inv
+    litestream-setup`` replica URL on VM1 and the directory created
+    here on VM2 cannot drift apart silently.
+
+    Mode ``0750`` with ``ubuntu:ubuntu`` ownership lets the SFTP
+    receiver (logged in as ``ubuntu``) write WAL segments without
+    granting world-read to the replica stream, which contains full
+    row data pre-compaction.
+    """
+    return (
+        "sudo bash <<'DINARY_REPLICA_DIR_EOF'\n"
+        "set -euo pipefail\n"
+        f"mkdir -p {REPLICA_LITESTREAM_DIR}\n"
+        f"chown ubuntu:ubuntu {REPLICA_LITESTREAM_DIR}\n"
+        f"chmod 750 {REPLICA_LITESTREAM_DIR}\n"
+        f"ls -ld {REPLICA_LITESTREAM_DIR}\n"
+        "DINARY_REPLICA_DIR_EOF\n"
+    )
+
+
+def _build_setup_replica_backup_packages_script() -> str:
+    """Emit the apt step of the backup bootstrap on VM2.
+
+    Installs the three binaries the daily backup pipeline shells out
+    to (``rclone`` for uploads, ``sqlite3`` for PRAGMA integrity_check,
+    ``zstd`` for compression). Kept separate from the replica's own
+    apt step so ``inv setup-replica`` can stay minimal — a box that is
+    only an SFTP sink does not need rclone.
+
+    ``DEBIAN_FRONTEND=noninteractive`` mirrors
+    :func:`_build_setup_replica_packages_script`: without it, apt on
+    a fresh cloud image can block on a postfix / grub debconf prompt
+    that nobody is around to answer.
+    """
+    return (
+        "sudo bash <<'DINARY_BACKUP_PKG_EOF'\n"
+        "set -euo pipefail\n"
+        "export DEBIAN_FRONTEND=noninteractive\n"
+        "apt-get update -qq\n"
+        "apt-get install -y -qq rclone sqlite3 zstd\n"
+        "DINARY_BACKUP_PKG_EOF\n"
+    )
+
+
+def _build_backup_script() -> str:
+    """Emit the ``/usr/local/bin/dinary-backup`` bash script.
+
+    Daily flow on VM2:
+
+    1. ``litestream restore`` materializes the local replica tree at
+       ``<REPLICA_LITESTREAM_DIR>/<REPLICA_DB_NAME>`` into a plain
+       SQLite file in a throwaway workdir.
+    2. ``PRAGMA integrity_check`` on the restored file. A failure here
+       aborts the run without touching Yandex — we refuse to
+       overwrite the remote history with a visibly corrupt snapshot.
+    3. ``zstd -19`` compresses (ratio is near-optimal on SQLite's
+       highly repetitive page layout, CPU cost negligible on a
+       <1 MB input).
+    4. ``rclone copyto`` uploads to
+       ``<BACKUP_RCLONE_REMOTE>:<BACKUP_RCLONE_PATH>/`` under a
+       lexicographically-chronological filename
+       ``dinary-YYYY-MM-DDTHHMMZ.db.zst``.
+    5. Calls ``/usr/local/bin/dinary-backup-retention`` to prune per
+       the GFS policy.
+
+    ``set -euo pipefail`` + ``trap 'rm -rf "$WORKDIR"' EXIT`` so a
+    failure never leaks multi-MB temp files on the 46 GB VM2 disk,
+    and never creates an upload from a half-restored DB.
+    """
+    replica_path = f"{REPLICA_LITESTREAM_DIR}/{REPLICA_DB_NAME}"
+    remote_prefix = f"{BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}"
+    return f"""#!/usr/bin/env bash
+# Managed by inv setup-replica-backup. Overwritten on every re-apply.
+# Daily backup: Litestream replica -> plain .db -> zstd -> Yandex.Disk.
+set -euo pipefail
+
+WORKDIR=$(mktemp -d)
+trap 'rm -rf "$WORKDIR"' EXIT
+
+SNAP="$WORKDIR/dinary.db"
+CFG="$WORKDIR/litestream-restore.yml"
+
+cat > "$CFG" <<YAML
+dbs:
+  - path: $SNAP
+    replicas:
+      - type: file
+        path: {replica_path}
+YAML
+
+litestream restore -config "$CFG" "$SNAP"
+
+if ! sqlite3 "$SNAP" 'PRAGMA integrity_check' | grep -qx 'ok'; then
+    echo "integrity_check FAILED on restored snapshot" >&2
+    exit 1
+fi
+
+zstd -q -19 "$SNAP" -o "$SNAP.zst"
+
+TS=$(date -u +%Y-%m-%dT%H%MZ)
+REMOTE="{remote_prefix}/{BACKUP_FILENAME_PREFIX}$TS{BACKUP_FILENAME_SUFFIX}"
+rclone copyto "$SNAP.zst" "$REMOTE"
+
+{BACKUP_RETENTION_SCRIPT_PATH}
+"""
+
+
+def _backup_filename_regex() -> str:
+    """Python-level regex that matches one uploaded backup filename.
+
+    Kept as a helper so both the remote retention script and the
+    local restore task read the same pattern — a silent drift in the
+    capture group means retention keeps files the restore task
+    refuses to recognize, or vice versa.
+
+    Capture group 1 is the ISO calendar date (``YYYY-MM-DD``), which
+    both callers use to bucket snapshots into GFS keepers / to
+    resolve ``--snapshot=<date-prefix>``.
+    """
+    return (
+        "^"
+        + _re.escape(BACKUP_FILENAME_PREFIX)
+        + r"(\d{4}-\d{2}-\d{2})T\d{4}Z"
+        + _re.escape(BACKUP_FILENAME_SUFFIX)
+        + "$"
+    )
+
+
+def _build_backup_retention_script() -> str:
+    """Emit ``/usr/local/bin/dinary-backup-retention`` (Python 3, stdlib).
+
+    Runs as the final step of ``dinary-backup``. Enforces GFS on
+    ``<BACKUP_RCLONE_REMOTE>:<BACKUP_RCLONE_PATH>/``:
+
+    * keeps the last :data:`BACKUP_RETENTION_DAILY` daily snapshots,
+    * keeps the newest-per-ISO-week for the last
+      :data:`BACKUP_RETENTION_WEEKLY` weeks,
+    * keeps the newest-per-calendar-month for the last
+      :data:`BACKUP_RETENTION_MONTHLY` months,
+    * keeps one snapshot per calendar year forever (closed years are
+      immutable; any drift between two yearly snapshots of the same
+      closed year signals corruption worth preserving).
+
+    Buckets overlap — a snapshot is pruned only when it belongs to
+    no keeper bucket. Pure stdlib so VM2 needs no pip/venv install.
+    Constants are injected as top-level assignments rather than
+    f-string substitutions so the regex's literal ``\\d{4}`` braces
+    stay legible and the body below doubles as a grep target.
+    """
+    header = (
+        "#!/usr/bin/env python3\n"
+        "# Managed by inv setup-replica-backup. Overwritten on every re-apply.\n"
+        "# GFS retention on the off-site backup remote.\n"
+        f"DAILY_KEEP = {BACKUP_RETENTION_DAILY}\n"
+        f"WEEKLY_KEEP = {BACKUP_RETENTION_WEEKLY}\n"
+        f"MONTHLY_KEEP = {BACKUP_RETENTION_MONTHLY}\n"
+        f"REMOTE = {BACKUP_RCLONE_REMOTE + ':' + BACKUP_RCLONE_PATH + '/'!r}\n"
+        f"FILENAME_PATTERN = {_backup_filename_regex()!r}\n"
+    )
+    body = '''
+import datetime as dt
+import re
+import subprocess
+import sys
+
+PATTERN = re.compile(FILENAME_PATTERN)
+
+
+def list_snapshots():
+    out = subprocess.check_output(
+        ["rclone", "lsf", REMOTE, "--files-only"], text=True
+    )
+    snaps = []
+    for line in out.splitlines():
+        name = line.strip()
+        m = PATTERN.match(name)
+        if m:
+            snaps.append((dt.date.fromisoformat(m.group(1)), name))
+    snaps.sort()
+    return snaps
+
+
+def pick_keepers(snaps):
+    keepers = set()
+    for _, name in snaps[-DAILY_KEEP:]:
+        keepers.add(name)
+    per_week = {}
+    for d, name in snaps:
+        per_week[d.isocalendar()[:2]] = name
+    for key in sorted(per_week)[-WEEKLY_KEEP:]:
+        keepers.add(per_week[key])
+    per_month = {}
+    for d, name in snaps:
+        per_month[(d.year, d.month)] = name
+    for key in sorted(per_month)[-MONTHLY_KEEP:]:
+        keepers.add(per_month[key])
+    per_year = {}
+    for d, name in snaps:
+        per_year[d.year] = name
+    keepers.update(per_year.values())
+    return keepers
+
+
+def main():
+    snaps = list_snapshots()
+    keepers = pick_keepers(snaps)
+    to_delete = [name for _, name in snaps if name not in keepers]
+    for name in to_delete:
+        subprocess.check_call(["rclone", "delete", REMOTE + name])
+    print("kept " + str(len(keepers)) + ", deleted " + str(len(to_delete)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+    return header + body
+
+
+def _build_backup_service_unit() -> str:
+    """Emit the ``dinary-backup.service`` systemd unit (oneshot).
+
+    ``User=ubuntu`` so the run uses the same ``~/.config/rclone/
+    rclone.conf`` that the operator configured interactively; no
+    root/ubuntu config split. ``Type=oneshot`` is the natural shape
+    for a pipeline that must either finish cleanly or show up failed
+    in the journal — no long-running daemon state to keep alive.
+
+    ``Nice`` + ``IOSchedulingClass`` push the job below the
+    ``litestream.service`` replica-producer on VM1's SFTP endpoint,
+    so a scheduled backup never contends with the running hot-
+    replication feed that it depends on.
+    """
+    return (
+        "# Managed by inv setup-replica-backup. Overwritten on every re-apply.\n"
+        "[Unit]\n"
+        "Description=Back up dinary replica to Yandex.Disk\n"
+        "After=network-online.target\n"
+        "Wants=network-online.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        "User=ubuntu\n"
+        f"ExecStart={BACKUP_SCRIPT_PATH}\n"
+        "Nice=10\n"
+        "IOSchedulingClass=best-effort\n"
+        "IOSchedulingPriority=7\n"
+    )
+
+
+def _build_backup_timer_unit() -> str:
+    """Emit the ``dinary-backup.timer`` systemd unit.
+
+    03:17 UTC + 30m jitter: off every regular-looking hour boundary
+    (so we do not collide with the top-of-hour Litestream snapshot
+    cadence on VM1, which is the producer of the replica we read),
+    and late enough that most operator timezones are asleep.
+
+    ``Persistent=true`` → if VM2 happened to be down through the
+    scheduled slot, the missed run triggers at next boot. Otherwise
+    a reboot-on-the-hour would silently create a 24 h retention gap.
+    """
+    return (
+        "# Managed by inv setup-replica-backup. Overwritten on every re-apply.\n"
+        "[Unit]\n"
+        "Description=Daily dinary off-site backup\n"
+        "\n"
+        "[Timer]\n"
+        "OnCalendar=*-*-* 03:17:00\n"
+        "RandomizedDelaySec=30m\n"
+        "Persistent=true\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
+    )
+
+
+@task(name="setup-replica")
+def setup_replica(c, swap_size_gb=1):
+    """Bootstrap a Litestream SFTP replica host (VM2).
+
+    Distinct from :func:`setup` because the replica is intentionally
+    minimal: no Python app, no systemd service for ``dinary``, no
+    public tunnel. Its only job is to accept WAL segments over SFTP
+    from VM1's ``litestream.service`` and hold them until the laptop
+    pulls the snapshot.
+
+    Preconditions (not auto-provisioned by this task):
+
+    * ``DINARY_REPLICA_HOST`` is set in ``.deploy/.env`` to the SSH
+      target of VM2 (e.g. ``ubuntu@dinary-replica`` via Tailscale
+      MagicDNS).
+    * Tailscale is installed and logged in on VM2. We deliberately
+      do not automate ``tailscale up`` because its OAuth flow needs
+      a human-approved browser click, and stashing a long-lived
+      auth key in this task would be a much larger attack surface
+      than the one-off manual step.
+    * Current shell on the operator machine can already ``ssh
+      $DINARY_REPLICA_HOST`` (a second terminal for break-glass is
+      strongly recommended — the final step flips public TCP/22
+      closed, mirroring :func:`ssh_tailscale_only`).
+
+    Idempotent: every step is a pure-function shell block that
+    short-circuits on re-apply (apt no-op on already-installed
+    packages, ``mkdir -p`` plus explicit chown/chmod, the swap
+    builder's own ``swapon --show`` guard, the ssh-tailscale-only
+    drop-in rewrite).
+
+    Flags:
+        --swap-size-gb N   replica swap size in gigabytes (default 1,
+                           matches the Always Free VM2 profile).
+    """
+    size = int(swap_size_gb)
+    print(f"=== Installing baseline packages on {_replica_host()} ===")
+    _ssh_replica(c, _build_setup_replica_packages_script())
+    print(f"=== Provisioning {REPLICA_LITESTREAM_DIR} ===")
+    _ssh_replica(c, _build_setup_replica_litestream_dir_script())
+    print("=== Allocating swap ===")
+    _ssh_replica(c, _build_setup_swap_script(size_gb=size))
+    print("=== Restricting sshd to Tailscale + loopback ===")
+    _ssh_replica(c, _build_ssh_tailscale_only_script())
+    print("=== Replica bootstrap done ===")
+
+
+@task(name="setup-replica-backup")
+def setup_replica_backup(c):
+    """Add the daily Yandex.Disk backup role on top of an already-
+    provisioned Litestream replica host (VM2).
+
+    This is a *layer on top of* :func:`setup_replica`, not a
+    replacement for it. The split exists because the backup layer
+    has one precondition that cannot be automated from the operator
+    machine: an interactive ``rclone config`` on VM2 to add a
+    ``yandex`` remote (OAuth requires a human-approved browser
+    click, and stashing a long-lived Yandex auth key on VM2 would
+    be a worse secret than the service-account key we already
+    manage). Baking that into ``setup_replica`` would either fail
+    the whole replica bootstrap on a fresh box (leaving half-
+    provisioned state) or silently skip the backup (no first backup
+    until someone remembers to come back). Keeping them as two
+    tasks makes the "run setup-replica, do the manual OAuth step,
+    then run setup-replica-backup" sequence explicit.
+
+    What this task adds (on top of what :func:`setup_replica` has
+    already provisioned):
+
+    * apt packages ``rclone sqlite3 zstd`` — the daily pipeline
+      shells out to all three.
+    * Pinned Litestream binary — used to materialize the on-disk
+      replica tree at ``<REPLICA_LITESTREAM_DIR>/<REPLICA_DB_NAME>``
+      into a plain SQLite file before compression.
+    * ``/usr/local/bin/dinary-backup`` — bash pipeline (restore →
+      validate → zstd → rclone upload → retention).
+    * ``/usr/local/bin/dinary-backup-retention`` — Python GFS prune
+      (7 daily / 4 weekly / 12 monthly / all yearly indefinitely).
+    * ``/etc/systemd/system/dinary-backup.service`` — oneshot unit.
+    * ``/etc/systemd/system/dinary-backup.timer`` — daily trigger at
+      03:17 UTC + 30 min jitter, ``Persistent=true`` so a reboot
+      across the scheduled hour still runs the missed backup.
+
+    Each uploaded snapshot is a plain ``dinary-<UTC-ISO>.db.zst``
+    on ``<BACKUP_RCLONE_REMOTE>:<BACKUP_RCLONE_PATH>/`` — deliberately
+    not an opaque repository format, so any machine with ``zstd``
+    and ``sqlite3`` can open a snapshot directly without the
+    ``dinary`` tooling during disaster recovery.
+
+    Preconditions on VM2 (not auto-provisioned by this task):
+
+    * :func:`setup_replica` has been run (receive directory exists
+      and is already accepting Litestream WAL segments).
+    * ``rclone config`` has been run interactively on VM2 to add a
+      remote named ``yandex``. First run of this task fails with an
+      actionable message pointing at that step if it is missing.
+
+    Idempotent. apt installs are no-op on re-apply, scripts and
+    systemd units are overwritten, the timer's ``enable --now`` is
+    harmless to re-run.
+    """
+    replica = _replica_host()
+
+    print(f"=== Installing apt packages (rclone, sqlite3, zstd) on {replica} ===")
+    _ssh_replica(c, _build_setup_replica_backup_packages_script())
+
+    print("=== Installing Litestream binary on replica ===")
+    _ssh_replica(c, _litestream_install_script())
+
+    print("=== Verifying rclone 'yandex' remote is configured ===")
+    _ssh_replica(
+        c,
+        "if ! rclone listremotes 2>/dev/null | grep -qx 'yandex:'; then "
+        "  echo >&2 ''; "
+        "  echo >&2 'rclone remote \"yandex:\" is not configured on the replica.'; "
+        "  echo >&2 'Run `rclone config` interactively on the replica (OAuth'; "
+        "  echo >&2 'flow, browser), then re-run `inv setup-replica-backup`.'; "
+        "  exit 1; "
+        "fi",
+    )
+
+    print(f"=== Preparing {BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}/ ===")
+    _ssh_replica(
+        c,
+        f"rclone mkdir {BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH} && "
+        f"rclone lsf {BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}/ || true",
+    )
+
+    print(f"=== Writing {BACKUP_SCRIPT_PATH} ===")
+    _write_remote_replica_file(c, BACKUP_SCRIPT_PATH, _build_backup_script())
+    _ssh_replica(c, f"sudo chmod 0755 {BACKUP_SCRIPT_PATH}")
+
+    print(f"=== Writing {BACKUP_RETENTION_SCRIPT_PATH} ===")
+    _write_remote_replica_file(
+        c, BACKUP_RETENTION_SCRIPT_PATH, _build_backup_retention_script()
+    )
+    _ssh_replica(c, f"sudo chmod 0755 {BACKUP_RETENTION_SCRIPT_PATH}")
+
+    print("=== Installing systemd service + timer ===")
+    _write_remote_replica_file(c, BACKUP_SERVICE_PATH, _build_backup_service_unit())
+    _write_remote_replica_file(c, BACKUP_TIMER_PATH, _build_backup_timer_unit())
+    _ssh_replica(c, "sudo systemctl daemon-reload")
+    _ssh_replica(c, "sudo systemctl enable --now dinary-backup.timer")
+
+    print("=== Running an initial backup to verify the pipeline end-to-end ===")
+    _ssh_replica(
+        c,
+        "sudo systemctl start dinary-backup.service && "
+        "sudo journalctl -u dinary-backup.service -n 40 --no-pager",
+    )
+    print("=== setup-replica-backup done ===")
+
+
+def _yadisk_list_snapshots():
+    """Return ``[(filename, size_bytes), ...]`` of backups on Yandex.Disk.
+
+    Always sorted oldest-first so callers can reach for
+    ``snapshots[-1]`` to get the newest deterministically.
+    Uses ``rclone lsjson`` rather than ``lsf`` to avoid parsing
+    rclone's separator-quirky line format — JSON is always stable.
+    Anything whose filename does not match
+    :func:`_backup_filename_regex` is silently ignored so human-
+    uploaded noise in the same Yandex folder cannot break the
+    inventory.
+    """
+    raw = subprocess.check_output(
+        ["rclone", "lsjson", f"{BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}/",
+         "--files-only"],
+        text=True,
+    )
+    entries = _json.loads(raw)
+    pattern = _re.compile(_backup_filename_regex())
+    result = []
+    for entry in entries:
+        name = entry.get("Name", "")
+        if pattern.match(name):
+            result.append((name, int(entry.get("Size", 0))))
+    result.sort(key=lambda x: x[0])
+    return result
+
+
+def _pick_snapshot(snapshots, key):
+    """Resolve the ``--snapshot`` CLI arg to one inventory entry.
+
+    ``key='latest'`` returns the newest snapshot (sorts are
+    chronological by filename).
+
+    Any other value is treated as a date-prefix match against the
+    ``YYYY-MM-DD`` portion of the filename so the operator can type
+    ``--snapshot 2026-03-15`` and get the run stored as
+    ``dinary-2026-03-15T0317Z.db.zst`` without memorizing the time
+    suffix. Returns ``None`` when nothing matches so callers can
+    print a useful error with the full inventory.
+    """
+    if not snapshots:
+        return None
+    if key == "latest":
+        return snapshots[-1]
+    needle = f"{BACKUP_FILENAME_PREFIX}{key}"
+    for name, size in snapshots:
+        if name.startswith(needle):
+            return (name, size)
+    return None
+
+
+def _print_snapshot_list(snapshots, stream=None):
+    """Chronological dump, newest first, with human-readable sizes.
+
+    Used by both ``--list`` (operator discovery) and the "no match"
+    error path (so a typo in ``--snapshot`` surfaces the actual
+    available keys next to the error message).
+    """
+    stream = stream if stream is not None else sys.stdout
+    for name, size in reversed(snapshots):
+        kb = size / 1024
+        stream.write(f"  {name}  ({kb:,.1f} KB)\n")
+
+
+def _prompt_restore_confirmation(target_db, picked):
+    """Interactive "type yes" gate before overwriting a non-empty DB.
+
+    Shows row count + size + mtime of the file that will be replaced
+    and the size of the incoming snapshot so the operator can sanity-
+    check they are about to lose ~nothing (debug DB case) or a lot
+    (prod case). Any input other than the literal ``yes`` aborts.
+
+    Why not a simple y/n: ``y`` is a one-keypress accept and every
+    heavy-destructive CLI tool I want to keep safe asks for a full
+    word precisely so ``Enter`` cannot accidentally commit.
+    """
+    row_count = _sqlite_row_count(target_db)
+    size_kb = target_db.stat().st_size / 1024
+    mtime = _dt.fromtimestamp(target_db.stat().st_mtime, tz=_timezone.utc).strftime(
+        "%Y-%m-%d %H:%M UTC",
+    )
+    print(
+        f"About to overwrite {target_db} ({row_count:,} expense rows, "
+        f"{size_kb:,.1f} KB, mtime {mtime})\n"
+        f"with snapshot {picked[0]} ({picked[1] / 1024:,.1f} KB compressed).\n"
+        f"The previous file will be saved as "
+        f"{target_db.name}.before-restore-<UTC-ISO>.",
+    )
+    answer = input("Type 'yes' to proceed: ").strip()
+    if answer != "yes":
+        sys.stderr.write("Aborted.\n")
+        sys.exit(1)
+
+
+def _sqlite_row_count(db_path):
+    """Cheap "how many expenses are about to vanish" sanity number.
+
+    Returns zero on any SQLite error (schema mismatch, file locked,
+    table absent in a very-fresh-bootstrap DB). The number is cosmetic
+    — it feeds the confirmation prompt — so failing soft is better
+    than aborting the restore because the count query tripped on an
+    edge-case file.
+    """
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cur = conn.execute("SELECT COUNT(*) FROM expense")
+            return cur.fetchone()[0]
+    except sqlite3.Error:
+        return 0
+
+
+@task(name="restore-from-yadisk")
+def restore_from_yadisk(c, snapshot="latest", list_only=False, yes=False):
+    """Restore ``data/dinary.db`` from an off-site Yandex.Disk backup.
+
+    **Local-only task.** Writes to ``./data/dinary.db`` relative to
+    the cwd. There is intentionally no ``--remote`` mode: the
+    ergonomic way to recover prod is ``ssh ubuntu@dinary; cd
+    ~/dinary; inv restore-from-yadisk``. The SSH + cd + interactive
+    confirmation are the footgun guards — a one-word ``inv restore-
+    from-yadisk`` on the wrong terminal must not silently overwrite
+    prod.
+
+    Flags:
+        --snapshot DATE   pick a specific snapshot by date prefix
+                          (e.g. ``2026-04-22`` matches the full
+                          filename ``dinary-2026-04-22T0317Z.db.zst``).
+                          Default ``latest`` = newest available.
+        --list-only       read-only: enumerate available snapshots
+                          and exit without downloading or writing
+                          anything.
+        --yes             skip the "type yes to proceed" gate (still
+                          preserves the previous ``data/dinary.db``
+                          as ``.before-restore-<ts>``, so nothing is
+                          ever lost silently). Intended for automated
+                          debug bootstrapping on the laptop, not for
+                          prod recovery.
+
+    Preconditions (operator machine, one-time):
+
+    * ``rclone`` installed and ``rclone config`` run interactively
+      to add a remote named ``yandex`` (OAuth, browser).
+    * ``sqlite3`` + ``zstd`` installed (both are used to validate
+      and decompress the snapshot before it replaces any existing
+      DB).
+
+    Safety:
+
+    * The snapshot is decompressed into a tmpdir and
+      ``PRAGMA integrity_check``'d BEFORE any existing
+      ``data/dinary.db`` is touched. A corrupt snapshot aborts the
+      run with the live DB untouched.
+    * If ``data/dinary.db`` exists and is non-empty, it is renamed
+      to ``data/dinary.db.before-restore-<UTC-ISO>`` before the
+      move. The previous state is always recoverable from the same
+      directory.
+
+    Prod recovery runbook (for reference — also in
+    ``docs/src/en/operations.md``):
+
+    .. code-block:: bash
+
+        ssh ubuntu@dinary
+        sudo systemctl stop dinary litestream
+        cd ~/dinary
+        inv restore-from-yadisk --snapshot 2026-03-15
+        sudo systemctl start litestream dinary
+    """
+    _assert_local_binaries(["rclone", "sqlite3", "zstd"])
+
+    snapshots = _yadisk_list_snapshots()
+    if not snapshots:
+        sys.stderr.write(
+            f"No snapshots found at {BACKUP_RCLONE_REMOTE}:"
+            f"{BACKUP_RCLONE_PATH}/.\n",
+        )
+        sys.exit(1)
+
+    if list_only:
+        _print_snapshot_list(snapshots)
+        return
+
+    picked = _pick_snapshot(snapshots, snapshot)
+    if picked is None:
+        sys.stderr.write(f"No snapshot matches --snapshot={snapshot!r}.\n")
+        _print_snapshot_list(snapshots, stream=sys.stderr)
+        sys.exit(1)
+
+    target_db = Path("data/dinary.db")
+    if target_db.exists() and target_db.stat().st_size > 0 and not yes:
+        _prompt_restore_confirmation(target_db, picked)
+
+    with tempfile.TemporaryDirectory() as workdir:
+        workpath = Path(workdir)
+        archive = workpath / picked[0]
+        restored = workpath / "restored.db"
+
+        remote_path = (
+            f"{BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}/{picked[0]}"
+        )
+        c.run(f"rclone copyto {shlex.quote(remote_path)} {shlex.quote(str(archive))}")
+        c.run(
+            f"zstd -q -d {shlex.quote(str(archive))} "
+            f"-o {shlex.quote(str(restored))}",
+        )
+
+        # ``check=False`` because sqlite3 exits 26 (SQLITE_NOTADB) on
+        # a non-DB file rather than printing a diagnostic to stdout;
+        # we want to treat that the same way as an "ok"-less stdout
+        # and fail the restore without touching data/dinary.db.
+        check = subprocess.run(
+            ["sqlite3", str(restored), "PRAGMA integrity_check"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if check.returncode != 0 or check.stdout.strip() != "ok":
+            sys.stderr.write(
+                f"integrity_check FAILED on {picked[0]}; "
+                f"data/dinary.db NOT touched.\n"
+                f"  stdout: {check.stdout.strip() or '(empty)'}\n"
+                f"  stderr: {check.stderr.strip() or '(empty)'}\n",
+            )
+            sys.exit(1)
+
+        target_db.parent.mkdir(parents=True, exist_ok=True)
+        if target_db.exists():
+            # Tests pin the ``before-restore-<UTC>`` suffix shape, and
+            # the UTC stamp is what makes parallel operator runs
+            # non-colliding. ``datetime.now(UTC)`` replaces the
+            # deprecated ``utcnow()`` (3.13+).
+            ts = _dt.now(tz=_timezone.utc).strftime("%Y%m%dT%H%MZ")
+            preserved = target_db.with_name(f"dinary.db.before-restore-{ts}")
+            target_db.rename(preserved)
+            print(f"Previous data/dinary.db saved as data/{preserved.name}")
+
+        shutil.move(str(restored), str(target_db))
+
+    print(f"Restored data/dinary.db from {picked[0]}")
+
+
+def _assert_local_binaries(names):
+    """Bail out with an actionable message if any required CLI is missing.
+
+    Checked up-front in :func:`restore_from_yadisk` so the operator
+    sees one consolidated "install X" error rather than discovering
+    a missing tool mid-pipeline after the snapshot has already been
+    downloaded.
+    """
+    missing = [name for name in names if shutil.which(name) is None]
+    if not missing:
+        return
+    sys.stderr.write(
+        "Missing local tools: " + ", ".join(missing) + ".\n"
+        "  Ubuntu/Debian: sudo apt install " + " ".join(missing) + "\n"
+        "  macOS: brew install " + " ".join(missing) + "\n"
+        "Also ensure `rclone config` has run and a remote named "
+        f"{BACKUP_RCLONE_REMOTE!r} exists (one-time OAuth browser click).\n",
+    )
+    sys.exit(1)
 
 
 @task
@@ -1607,8 +2406,11 @@ def litestream_setup(c):
     print(f"=== Uploading {LOCAL_LITESTREAM_CONFIG_PATH} to {REMOTE_LITESTREAM_CONFIG_PATH} ===")
     content = Path(LOCAL_LITESTREAM_CONFIG_PATH).read_text(encoding="utf-8")
     _write_remote_file(c, REMOTE_LITESTREAM_CONFIG_PATH, content)
-    _ssh_sudo(c, f"chown root:root {REMOTE_LITESTREAM_CONFIG_PATH} "
-                 f"&& chmod 644 {REMOTE_LITESTREAM_CONFIG_PATH}")
+    _ssh_sudo(
+        c,
+        f"bash -c 'chown root:root {REMOTE_LITESTREAM_CONFIG_PATH} "
+        f"&& chmod 644 {REMOTE_LITESTREAM_CONFIG_PATH}'",
+    )
 
     print("=== Creating litestream systemd service ===")
     _create_service(c, "litestream", LITESTREAM_SERVICE)

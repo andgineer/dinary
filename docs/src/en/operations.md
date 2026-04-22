@@ -1,8 +1,9 @@
 # Database, Migrations, Backups, and Replication
 
 This page describes how `dinary` stores data, how schema migrations
-run, how the local file-based backup story works, and how to set up
-hot off-site replication with Litestream.
+run, the full backup story (local cold copies, hot Litestream
+replication to VM 2, and daily off-site backups to Yandex.Disk), and
+the restore procedures for each.
 
 ## Database file
 
@@ -104,14 +105,42 @@ that ships LTX segments to an SFTP target continuously.
 
 #### Prerequisites
 
-- A second host you control (Oracle Cloud Free Tier's 4-vCPU Arm VM
-  is the reference target) with SSH reachable from VM 1.
-- The replica host has a directory you can write to, e.g.
-  `/home/ubuntu/replicas/dinary/`.
-- VM 1's `~/.ssh/id_ed25519.pub` is in the replica host's
-  `~/.ssh/authorized_keys` (one-time `ssh-copy-id`).
+- A second VM you control (VM 2, the Litestream replica host) — the
+  reference target is an Oracle Cloud Free Tier `VM.Standard.E2.1.
+  Micro` with Ubuntu 22.04 Minimal, same shape as VM 1.
+- VM 2 has `DINARY_REPLICA_HOST` set in `.deploy/.env` on the
+  operator machine (e.g. `ubuntu@dinary-replica` via Tailscale
+  MagicDNS).
+- VM 1's `~/.ssh/id_ed25519.pub` is in VM 2's
+  `~/.ssh/authorized_keys` — this is the trust that lets
+  `litestream.service` on VM 1 push WAL segments over SFTP. Run
+  `ssh-copy-id` manually once (cross-host trust is out of scope for
+  automation from the operator machine).
 
-#### One-time bootstrap
+#### Provisioning VM 2
+
+Run once from the operator machine against VM 2:
+
+```bash
+inv setup-replica
+```
+
+This installs `unattended-upgrades`, allocates a 1 GB swap file,
+creates `/var/lib/litestream/` with the right ownership so the SFTP
+receiver can drop WAL segments into it, and locks public SSH (see
+the [Cloud security notes](../../.plans/cloud-security.md) for the
+rationale). The task is idempotent — re-running it after a
+`Persistent=true` reboot or a Tailscale IP rotation converges
+cleanly.
+
+`setup-replica` does NOT install the `dinary` app service, a public
+tunnel, or any Python runtime — VM 2 is intentionally a minimal SFTP
+sink. Everything the daily off-site backup needs (rclone, sqlite3,
+zstd, the Litestream binary used only for local restore) is added
+later by `inv setup-replica-backup` — see "Off-site backup: Yandex.Disk"
+below.
+
+#### One-time Litestream bootstrap on VM 1
 
 1. Copy the example config locally and fill in the SFTP target:
 
@@ -183,6 +212,168 @@ LTX forward to the latest committed transaction, and writes a fresh
 `dinary.db`. The restored DB is transactionally consistent — no
 `PRAGMA integrity_check` is required, but running it does not hurt.
 
+## Off-site backup: Yandex.Disk (daily, GFS retention)
+
+The Litestream replica on VM 2 is hot (seconds-level RPO) but
+co-located with VM 1 in the same cloud provider's region. For
+"both VMs went away" scenarios there is a daily off-site backup
+pushed from VM 2 to Yandex.Disk, orchestrated by
+`inv setup-replica-backup`.
+
+### What it does
+
+Every day at 03:17 UTC (+ 30 min jitter) a systemd oneshot on VM 2:
+
+1. Materializes the local Litestream replica at
+   `/var/lib/litestream/dinary` into a plain SQLite file via
+   `litestream restore`.
+2. Validates the restored file with `PRAGMA integrity_check`.
+   A corruption failure aborts the run without uploading — we
+   refuse to overwrite the Yandex history with a visibly broken
+   snapshot.
+3. Compresses with `zstd -19` (ratio is near-optimal on SQLite's
+   repetitive page layout; CPU cost is negligible on the <1 MB
+   input).
+4. Uploads to
+   `yandex:Backup/dinary/dinary-<UTC-ISO>.db.zst` via `rclone`.
+5. Prunes Yandex.Disk per the GFS retention policy (see below).
+
+The upload is a plain compressed SQLite file, not an opaque
+repository format — any machine with `zstd` and `sqlite3` can open
+a snapshot directly without the `dinary` tooling.
+
+### GFS retention
+
+- 7 most-recent **daily** snapshots.
+- 4 most-recent **weekly** snapshots (newest per ISO week).
+- 12 most-recent **monthly** snapshots (newest per calendar month).
+- All **yearly** snapshots, kept indefinitely (closed years are
+  immutable — any drift between two yearly snapshots of the same
+  closed year signals corruption and is worth keeping forever).
+
+Buckets overlap — a snapshot is pruned only if it belongs to no
+keeper bucket. On a 10-year horizon this is roughly 29 files total
+(~9 MB on disk).
+
+### One-time bootstrap
+
+Preconditions:
+
+- `inv setup-replica` has been run against VM 2.
+- `rclone config` has been run interactively on VM 2 to add a
+  remote named `yandex`. We deliberately do not automate this step:
+  the OAuth flow requires a human-approved browser click, and
+  stashing a long-lived Yandex auth key on VM 2 would be a worse
+  secret than the service-account key we already manage.
+
+Then, from the operator machine:
+
+```bash
+inv setup-replica-backup
+```
+
+This installs `rclone`, `sqlite3`, `zstd`, and the pinned Litestream
+binary on VM 2; writes `/usr/local/bin/dinary-backup` plus the
+paired retention script; installs and enables
+`dinary-backup.timer`; and triggers one immediate run so the first
+snapshot is visible on Yandex.Disk within a minute of bootstrap.
+
+The task is idempotent: apt installs are no-op on re-apply, scripts
+and systemd units are overwritten, `enable --now` is harmless to
+re-run.
+
+### Watching the daily run
+
+```bash
+ssh ubuntu@dinary-replica sudo journalctl -u dinary-backup.service -n 50 --no-pager
+ssh ubuntu@dinary-replica sudo systemctl list-timers dinary-backup.timer
+```
+
+## Point-in-time restore from Yandex.Disk
+
+```bash
+inv restore-from-yadisk --list-only                     # show inventory
+inv restore-from-yadisk                                 # restore latest
+inv restore-from-yadisk --snapshot 2026-03-15           # specific date
+inv restore-from-yadisk --yes                           # skip confirm
+```
+
+### Two intended use cases
+
+- **Laptop debug bootstrap.** Materialize a recent prod snapshot
+  into `./data/dinary.db` on your workstation to reproduce a bug
+  against real data. Low risk: any overwrite of a local debug DB
+  is recoverable from the auto-saved
+  `data/dinary.db.before-restore-<ts>`.
+- **Production disaster recovery.** Run the task on VM 1 itself
+  (via SSH) when both the local DB and the Litestream replica on
+  VM 2 are unusable. The SSH + `cd ~/dinary` + interactive
+  confirmation hops are intentional friction so a one-word
+  `inv restore-from-yadisk` on the wrong terminal cannot silently
+  overwrite prod.
+
+`restore-from-yadisk` is **local-only** — it writes to
+`./data/dinary.db` relative to the cwd and has no `--remote` mode.
+There is no way to invoke it against a remote host from the
+operator machine.
+
+### Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--snapshot DATE` | `latest` | Filename date prefix, e.g. `2026-04-22` matches the full `dinary-2026-04-22T0317Z.db.zst` |
+| `--list-only` | off | Read-only: enumerate available snapshots and exit |
+| `--yes` | off | Skip the "type yes to proceed" gate (preservation backup still happens) |
+
+### Preconditions (operator machine, one-time)
+
+- `rclone` installed (`apt install rclone` on Ubuntu, `brew install
+  rclone` on macOS). Already pre-installed on VM 1 by `inv setup` so
+  no manual install is needed during disaster recovery.
+- `rclone config` run interactively to add a remote named `yandex`
+  (OAuth, browser).
+- `sqlite3` + `zstd` installed (both are already on VM 1 via
+  `inv setup` and on macOS via `brew install sqlite zstd`).
+
+### Safety guarantees
+
+- The snapshot is decompressed into a tmpdir and
+  `PRAGMA integrity_check`'d **before** any existing
+  `data/dinary.db` is touched. A corrupt snapshot aborts the run
+  with the live DB untouched.
+- If `data/dinary.db` exists and is non-empty, it is renamed to
+  `data/dinary.db.before-restore-<UTC-ISO>` before the move.
+  Previous state is always recoverable from the same directory,
+  even with `--yes`.
+
+### Production disaster recovery runbook
+
+When VM 1's live DB is gone AND the Litestream replica on VM 2 is
+unusable:
+
+```bash
+ssh ubuntu@dinary                       # or the public IP / Tailscale IP
+sudo systemctl stop dinary litestream   # avoid a half-written DB
+cd ~/dinary
+inv restore-from-yadisk --snapshot 2026-03-15
+# confirmation prompt: shows row count / size / mtime of the
+# current DB plus compressed size of the incoming snapshot, then
+# asks for literal 'yes'.
+sudo systemctl start litestream dinary  # resume write + replication
+inv verify-db                           # integrity + FK check
+```
+
+If the live DB is merely stale but intact and you only want the
+Yandex snapshot for comparison, run the task in a scratch
+directory (so `./data/dinary.db` is the snapshot, not prod):
+
+```bash
+cd /tmp/restore-preview
+mkdir -p data
+inv restore-from-yadisk --snapshot 2026-03-15 --yes
+sqlite3 data/dinary.db 'SELECT COUNT(*) FROM expense'
+```
+
 ## Restore from cold backup
 
 1. Stop the running service: `inv stop`.
@@ -194,8 +385,11 @@ LTX forward to the latest committed transaction, and writes a fresh
 
 ## Practical guidance
 
-- The pair `inv backup` + Litestream cover the "oops I nuked the DB"
-  and "oops I lost VM 1" failure modes respectively. Use both.
+- Three layers of redundancy, paired to their failure modes:
+  `inv backup` covers "oops I nuked the DB during a manual repair";
+  Litestream to VM 2 covers "oops I lost VM 1"; Yandex.Disk
+  (`inv setup-replica-backup`) covers "oops I lost both VMs / lost the
+  whole cloud provider".
 - Treat `data/dinary.db` as the source of truth. Do not edit it
   while the service is running, and never hand-edit the
   `-wal`/`-shm` sidecars at all.

@@ -235,7 +235,7 @@ The SSH brute-force noise today is the main log source; the choice is
 between eliminating the source and just capping the damage. Listed in
 descending order of impact.
 
-### Option 1 (recommended): bind SSH to Tailscale only
+### Option 1 (tried, reverted): bind SSH to Tailscale only
 
 All administrative access already goes through Tailscale; the laptop
 is in the tailnet. Keeping TCP/22 open on the public interface adds
@@ -257,8 +257,28 @@ reach the box via the tailnet name (`ssh ubuntu@dinary`) **from a
 different terminal** before closing the current session.
 
 Break-glass path if Tailscale is ever unreachable: Oracle Cloud
-console exposes a Serial Console that bypasses the network stack
-entirely, so losing public TCP/22 is safe.
+console exposes a Serial Console that bypasses the network stack.
+
+**Why this was reverted in April 2026.** The posture was applied to
+both VM 1 and VM 2 (the latter via `inv setup-replica` step 4) and
+worked — `ss -tlnp` on each host bound sshd to the Tailscale IPv4 +
+loopback only, public TCP/22 returned `Connection refused`. The
+problem surfaced once the full topology was in place: VM 1's FastAPI
+ingress, its SSH ingress, VM 2's SSH ingress, and the Litestream
+SFTP stream between them all depend on the same `tailscaled`
+processes and the Tailscale coordination server. A single control-
+plane outage, a `tailscaled` crash, or an accidental key-expiry on
+one node would simultaneously take out operator access *and* the
+PWA's data path — with no independent recovery because the
+`ubuntu` user is locked (`passwd -l`) on both hosts, so Oracle Cloud
+Serial Console cannot authenticate the fallback shell. Paying for a
+zero-public-22 posture with that much blast radius is the wrong
+trade-off when the public-22 threat is bot noise, not actual
+compromise (key-only auth already defeats brute-force). Option 3
+below is the durable posture; Option 1 stays documented here as the
+conservative default shipped by `inv setup`/`inv setup-replica` so a
+re-bootstrap starts locked down and the operator can opt out
+explicitly by removing the drop-in.
 
 ### Option 2: keep public 22, rate-limit in iptables
 
@@ -278,30 +298,58 @@ Packets are `DROP`ped before `sshd` sees them, so those attempts never
 generate log lines. Typical scanners try once or twice and move on →
 ~90% noise reduction.
 
-### Option 3: fail2ban
+### Option 3 (applied): fail2ban
 
-Reads `auth.log`, bans offending IPs through a dynamic iptables chain.
-First 2–3 lines per scanner are still written, but the same IP cannot
-retry for `bantime`:
+Reads sshd auth events from journald (Ubuntu 22.04's default sink
+for sshd log output; `backend = systemd` is the binding that matches
+what the OS actually writes — picking `auto` or the older `polling`
+on a box that does not maintain `/var/log/auth.log` is the common
+fail2ban-is-silent misconfiguration). After `maxretry` failures
+within `findtime`, the offending IP is banned through a dynamic
+nftables chain. First 2–3 failed-auth lines per scanner are still
+written before the ban lands, but the same IP cannot retry for
+`bantime`:
 
 ```bash
 ssh ubuntu@130.110.19.227 '
   sudo apt-get install -y fail2ban
-  sudo tee /etc/fail2ban/jail.d/sshd.local >/dev/null <<EOF
+  sudo tee /etc/fail2ban/jail.local >/dev/null <<EOF
+[DEFAULT]
+# Skip tailnet (we do not want to auto-ban operator traffic
+# that loops through the tailnet). 100.64.0.0/10 is the CGNAT
+# range Tailscale allocates to every tailnet node.
+ignoreip = 127.0.0.1/8 ::1 100.64.0.0/10
+# Growing bans: first offence 1d, doubling each repeat up to 30d.
+# Absorbs the steady-state bot noise without the operator having
+# to look at the ban list every day.
+bantime = 1d
+bantime.increment = true
+bantime.factor = 2
+bantime.maxtime = 30d
+findtime = 10m
+maxretry = 3
+
 [sshd]
 enabled = true
-maxretry = 3
-bantime  = 1h
-findtime = 10m
+backend = systemd
 EOF
   sudo systemctl enable --now fail2ban
   sudo fail2ban-client status sshd
 '
 ```
 
-Upside: nice `fail2ban-client status` view. Downside: one more moving
-part, one more Python3 daemon pinned in RAM, and logs still grow a
-little.
+Apply on VM 2 in parallel with the same `jail.local` contents.
+`journald` retention (Option 4) is still a good belt-and-suspenders
+even with fail2ban in place — it bounds the worst case if a new
+scanner wave ever outpaces ban issuance.
+
+**Field-tested behaviour.** On VM 1 the first bot-scanner IP got
+banned within ~60 s of the public 22 coming back up (5 failed
+attempts → 1 d ban), so steady-state log growth is dominated by
+fail2ban's own ban-state log rather than sshd auth attempts.
+Re-running the task is safe: the `jail.local` rewrite is
+deterministic and `systemctl enable --now fail2ban` no-ops when the
+unit is already active.
 
 ### Option 4 (defense in depth, orthogonal): cap journald retention
 
@@ -330,8 +378,11 @@ without impacting steady state.
 1. **Today**: §Critical — `chmod 600` the Google service-account key.
 2. **Today**: §High — wipe root/opc `authorized_keys`, lock `opc`,
    `PermitRootLogin no`.
-3. **This week**: §Medium (log volume) — Option 1 (Tailscale-only
-   SSH) + Option 4 (journald caps).
+3. **Done, April 2026**: §Medium (log volume) — Option 3 (fail2ban
+   with systemd backend) + Option 4 (journald caps) applied on both
+   VM 1 and VM 2. Option 1 (Tailscale-only SSH) was attempted first
+   and reverted; see the rationale under "Option 1 (tried, reverted)"
+   above.
 4. **This week**: §Medium (kernel reboot).
 5. **Next deploy cycle**: §Medium — add the sandboxing block to
    `dinary.service` and ship it via `inv deploy`.
