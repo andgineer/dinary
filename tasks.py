@@ -606,7 +606,10 @@ def setup(c):
     )
 
     print("=== Installing system packages ===")
-    _ssh_sudo(c, "apt update && sudo apt install -y python3 python3-pip git curl")
+    _ssh_sudo(
+        c,
+        "apt update && sudo apt install -y python3 python3-pip git curl sqlite3",
+    )
 
     print("=== Installing uv ===")
     _ssh(c, "curl -LsSf https://astral.sh/uv/install.sh | sh")
