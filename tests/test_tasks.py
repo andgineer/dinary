@@ -613,6 +613,91 @@ class TestLitestreamInstallScript:
 
 
 @allure.epic("Deploy")
+@allure.feature("setup-swap: persistent swapfile provisioner")
+class TestSetupSwapScript:
+    """``inv setup-swap`` is the only mechanism that provisions swap
+    on the Oracle Free Tier VMs, which ship with zero swap and
+    ~956 MiB of RAM. A silent regression here (wrong size, forgotten
+    fstab entry, broken idempotency) would surface weeks later as an
+    OOM-killed ``dinary.service`` during a heavy import. These tests
+    pin the script's observable contract so the next reviewer does
+    not have to re-derive it.
+    """
+
+    def test_default_allocates_one_gigabyte(self):
+        """Default swap size is 1 GB — matches the Always Free VM
+        profile (enough headroom for ``uv sync`` / bulk import
+        spikes without eating meaningful disk on a 45 GB root fs).
+        """
+        script = _tasks._build_setup_swap_script(size_gb=1)
+        assert "fallocate -l 1G /swapfile" in script
+
+    def test_size_parameter_interpolates_into_fallocate(self):
+        """Operators on a fatter shape can opt up; the size must
+        land verbatim in the ``fallocate`` line, not just a format
+        placeholder.
+        """
+        script = _tasks._build_setup_swap_script(size_gb=4)
+        assert "fallocate -l 4G /swapfile" in script
+        assert "fallocate -l 1G" not in script
+
+    def test_rejects_nonpositive_size(self):
+        """``fallocate -l 0G`` silently succeeds with a zero-byte
+        file that ``mkswap`` then rejects — the error message from
+        ``mkswap`` is cryptic. Fail fast with a clear local error
+        before we even build the script.
+        """
+        with pytest.raises(ValueError, match="size_gb must be a positive integer"):
+            _tasks._build_setup_swap_script(size_gb=0)
+        with pytest.raises(ValueError, match="size_gb must be a positive integer"):
+            _tasks._build_setup_swap_script(size_gb=-1)
+
+    def test_idempotent_on_reapply(self):
+        """The swapon-check short-circuits allocation when
+        ``/swapfile`` is already active. Without this, a second
+        ``inv setup`` run would ``fallocate`` a fresh file on top
+        of the live one and ``mkswap`` would corrupt the signature
+        of the currently-swapped backing store.
+        """
+        script = _tasks._build_setup_swap_script(size_gb=1)
+        assert "swapon --show=NAME --noheadings" in script
+        assert "grep -qx /swapfile" in script
+        assert "/swapfile already active, skipping allocation" in script
+
+    def test_fstab_line_is_deduplicated(self):
+        """The fstab append uses ``grep -qxF || echo >>`` so
+        re-running never accumulates duplicate entries — otherwise
+        every ``inv setup`` would grow ``/etc/fstab`` by a line and
+        the system would eventually refuse to mount.
+        """
+        script = _tasks._build_setup_swap_script(size_gb=1)
+        assert "/swapfile none swap sw 0 0" in script
+        assert 'grep -qxF "$FSTAB_LINE" /etc/fstab || echo "$FSTAB_LINE" >> /etc/fstab' in script
+
+    def test_elevation_wraps_entire_block_not_just_first_command(self):
+        """Every step (``fallocate`` / ``chmod`` / ``mkswap`` /
+        ``swapon`` / fstab edit) needs root. ``sudo bash <<HEREDOC``
+        elevates the whole block in one call; a plain semicolon
+        chain prefixed with ``sudo`` would only elevate the first
+        command and the rest would fail with a permission error.
+        """
+        script = _tasks._build_setup_swap_script(size_gb=1)
+        assert script.startswith("sudo bash <<'DINARY_SWAP_EOF'\n")
+        assert script.rstrip().endswith("DINARY_SWAP_EOF")
+
+    def test_quoted_heredoc_prevents_local_variable_expansion(self):
+        """Without ``<<'EOF'`` (quoted delimiter), the local shell
+        would expand ``$FSTAB_LINE`` to an empty string *before*
+        the script ever reached the remote, so the fstab would
+        get ``grep -qxF "" /etc/fstab`` — a silent match that
+        never appends the real entry.
+        """
+        script = _tasks._build_setup_swap_script(size_gb=1)
+        assert "<<'DINARY_SWAP_EOF'" in script
+        assert "$FSTAB_LINE" in script
+
+
+@allure.epic("Deploy")
 @allure.feature("verify-db: integrity_check + foreign_key_check gate")
 class TestVerifyDbLocal:
     """``inv verify-db`` runs SQLite's two ship-blocker pragmas against

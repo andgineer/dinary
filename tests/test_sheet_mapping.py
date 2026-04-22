@@ -575,7 +575,11 @@ class TestReloadNowOrdering:
 @allure.epic("SheetMapping")
 @allure.feature("ensure_fresh skips when modifiedTime unchanged")
 class TestEnsureFresh:
-    def test_ensure_fresh_is_noop_when_cache_matches_drive(self, monkeypatch):
+    def test_ensure_fresh_is_noop_when_cache_matches_drive(
+        self,
+        monkeypatch,
+        real_ensure_fresh,
+    ):
         monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "SSID")
         sheet_mapping._reset_cache()
 
@@ -614,6 +618,7 @@ class TestEnsureFresh:
     def test_ensure_fresh_triggers_reload_when_drive_reports_newer(
         self,
         monkeypatch,
+        real_ensure_fresh,
     ):
         monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "SSID")
         sheet_mapping._reset_cache()

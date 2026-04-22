@@ -612,6 +612,9 @@ def setup(c):
         "apt update && sudo apt install -y python3 python3-pip git curl sqlite3",
     )
 
+    print("=== Provisioning swap file ===")
+    setup_swap(c)
+
     print("=== Installing uv ===")
     _ssh(c, "curl -LsSf https://astral.sh/uv/install.sh | sh")
 
@@ -679,6 +682,67 @@ def setup(c):
 
     print("=== Done! Checking health... ===")
     _ssh(c, "sleep 15 && curl -s http://localhost:8000/api/health")
+
+
+def _build_setup_swap_script(*, size_gb: int) -> str:
+    """Emit the shell script that idempotently installs ``/swapfile``.
+
+    Kept separate from :func:`setup_swap` so tests can pin the shape
+    of the emitted script (fallocate size, idempotency guard, fstab
+    dedup) without mocking SSH.
+
+    Uses ``sudo bash <<'HEREDOC'`` so every command inside the
+    block runs as root without nested-quote gymnastics. The
+    heredoc is quoted (``<<'EOF'``) so ``$FSTAB_LINE`` stays
+    literal for the remote shell instead of being expanded locally
+    to an empty string.
+    """
+    if size_gb <= 0:
+        msg = f"size_gb must be a positive integer, got {size_gb!r}"
+        raise ValueError(msg)
+    return (
+        "sudo bash <<'DINARY_SWAP_EOF'\n"
+        "set -euo pipefail\n"
+        "if swapon --show=NAME --noheadings 2>/dev/null | grep -qx /swapfile; then\n"
+        '  echo "/swapfile already active, skipping allocation"\n'
+        "else\n"
+        f"  fallocate -l {size_gb}G /swapfile\n"
+        "  chmod 600 /swapfile\n"
+        "  mkswap /swapfile\n"
+        "  swapon /swapfile\n"
+        "fi\n"
+        "FSTAB_LINE='/swapfile none swap sw 0 0'\n"
+        'grep -qxF "$FSTAB_LINE" /etc/fstab || echo "$FSTAB_LINE" >> /etc/fstab\n'
+        "swapon --show\n"
+        "free -h\n"
+        "DINARY_SWAP_EOF\n"
+    )
+
+
+@task(name="setup-swap")
+def setup_swap(c, size_gb=1):
+    """Provision a persistent ``/swapfile`` on the server (idempotent).
+
+    Oracle Cloud Always Free VMs ship with zero swap and ~1 GiB RAM,
+    so a transient memory spike (bulk import, ``uv sync`` on a fat
+    lockfile, a cloudflared update) can OOM-kill ``dinary`` even
+    with 40 GB of idle disk. This task allocates ``/swapfile``,
+    activates it, and wires it into ``/etc/fstab`` so the swap
+    survives reboots.
+
+    Re-running is safe: if ``/swapfile`` is already active the
+    allocation is skipped, and the fstab line is appended only when
+    not already present. Changing ``--size-gb`` on a re-run does
+    **not** silently resize — operators must ``swapoff /swapfile``
+    and ``rm /swapfile`` manually first, otherwise the system would
+    briefly go to zero swap under load during the resize.
+
+    Flags:
+        --size-gb N   swap file size in gigabytes (default 1).
+    """
+    size = int(size_gb)
+    script = _build_setup_swap_script(size_gb=size)
+    _ssh(c, script)
 
 
 @task
