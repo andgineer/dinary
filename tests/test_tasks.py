@@ -622,10 +622,10 @@ class TestVerifyDbLocal:
     the hard-failure path (FK violation), and the ``no DB`` guard.
 
     The fixture builds real SQLite files on ``tmp_path`` so the test
-    exercises the production ``sqlite3`` CLI path (the one
-    ``tasks.verify_db`` invokes via ``subprocess.run``) — a pure mock
-    would not catch a regression that, e.g., reordered the two
-    ``PRAGMA`` statements or dropped the output-line check.
+    runs both pragmas through the stdlib bindings that
+    ``tasks.verify_db`` uses — a pure mock would not catch a
+    regression that, e.g., reordered the two ``PRAGMA`` statements
+    or dropped the output-line check.
     """
 
     @staticmethod

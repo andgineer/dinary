@@ -3,6 +3,7 @@ import json as _json
 import re as _re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime as _dt
@@ -1337,33 +1338,22 @@ def verify_db(c, remote=False):
         if not db_path.exists():
             print(f"No local DB at {db_path}; run `inv dev` or `inv backup` first.", file=sys.stderr)
             sys.exit(1)
-        # Preflight: the task shells out to the system ``sqlite3``
-        # CLI (instead of the stdlib bindings) because the two pragmas
-        # below are easier to consume as plain text than as cursor
-        # rows. A dev laptop without the CLI installed would otherwise
-        # surface as a cryptic ``FileNotFoundError`` from
-        # ``subprocess.run``; match the "no local DB" UX with an
-        # actionable hint.
-        if shutil.which("sqlite3") is None:
-            print(
-                "No `sqlite3` CLI on PATH; `inv verify-db` shells out to it. "
-                "Install via `brew install sqlite` (macOS) or "
-                "`apt install sqlite3` (Debian/Ubuntu) and retry.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        result = subprocess.run(
-            [
-                "sqlite3",
-                str(db_path),
-                "PRAGMA integrity_check; PRAGMA foreign_key_check;",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True,
-            text=True,
-        )
-        output = result.stdout
+        # Run both pragmas via the stdlib bindings so the local path
+        # has no dependency on a system ``sqlite3`` CLI (Windows
+        # runners don't ship one). Output lines are formatted the
+        # same as the CLI's default ``list`` mode (``|``-joined
+        # columns) so the shared ``lines == ["ok"]`` gate below
+        # treats stdlib- and CLI-produced output identically, and the
+        # ``--remote`` branch — which keeps using the server's CLI
+        # against a ``/tmp`` snapshot — stays byte-compatible with
+        # the local path.
+        con = sqlite3.connect(db_path)
+        try:
+            rows = con.execute("PRAGMA integrity_check").fetchall()
+            rows.extend(con.execute("PRAGMA foreign_key_check").fetchall())
+        finally:
+            con.close()
+        output = "\n".join("|".join(str(col) for col in row) for row in rows)
     print(output, end="" if output.endswith("\n") else "\n")
     # ``integrity_check`` prints a single ``ok`` line when the DB is
     # healthy and one line per problem otherwise.
