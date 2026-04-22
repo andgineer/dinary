@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_5296b11a043bfcc6_main_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-22 08:49 +0000
+            created at 2026-04-22 11:40 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -96,7 +96,7 @@
     <p class="mis mis2 show_mis"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t">    <span class="nam">INCOME_LAYOUTS</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis mis2 show_mis"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t">    <span class="nam">aggregate_from_sheet</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis mis2 show_mis"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">services</span> <span class="key">import</span> <span class="nam">duckdb_repo</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">services</span> <span class="key">import</span> <span class="nam">ledger_repo</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t"><span class="nam">logger</span> <span class="op">=</span> <span class="nam">logging</span><span class="op">.</span><span class="nam">getLogger</span><span class="op">(</span><span class="nam">__name__</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -140,7 +140,7 @@
     <p class="mis show_mis"><span class="n"><a id="t58" href="#t58">58</a></span><span class="t">    <span class="nam">layout</span> <span class="op">=</span> <span class="nam">INCOME_LAYOUTS</span><span class="op">[</span><span class="nam">layout_key</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t59" href="#t59">59</a></span><span class="t">    <span class="nam">sheet_monthly</span><span class="op">,</span> <span class="nam">_rows</span> <span class="op">=</span> <span class="nam">aggregate_from_sheet</span><span class="op">(</span><span class="nam">year</span><span class="op">,</span> <span class="nam">source</span><span class="op">,</span> <span class="nam">layout</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t60" href="#t60">60</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t61" href="#t61">61</a></span><span class="t">    <span class="nam">con</span> <span class="op">=</span> <span class="nam">duckdb_repo</span><span class="op">.</span><span class="nam">get_connection</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t61" href="#t61">61</a></span><span class="t">    <span class="nam">con</span> <span class="op">=</span> <span class="nam">ledger_repo</span><span class="op">.</span><span class="nam">get_connection</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t62" href="#t62">62</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t63" href="#t63">63</a></span><span class="t">        <span class="nam">db_rows</span> <span class="op">=</span> <span class="nam">con</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis mis2 show_mis"><span class="n"><a id="t64" href="#t64">64</a></span><span class="t">            <span class="str">"SELECT month, amount FROM income WHERE year = ? ORDER BY month"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -196,7 +196,7 @@
             <a class="nav" href="z_5296b11a043bfcc6_main_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-22 08:49 +0000
+            created at 2026-04-22 11:40 +0000
         </p>
     </div>
 </footer>

@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_c87f1cd18a70cd57_expenses_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-22 08:49 +0000
+            created at 2026-04-22 11:40 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -97,7 +97,7 @@
     <p class="run"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span> <span class="key">import</span> <span class="nam">__version__</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">api</span> <span class="key">import</span> <span class="nam">admin_catalog</span><span class="op">,</span> <span class="nam">catalog</span><span class="op">,</span> <span class="nam">expenses</span><span class="op">,</span> <span class="nam">qr</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">config</span> <span class="key">import</span> <span class="nam">settings</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">services</span> <span class="key">import</span> <span class="nam">duckdb_repo</span><span class="op">,</span> <span class="nam">sheet_logging</span><span class="op">,</span> <span class="nam">sheet_mapping</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">services</span> <span class="key">import</span> <span class="nam">ledger_repo</span><span class="op">,</span> <span class="nam">sheet_logging</span><span class="op">,</span> <span class="nam">sheet_mapping</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t"><span class="nam">_PROJECT_ROOT</span> <span class="op">=</span> <span class="nam">Path</span><span class="op">(</span><span class="nam">__file__</span><span class="op">)</span><span class="op">.</span><span class="nam">resolve</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">parent</span><span class="op">.</span><span class="nam">parent</span><span class="op">.</span><span class="nam">parent</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t"><span class="nam">_BUILT_STATIC</span> <span class="op">=</span> <span class="nam">_PROJECT_ROOT</span> <span class="op">/</span> <span class="str">"_static"</span>&nbsp;</span><span class="r"></span></p>
@@ -226,7 +226,7 @@
     <p class="pln"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t"><span class="op">@</span><span class="nam">asynccontextmanager</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t146" href="#t146">146</a></span><span class="t"><span class="key">async</span> <span class="key">def</span> <span class="nam">_lifespan</span><span class="op">(</span><span class="nam">_app</span><span class="op">:</span> <span class="nam">FastAPI</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t147" href="#t147">147</a></span><span class="t">    <span class="nam">duckdb_repo</span><span class="op">.</span><span class="nam">init_db</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t147" href="#t147">147</a></span><span class="t">    <span class="nam">ledger_repo</span><span class="op">.</span><span class="nam">init_db</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t148" href="#t148">148</a></span><span class="t">    <span class="key">await</span> <span class="nam">_warm_sheet_mapping</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t149" href="#t149">149</a></span><span class="t">    <span class="nam">drain_task</span> <span class="op">=</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">create_task</span><span class="op">(</span><span class="nam">_drain_loop</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="nam">name</span><span class="op">=</span><span class="str">"sheet-logging-drain"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t150" href="#t150">150</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -299,7 +299,7 @@
             <a class="nav" href="z_c87f1cd18a70cd57_expenses_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-22 08:49 +0000
+            created at 2026-04-22 11:40 +0000
         </p>
     </div>
 </footer>
