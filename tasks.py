@@ -1,4 +1,5 @@
 import base64
+import getpass
 import json as _json
 import re as _re
 import shlex
@@ -152,6 +153,13 @@ BACKUP_RETENTION_DAILY = 7
 BACKUP_RETENTION_WEEKLY = 4
 BACKUP_RETENTION_MONTHLY = 12
 
+# Freshness threshold for `inv backup-status`. The daily systemd timer
+# fires at 03:17 UTC with 30 min jitter, so a healthy snapshot is
+# always <= 24h30m old. 26h gives a ~1h30m buffer for a single missed
+# jitter window without false-alerting. A stale snapshot for >26h
+# means the pipeline silently stopped producing.
+BACKUP_STALE_HOURS = 26
+
 
 def _litestream_install_script(version: str = LITESTREAM_VERSION) -> str:
     """Return the shell snippet that installs Litestream on the VM.
@@ -296,6 +304,24 @@ def _ssh_replica(c, cmd):
     c.run(f"ssh {_replica_host()} 'echo {b64} | base64 -d | bash'")
 
 
+def _ssh_replica_capture_bytes(cmd: str) -> bytes:
+    """Run *cmd* on the replica (VM2) and return its stdout as bytes.
+
+    Mirrors :func:`_ssh_capture_bytes` but targets :func:`_replica_host`.
+    Used by :func:`backup_status` to ask VM2's ``rclone`` for the
+    off-site inventory over SSH, so the laptop does not need a
+    ``yandex:`` remote of its own just to monitor freshness.
+    """
+    b64 = base64.b64encode(cmd.encode()).decode()
+    remote = f"echo {b64} | base64 -d | bash"
+    result = subprocess.run(
+        ["ssh", _replica_host(), remote],
+        stdout=subprocess.PIPE,
+        check=True,
+    )
+    return result.stdout
+
+
 def _ssh_sudo(c, cmd):
     _ssh(c, f"sudo {cmd}")
 
@@ -387,6 +413,230 @@ def _write_remote_replica_file(c, path, content):
     c.run(
         f"ssh {_replica_host()} 'echo {b64} | base64 -d | sudo tee {path} > /dev/null'"
     )
+
+
+def _replica_has_working_yandex_remote():
+    """Return True iff VM2's rclone has a ``yandex:`` remote that
+    actually works (auth + URL + scope + network all green).
+
+    The contract here is "do we need to prompt the operator?", not
+    "does a config section exist?". A half-written config (missing
+    ``url``, wrong app-password, revoked scope) still needs the
+    interactive bootstrap — otherwise the retention timer would
+    quietly fail every night against a broken remote. So the probe:
+
+    1. ``rclone listremotes`` must include exact line ``yandex:``
+       — substring match against e.g. ``yandex-old:`` would falsely
+       pass.
+    2. ``rclone lsd yandex:`` must succeed. This smoke-tests the
+       entire stack: URL scheme, credentials, scope, Yandex
+       reachability.
+
+    If the remote exists but fails the smoke-test, we delete it
+    inline before returning False. That way the next
+    :func:`_ensure_yandex_rclone_configured` call prompts fresh
+    credentials instead of silently keeping a broken config around
+    across runs (the exact bug that bit us when
+    ``rclone config create`` silently dropped ``key=value`` fields).
+    """
+    probe = (
+        "set -eu\n"
+        "if ! rclone listremotes 2>/dev/null | grep -qx 'yandex:'; then\n"
+        "  exit 1\n"
+        "fi\n"
+        "if ! rclone lsd yandex: >/dev/null 2>&1; then\n"
+        "  rclone config delete yandex >/dev/null 2>&1 || true\n"
+        "  echo 'stale yandex: remote removed on VM2 — re-prompting' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+    )
+    result = subprocess.run(
+        ["ssh", _replica_host(), probe],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.stderr:
+        sys.stderr.write(result.stderr)
+    return result.returncode == 0
+
+
+def _prompt_yandex_credentials():
+    """Interactive prompt for Yandex login + app-password.
+
+    Split out so the IO layer is mockable — the in-flow tests stub
+    this to feed deterministic credentials without poking a real
+    terminal. Returns ``(login, app_password)``; raises SystemExit
+    on empty input to keep the caller out of the partial-config
+    weeds (a half-created rclone remote is worse than no remote).
+    """
+    print(
+        "\n"
+        "=== Yandex.Disk WebDAV credentials ===\n"
+        "\n"
+        "IMPORTANT: Yandex WebDAV does NOT accept your regular Yandex\n"
+        "account password. You need an APP-PASSWORD — a separate,\n"
+        "scoped password Yandex generates for one specific app.\n"
+        "\n"
+        "How to get one:\n"
+        "  1. Open https://id.yandex.ru/security/app-passwords\n"
+        "  2. Click \"Create a new password\".\n"
+        "  3. Pick the \"Files\" (Файлы / WebDAV) category — NOT Mail,\n"
+        "     Calendar, or generic.\n"
+        "  4. Yandex shows a 16-character password ONCE (often rendered\n"
+        "     as 4 blocks of 4 letters). Copy it immediately; it\n"
+        "     cannot be retrieved later, only regenerated.\n"
+        "  5. Paste it below. You can revoke it from the same page at\n"
+        "     any time without affecting your main Yandex password.\n"
+        "\n"
+        "Plaintext never touches disk. The obscured form is written\n"
+        "to ~ubuntu/.config/rclone/rclone.conf on VM2.\n"
+    )
+    login = input("Yandex login (without @yandex.ru): ").strip()
+    if not login:
+        sys.stderr.write("Empty login; aborting.\n")
+        sys.exit(1)
+    app_password = getpass.getpass(
+        "Yandex APP-PASSWORD (generate at "
+        "https://id.yandex.ru/security/app-passwords → Files): "
+    )
+    if not app_password:
+        sys.stderr.write("Empty app-password; aborting.\n")
+        sys.exit(1)
+    return login, app_password
+
+
+def _install_yandex_rclone_remote(login: str, app_password: str) -> None:
+    """Create the ``yandex:`` WebDAV remote on VM2 without shell leakage.
+
+    Security shape:
+
+    * Login AND app-password travel as two lines on the ssh stdin,
+      consumed by ``read -r`` / ``read -rs``. Neither lands in argv
+      (``ps`` listing), shell history, or the script image shipped
+      to VM2. The plaintext password additionally dies inside
+      ``rclone obscure -`` the moment it is converted to its
+      obscured on-disk form.
+    * ``rclone config create`` writes the obscured form to
+      ``~ubuntu/.config/rclone/rclone.conf``; that is the same format
+      the ``rclone config`` interactive wizard produces, so subsequent
+      manual edits remain possible.
+
+    Two sharp invariants past versions of this helper got wrong:
+
+    * ``rclone config create`` wants ``key value`` pairs separated by
+      spaces, NOT ``key=value``. The latter form silently drops
+      fields on current rclone releases: an earlier version of this
+      helper produced a ``[yandex]`` section with no ``url`` line,
+      which then failed every operation with
+      ``unsupported protocol scheme ""`` — and stuck around across
+      re-runs because ``rclone listremotes`` still reported
+      ``yandex:``.
+    * ``rclone config create`` re-obscures ``pass`` by default, so
+      feeding the already-obscured value without ``--no-obscure``
+      corrupts it. We pass ``--no-obscure`` explicitly.
+
+    Smoke-tests end-to-end with ``rclone lsd yandex:``. If the smoke
+    test fails (wrong app-password, wrong scope, typo, Yandex
+    unreachable) we **roll back** by deleting the just-written
+    ``yandex`` remote, so the next ``inv setup-replica-backup``
+    re-prompts for fresh credentials instead of silently reusing the
+    broken config.
+    """
+    inner = (
+        "set -euo pipefail\n"
+        "read -r LOGIN\n"
+        "read -rs PASS\n"
+        # Obscure plaintext via a local pipe; --no-obscure below
+        # prevents rclone from re-obscuring on config write.
+        'OBS=$(printf "%s" "$PASS" | rclone obscure -)\n'
+        # Space-separated key/value pairs — key=value form silently
+        # drops fields on this rclone release (see docstring).
+        "rclone config create --no-obscure yandex webdav "
+        "url https://webdav.yandex.ru "
+        "vendor other "
+        'user "$LOGIN" '
+        'pass "$OBS" >/dev/null\n'
+        # Print the [yandex] section with pass redacted so the
+        # operator can see exactly what was written (sanity-check
+        # url/user) without leaking the obscured secret on re-run.
+        "echo '--- written [yandex] config (pass redacted) ---' >&2\n"
+        "sed -n '/^\\[yandex\\]/,/^\\[/p' "
+        "\"$HOME/.config/rclone/rclone.conf\" "
+        "| sed 's/^pass = .*/pass = <redacted>/' >&2\n"
+        "echo '--- smoke test: rclone lsd yandex: ---' >&2\n"
+        # End-to-end smoke test with FULL error output so we can
+        # diagnose auth/scope/network issues when they happen.
+        # --low-level-retries 1 + --retries 1 fail fast on the
+        # interactive path; the daily timer keeps rclone's defaults.
+        "if ! rclone lsd yandex: --low-level-retries 1 --retries 1 -v; then\n"
+        "  rclone config delete yandex >/dev/null 2>&1 || true\n"
+        "  echo '' >&2\n"
+        "  echo 'rclone lsd yandex: failed; broken remote removed from VM2' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+    )
+    inner_b64 = base64.b64encode(inner.encode()).decode()
+    outer = (
+        "set -euo pipefail; "
+        "T=$(mktemp); "
+        'trap "rm -f \\"$T\\"" EXIT; '
+        f'echo {inner_b64} | base64 -d > "$T"; '
+        'bash "$T"'
+    )
+    proc = subprocess.run(
+        ["ssh", _replica_host(), outer],
+        input=f"{login}\n{app_password}\n",
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        sys.stderr.write(
+            "\nrclone config failed on the replica. Common causes:\n"
+            "  * a regular Yandex account password was used instead of\n"
+            "    an APP-PASSWORD. Yandex WebDAV accepts only app-\n"
+            "    passwords from https://id.yandex.ru/security/app-passwords\n"
+            "    (even on accounts without 2FA).\n"
+            "  * the app-password was created for a category other than\n"
+            "    \"Files\" (Файлы / WebDAV) — e.g. \"Mail\" tokens are\n"
+            "    scoped differently and the WebDAV endpoint rejects them.\n"
+            "  * the login was a display name or email (e.g. \"Joe Doe\",\n"
+            "    \"joe@yandex.ru\") instead of the bare Yandex login.\n"
+            "  * the app-password was mistyped (it is usually shown as\n"
+            "    4 blocks of 4 letters; paste WITHOUT spaces).\n"
+            "  * the replica cannot reach https://webdav.yandex.ru.\n"
+            "\n"
+            "The partially-created 'yandex:' remote has been rolled\n"
+            "back on VM2.\n"
+            "Re-run `inv setup-replica-backup` to try again; it will\n"
+            "prompt for credentials fresh.\n",
+        )
+        sys.exit(proc.returncode)
+
+
+def _ensure_yandex_rclone_configured(c):
+    """Interactive bootstrap for the ``yandex:`` rclone remote on VM2.
+
+    No-op when the remote already exists — the typical flow on
+    re-runs of :func:`setup_replica_backup`. The first-time path
+    prompts the operator for their Yandex login + app-password (app-
+    password URL printed in the prompt text) and writes the remote
+    to VM2 non-interactively via ``rclone config create``.
+
+    The interactive OAuth flow that the rclone wizard would trigger
+    is avoided on purpose: VM2 is headless, and the
+    laptop-authorize/copy-token dance across machines is an error
+    magnet during a future disaster recovery. WebDAV + an app-
+    password is equivalent for our access pattern (PUT/DELETE of
+    uploaded files) and the app-password can be revoked from
+    Yandex's account UI at any time.
+    """
+    if _replica_has_working_yandex_remote():
+        print("yandex: remote already configured and healthy — skipping prompt.")
+        return
+    login, app_password = _prompt_yandex_credentials()
+    _install_yandex_rclone_remote(login, app_password)
+    print("yandex: remote configured and verified (rclone lsd succeeded).")
 
 
 def _render_service(c, name, content):
@@ -1306,27 +1556,27 @@ def setup_replica_backup(c):
     provisioned Litestream replica host (VM2).
 
     This is a *layer on top of* :func:`setup_replica`, not a
-    replacement for it. The split exists because the backup layer
-    has one precondition that cannot be automated from the operator
-    machine: an interactive ``rclone config`` on VM2 to add a
-    ``yandex`` remote (OAuth requires a human-approved browser
-    click, and stashing a long-lived Yandex auth key on VM2 would
-    be a worse secret than the service-account key we already
-    manage). Baking that into ``setup_replica`` would either fail
-    the whole replica bootstrap on a fresh box (leaving half-
-    provisioned state) or silently skip the backup (no first backup
-    until someone remembers to come back). Keeping them as two
-    tasks makes the "run setup-replica, do the manual OAuth step,
-    then run setup-replica-backup" sequence explicit.
+    replacement for it. ``setup_replica`` owns the Litestream
+    receiver (SFTP ingestion of WAL segments from VM1). This task
+    owns the daily "take the current replica, validate it, upload
+    a compressed snapshot to Yandex.Disk, prune by GFS" pipeline.
 
-    What this task adds (on top of what :func:`setup_replica` has
-    already provisioned):
+    What this task installs/configures on VM2 (on top of what
+    :func:`setup_replica` has already provisioned):
 
     * apt packages ``rclone sqlite3 zstd`` — the daily pipeline
       shells out to all three.
     * Pinned Litestream binary — used to materialize the on-disk
       replica tree at ``<REPLICA_LITESTREAM_DIR>/<REPLICA_DB_NAME>``
       into a plain SQLite file before compression.
+    * ``yandex:`` rclone remote (WebDAV). The first run of this task
+      detects a missing remote and prompts the operator for a
+      Yandex login + app-password (URL for the Yandex app-password
+      page is printed in the prompt). Subsequent runs skip the
+      prompt. The plaintext password is piped over the SSH channel
+      to ``rclone obscure -`` on VM2 and is never written to argv
+      or disk; only the obscured form lands in
+      ``~ubuntu/.config/rclone/rclone.conf``.
     * ``/usr/local/bin/dinary-backup`` — bash pipeline (restore →
       validate → zstd → rclone upload → retention).
     * ``/usr/local/bin/dinary-backup-retention`` — Python GFS prune
@@ -1346,11 +1596,9 @@ def setup_replica_backup(c):
 
     * :func:`setup_replica` has been run (receive directory exists
       and is already accepting Litestream WAL segments).
-    * ``rclone config`` has been run interactively on VM2 to add a
-      remote named ``yandex``. First run of this task fails with an
-      actionable message pointing at that step if it is missing.
 
-    Idempotent. apt installs are no-op on re-apply, scripts and
+    Idempotent. apt installs are no-op on re-apply, rclone-remote
+    bootstrap is a no-op once ``yandex:`` exists, scripts and
     systemd units are overwritten, the timer's ``enable --now`` is
     harmless to re-run.
     """
@@ -1362,17 +1610,8 @@ def setup_replica_backup(c):
     print("=== Installing Litestream binary on replica ===")
     _ssh_replica(c, _litestream_install_script())
 
-    print("=== Verifying rclone 'yandex' remote is configured ===")
-    _ssh_replica(
-        c,
-        "if ! rclone listremotes 2>/dev/null | grep -qx 'yandex:'; then "
-        "  echo >&2 ''; "
-        "  echo >&2 'rclone remote \"yandex:\" is not configured on the replica.'; "
-        "  echo >&2 'Run `rclone config` interactively on the replica (OAuth'; "
-        "  echo >&2 'flow, browser), then re-run `inv setup-replica-backup`.'; "
-        "  exit 1; "
-        "fi",
-    )
+    print("=== Ensuring rclone 'yandex' remote is configured ===")
+    _ensure_yandex_rclone_configured(c)
 
     print(f"=== Preparing {BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}/ ===")
     _ssh_replica(
@@ -1406,23 +1645,22 @@ def setup_replica_backup(c):
     print("=== setup-replica-backup done ===")
 
 
-def _yadisk_list_snapshots():
-    """Return ``[(filename, size_bytes), ...]`` of backups on Yandex.Disk.
+def _parse_snapshot_lsjson(raw):
+    """Turn ``rclone lsjson`` output into ``[(name, size_bytes), ...]``.
 
-    Always sorted oldest-first so callers can reach for
-    ``snapshots[-1]`` to get the newest deterministically.
-    Uses ``rclone lsjson`` rather than ``lsf`` to avoid parsing
-    rclone's separator-quirky line format — JSON is always stable.
+    Pure parser, no I/O. Both the local-rclone reader
+    (:func:`_yadisk_list_snapshots`) and the over-SSH reader
+    (:func:`_replica_list_snapshots`) go through this helper so a
+    change to the filename regex or to the "ignore noise" rule
+    cannot drift between restore (local) and freshness monitoring
+    (replica). Always sorted oldest-first so callers can reach for
+    ``result[-1]`` to get the newest deterministically.
+
     Anything whose filename does not match
-    :func:`_backup_filename_regex` is silently ignored so human-
+    :func:`_backup_filename_regex` is silently dropped so human-
     uploaded noise in the same Yandex folder cannot break the
     inventory.
     """
-    raw = subprocess.check_output(
-        ["rclone", "lsjson", f"{BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}/",
-         "--files-only"],
-        text=True,
-    )
     entries = _json.loads(raw)
     pattern = _re.compile(_backup_filename_regex())
     result = []
@@ -1432,6 +1670,172 @@ def _yadisk_list_snapshots():
             result.append((name, int(entry.get("Size", 0))))
     result.sort(key=lambda x: x[0])
     return result
+
+
+def _yadisk_list_snapshots():
+    """Return ``[(filename, size_bytes), ...]`` of backups on Yandex.Disk.
+
+    Uses ``rclone lsjson`` against the operator-local ``yandex:``
+    remote (the one configured on the machine running
+    :func:`restore_from_yadisk`). Shape/sort contract is inherited
+    from :func:`_parse_snapshot_lsjson`.
+    """
+    raw = subprocess.check_output(
+        ["rclone", "lsjson", f"{BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}/",
+         "--files-only"],
+        text=True,
+    )
+    return _parse_snapshot_lsjson(raw)
+
+
+def _replica_list_snapshots():
+    """Like :func:`_yadisk_list_snapshots` but asks VM2 over SSH.
+
+    Used by :func:`backup_status` so the monitoring path reuses the
+    already-configured ``yandex:`` remote on VM2. The laptop can
+    then run freshness checks from cron without keeping its own
+    Yandex WebDAV credentials.
+    """
+    raw = _ssh_replica_capture_bytes(
+        f"rclone lsjson {BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}/ --files-only"
+    ).decode("utf-8")
+    return _parse_snapshot_lsjson(raw)
+
+
+def _parse_snapshot_timestamp(name):
+    """Extract the UTC datetime encoded in a backup filename.
+
+    Filenames are ``dinary-YYYY-MM-DDTHHMMZ.db.zst`` — the timestamp
+    lives in the name itself and is the single source of truth for
+    "when was this backup produced". Using filename timestamps rather
+    than ``rclone``'s ``ModTime`` means freshness checks are
+    independent of Yandex-side clock skew and of any metadata
+    rewrites a future rclone version might do.
+    """
+    pattern = _re.compile(
+        _re.escape(BACKUP_FILENAME_PREFIX)
+        + r"(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})Z"
+        + _re.escape(BACKUP_FILENAME_SUFFIX)
+        + "$"
+    )
+    match = pattern.match(name)
+    if match is None:
+        return None
+    year, month, day, hour, minute = (int(g) for g in match.groups())
+    return _dt(year, month, day, hour, minute, tzinfo=_timezone.utc)
+
+
+def _check_backup_freshness(snapshots, now, max_age_hours):
+    """Compute the freshness verdict for ``inv backup-status``.
+
+    Pure helper so tests can pin the ok/stale/empty branches without
+    any SSH/rclone plumbing. Returns a dict ready for both human-
+    and JSON output paths.
+
+    Keys:
+        ``status``           ``ok`` | ``stale`` | ``empty``
+        ``newest``           filename of the latest snapshot (or None)
+        ``age_hours``        float, hours between now and the filename
+                             timestamp (or None)
+        ``size_bytes``       int (or None)
+        ``threshold_hours``  float, the ``max_age_hours`` input
+    """
+    if not snapshots:
+        return {
+            "status": "empty",
+            "newest": None,
+            "age_hours": None,
+            "size_bytes": None,
+            "threshold_hours": float(max_age_hours),
+        }
+    name, size = snapshots[-1]
+    ts = _parse_snapshot_timestamp(name)
+    if ts is None:
+        return {
+            "status": "stale",
+            "newest": name,
+            "age_hours": None,
+            "size_bytes": size,
+            "threshold_hours": float(max_age_hours),
+        }
+    age_hours = (now - ts).total_seconds() / 3600.0
+    status = "ok" if age_hours <= max_age_hours else "stale"
+    return {
+        "status": status,
+        "newest": name,
+        "age_hours": age_hours,
+        "size_bytes": size,
+        "threshold_hours": float(max_age_hours),
+    }
+
+
+def _format_backup_status_line(verdict):
+    """Render one human-readable summary line for ``inv backup-status``.
+
+    Kept separate from the task so the laptop cron wrapper can log
+    the exact same line the operator would see, and so tests can pin
+    the wording without importing invoke's ``Context``.
+    """
+    threshold = verdict["threshold_hours"]
+    if verdict["status"] == "empty":
+        return (
+            f"STALE: no snapshots on "
+            f"{BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}/ "
+            f"(threshold: {threshold:g}h)"
+        )
+    name = verdict["newest"]
+    size = verdict["size_bytes"]
+    size_kb = (size or 0) / 1024
+    age = verdict["age_hours"]
+    if age is None:
+        return (
+            f"STALE: newest {name} has un-parseable timestamp "
+            f"({size_kb:,.1f} KB, threshold: {threshold:g}h)"
+        )
+    tag = "OK" if verdict["status"] == "ok" else "STALE"
+    return (
+        f"{tag}: newest {name}, age {age:.1f}h, "
+        f"size {size_kb:,.1f} KB (threshold: {threshold:g}h)"
+    )
+
+
+@task(name="backup-status")
+def backup_status(_c, max_age_hours=None, json_output=False):
+    """Check freshness of the newest Yandex.Disk backup.
+
+    Prints a one-line summary and exits 0 when the newest snapshot
+    is within ``--max-age-hours`` (default :data:`BACKUP_STALE_HOURS`),
+    non-zero otherwise. Designed to be called from an off-VM2 cron
+    (the laptop) so a dead VM2 / broken rclone auth / missed timer
+    all surface as an actionable alert without the monitor living
+    on the machine being monitored.
+
+    Under the hood runs ``rclone lsjson`` on VM2 over SSH (see
+    :func:`_replica_list_snapshots`) — the laptop does not need its
+    own ``yandex:`` remote just to monitor.
+
+    Flags:
+        --max-age-hours N   Freshness threshold in hours. Default is
+                            :data:`BACKUP_STALE_HOURS`. Lower this
+                            temporarily during an incident to confirm
+                            a fresh backup has landed.
+        --json-output       Emit a JSON object instead of the human
+                            summary; the exit code still signals
+                            fresh/stale for scripts that just want to
+                            ``|| send_fail_email``.
+    """
+    threshold = (
+        float(max_age_hours) if max_age_hours is not None else float(BACKUP_STALE_HOURS)
+    )
+    snapshots = _replica_list_snapshots()
+    now = _dt.now(tz=_timezone.utc)
+    verdict = _check_backup_freshness(snapshots, now, threshold)
+    if json_output:
+        print(_json.dumps(verdict))
+    else:
+        print(_format_backup_status_line(verdict))
+    if verdict["status"] != "ok":
+        sys.exit(1)
 
 
 def _pick_snapshot(snapshots, key):

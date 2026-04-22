@@ -257,14 +257,7 @@ keeper bucket. On a 10-year horizon this is roughly 29 files total
 
 ### One-time bootstrap
 
-Preconditions:
-
-- `inv setup-replica` has been run against VM 2.
-- `rclone config` has been run interactively on VM 2 to add a
-  remote named `yandex`. We deliberately do not automate this step:
-  the OAuth flow requires a human-approved browser click, and
-  stashing a long-lived Yandex auth key on VM 2 would be a worse
-  secret than the service-account key we already manage.
+Precondition: `inv setup-replica` has been run against VM 2.
 
 Then, from the operator machine:
 
@@ -272,13 +265,47 @@ Then, from the operator machine:
 inv setup-replica-backup
 ```
 
-This installs `rclone`, `sqlite3`, `zstd`, and the pinned Litestream
-binary on VM 2; writes `/usr/local/bin/dinary-backup` plus the
-paired retention script; installs and enables
-`dinary-backup.timer`; and triggers one immediate run so the first
-snapshot is visible on Yandex.Disk within a minute of bootstrap.
+The task:
 
-The task is idempotent: apt installs are no-op on re-apply, scripts
+- Installs apt packages `rclone`, `sqlite3`, `zstd` and the pinned
+  Litestream binary on VM 2.
+- **Configures the `yandex:` rclone remote interactively on the
+  first run.** If the remote is missing the task prints a pointer
+  to <https://id.yandex.ru/security/app-passwords>, prompts for the
+  Yandex login, and reads the app-password via `getpass` (no echo).
+
+  > **Yandex WebDAV does NOT accept your regular Yandex account
+  > password.** You must create a dedicated app-password under the
+  > "Files" (Файлы / WebDAV) category on the page above — Mail,
+  > Calendar, or generic tokens are rejected by the WebDAV
+  > endpoint. The app-password is revocable from the same page
+  > without affecting the main account password.
+
+  The plaintext password travels only over the SSH channel to VM 2,
+  is fed to `rclone obscure -` on stdin, and only the obscured form
+  is written to `~ubuntu/.config/rclone/rclone.conf`. Plaintext
+  never lands in argv (`ps` listing), shell history, or disk.
+
+  After writing the config the task runs `rclone lsd yandex:` as a
+  smoke test. Any failure (wrong password, wrong scope, network)
+  aborts the task and rolls back the partial config so the next run
+  re-prompts with a clean slate. On a green smoke test the prompt
+  is skipped on subsequent runs.
+- Writes `/usr/local/bin/dinary-backup` and the paired retention
+  script; installs and enables `dinary-backup.timer`; triggers one
+  immediate run so the first snapshot is visible on Yandex.Disk
+  within a minute of bootstrap.
+
+Why an app-password and not the full OAuth flow: VM 2 is headless,
+and the interactive `rclone config` wizard expects a
+laptop-authorize → copy-token dance across machines. An
+app-password is equivalent for our access pattern (PUT/DELETE of
+uploaded files), can be revoked from the Yandex account UI at any
+time, and bootstrap stays end-to-end non-interactive beyond the
+password prompt.
+
+The task is idempotent: apt installs are no-op on re-apply,
+rclone-remote bootstrap is a no-op once `yandex:` exists, scripts
 and systemd units are overwritten, `enable --now` is harmless to
 re-run.
 
@@ -288,6 +315,48 @@ re-run.
 ssh ubuntu@dinary-replica sudo journalctl -u dinary-backup.service -n 50 --no-pager
 ssh ubuntu@dinary-replica sudo systemctl list-timers dinary-backup.timer
 ```
+
+### Freshness monitoring: `inv backup-status`
+
+The daily timer failing silently is the worst-case mode — the
+off-site snapshot stops refreshing while everything else looks fine.
+`inv backup-status` is the off-VM2 probe:
+
+```bash
+inv backup-status                     # human one-liner; exit 0/1
+inv backup-status --json-output       # machine-readable verdict
+inv backup-status --max-age-hours 3   # tighten threshold during an incident
+```
+
+It SSHes into VM 2, runs `rclone lsjson` against the `yandex:`
+remote, extracts the UTC timestamp encoded in the newest
+`dinary-YYYY-MM-DDTHHMMZ.db.zst` filename, and compares it to
+`--max-age-hours` (default **26 h** — 24 h + 1 h for the 30 min
+timer jitter + 30 min headroom). Sample outputs:
+
+```
+OK: newest dinary-2026-04-22T0317Z.db.zst, age 7.1h, size 198.5 KB (threshold: 26h)
+STALE: newest dinary-2026-04-20T0317Z.db.zst, age 49.3h, size 198.1 KB (threshold: 26h)
+STALE: no snapshots on yandex:Backup/dinary/ (threshold: 26h)
+```
+
+Because it runs off-VM2, **both** a dead VM 2 (SSH fails) and a
+silently-stopped timer (snapshot stale) surface as a non-zero exit
+code, so one probe covers both failure modes.
+
+Wire it into laptop cron via
+`linux-conf/osx/dinary_backup_check.sh` (copied into `~/scripts/`
+by `linux-conf/osx/copy_scripts.sh`). That wrapper `cd`s into
+`~/projects/dinary`, runs `uv run inv backup-status`, and on
+non-zero exit pipes the captured output through `send_fail_email`
+(macOS-side msmtp → Yandex SMTP). Suggested crontab:
+
+```
+17 */6 * * * /Users/<you>/scripts/dinary_backup_check.sh
+```
+
+Four checks per day is cheap and catches a missed 03:17 UTC run
+within hours rather than the next morning.
 
 ## Point-in-time restore from Yandex.Disk
 
@@ -330,8 +399,12 @@ operator machine.
 - `rclone` installed (`apt install rclone` on Ubuntu, `brew install
   rclone` on macOS). Already pre-installed on VM 1 by `inv setup` so
   no manual install is needed during disaster recovery.
-- `rclone config` run interactively to add a remote named `yandex`
-  (OAuth, browser).
+- A `yandex:` rclone remote configured locally, pointing at the
+  same Yandex.Disk account used by `inv setup-replica-backup`. If
+  the operator machine never had `inv setup-replica-backup` run
+  from it, configure it once with
+  `rclone config create yandex webdav url=https://webdav.yandex.ru vendor=other user=<login>`
+  (it will prompt for the app-password via `rclone obscure`).
 - `sqlite3` + `zstd` installed (both are already on VM 1 via
   `inv setup` and on macOS via `brew install sqlite zstd`).
 

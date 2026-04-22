@@ -4,9 +4,11 @@ We only cover pure helpers here; tasks themselves run shell commands
 against a real server and are exercised via the deploy flow.
 """
 
+import base64
 import importlib.util
 import io
 import json
+import re as _stdlib_re
 import shlex
 import shutil
 import sqlite3
@@ -1438,8 +1440,6 @@ class TestBackupRetentionScript:
         precision) that breaks one side also visibly breaks this
         test.
         """
-        import re as _stdlib_re
-
         pattern = _stdlib_re.compile(retention_ns["FILENAME_PATTERN"])
         m = pattern.match("dinary-2026-04-22T0317Z.db.zst")
         assert m is not None
@@ -1635,21 +1635,34 @@ class TestSetupBackupTask:
         class Spy:
             ssh_calls: list[str]
             write_calls: list[tuple[str, str]]
+            ensure_calls: int
+            events: list[str]
 
             def __init__(self) -> None:
                 self.ssh_calls = []
                 self.write_calls = []
+                self.ensure_calls = 0
+                self.events = []
 
         spy = Spy()
 
         def fake_ssh_replica(_c, cmd: str) -> None:
             spy.ssh_calls.append(cmd)
+            spy.events.append(f"ssh:{cmd}")
 
         def fake_write(_c, path: str, content: str) -> None:
             spy.write_calls.append((path, content))
+            spy.events.append(f"write:{path}")
+
+        def fake_ensure(_c) -> None:
+            spy.ensure_calls += 1
+            spy.events.append("ensure_yandex")
 
         monkeypatch.setattr(_tasks, "_ssh_replica", fake_ssh_replica)
         monkeypatch.setattr(_tasks, "_write_remote_replica_file", fake_write)
+        monkeypatch.setattr(
+            _tasks, "_ensure_yandex_rclone_configured", fake_ensure
+        )
         monkeypatch.setattr(
             _tasks,
             "_replica_host",
@@ -1657,31 +1670,28 @@ class TestSetupBackupTask:
         )
         return spy
 
-    def test_runs_package_install_before_remote_check(self, _spy):
+    def test_runs_package_install_before_rclone_bootstrap(self, _spy):
         """rclone itself is installed in the apt step; the yandex
-        remote check must therefore come after. Inverting the order
-        would make the check fail with "command not found" on a fresh
-        VM2 rather than with the actionable "rclone config not run"
-        message we want.
+        remote bootstrap must therefore come after. Inverting the
+        order would make the bootstrap fail with "command not
+        found" on a fresh VM2 rather than reaching the interactive
+        prompt we want.
         """
         _tasks.setup_replica_backup.body(MagicMock())
         pkg_idx = next(
             (
-                i for i, cmd in enumerate(_spy.ssh_calls)
-                if "apt-get install -y -qq rclone" in cmd
+                i for i, ev in enumerate(_spy.events)
+                if ev.startswith("ssh:") and "apt-get install -y -qq rclone" in ev
             ),
             None,
         )
-        check_idx = next(
-            (
-                i for i, cmd in enumerate(_spy.ssh_calls)
-                if "rclone listremotes" in cmd
-            ),
+        ensure_idx = next(
+            (i for i, ev in enumerate(_spy.events) if ev == "ensure_yandex"),
             None,
         )
         assert pkg_idx is not None
-        assert check_idx is not None
-        assert pkg_idx < check_idx
+        assert ensure_idx is not None
+        assert pkg_idx < ensure_idx
 
     def test_installs_litestream_via_shared_helper(self, _spy):
         """The ``litestream restore`` call inside ``dinary-backup``
@@ -1693,18 +1703,33 @@ class TestSetupBackupTask:
         install_cmd = _tasks._litestream_install_script()
         assert install_cmd in _spy.ssh_calls
 
-    def test_rclone_remote_check_points_at_yandex(self, _spy):
-        """The pre-flight must specifically ask for the ``yandex:``
-        remote; a generic ``listremotes`` that passes on any
-        configured remote would mask a misnamed OAuth setup.
+    def test_calls_yandex_rclone_bootstrap_helper(self, _spy):
+        """The orchestrator must delegate the rclone-remote setup
+        to the dedicated helper; inlining the check here (old
+        behaviour) meant a missing remote produced only a "run
+        rclone config" hint instead of actually setting it up.
         """
         _tasks.setup_replica_backup.body(MagicMock())
-        check_cmd = next(
-            (cmd for cmd in _spy.ssh_calls if "rclone listremotes" in cmd),
+        assert _spy.ensure_calls == 1
+
+    def test_mkdir_runs_after_yandex_bootstrap(self, _spy):
+        """``rclone mkdir yandex:Backup/dinary`` only succeeds after
+        the ``yandex:`` remote exists. Reversing this order on a
+        fresh VM2 would hard-fail the whole orchestrator.
+        """
+        _tasks.setup_replica_backup.body(MagicMock())
+        ensure_idx = next(
+            i for i, ev in enumerate(_spy.events) if ev == "ensure_yandex"
+        )
+        mkdir_idx = next(
+            (
+                i for i, ev in enumerate(_spy.events)
+                if ev.startswith("ssh:") and "rclone mkdir" in ev
+            ),
             None,
         )
-        assert check_cmd is not None
-        assert "grep -qx 'yandex:'" in check_cmd
+        assert mkdir_idx is not None
+        assert ensure_idx < mkdir_idx
 
     def test_writes_all_four_managed_paths(self, _spy):
         """Silently dropping any of the four paths would leave VM2
@@ -1770,6 +1795,203 @@ class TestSetupBackupTask:
 
 
 @allure.epic("Deploy")
+@allure.feature("setup-replica-backup: yandex rclone bootstrap")
+class TestEnsureYandexRcloneConfigured:
+    """The interactive Yandex bootstrap replaces the previous "run
+    ``rclone config`` manually on VM2" step. The contract is:
+
+    1. If ``yandex:`` already exists — no prompt, no network.
+    2. If it's missing — prompt operator for login+password, then
+       install the remote via ``rclone obscure`` + ``rclone config create``
+       without putting plaintext in argv or on disk.
+
+    Breaking either branch turns the daily timer into silent failure
+    (no remote → rclone errors → retention prunes nothing new), so
+    each invariant below guards a real failure mode.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _pin_replica_host(self, monkeypatch):
+        monkeypatch.setattr(
+            _tasks, "_replica_host", lambda: "ubuntu@dinary-replica"
+        )
+
+    def test_skips_when_remote_already_exists_and_works(self, monkeypatch):
+        """Re-running ``setup-replica-backup`` on a working replica
+        must not re-prompt for credentials — the second-run UX is
+        ``inv pre`` + redeploy, not "now re-enter your Yandex
+        password".
+        """
+        monkeypatch.setattr(
+            _tasks, "_replica_has_working_yandex_remote", lambda: True
+        )
+
+        def boom(*_a, **_kw):
+            raise AssertionError("must not prompt when remote exists")
+
+        monkeypatch.setattr(_tasks, "_prompt_yandex_credentials", boom)
+        monkeypatch.setattr(_tasks, "_install_yandex_rclone_remote", boom)
+        _tasks._ensure_yandex_rclone_configured(MagicMock())
+
+    def test_prompts_and_installs_when_remote_missing_or_broken(self, monkeypatch):
+        """The happy path on a fresh VM2 AND the recovery path from a
+        previously-broken config both land here: probe returns False
+        → prompt → install. A silent skip here would hide setup
+        failures until the first timer fires a day later.
+        """
+        monkeypatch.setattr(
+            _tasks, "_replica_has_working_yandex_remote", lambda: False
+        )
+        events: list[str] = []
+
+        def fake_prompt():
+            events.append("prompt")
+            return ("mylogin", "hunter2-app-pw")
+
+        captured: dict[str, str] = {}
+
+        def fake_install(login: str, pw: str) -> None:
+            events.append("install")
+            captured["login"] = login
+            captured["pw"] = pw
+
+        monkeypatch.setattr(_tasks, "_prompt_yandex_credentials", fake_prompt)
+        monkeypatch.setattr(_tasks, "_install_yandex_rclone_remote", fake_install)
+        _tasks._ensure_yandex_rclone_configured(MagicMock())
+        assert events == ["prompt", "install"]
+        assert captured == {"login": "mylogin", "pw": "hunter2-app-pw"}
+
+    def test_probe_uses_exact_line_match_not_substring(self, monkeypatch):
+        """The probe runs on VM2 as a single ssh'd shell script; it
+        must grep ``listremotes`` with ``grep -qx 'yandex:'`` so a
+        differently-named remote (``yandex-old:``) does not falsely
+        mask the absence of the real one.
+        """
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, *, capture_output, text, check):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
+        assert _tasks._replica_has_working_yandex_remote() is False
+        assert calls
+        probe = calls[0][-1]
+        assert "grep -qx 'yandex:'" in probe
+
+    def test_probe_smoke_tests_with_rclone_lsd(self, monkeypatch):
+        """A remote that shows up in ``listremotes`` but fails
+        ``rclone lsd`` (missing url, wrong creds) must be treated as
+        absent — otherwise the previous broken-config bug re-surfaces
+        where subsequent ``mkdir`` / ``copyto`` fail forever.
+        """
+        calls: list[str] = []
+
+        def fake_run(cmd, *, capture_output, text, check):
+            calls.append(cmd[-1])
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
+        _tasks._replica_has_working_yandex_remote()
+        assert any("rclone lsd yandex:" in c for c in calls)
+
+    def test_probe_rolls_back_broken_remote_inline(self, monkeypatch):
+        """If smoke-test fails the probe must delete the broken
+        remote server-side so the next call re-prompts for fresh
+        credentials rather than seeing the same broken yandex:
+        entry again.
+        """
+        calls: list[str] = []
+
+        def fake_run(cmd, *, capture_output, text, check):
+            calls.append(cmd[-1])
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
+        _tasks._replica_has_working_yandex_remote()
+        assert any("rclone config delete yandex" in c for c in calls)
+
+    def test_probe_returns_true_when_remote_works(self, monkeypatch):
+        """Positive counterpart: a probe that exits 0 (listremotes
+        matched + lsd succeeded) must short-circuit the prompt.
+        """
+
+        def fake_run(cmd, *, capture_output, text, check):
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
+        assert _tasks._replica_has_working_yandex_remote() is True
+
+    def test_install_does_not_leak_password_in_argv(self, monkeypatch):
+        """The plaintext app-password must travel only through
+        ssh stdin (encrypted channel) and then die inside
+        ``rclone obscure -``. Any ssh argument carrying the
+        plaintext would leak it to ``ps`` on both sides.
+        """
+        seen: dict[str, object] = {}
+
+        def fake_run(cmd, *, input, text, check):
+            seen["cmd"] = cmd
+            seen["input"] = input
+            return subprocess.CompletedProcess(cmd, 0)
+
+        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
+        _tasks._install_yandex_rclone_remote("joe", "super-secret-pw")
+        # Plaintext is in stdin payload, never in argv.
+        assert "super-secret-pw" in seen["input"]
+        assert all("super-secret-pw" not in a for a in seen["cmd"])
+
+    def test_install_uses_obscure_and_webdav_shape(self, monkeypatch):
+        """The inner script must call ``rclone obscure`` on the
+        password (never write plaintext to the rclone config) and
+        must pin the WebDAV url + vendor with the **space-separated**
+        key/value syntax rclone actually parses. An earlier
+        ``key=value`` form silently dropped ``url`` and produced a
+        broken remote that failed every operation with
+        ``unsupported protocol scheme ""``.
+        """
+        seen: dict[str, object] = {}
+
+        def fake_run(cmd, *, input, text, check):
+            seen["cmd"] = cmd
+            return subprocess.CompletedProcess(cmd, 0)
+
+        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
+        _tasks._install_yandex_rclone_remote("joe", "pw")
+        outer = " ".join(seen["cmd"])
+        match = _stdlib_re.search(r"echo ([A-Za-z0-9+/=]+) \| base64 -d", outer)
+        assert match is not None
+        inner = base64.b64decode(match.group(1)).decode()
+        assert "rclone obscure -" in inner
+        # Space-separated key/value, NOT key=value. --no-obscure
+        # prevents rclone from re-obscuring our already-obscured
+        # pass value, which would render it unusable.
+        assert "rclone config create --no-obscure yandex webdav" in inner
+        assert "url https://webdav.yandex.ru" in inner
+        assert "vendor other" in inner
+        # Smoke-test that verifies creds actually work.
+        assert "rclone lsd yandex:" in inner
+        # Rollback on smoke-test failure: the broken remote must be
+        # deleted server-side so the next run re-prompts.
+        assert "rclone config delete yandex" in inner
+
+    def test_install_propagates_ssh_failure(self, monkeypatch):
+        """A non-zero exit (wrong app-password, unreachable Yandex
+        WebDAV, etc.) MUST abort the whole orchestrator — partial
+        state here (packages installed, remote missing) is worse
+        than a clean failure the operator can retry.
+        """
+
+        def fake_run(cmd, *, input, text, check):
+            return subprocess.CompletedProcess(cmd, 5)
+
+        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
+        with pytest.raises(SystemExit) as excinfo:
+            _tasks._install_yandex_rclone_remote("joe", "pw")
+        assert excinfo.value.code == 5
+
+
+@allure.epic("Deploy")
 @allure.feature("restore-from-yadisk: inventory + snapshot picker")
 class TestRestoreFromYadiskHelpers:
     """``restore-from-yadisk`` is split into three helpers so the
@@ -1785,8 +2007,6 @@ class TestRestoreFromYadiskHelpers:
         would leave keepers the restorer cannot see, or vice versa.
         """
         pattern = _tasks._backup_filename_regex()
-        import re as _stdlib_re
-
         assert _stdlib_re.match(pattern, "dinary-2026-04-22T0317Z.db.zst")
         assert not _stdlib_re.match(pattern, "dinary-2026-04-22.db.zst")
         assert not _stdlib_re.match(pattern, "random.txt")
@@ -1862,7 +2082,252 @@ class TestRestoreFromYadiskHelpers:
 
 
 @allure.epic("Deploy")
+@allure.feature("backup-status: freshness check")
+class TestBackupStatusHelpers:
+    """Pure helpers behind ``inv backup-status``. The task itself is a
+    thin wrapper over :func:`_replica_list_snapshots` (I/O) and
+    :func:`_check_backup_freshness` (pure) — these tests pin the
+    pure branches so the ok/stale/empty/unparseable transitions are
+    locked down independently of SSH/rclone plumbing.
+    """
+
+    def test_parse_timestamp_round_trips_canonical_filename(self):
+        """The canonical name produced by ``dinary-backup`` must parse
+        to the exact UTC datetime it encodes. The single source of
+        truth for "when was this backup produced" is the filename,
+        not Yandex-side ModTime, so a silent drift here would make
+        freshness checks lie.
+        """
+        ts = _tasks._parse_snapshot_timestamp("dinary-2026-04-22T0317Z.db.zst")
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+        assert ts == _dt(2026, 4, 22, 3, 17, tzinfo=_tz.utc)
+
+    def test_parse_timestamp_returns_none_on_unexpected_shape(self):
+        """Human-uploaded noise in the same Yandex folder must not
+        crash the parser: it returns ``None`` so the caller can treat
+        it the same as "no timestamp" rather than surfacing a
+        ValueError to cron.
+        """
+        assert _tasks._parse_snapshot_timestamp("random.txt") is None
+        assert _tasks._parse_snapshot_timestamp("dinary-bad.db.zst") is None
+
+    def test_check_freshness_ok_when_newest_inside_threshold(self):
+        """Under-threshold → ``ok`` + exact age in hours. The newest
+        snapshot is always the last entry of the sorted list — any
+        regression that reads ``[0]`` would read the oldest and
+        false-alert every day.
+        """
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+        snaps = [
+            ("dinary-2026-04-21T0317Z.db.zst", 100),
+            ("dinary-2026-04-22T0317Z.db.zst", 200),
+        ]
+        now = _dt(2026, 4, 22, 10, 17, tzinfo=_tz.utc)
+        verdict = _tasks._check_backup_freshness(snaps, now, max_age_hours=26)
+        assert verdict["status"] == "ok"
+        assert verdict["newest"] == "dinary-2026-04-22T0317Z.db.zst"
+        assert verdict["age_hours"] == pytest.approx(7.0)
+        assert verdict["size_bytes"] == 200
+
+    def test_check_freshness_stale_when_newest_older_than_threshold(self):
+        """Over-threshold → ``stale``. Uses a 49h gap (two full days
+        missed) so the threshold itself (26h default) is unambiguous.
+        """
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+        snaps = [("dinary-2026-04-20T0317Z.db.zst", 100)]
+        now = _dt(2026, 4, 22, 4, 17, tzinfo=_tz.utc)
+        verdict = _tasks._check_backup_freshness(snaps, now, max_age_hours=26)
+        assert verdict["status"] == "stale"
+        assert verdict["age_hours"] == pytest.approx(49.0)
+
+    def test_check_freshness_empty_bucket(self):
+        """No snapshots at all → ``empty`` (distinct from ``stale``
+        so the alert message can point at the right failure mode:
+        "nothing ever uploaded" vs "uploads stopped").
+        """
+        verdict = _tasks._check_backup_freshness([], now=None, max_age_hours=26)
+        assert verdict["status"] == "empty"
+        assert verdict["newest"] is None
+        assert verdict["age_hours"] is None
+        assert verdict["threshold_hours"] == 26.0
+
+    def test_check_freshness_unparseable_newest_is_stale(self):
+        """A newest file that does not match the canonical timestamp
+        shape (e.g. someone manually uploaded ``dinary-final.db.zst``)
+        must surface as ``stale`` with ``age_hours=None`` — we refuse
+        to guess a timestamp and the operator sees something is
+        wrong.
+        """
+        snaps = [("dinary-final.db.zst", 42)]
+        verdict = _tasks._check_backup_freshness(snaps, now=None, max_age_hours=26)
+        assert verdict["status"] == "stale"
+        assert verdict["age_hours"] is None
+
+    def test_format_line_ok(self):
+        """Human summary must contain the tag, filename, age and
+        threshold so the one-line log in ``sync_log`` is enough to
+        diagnose without re-running the task.
+        """
+        line = _tasks._format_backup_status_line({
+            "status": "ok",
+            "newest": "dinary-2026-04-22T0317Z.db.zst",
+            "age_hours": 7.0,
+            "size_bytes": 203456,
+            "threshold_hours": 26.0,
+        })
+        assert line.startswith("OK: ")
+        assert "dinary-2026-04-22T0317Z.db.zst" in line
+        assert "7.0h" in line
+        assert "26h" in line
+
+    def test_format_line_stale(self):
+        """``stale`` shows the ``STALE:`` tag — cron wrapper greps
+        only the exit code, but the operator seeing the log line
+        needs to recognize the failure mode at a glance.
+        """
+        line = _tasks._format_backup_status_line({
+            "status": "stale",
+            "newest": "dinary-2026-04-20T0317Z.db.zst",
+            "age_hours": 49.0,
+            "size_bytes": 200000,
+            "threshold_hours": 26.0,
+        })
+        assert line.startswith("STALE: ")
+        assert "49.0h" in line
+
+    def test_format_line_empty(self):
+        """``empty`` points at the remote path so the operator can
+        jump straight to rclone/Yandex to investigate — the message
+        is not just "STALE" without context.
+        """
+        line = _tasks._format_backup_status_line({
+            "status": "empty",
+            "newest": None,
+            "age_hours": None,
+            "size_bytes": None,
+            "threshold_hours": 26.0,
+        })
+        assert line.startswith("STALE: no snapshots")
+        assert _tasks.BACKUP_RCLONE_REMOTE in line
+        assert _tasks.BACKUP_RCLONE_PATH in line
+
+
+@allure.epic("Deploy")
+@allure.feature("backup-status: task")
+class TestBackupStatusTask:
+    """End-to-end tests for the ``inv backup-status`` task: mocks the
+    two I/O seams (``_replica_list_snapshots`` and ``_dt.now``) and
+    pins the print/exit behavior.
+    """
+
+    @pytest.fixture
+    def _mock_now(self, monkeypatch):
+        """Freeze the clock at a well-known UTC timestamp so test
+        expectations don't depend on the runner's wall clock. The
+        task only reads ``datetime.now(tz=utc)`` once.
+        """
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+        frozen = _dt(2026, 4, 22, 10, 17, tzinfo=_tz.utc)
+
+        class _FrozenDateTime(_dt):
+            @classmethod
+            def now(cls, tz=None):
+                return frozen
+
+        monkeypatch.setattr(_tasks, "_dt", _FrozenDateTime)
+
+    def test_ok_prints_summary_and_does_not_exit(
+        self, monkeypatch, capsys, _mock_now
+    ):
+        """Happy path: fresh snapshot → one-line summary on stdout,
+        no sys.exit(1). The task's contract for cron is "exit code
+        0 means everything is fine"; a regression that exits 1 on OK
+        would false-alert the operator every hour.
+        """
+        monkeypatch.setattr(
+            _tasks, "_replica_list_snapshots",
+            lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
+        )
+        _tasks.backup_status.body(MagicMock())
+        out = capsys.readouterr().out
+        assert out.startswith("OK: ")
+        assert "dinary-2026-04-22T0317Z.db.zst" in out
+
+    def test_stale_exits_one(self, monkeypatch, _mock_now):
+        """Stale snapshot → ``SystemExit(1)``. The cron wrapper only
+        looks at the exit code to decide whether to fire
+        ``send_fail_email``.
+        """
+        monkeypatch.setattr(
+            _tasks, "_replica_list_snapshots",
+            lambda: [("dinary-2026-04-20T0317Z.db.zst", 200)],
+        )
+        with pytest.raises(SystemExit) as exc:
+            _tasks.backup_status.body(MagicMock())
+        assert exc.value.code == 1
+
+    def test_empty_exits_one(self, monkeypatch, _mock_now):
+        """No snapshots at all must also signal failure — an
+        always-empty backup bucket is the worst-case silent failure
+        we're protecting against.
+        """
+        monkeypatch.setattr(_tasks, "_replica_list_snapshots", lambda: [])
+        with pytest.raises(SystemExit) as exc:
+            _tasks.backup_status.body(MagicMock())
+        assert exc.value.code == 1
+
+    def test_json_output_emits_machine_readable(
+        self, monkeypatch, capsys, _mock_now
+    ):
+        """``--json-output`` emits a single JSON object on stdout so
+        other tooling (future dashboard) can consume the same verdict
+        without scraping the human line.
+        """
+        monkeypatch.setattr(
+            _tasks, "_replica_list_snapshots",
+            lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
+        )
+        _tasks.backup_status.body(MagicMock(), json_output=True)
+        out = capsys.readouterr().out
+        payload = json.loads(out)
+        assert payload["status"] == "ok"
+        assert payload["newest"] == "dinary-2026-04-22T0317Z.db.zst"
+        assert payload["age_hours"] == pytest.approx(7.0)
+        assert payload["threshold_hours"] == 26.0
+
+    def test_max_age_hours_override_flips_ok_to_stale(
+        self, monkeypatch, capsys, _mock_now
+    ):
+        """``--max-age-hours`` lowers the threshold so the operator
+        can verify a fresh backup has landed during an incident. A
+        7h-old backup with a 3h threshold must flip to ``stale``.
+        """
+        monkeypatch.setattr(
+            _tasks, "_replica_list_snapshots",
+            lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
+        )
+        with pytest.raises(SystemExit) as exc:
+            _tasks.backup_status.body(MagicMock(), max_age_hours=3)
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert out.startswith("STALE: ")
+
+
+@allure.epic("Deploy")
 @allure.feature("restore-from-yadisk: task")
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "restore-from-yadisk shells out to the zstd and sqlite3 CLI "
+        "binaries, which are not on the Windows CI runner path. The "
+        "task itself only targets Linux (VM 1) / macOS (operator "
+        "laptop), so skipping Windows here matches the deploy matrix."
+    ),
+)
 class TestRestoreFromYadiskTask:
     """End-to-end tests for the destructive path: download, decompress,
     validate, preserve-and-replace. Uses real SQLite + zstd on
