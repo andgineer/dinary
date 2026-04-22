@@ -13,7 +13,7 @@
 
 - **Phase 0 is superseded by Phase 1.** The DuckDB-backed architecture is now the active system. Phase 0 code (direct Google Sheets writes) remains in the codebase for rollback purposes but is no longer the active write path.
 - **Phase 0 was previously complete and in daily use.** The MVP was a FastAPI service that served a mobile-first PWA, wrote directly to Google Sheets, supported offline-safe expense entry, and was deployed to an always-on VM.
-- **dinary-server** (`/Users/andrei_sorokin2/projects/dinary-server`): production repo for the full Phase 0 stack: FastAPI backend, Google Sheets integration, QR parsing, PWA frontend in `static/`, Oracle/Tailscale deployment tasks, and unified Python + JavaScript test reporting via Allure.
+- **dinary** (`/Users/andrei_sorokin2/projects/dinary`): production repo for the full Phase 0 stack: FastAPI backend, Google Sheets integration, QR parsing, PWA frontend in `static/`, Oracle/Tailscale deployment tasks, and unified Python + JavaScript test reporting via Allure.
 - **dinary** (`/Users/andrei_sorokin2/projects/dinary`): still reserved for the future Rust desktop app. Not used in Phase 0.
 
 ### Implemented MVP summary
@@ -57,9 +57,9 @@ The PWA on iOS cannot execute code in the background (no Background App Refresh,
 
 ---
 
-## Step 1: Backend -- dinary-server
+## Step 1: Backend -- dinary
 
-Replace the placeholder CLI with a FastAPI service. All backend work happens in **this repo** (`dinary-server`).
+Replace the placeholder CLI with a FastAPI service. All backend work happens in **this repo** (`dinary`).
 
 **Why FastAPI rather than a serverless function:** FastAPI carries forward into Phase 1 (DuckDB), Phase 4 (AI agent API). A serverless backend (Apps Script, Cloudflare Workers) would be a dead end — it cannot evolve into DuckDB storage or serve the desktop AI agent.
 
@@ -147,16 +147,16 @@ Structured logging to stdout via Python `logging` (JSON format for production). 
 
 ---
 
-## Step 2: Frontend -- PWA in dinary-server repo
+## Step 2: Frontend -- PWA in dinary repo
 
-The PWA lives in this repo (`dinary-server`) since the backend serves it directly via FastAPI `StaticFiles`. No cross-repo deployment step, no build-time copying — the PWA source is right next to the backend code.
+The PWA lives in this repo (`dinary`) since the backend serves it directly via FastAPI `StaticFiles`. No cross-repo deployment step, no build-time copying — the PWA source is right next to the backend code.
 
 The `dinary` repo (`../dinary/`) remains for the future Rust desktop app and is not used in Phase 0.
 
-### 2.1 Repo structure (dinary-server additions)
+### 2.1 Repo structure (dinary additions)
 
 ```
-dinary-server/
+dinary/
   src/dinary/
     ...                        # Backend (see Step 1)
   static/                      # PWA source, served by FastAPI StaticFiles
@@ -242,7 +242,7 @@ Current approved structure:
 
 ## Repo Responsibility Summary
 
-- **dinary-server** (this repo): FastAPI backend, Google Sheets integration, QR page parser, API, PWA frontend (in `static/`), Docker for local dev, deployment config, dev docs in `.plans/`, user manual in `docs/`.
+- **dinary** (this repo): FastAPI backend, Google Sheets integration, QR page parser, API, PWA frontend (in `static/`), Docker for local dev, deployment config, dev docs in `.plans/`, user manual in `docs/`.
 - **dinary** (`../dinary/`): Not used in Phase 0. Reserved for the future Rust desktop app (daemon + GUI, Phase 4+).
 
 ---

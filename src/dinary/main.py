@@ -1,4 +1,4 @@
-"""FastAPI application for dinary-server."""
+"""FastAPI application for dinary."""
 
 import asyncio
 import contextlib
@@ -159,7 +159,7 @@ def create_app() -> FastAPI:
     _setup_logging()
 
     app = FastAPI(
-        title="dinary-server",
+        title="dinary",
         version=__version__,
         lifespan=_lifespan,
     )

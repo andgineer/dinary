@@ -46,7 +46,7 @@ mv ~/Downloads/your-project-*.json ~/.config/gspread/service_account.json
 3. Copy the spreadsheet ID from the URL: `https://docs.google.com/spreadsheets/d/<SPREADSHEET_ID>/edit`.
 4. Click **Share** → paste the service account email (found in the JSON key as `client_email`, looks like `dinary@project-id.iam.gserviceaccount.com`) → set role to **Editor** → **Send**.
 
-## 6. Configure dinary-server
+## 6. Configure dinary
 
 Runtime Google Sheets settings live in `.deploy/.env` (environment variables):
 

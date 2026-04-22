@@ -1,13 +1,13 @@
 # Cloudflare Tunnel & Access Setup
 
-Cloudflare Tunnel creates an encrypted connection from the machine running dinary-server to Cloudflare's network. This gives you HTTPS and a custom domain without opening firewall ports. Cloudflare Access adds email-based authentication (free for up to 50 users).
+Cloudflare Tunnel creates an encrypted connection from the machine running dinary to Cloudflare's network. This gives you HTTPS and a custom domain without opening firewall ports. Cloudflare Access adds email-based authentication (free for up to 50 users).
 
-All commands in steps 1-5 are executed **on the machine where dinary-server runs** (Oracle Cloud VM, your Mac/PC, etc.).
+All commands in steps 1-5 are executed **on the machine where dinary runs** (Oracle Cloud VM, your Mac/PC, etc.).
 
 ## Prerequisites
 
 - A domain managed by Cloudflare (free plan is fine). If you don't have one, you can buy a domain directly in Cloudflare (~$10/year for `.com`).
-- dinary-server running on `http://localhost:8000` on the target machine.
+- dinary running on `http://localhost:8000` on the target machine.
 
 ## 1. Install cloudflared on the server
 

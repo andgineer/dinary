@@ -1,5 +1,5 @@
-[![Build Status](https://github.com/andgineer/dinary-server/workflows/CI/badge.svg)](https://github.com/andgineer/dinary-server/actions)
-[![Coverage](https://raw.githubusercontent.com/andgineer/dinary-server/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary-server/blob/python-coverage-comment-action-data/htmlcov/index.html)
+[![Build Status](https://github.com/andgineer/dinary/workflows/CI/badge.svg)](https://github.com/andgineer/dinary/actions)
+[![Coverage](https://raw.githubusercontent.com/andgineer/dinary/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary/blob/python-coverage-comment-action-data/htmlcov/index.html)
 # Dinary (server)
 
 Server for [Dinary - your dinar diary](https://github.com/andgineer/dinary).
@@ -8,7 +8,7 @@ Track expenses, scan receipts, analyze spending with AI
 
 # Documentation
 
-[Dinary server](https://andgineer.github.io/dinary-server/)
+[Dinary server](https://andgineer.github.io/dinary/)
 
 # Local development
 
@@ -48,7 +48,7 @@ uv run inv dev                            # NOT --reset; keep the snapshot
 
 Credentials are read from `~/.config/gspread/service_account.json` (standard gspread location).
 Don't have a service account key yet?
-See [Google Sheets Setup](https://andgineer.github.io/dinary-server/google-sheets-setup/).
+See [Google Sheets Setup](https://andgineer.github.io/dinary/google-sheets-setup/).
 
 ### Run tests
 
@@ -83,12 +83,12 @@ inv status   # check service status
 inv logs     # tail server logs
 ```
 
-See [Oracle Cloud deployment guide](https://andgineer.github.io/dinary-server/deploy-oracle/) for details.
+See [Oracle Cloud deployment guide](https://andgineer.github.io/dinary/deploy-oracle/) for details.
 
 ## Reports
 
-* [Allure test report](https://andgineer.github.io/dinary-server/builds/tests/)
-* [Codecov](https://app.codecov.io/gh/andgineer/dinary-server/tree/main/src%2Fdinary)
-* [Coveralls](https://coveralls.io/github/andgineer/dinary-server)
+* [Allure test report](https://andgineer.github.io/dinary/builds/tests/)
+* [Codecov](https://app.codecov.io/gh/andgineer/dinary/tree/main/src%2Fdinary)
+* [Coveralls](https://coveralls.io/github/andgineer/dinary)
 
 > Created with cookiecutter using [template](https://github.com/andgineer/cookiecutter-python-package)

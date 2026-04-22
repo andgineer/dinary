@@ -14,7 +14,7 @@ source of deploy configuration across every server they run.
 
 - **`.env`** — required runtime config (`DINARY_DEPLOY_HOST`, optional
   `DINARY_SHEET_LOGGING_SPREADSHEET`, etc.). `inv deploy` reads this
-  locally and syncs it to the server as `/home/ubuntu/dinary-server/.deploy/.env`.
+  locally and syncs it to the server as `/home/ubuntu/dinary/.deploy/.env`.
 - **`import_sources.json`** — OPTIONAL. Only needed if you run
   `inv import-*` tasks to import historical expenses from your own
   Google Sheets. Non-import users can leave this file alone — it is

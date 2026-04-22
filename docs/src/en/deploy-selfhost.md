@@ -1,6 +1,6 @@
 # Deploy on Your Own Computer
 
-Run dinary-server on your Mac or PC and expose it to the internet via a tunnel. Free, always on while the computer is running, and aligns with the long-term architecture (desktop AI agent runs on the same machine).
+Run dinary on your Mac or PC and expose it to the internet via a tunnel. Free, always on while the computer is running, and aligns with the long-term architecture (desktop AI agent runs on the same machine).
 
 ## Pricing
 
@@ -15,7 +15,7 @@ Run dinary-server on your Mac or PC and expose it to the internet via a tunnel. 
 
 - A Google service account JSON key — see [Google Sheets Setup](google-sheets-setup.md).
 - A populated `.deploy/.env` with the variables you need (minimally `DINARY_GOOGLE_SHEETS_CREDENTIALS_PATH`; optionally `DINARY_SHEET_LOGGING_SPREADSHEET` for sheet logging).
-- dinary-server running locally (see [README](https://github.com/andgineer/dinary-server#local-development)).
+- dinary running locally (see [README](https://github.com/andgineer/dinary#local-development)).
 
 ## Option A: Tailscale Funnel
 
@@ -36,10 +36,10 @@ In the [Tailscale admin console](https://login.tailscale.com/admin/dns):
 1. Enable **MagicDNS** (if not already enabled).
 2. Enable **HTTPS** for your tailnet.
 
-### 3. Start dinary-server
+### 3. Start dinary
 
 ```bash
-cd dinary-server
+cd dinary
 mkdir -p .deploy
 cp .deploy.example/.env .deploy/.env
 # Edit .deploy/.env if needed (optional `DINARY_SHEET_LOGGING_SPREADSHEET`
@@ -62,7 +62,7 @@ Tailscale prints the public URL, e.g. `https://your-machine.your-tailnet.ts.net`
 
 ### 5. Keep running
 
-To keep dinary-server running when you close the terminal:
+To keep dinary running when you close the terminal:
 
 === "macOS (launchd)"
 

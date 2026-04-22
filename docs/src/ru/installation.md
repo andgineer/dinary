@@ -2,11 +2,11 @@
 
 ## Быстрый старт (Docker, локальная разработка)
 
-Простейший способ запустить dinary-server локально — через Docker:
+Простейший способ запустить dinary локально — через Docker:
 
 ```bash
-git clone https://github.com/andgineer/dinary-server.git
-cd dinary-server
+git clone https://github.com/andgineer/dinary.git
+cd dinary
 
 # Поместите ключ сервисного аккаунта Google туда, где его ждёт docker-compose.yml
 mkdir -p ~/.config/gspread
@@ -28,4 +28,4 @@ docker compose up -d
 
 ## Локальная разработка (без Docker)
 
-См. [README](https://github.com/andgineer/dinary-server#local-development) для настройки локальной разработки с `uv`.
+См. [README](https://github.com/andgineer/dinary#local-development) для настройки локальной разработки с `uv`.

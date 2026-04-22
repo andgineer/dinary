@@ -36,18 +36,18 @@ def get_allowed_doc_languages():
 ALLOWED_DOC_LANGUAGES = get_allowed_doc_languages()
 ALLOWED_VERSION_TYPES = ["release", "bug", "feature"]
 
-REPO_URL = "https://github.com/andgineer/dinary-server.git"
+REPO_URL = "https://github.com/andgineer/dinary.git"
 
 DINARY_SERVICE = """\
 [Unit]
-Description=dinary-server
+Description=dinary
 After=network.target
 
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/dinary-server
-EnvironmentFile=/home/ubuntu/dinary-server/.deploy/.env
+WorkingDirectory=/home/ubuntu/dinary
+EnvironmentFile=/home/ubuntu/dinary/.deploy/.env
 ExecStart=/home/ubuntu/.local/bin/uv run uvicorn dinary.main:app --host {host} --port 8000
 Restart=always
 RestartSec=5
@@ -77,9 +77,9 @@ VALID_TUNNELS = ("tailscale", "cloudflare", "none")
 LOCAL_ENV_PATH = ".deploy/.env"
 LOCAL_ENV_EXAMPLE_PATH = ".deploy.example/.env"
 LOCAL_IMPORT_SOURCES_PATH = ".deploy/import_sources.json"
-REMOTE_DEPLOY_DIR = "/home/ubuntu/dinary-server/.deploy"
+REMOTE_DEPLOY_DIR = "/home/ubuntu/dinary/.deploy"
 REMOTE_ENV_PATH = f"{REMOTE_DEPLOY_DIR}/.env"
-REMOTE_LEGACY_ENV_PATH = "/home/ubuntu/dinary-server/.env"
+REMOTE_LEGACY_ENV_PATH = "/home/ubuntu/dinary/.env"
 REMOTE_IMPORT_SOURCES_PATH = f"{REMOTE_DEPLOY_DIR}/import_sources.json"
 
 
@@ -536,11 +536,11 @@ def setup(c):
     _ssh(c, "curl -LsSf https://astral.sh/uv/install.sh | sh")
 
     print("=== Cloning repo ===")
-    _ssh(c, f"test -d ~/dinary-server || git clone {REPO_URL} ~/dinary-server")
-    _ssh(c, "cd ~/dinary-server && git pull && source ~/.local/bin/env && uv sync --no-dev")
+    _ssh(c, f"test -d ~/dinary || git clone {REPO_URL} ~/dinary")
+    _ssh(c, "cd ~/dinary && git pull && source ~/.local/bin/env && uv sync --no-dev")
 
     print("=== Ensuring data/ directory ===")
-    _ssh(c, "mkdir -p ~/dinary-server/data")
+    _ssh(c, "mkdir -p ~/dinary/data")
 
     print("=== Syncing .deploy/.env to server ===")
     _sync_remote_env(c)
@@ -589,7 +589,7 @@ def deploy(c, ref="", no_restart=False):
     Use --ref to deploy a specific version. Use --no-restart for the coordinated
     reset flow: it skips both the post-deploy systemctl restart and the
     auto-applied schema migration, because the very next step in that flow is
-    `inv stop` followed by `rm -f ~/dinary-server/data/*.duckdb` +
+    `inv stop` followed by `rm -f ~/dinary/data/*.duckdb` +
     `inv migrate` + `inv import-catalog --yes` which rebuilds the single DB
     anyway.
 
@@ -597,7 +597,7 @@ def deploy(c, ref="", no_restart=False):
     original inline-fk-drop-and-reset-db plan for the constraints):
 
     * ``_sync_remote_env`` writes to
-      ``~/dinary-server/.deploy/.env`` via ``sudo tee``, which does
+      ``~/dinary/.deploy/.env`` via ``sudo tee``, which does
       not ``mkdir -p`` — ``_sync_remote_env`` itself now runs
       ``mkdir -p`` first.
     * We re-render ``/etc/systemd/system/dinary.service`` every
@@ -607,7 +607,7 @@ def deploy(c, ref="", no_restart=False):
       top-level ``.env``) would survive the deploy and the
       post-deploy ``systemctl restart`` would start dinary with an
       unresolved ``EnvironmentFile``.
-    * Legacy ``~/dinary-server/.env`` is removed *after* the unit
+    * Legacy ``~/dinary/.env`` is removed *after* the unit
       has been rewritten so systemd is never left with a dangling
       ``EnvironmentFile`` pointer.
     """
@@ -617,23 +617,23 @@ def deploy(c, ref="", no_restart=False):
     os.makedirs(backup_dir, exist_ok=True)
     host = _host()
     tunnel = _tunnel()
-    c.run(f"scp -r {host}:~/dinary-server/data/ {backup_dir}/", warn=True)
+    c.run(f"scp -r {host}:~/dinary/data/ {backup_dir}/", warn=True)
 
-    print("=== Deploying dinary-server ===")
+    print("=== Deploying dinary ===")
     if ref:
         _ssh(
             c,
-            f"cd ~/dinary-server && git fetch --tags && git checkout {ref} && source ~/.local/bin/env && uv sync --no-dev",
+            f"cd ~/dinary && git fetch --tags && git checkout {ref} && source ~/.local/bin/env && uv sync --no-dev",
         )
         print(
             f"=== WARNING: Remote is in detached HEAD at '{ref}'. "
             "Future `inv deploy` without --ref will `git pull` on whatever branch is checked out. ==="
         )
     else:
-        _ssh(c, "cd ~/dinary-server && git pull && source ~/.local/bin/env && uv sync --no-dev")
+        _ssh(c, "cd ~/dinary && git pull && source ~/.local/bin/env && uv sync --no-dev")
 
     print("=== Ensuring data/ directory ===")
-    _ssh(c, "mkdir -p ~/dinary-server/data")
+    _ssh(c, "mkdir -p ~/dinary/data")
 
     print("=== Syncing .deploy/.env to server ===")
     _sync_remote_env(c)
@@ -645,14 +645,14 @@ def deploy(c, ref="", no_restart=False):
     print(f"=== Re-rendering dinary systemd unit (bind {bind_host}) ===")
     _render_service(c, "dinary", DINARY_SERVICE.format(host=bind_host))
 
-    print("=== Cleaning up legacy ~/dinary-server/.env (if present) ===")
+    print("=== Cleaning up legacy ~/dinary/.env (if present) ===")
     _ssh(c, f"rm -f {REMOTE_LEGACY_ENV_PATH}")
 
     if not no_restart:
         print("=== Applying schema migrations ===")
         _ssh(
             c,
-            "cd ~/dinary-server && source ~/.local/bin/env && "
+            "cd ~/dinary && source ~/.local/bin/env && "
             "uv run python -c 'from dinary.services import duckdb_repo; duckdb_repo.init_db(); "
             'print("Migrated data/dinary.duckdb")\'',
         )
@@ -660,14 +660,14 @@ def deploy(c, ref="", no_restart=False):
         bootstrap_catalog(c)
 
     print("=== Building _static/ with version ===")
-    _ssh(c, "cd ~/dinary-server && source ~/.local/bin/env && uv run inv build-static")
+    _ssh(c, "cd ~/dinary && source ~/.local/bin/env && uv run inv build-static")
 
     if no_restart:
         print(
             "=== --no-restart set: SKIPPING systemctl restart and schema migration. ===\n"
             "=== Next steps in the coordinated reset flow:   ===\n"
             "===   inv stop                                  ===\n"
-            "===   ssh $HOST 'rm -f ~/dinary-server/data/*.duckdb'  ===\n"
+            "===   ssh $HOST 'rm -f ~/dinary/data/*.duckdb'  ===\n"
             "===   inv migrate                               ===\n"
             "===   inv import-catalog --yes                  ===\n"
             "===   inv import-budget-all --yes               ===\n"
@@ -738,7 +738,7 @@ def bootstrap_catalog(c):
     """
     _ssh(
         c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.services.seed_config import bootstrap_catalog; "
         "import json; print(json.dumps(bootstrap_catalog()))'",
     )
@@ -755,7 +755,7 @@ def import_config(c):
     """
     _ssh(
         c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.seed import seed_from_sheet; "
         "import json; print(json.dumps(seed_from_sheet()))'",
     )
@@ -766,7 +766,7 @@ def migrate(c):
     """Apply pending migrations to ``data/dinary.duckdb`` on the server."""
     _ssh(
         c,
-        "cd ~/dinary-server && source ~/.local/bin/env && "
+        "cd ~/dinary && source ~/.local/bin/env && "
         "uv run python -c 'from dinary.services import duckdb_repo; "
         'duckdb_repo.init_db(); print("Migrated data/dinary.duckdb")\'',
     )
@@ -847,7 +847,7 @@ def import_catalog(c, yes=False):
         return
     _ssh(
         c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.seed import rebuild_config_from_sheets; "
         "import json; print(json.dumps(rebuild_config_from_sheets()))'",
     )
@@ -872,7 +872,7 @@ def import_budget(c, year="", yes=False):
         return
     _ssh(
         c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.expense_import import import_year; "
         f"import json; print(json.dumps(import_year({year_int})))'",
     )
@@ -898,7 +898,7 @@ def import_budget_all(c, yes=False):
         return
     _ssh(
         c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.config import read_import_sources; "
         "from dinary.imports.expense_import import import_year; "
         "import json; "
@@ -928,7 +928,7 @@ def verify_bootstrap_import(c, year="", json=False):  # noqa: A002
     # status and renderer status cannot drift out of sync.
     result = _ssh_json(
         c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.verify_equivalence import verify_bootstrap_import; "
         f"import json; print(json.dumps(verify_bootstrap_import({year_int}), "
         "indent=2, ensure_ascii=False))'",
@@ -952,7 +952,7 @@ def verify_bootstrap_import_all(c, json=False):  # noqa: A002
     """
     results = _ssh_json(
         c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.config import read_import_sources; "
         "from dinary.imports.verify_equivalence import verify_bootstrap_import; "
         "import json; "
@@ -979,7 +979,7 @@ def import_income(c, year="", yes=False):
         return
     _ssh(
         c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.income_import import import_year_income; "
         f"import json; print(json.dumps(import_year_income({year_int})))'",
     )
@@ -996,7 +996,7 @@ def import_income_all(c, yes=False):
         return
     _ssh(
         c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.config import read_import_sources; "
         "from dinary.imports.income_import import import_year_income; "
         "import json; "
@@ -1024,7 +1024,7 @@ def verify_income_equivalence(c, year="", json=False):  # noqa: A002
     year_int = _require_year(year)
     result = _ssh_json(
         c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.verify_income import verify_income_equivalence; "
         f"import json; print(json.dumps(verify_income_equivalence({year_int}), "
         "indent=2, ensure_ascii=False))'",
@@ -1048,7 +1048,7 @@ def verify_income_equivalence_all(c, json=False):  # noqa: A002
     """
     results = _ssh_json(
         c,
-        "cd ~/dinary-server && source ~/.local/bin/env && uv run python -c '"
+        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.config import read_import_sources; "
         "from dinary.imports.verify_income import verify_income_equivalence; "
         "import json; "
@@ -1094,7 +1094,7 @@ def backup(c):
     backup_dir = dest / ts
     backup_dir.mkdir(parents=True, exist_ok=True)
     host = _host()
-    c.run(f"scp -r {host}:~/dinary-server/data/ {backup_dir}/")
+    c.run(f"scp -r {host}:~/dinary/data/ {backup_dir}/")
     print(f"Backed up to {backup_dir}/")
 
 
@@ -1184,7 +1184,7 @@ def import_report_2d_3d(
 
 #: Remote path of the live DuckDB file the server process keeps
 #: exclusively locked (single-writer DuckDB 1.x).
-_REMOTE_DB_PATH = "/home/ubuntu/dinary-server/data/dinary.duckdb"
+_REMOTE_DB_PATH = "/home/ubuntu/dinary/data/dinary.duckdb"
 
 
 def _remote_snapshot_cmd(module_path: str, flags: list[str]) -> str:
@@ -1231,7 +1231,7 @@ def _remote_snapshot_cmd(module_path: str, flags: list[str]) -> str:
         'trap "rm -f ${SNAP} ${SNAP}.wal" EXIT; '
         f"cp {_REMOTE_DB_PATH} ${{SNAP}}; "
         f"cp {_REMOTE_DB_PATH}.wal ${{SNAP}}.wal 2>/dev/null || true; "
-        "cd ~/dinary-server && source ~/.local/bin/env && "
+        "cd ~/dinary && source ~/.local/bin/env && "
         f"DINARY_DATA_PATH=${{SNAP}} {report}"
     )
 

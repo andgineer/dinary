@@ -44,7 +44,7 @@ materialized caches are DuckDB-local and disposable.
 
 ## 3. Repository placement: monorepo (decided)
 
-Analytics code lives in the same `dinary-server` repository as the
+Analytics code lives in the same `dinary` repository as the
 server, for these reasons (unchanged from the design discussion that
 produced this plan):
 

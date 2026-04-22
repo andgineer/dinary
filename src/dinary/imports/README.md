@@ -2,7 +2,7 @@
 
 > **Most operators don't need anything in this directory.**
 >
-> Runtime dinary-server — the FastAPI service, the PWA, Sheet logging,
+> Runtime dinary — the FastAPI service, the PWA, Sheet logging,
 > the DuckDB ledger — works perfectly without ever reading any file
 > documented here. This directory covers the one-shot **bootstrap
 > import** that migrates the author's legacy Google Sheets budgets

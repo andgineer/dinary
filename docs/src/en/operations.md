@@ -1,6 +1,6 @@
 # Database Migrations and Backups
 
-This page describes how `dinary-server` manages its DuckDB files and how to back them up safely.
+This page describes how `dinary` manages its DuckDB files and how to back them up safely.
 
 ## Database files
 

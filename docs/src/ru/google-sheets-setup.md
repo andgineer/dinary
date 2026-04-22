@@ -46,7 +46,7 @@ mv ~/Downloads/your-project-*.json ~/.config/gspread/service_account.json
 3. Скопируйте ID таблицы из URL: `https://docs.google.com/spreadsheets/d/<SPREADSHEET_ID>/edit`.
 4. Нажмите **Поделиться** → вставьте email сервисного аккаунта (из JSON-ключа, поле `client_email`, вида `dinary@project-id.iam.gserviceaccount.com`) → роль **Редактор** → **Отправить**.
 
-## 6. Настройка dinary-server
+## 6. Настройка dinary
 
 Runtime-настройки Google Sheets живут в `.deploy/.env` (переменные окружения):
 

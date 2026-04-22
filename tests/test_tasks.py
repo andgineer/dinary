@@ -79,14 +79,14 @@ class TestRemoteSnapshotCmd:
 
     def test_copies_primary_db_to_tmp_snapshot(self):
         cmd = _remote_snapshot_cmd("dinary.reports.income", [])
-        assert "cp /home/ubuntu/dinary-server/data/dinary.duckdb ${SNAP}" in cmd
+        assert "cp /home/ubuntu/dinary/data/dinary.duckdb ${SNAP}" in cmd
 
     def test_copies_wal_sidecar_when_present(self):
         """The WAL sidecar may not exist (fresh install, post-checkpoint),
         so the copy must be tolerant of a missing file — otherwise
         ``set -e`` would abort on every clean install."""
         cmd = _remote_snapshot_cmd("dinary.reports.income", [])
-        assert "cp /home/ubuntu/dinary-server/data/dinary.duckdb.wal" in cmd
+        assert "cp /home/ubuntu/dinary/data/dinary.duckdb.wal" in cmd
         assert "2>/dev/null || true" in cmd
 
     def test_points_data_path_at_snapshot_not_primary_db(self):
@@ -94,7 +94,7 @@ class TestRemoteSnapshotCmd:
         assert "DINARY_DATA_PATH=${SNAP}" in cmd
         # Belt-and-suspenders: the emitted command must NEVER point the
         # report module at the live, locked primary file.
-        assert "DINARY_DATA_PATH=/home/ubuntu/dinary-server/data/dinary.duckdb " not in cmd
+        assert "DINARY_DATA_PATH=/home/ubuntu/dinary/data/dinary.duckdb " not in cmd
 
     def test_passes_flags_through_to_module(self):
         cmd = _remote_snapshot_cmd(
@@ -143,7 +143,7 @@ class TestRemoteSnapshotCmd:
         # trap must come BEFORE the first cp so an interrupt between
         # the copy and the trap-registration cannot leak.
         trap_pos = cmd.index("trap")
-        first_cp_pos = cmd.index("cp /home/ubuntu/dinary-server/data/dinary.duckdb ${SNAP}")
+        first_cp_pos = cmd.index("cp /home/ubuntu/dinary/data/dinary.duckdb ${SNAP}")
         assert trap_pos < first_cp_pos
 
     def test_uses_set_e_so_cp_failure_is_visible(self):
@@ -483,11 +483,11 @@ class TestImportReport2d3dTransport:
         # run the report against the snapshot, and set up the trap
         # before the copy.
         assert "SNAP=/tmp/dinary-report-snapshot-$$" in cmd
-        assert "cp /home/ubuntu/dinary-server/data/dinary.duckdb ${SNAP}" in cmd
+        assert "cp /home/ubuntu/dinary/data/dinary.duckdb ${SNAP}" in cmd
         assert "DINARY_DATA_PATH=${SNAP}" in cmd
         assert 'trap "rm -f ${SNAP} ${SNAP}.wal" EXIT' in cmd
         assert cmd.index("trap") < cmd.index(
-            "cp /home/ubuntu/dinary-server/data/dinary.duckdb ${SNAP}"
+            "cp /home/ubuntu/dinary/data/dinary.duckdb ${SNAP}"
         )
 
     def test_remote_csv_renders_locally(self, _spy_transports, capsys):

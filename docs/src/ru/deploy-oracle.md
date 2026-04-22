@@ -1,6 +1,6 @@
 # Развёртывание на Oracle Cloud Free Tier
 
-Oracle Cloud Always Free предоставляет бессрочные VM — достаточно для работы dinary-server бесплатно.
+Oracle Cloud Always Free предоставляет бессрочные VM — достаточно для работы dinary бесплатно.
 
 ## Стоимость
 
@@ -18,7 +18,7 @@ Oracle Cloud Always Free предоставляет бессрочные VM — 
     **ARM Ampere A1** (`VM.Standard.A1.Flex`, до 24 ГБ RAM) — мощнее, но часто недоступен ("Out of host capacity"). Если удалось создать — отлично, если нет — берите AMD Micro.
 
 !!! warning
-    Oracle может отключить неактивные Always Free инстансы. Работающий сервер dinary поддерживает инстанс активным. Если инстанс отключён, VM можно пересоздать, но runtime source of truth лежит в `data/*.duckdb` на диске, а не в Google Sheets. Перед деструктивными операциями делайте backup `~/dinary-server/data/` и не считайте sheet logging таблицу полноценным источником восстановления.
+    Oracle может отключить неактивные Always Free инстансы. Работающий сервер dinary поддерживает инстанс активным. Если инстанс отключён, VM можно пересоздать, но runtime source of truth лежит в `data/*.duckdb` на диске, а не в Google Sheets. Перед деструктивными операциями делайте backup `~/dinary/data/` и не считайте sheet logging таблицу полноценным источником восстановления.
 
 ## Требования
 
@@ -97,7 +97,7 @@ DINARY_DEPLOY_HOST=ubuntu@<PUBLIC_IP>
 ```
 
 `inv setup` синхронизирует локальные `.deploy/.env` на VM в
-`/home/ubuntu/dinary-server/.deploy/` и сидит базовую таксономию командой
+`/home/ubuntu/dinary/.deploy/` и сидит базовую таксономию командой
 `inv bootstrap-catalog`.
 
 Проверьте SSH-доступ:
@@ -108,7 +108,7 @@ ssh ubuntu@<PUBLIC_IP>
 
 ## 5. Настройка сервера
 
-На вашем ноутбуке, в репозитории dinary-server:
+На вашем ноутбуке, в репозитории dinary:
 
 ```bash
 inv setup
@@ -159,5 +159,5 @@ ssh ubuntu@<PUBLIC_IP> 'sudo iptables -I INPUT -p tcp --dport 8000 -j ACCEPT && 
 |---------|-----------|
 | `inv deploy` | Обновить код, синхронизировать зависимости, перезапустить сервис |
 | `inv status` | Показать статус сервисов dinary и туннеля |
-| `inv logs` | Показать логи dinary-server в реальном времени |
+| `inv logs` | Показать логи dinary в реальном времени |
 | `inv setup` | Полная настройка (безопасно запускать повторно) |

@@ -65,7 +65,7 @@ the server.
 
 When running from the laptop against a remote VM, `inv setup` and
 `inv deploy` rsync `.deploy/.env` and `.deploy/import_sources.json`
-to `/home/ubuntu/dinary-server/.deploy/` on the host. Bootstrap
+to `/home/ubuntu/dinary/.deploy/` on the host. Bootstrap
 import tasks then read the file from the server. No separate sync
 step is needed — just run `inv setup` once or `inv deploy` on every
 config change.

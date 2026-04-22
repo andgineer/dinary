@@ -455,7 +455,7 @@ Concrete steps:
 
   ```yaml
   dbs:
-    - path: /home/ubuntu/dinary-server/data/dinary.db
+    - path: /home/ubuntu/dinary/data/dinary.db
       replicas:
         - type: sftp
           host: dinary-replica:22
@@ -655,7 +655,7 @@ VM 2 already covers the durability side. Script:
 ```bash
 #!/bin/bash
 set -euo pipefail
-SRC=~/projects/dinary-server/analytics/dinary.db
+SRC=~/projects/dinary/analytics/dinary.db
 DEST_DIR=~/Backups/dinary   # inside OneDrive/GDrive/YDisk sync folder
 DATE=$(date +%F)
 mkdir -p "$DEST_DIR"

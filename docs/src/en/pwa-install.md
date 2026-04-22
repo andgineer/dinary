@@ -5,7 +5,7 @@ installed directly from the website. No App Store or Google Play needed.
 
 ## 1. Find your server URL
 
-Your URL depends on how you deployed dinary-server:
+Your URL depends on how you deployed dinary:
 
 - **Tailscale Funnel**: `https://<your-machine>.<tailnet>.ts.net` (shown when you ran `tailscale funnel 8000`)
 - **Cloudflare Tunnel**: `https://dinary.yourdomain.com` (the domain you configured)

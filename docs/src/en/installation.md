@@ -2,11 +2,11 @@
 
 ## Quick start (Docker, local development)
 
-The simplest way to run dinary-server locally is with Docker:
+The simplest way to run dinary locally is with Docker:
 
 ```bash
-git clone https://github.com/andgineer/dinary-server.git
-cd dinary-server
+git clone https://github.com/andgineer/dinary.git
+cd dinary
 
 # Place your Google service account key where docker-compose.yml expects it
 mkdir -p ~/.config/gspread
@@ -28,4 +28,4 @@ docker compose up -d
 
 ## Local development (without Docker)
 
-See the [README](https://github.com/andgineer/dinary-server#local-development) for local development setup with `uv`.
+See the [README](https://github.com/andgineer/dinary#local-development) for local development setup with `uv`.

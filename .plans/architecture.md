@@ -15,12 +15,12 @@ prioritizing clean data model and scriptability over UI polish.
 
 | Repository         | Language | Role                                                                                                                                                                       |
 |--------------------|---|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **dinary-server**  | Python (FastAPI + DuckDB) | Backend — REST API, data storage, rule-based classification, dashboards, Google Sheets sync. Also: PWA mobile frontend (in `static/`), user manuals (MkDocs in `docs/`), deployment configs. |
-| **dinary** | Rust | Desktop app (macOS/Windows): daemon for background AI tasks via `claude -p`, and GUI for analysis parameters, interactive results view, and quick data entry (text/PDF receipt import). Communicates with dinary-server API. |
+| **dinary**  | Python (FastAPI + DuckDB) | Backend — REST API, data storage, rule-based classification, dashboards, Google Sheets sync. Also: PWA mobile frontend (in `static/`), user manuals (MkDocs in `docs/`), deployment configs. |
+| **dinary** | Rust | Desktop app (macOS/Windows): daemon for background AI tasks via `claude -p`, and GUI for analysis parameters, interactive results view, and quick data entry (text/PDF receipt import). Communicates with dinary API. |
 
 #### Documentation convention
 
-- **`docs/`** in dinary-server is a **MkDocs site** with bilingual content (`docs/src/en/`, `docs/src/ru/`). All user-facing manuals (PWA install, deployment guides, Cloudflare setup) go here. Do not place standalone markdown files directly in `docs/` — they will break the MkDocs build.
+- **`docs/`** in dinary is a **MkDocs site** with bilingual content (`docs/src/en/`, `docs/src/ru/`). All user-facing manuals (PWA install, deployment guides, Cloudflare setup) go here. Do not place standalone markdown files directly in `docs/` — they will break the MkDocs build.
 - **`.plans/`** is for development docs (architecture, phase plans, evaluation notes). These are not published to the MkDocs site.
 
 ---
@@ -379,7 +379,7 @@ Optional sheet logging keeps column B RSD-denominated regardless of the accounti
 earlier `DINARY_ADMIN_API_TOKEN` header-check was removed along with
 the single-file DB refactor because a shared static token was both
 annoying (PWA users had to type it on every add-tag modal) and
-weaker than the network layer we already rely on (`dinary-server is
+weaker than the network layer we already rely on (`dinary is
 only reachable through Cloudflare Access or a Tailscale tailnet
 — see "Deployment notes"). A proper app-level auth layer (session
 cookies or OIDC) is listed under the open items and will replace
@@ -544,11 +544,11 @@ Nice-to-have:
 
 **Tier 1: Fuzzy ML based classification like in other personal expense tracking apps.
 
-**Tier 2: AI batch classification (deferred, economical).** Unclassified items (`classification_status = 'pending'`) accumulate on dinary-server throughout the day.
+**Tier 2: AI batch classification (deferred, economical).** Unclassified items (`classification_status = 'pending'`) accumulate on dinary throughout the day.
 When the user runs dinary (manually or via scheduler), it fetches pending items from the server API and classifies them using `claude -p`:
 
 ```bash
-# dinary fetches pending items from dinary-server
+# dinary fetches pending items from dinary
 dinary classify
 
 # Under the hood:
@@ -558,7 +558,7 @@ dinary classify
 ```
 
 This runs on the user's laptop under the existing Claude subscription via `claude -p` (Claude Code CLI, non-interactive mode). No API costs.
-Typical batch: 20-50 items, easily fits in a single prompt. dinary-server applies the results to DuckDB.
+Typical batch: 20-50 items, easily fits in a single prompt. dinary applies the results to DuckDB.
 
 **Tier 3: Manual confirmation.** AI suggestions are stored as `ai_category_suggestion` and `classification_status = 'ai_suggested'`. The user reviews and confirms (or corrects) via the dashboard or a CLI script. Confirmed classifications can optionally generate new rules in `category_rules` (with `created_by = 'ai'`), so similar items are auto-classified in the future.
 
@@ -615,11 +615,11 @@ The dashboard is a view layer, not a data entry point.
 **Trigger:** On demand, when the user runs dinary. Not automated — the user decides when to run it.
 
 **Flow:**
-1. dinary fetches aggregated data from dinary-server:
+1. dinary fetches aggregated data from dinary:
    ```bash
    dinary analyze --period 2026-Q1
    ```
-2. Under the hood: fetches data from server API, feeds to `claude -p`, pushes the report back to dinary-server.
+2. Under the hood: fetches data from server API, feeds to `claude -p`, pushes the report back to dinary.
 3. The report is stored on the server and optionally displayed in the dashboard.
 
 **Cost:** Zero beyond the existing Claude subscription. A quarterly analysis is ~2-3K tokens of input data + prompt — trivial.
@@ -767,7 +767,7 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 
 ```
 ┌──────────────┐         ┌─────────────────────────────────────┐
-│  dinary-app  │────────▶│  dinary-server (VPS)                │
+│  dinary-app  │────────▶│  dinary (VPS)                │
 │  (mobile)    │         │                                     │
 │              │◀────────│  FastAPI + DuckDB                   │
 └──────────────┘         │  - receives expenses from mobile    │
@@ -800,7 +800,7 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
                          └─────────────────────────────────────┘
 ```
 
-### dinary-server (VPS)
+### dinary (VPS)
 
 **What it does:**
 - Accepts expenses from dinary-app (REST API).
@@ -845,9 +845,9 @@ A desktop application with two components: a **daemon** for background AI proces
 
 **Daemon (background service):**
 - Runs continuously (or on schedule) when the user is at the computer.
-- Fetches pending tasks from the dinary-server API.
+- Fetches pending tasks from the dinary API.
 - Processes them using `claude -p` (Claude Code CLI, non-interactive mode) under the user's existing subscription — no API token costs.
-- Pushes results back to the dinary-server API.
+- Pushes results back to the dinary API.
 - Handles all heavy/batch AI work that can be deferred.
 
 **GUI (interactive desktop app):**
@@ -868,7 +868,7 @@ The desktop app uses two distinct AI channels depending on latency requirements:
 
 1. **Batch classification** (daily or on demand):
    ```bash
-   # Fetch unclassified items from dinary-server
+   # Fetch unclassified items from dinary
    dinary classify
 
    # Under the hood:
@@ -887,23 +887,23 @@ The desktop app uses two distinct AI channels depending on latency requirements:
    # 3. POST https://server/api/tasks/analysis-report ← report
    ```
 
-3. **Future AI tasks** — any new AI-intensive operation follows the same pattern: dinary-server exposes a task endpoint, dinary fetches, processes with `claude -p`, pushes results back.
+3. **Future AI tasks** — any new AI-intensive operation follows the same pattern: dinary exposes a task endpoint, dinary fetches, processes with `claude -p`, pushes results back.
 
 **Built in Rust** — targeting macOS and Windows. Packaging model (single binary vs. app bundle, installer type, tray integration,
 daemon lifecycle management) depends on the GUI framework choice and will be determined during the Phase 4 GUI framework POC.
 
 ### Backup Strategy
 
-- DuckDB files on the VPS (dinary-server) are the primary copy.
+- DuckDB files on the VPS (dinary) are the primary copy.
 - Periodic backup to user's laptop: `rsync` or `scp` of DuckDB files.
 - Periodic Parquet export for maximum portability: `COPY expenses TO 'expenses_2026.parquet' (FORMAT parquet);`
 - Git for the codebase (scripts, config). Data files excluded from git, backed up separately.
 
 ### Security
 
-- dinary-server API protected by Cloudflare Access (if using Cloudflare Tunnel) or by tailnet membership (if using Tailscale Serve). Single user, no need for an in-app auth system.
+- dinary API protected by Cloudflare Access (if using Cloudflare Tunnel) or by tailnet membership (if using Tailscale Serve). Single user, no need for an in-app auth system.
 - Cloudflare Tunnel or Tailscale Serve provides HTTPS without exposing the application port directly to the internet.
-- DuckDB files are not accessible from the internet — only through the dinary-server API.
+- DuckDB files are not accessible from the internet — only through the dinary API.
 
 ---
 
@@ -934,7 +934,7 @@ No new database, no line-item parsing — just a mobile frontend that writes dir
 
 **Deliverables**
 
-- PWA frontend (in `static/`), backend, manuals, deployment scripts — all in the dinary-server repo
+- PWA frontend (in `static/`), backend, manuals, deployment scripts — all in the dinary repo
 - The `dinary` repo is not used in Phase 0 (reserved for the Rust desktop app, Phase 4+)
 
 **Operational conventions introduced by the completed MVP:**
@@ -953,7 +953,7 @@ No new database, no line-item parsing — just a mobile frontend that writes dir
 - The user has used the system daily for 2+ weeks and no longer opens the spreadsheet to enter data manually.
 - QR scanning has been used successfully on real receipts (camera → URL extraction → total + date pre-fill) and is confirmed to work reliably with the chosen frontend tool.
 
-### Phase 1: 3D ledger, idempotent ingestion, export-only Sheets (dinary-server) ✓ IMPLEMENTED (single-file reset, 2026-04)
+### Phase 1: 3D ledger, idempotent ingestion, export-only Sheets (dinary) ✓ IMPLEMENTED (single-file reset, 2026-04)
 
 Detailed plan: [phase1.md](phase1.md) (historical; frozen before the single-file reset — treat as context, not current documentation).
 
@@ -997,22 +997,22 @@ PWA beyond the manual-entry-first MVP".
   - Decide on the framework.
 
 - **4b: Build dinary daemon + GUI.**
-  - Daemon: background service that fetches pending tasks from dinary-server, processes with `claude -p`, pushes results back.
-  - Implement the task queue API on dinary-server (`/api/tasks/*`).
+  - Daemon: background service that fetches pending tasks from dinary, processes with `claude -p`, pushes results back.
+  - Implement the task queue API on dinary (`/api/tasks/*`).
   - Build the batch classification flow: fetch pending → `claude -p` → push results.
   - GUI: interactive AI API calls for responsive receipt extraction (paste text/PDF → AI API → extract amount, date, items → store via server API).
   - After AI classification of receipt line items is available, change the PWA receipt flow so scanning a receipt submits it immediately without waiting for a manual `Save` press. The scan should create the receipt/import job right away; later user interaction is only for review/correction, not for the initial submission.
   - Implement the review/confirm flow (via GUI or CLI).
   - Wire up rule learning (confirmed classifications → new rules in `category_rules`).
 
-### Phase 5: Dashboards (dinary-server)
+### Phase 5: Dashboards (dinary)
 - Operational dashboard (static HTML, current month snapshot).
 - Analytical dashboard (interactive SPA with time range selector and breakdowns).
 
-### Phase 6: AI Analysis & Google Sheets Sync (dinary + dinary-server)
-- Add analysis export endpoint to dinary-server API.
+### Phase 6: AI Analysis & Google Sheets Sync (dinary + dinary)
+- Add analysis export endpoint to dinary API.
 - Build the dinary analysis flow: fetch aggregates → `claude -p` → push report.
-- Build the Google Sheets sync script on dinary-server (if not already done in Phase 1).
+- Build the Google Sheets sync script on dinary (if not already done in Phase 1).
 - Set up scheduled runs on the VPS (sync, dashboard regeneration).
 
 Each phase is independently useful.
