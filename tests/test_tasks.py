@@ -698,6 +698,126 @@ class TestSetupSwapScript:
 
 
 @allure.epic("Deploy")
+@allure.feature("ssh-tailscale-only: rebind sshd to tailnet ingress")
+class TestSshTailscaleOnlyScript:
+    """``inv ssh-tailscale-only`` closes the public TCP/22 attack
+    surface by rebinding sshd to the Tailscale IPv4 + loopback. A
+    regression here is a lockout risk (operator cannot reach the VM
+    except via Oracle Cloud's Serial Console), so these tests pin the
+    script's observable contract: the pre-flight checks, the atomic
+    sshd -t gate with rollback on failure, and the idempotent drop-in
+    file layout.
+    """
+
+    def test_refuses_when_tailscale_is_not_installed(self):
+        """Binding sshd to a non-existent tailscaled IP would silently
+        kill inbound SSH entirely. Gate the flip on ``command -v
+        tailscale`` before touching any config file.
+        """
+        script = _tasks._build_ssh_tailscale_only_script()
+        assert "command -v tailscale" in script
+        assert "tailscale is not installed" in script
+
+    def test_refuses_when_tailscaled_has_no_ipv4(self):
+        """``tailscale`` binary being present is not enough — the
+        daemon may still be logged out or starting. Require a
+        non-empty ``tailscale ip -4`` output before the flip.
+        """
+        script = _tasks._build_ssh_tailscale_only_script()
+        assert 'TS_IP="$(tailscale ip -4 2>/dev/null | head -1)"' in script
+        assert 'if [ -z "$TS_IP" ]; then' in script
+        assert "tailscaled is not up" in script
+
+    def test_keeps_loopback_listen_address(self):
+        """Loopback must stay bound so operators who reach the box via
+        the Oracle Cloud Serial Console can still ``ssh 127.0.0.1``
+        locally to trigger ``systemctl reload`` after rolling back a
+        bad config.
+        """
+        script = _tasks._build_ssh_tailscale_only_script()
+        assert "ListenAddress 127.0.0.1:22" in script
+
+    def test_binds_to_live_tailscale_ip_not_a_hardcoded_value(self):
+        """The drop-in file must interpolate the *current* tailscale
+        IPv4, not a stale value baked into the script. This guards
+        against a subtle regression where a refactor replaces
+        ``${TS_IP}`` with an IPv4 literal and the task stops
+        self-healing after a Tailscale IP rotation.
+        """
+        script = _tasks._build_ssh_tailscale_only_script()
+        assert "ListenAddress ${TS_IP}:22" in script
+
+    def test_inner_heredoc_is_unquoted_so_tsip_expands(self):
+        """The inner ``cat >"$DROPIN" <<EOC`` delimiter is unquoted on
+        purpose: bash must expand ``${TS_IP}`` when writing the file,
+        otherwise the literal string ``${TS_IP}`` lands in
+        ``sshd_config.d/`` and ``sshd -t`` rejects it. Complementary
+        to the outer heredoc being quoted (checked below).
+        """
+        script = _tasks._build_ssh_tailscale_only_script()
+        assert 'cat >"$DROPIN" <<EOC\n' in script
+        assert "<<'EOC'" not in script
+
+    def test_sshd_t_validates_before_reload(self):
+        """``sshd -t`` must run *before* ``systemctl reload ssh``.
+        Reloading on an invalid config would leave the service
+        refusing new connections, and — combined with the public IP
+        being closed — trap the operator outside the box.
+        """
+        script = _tasks._build_ssh_tailscale_only_script()
+        t_idx = script.index("sshd -t")
+        reload_idx = script.index("systemctl reload ssh")
+        assert t_idx < reload_idx
+
+    def test_rejected_config_is_rolled_back(self):
+        """If ``sshd -t`` fails, the drop-in must be removed — a
+        persistent broken config would survive reboot and kill sshd
+        on next service start. Without rollback the only recovery
+        path is the Oracle Cloud Serial Console.
+        """
+        script = _tasks._build_ssh_tailscale_only_script()
+        assert 'rm -f "$DROPIN"' in script
+        assert "sshd -t rejected the new config" in script
+
+    def test_drop_in_path_and_idempotent_overwrite(self):
+        """The canonical Ubuntu drop-in directory is honored, and the
+        file is rewritten (``cat >``) on every run rather than
+        appended — so a Tailscale IP rotation is absorbed by a simple
+        replay.
+        """
+        script = _tasks._build_ssh_tailscale_only_script()
+        assert "DROPIN=/etc/ssh/sshd_config.d/10-tailscale-only.conf" in script
+        assert 'cat >"$DROPIN" <<EOC' in script
+        assert 'cat >>"$DROPIN"' not in script
+
+    def test_elevation_wraps_the_whole_block(self):
+        """Writing into ``/etc/ssh/sshd_config.d/``, running
+        ``sshd -t``, and ``systemctl reload ssh`` all require root;
+        the outer ``sudo bash <<HEREDOC`` is the single elevation
+        boundary that keeps these atomic (no partial apply if the
+        operator's sudo timestamp expires mid-script).
+        """
+        script = _tasks._build_ssh_tailscale_only_script()
+        assert script.startswith("sudo bash <<'DINARY_SSH_TS_EOF'\n")
+        assert script.rstrip().endswith("DINARY_SSH_TS_EOF")
+
+    def test_outer_heredoc_is_quoted_so_remote_vars_dont_expand_locally(self):
+        """``<<'DINARY_SSH_TS_EOF'`` (quoted delimiter) means the local
+        shell leaves ``$TS_IP`` / ``$DROPIN`` literal while it ships
+        the script to the remote. Without the quotes both would
+        expand to the empty string *before* ``_ssh`` even base64-
+        encodes the payload, which would end up silently writing a
+        file with ``ListenAddress :22`` (sshd rejects with a clear
+        error — but we would still have lost the pre-flight checks
+        along the way).
+        """
+        script = _tasks._build_ssh_tailscale_only_script()
+        assert "<<'DINARY_SSH_TS_EOF'" in script
+        assert "$TS_IP" in script
+        assert "$DROPIN" in script
+
+
+@allure.epic("Deploy")
 @allure.feature("verify-db: integrity_check + foreign_key_check gate")
 class TestVerifyDbLocal:
     """``inv verify-db`` runs SQLite's two ship-blocker pragmas against

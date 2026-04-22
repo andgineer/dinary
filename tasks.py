@@ -588,8 +588,17 @@ def dev(c, port=8000, sheet_logging=False, reset=False):
 
 
 @task
-def setup(c):
-    """One-time VM setup: install deps, clone repo, create services, upload creds."""
+def setup(c, lock_ssh_to_tailnet=False):
+    """One-time VM setup: install deps, clone repo, create services, upload creds.
+
+    Flags:
+        --lock-ssh-to-tailnet  After Tailscale is joined (requires
+            ``DINARY_TUNNEL=tailscale``), rebind ``sshd`` to the
+            Tailscale IP + loopback only, closing public TCP/22.
+            Delegates to ``inv ssh-tailscale-only``; see that task for
+            safety pre-conditions and the break-glass path. Off by
+            default so a first-time operator is never locked out.
+    """
     host = _host()
     tunnel = _tunnel()
 
@@ -656,10 +665,35 @@ def setup(c):
 
     if tunnel == "tailscale":
         _setup_tailscale(c)
+        if lock_ssh_to_tailnet:
+            print("=== Restricting sshd to Tailscale + loopback ===")
+            ssh_tailscale_only(c)
     elif tunnel == "cloudflare":
         _setup_cloudflare(c)
+        if lock_ssh_to_tailnet:
+            # The ``--lock-ssh-to-tailnet`` flag relies on a running
+            # tailscaled that we join during ``_setup_tailscale``; the
+            # cloudflare branch does not touch Tailscale, so honoring
+            # the flag here would silently succeed against whatever
+            # stale tailscale state happens to be on the box (or
+            # outright fail). Refuse instead of guessing.
+            msg = (
+                "--lock-ssh-to-tailnet requires DINARY_TUNNEL=tailscale "
+                "(the flag rebinds sshd to the tailscaled IPv4, which "
+                "is only guaranteed to exist after ``inv setup`` joined "
+                "the tailnet). Either set DINARY_TUNNEL=tailscale or drop "
+                "the flag."
+            )
+            raise RuntimeError(msg)
     else:
         print("=== No tunnel configured (DINARY_TUNNEL=none) ===")
+        if lock_ssh_to_tailnet:
+            msg = (
+                "--lock-ssh-to-tailnet requires DINARY_TUNNEL=tailscale; "
+                "current value is ``none``. See `inv ssh-tailscale-only` "
+                "for the standalone form once Tailscale is configured."
+            )
+            raise RuntimeError(msg)
 
     # Litestream bootstrap is intentionally NOT auto-invoked here. The
     # sidecar requires an already-reachable SFTP replica host whose
@@ -717,6 +751,97 @@ def _build_setup_swap_script(*, size_gb: int) -> str:
         "free -h\n"
         "DINARY_SWAP_EOF\n"
     )
+
+
+def _build_ssh_tailscale_only_script() -> str:
+    """Emit the shell script that restricts ``sshd`` ingress to Tailscale.
+
+    Kept separate from :func:`ssh_tailscale_only` so tests can pin the
+    script's observable contract (pre-flight Tailscale check, atomic
+    ``sshd -t`` validation with rollback, idempotent drop-in file)
+    without mocking SSH.
+
+    Shape and safety properties worth pinning explicitly:
+    - The drop-in file is always rewritten from scratch using a fresh
+      ``tailscale ip -4`` read off the remote, so a re-run after a
+      Tailscale IP rotation self-heals instead of leaving the old
+      ``ListenAddress`` line in place.
+    - ``ListenAddress 127.0.0.1:22`` is kept so loopback ssh (the
+      last-resort path from inside the box over the Serial Console)
+      still works after the flip.
+    - ``sshd -t`` validates the merged config *before* any reload; on
+      failure we delete the drop-in so a broken file cannot persist
+      across reboot and lock the operator out.
+    - ``tailscale`` must be installed and ``tailscale ip -4`` must
+      return a non-empty IPv4; otherwise we would bind sshd to nothing
+      and effectively kill inbound SSH.
+    - The outer ``sudo bash <<'HEREDOC'`` elevates the whole block in
+      one call — all of the file write, validation, rollback, reload
+      and status probe must run as root.
+    """
+    return (
+        "sudo bash <<'DINARY_SSH_TS_EOF'\n"
+        "set -euo pipefail\n"
+        "if ! command -v tailscale >/dev/null 2>&1; then\n"
+        '  echo "tailscale is not installed; refusing to rebind sshd" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        'TS_IP="$(tailscale ip -4 2>/dev/null | head -1)"\n'
+        'if [ -z "$TS_IP" ]; then\n'
+        '  echo "tailscaled is not up (no IPv4); refusing to rebind sshd" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        "DROPIN=/etc/ssh/sshd_config.d/10-tailscale-only.conf\n"
+        'cat >"$DROPIN" <<EOC\n'
+        "# Managed by inv ssh-tailscale-only. Overwritten on every run.\n"
+        "# Closes public TCP/22 by binding sshd to the Tailscale IPv4\n"
+        "# plus loopback; break-glass is via Oracle Cloud Serial Console.\n"
+        "ListenAddress ${TS_IP}:22\n"
+        "ListenAddress 127.0.0.1:22\n"
+        "EOC\n"
+        "if ! sshd -t; then\n"
+        '  echo "sshd -t rejected the new config; rolling back" >&2\n'
+        '  rm -f "$DROPIN"\n'
+        "  exit 1\n"
+        "fi\n"
+        "systemctl reload ssh\n"
+        "ss -tlnp | awk '/:22 / {print}'\n"
+        "DINARY_SSH_TS_EOF\n"
+    )
+
+
+@task(name="ssh-tailscale-only")
+def ssh_tailscale_only(c):
+    """Rebind ``sshd`` to Tailscale + loopback, closing public TCP/22.
+
+    Writes ``/etc/ssh/sshd_config.d/10-tailscale-only.conf`` with
+    ``ListenAddress <tailscale-ipv4>:22`` and
+    ``ListenAddress 127.0.0.1:22``, validates the merged config with
+    ``sshd -t``, and reloads ``ssh.service``. The Tailscale IPv4 is
+    read off the remote itself (``tailscale ip -4``) so replays after
+    a Tailscale IP rotation converge without a local re-run of
+    ``inv setup``.
+
+    Pre-conditions (enforced remotely; the task aborts if violated):
+
+    * ``tailscale`` command is installed;
+    * ``tailscaled`` is up and logged in (``tailscale ip -4`` returns
+      a non-empty IPv4).
+
+    Operator pre-flight:
+
+    1. Confirm the current shell still has an open session.
+    2. From a **second** terminal, verify ``ssh <tailnet-name>`` works
+       *before* running this — e.g. ``ssh ubuntu@dinary hostname``.
+    3. Only then run ``inv ssh-tailscale-only``.
+
+    Break-glass if locked out regardless: Oracle Cloud VM Instance
+    page → "Console connection" → "Launch Cloud Shell connection"
+    attaches a serial console that bypasses the network stack. Delete
+    ``/etc/ssh/sshd_config.d/10-tailscale-only.conf`` and
+    ``systemctl reload ssh``.
+    """
+    _ssh(c, _build_ssh_tailscale_only_script())
 
 
 @task(name="setup-swap")
