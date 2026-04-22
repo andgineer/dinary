@@ -1,6 +1,6 @@
 # Repository Coverage
 
-[Full report](https://htmlpreview.github.io/?https://github.com/andgineer/dinary-server/blob/python-coverage-comment-action-data/htmlcov/index.html)
+[Full report](https://htmlpreview.github.io/?https://github.com/andgineer/dinary/blob/python-coverage-comment-action-data/htmlcov/index.html)
 
 | Name                                      |    Stmts |     Miss |   Cover |   Missing |
 |------------------------------------------ | -------: | -------: | ------: | --------: |
@@ -23,7 +23,7 @@
 | src/dinary/reports/verify\_income.py      |       88 |        1 |     99% |        38 |
 | src/dinary/services/catalog\_writer.py    |      422 |       79 |     81% |177-178, 340-344, 498-500, 520-562, 571, 686, 698, 706, 835-837, 870, 879-884, 893, 895, 900, 905, 915, 931, 971-973, 1009, 1018, 1032-1034, 1059, 1091, 1096, 1113, 1209, 1241, 1245-1247, 1254-1256, 1277, 1281-1283, 1290-1292, 1314, 1327-1329 |
 | src/dinary/services/db\_migrations.py     |       49 |        2 |     96% |    49, 52 |
-| src/dinary/services/duckdb\_repo.py       |      242 |       19 |     92% |60-61, 565, 661, 667, 710, 755-769, 801-808, 934-935, 955-957, 1022 |
+| src/dinary/services/duckdb\_repo.py       |      263 |       15 |     94% |303-309, 663, 759, 765, 808, 855, 899-906, 1032-1033, 1053-1055, 1120 |
 | src/dinary/services/exchange\_rate.py     |       16 |       16 |      0% |      3-28 |
 | src/dinary/services/nbs.py                |      102 |       46 |     55% |30, 35, 46-55, 69-78, 102-104, 107-108, 112-114, 118, 121-122, 126-133, 151-156 |
 | src/dinary/services/qr\_parser.py         |       16 |        1 |     94% |        31 |
@@ -32,7 +32,8 @@
 | src/dinary/services/sheet\_mapping.py     |      252 |       49 |     81% |274, 346-348, 383-389, 439, 468-469, 479-497, 574-581, 609-661, 689, 700-705 |
 | src/dinary/services/sheets.py             |      231 |       58 |     75% |87-96, 100, 144-146, 165-176, 237-238, 244, 298, 337, 395, 478, 628, 672-677, 713-753 |
 | src/dinary/services/sql\_loader.py        |       33 |        0 |    100% |           |
-| **TOTAL**                                 | **3902** |  **940** | **76%** |           |
+| src/dinary/tools/sql.py                   |       71 |        3 |     96% |83, 173, 180 |
+| **TOTAL**                                 | **3994** |  **939** | **76%** |           |
 
 
 ## Setup coverage badge
@@ -41,20 +42,20 @@ Below are examples of the badges you can use in your main branch `README` file.
 
 ### Direct image
 
-[![Coverage badge](https://raw.githubusercontent.com/andgineer/dinary-server/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary-server/blob/python-coverage-comment-action-data/htmlcov/index.html)
+[![Coverage badge](https://raw.githubusercontent.com/andgineer/dinary/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary/blob/python-coverage-comment-action-data/htmlcov/index.html)
 
 This is the one to use if your repository is private or if you don't want to customize anything.
 
 ### [Shields.io](https://shields.io) Json Endpoint
 
-[![Coverage badge](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/andgineer/dinary-server/python-coverage-comment-action-data/endpoint.json)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary-server/blob/python-coverage-comment-action-data/htmlcov/index.html)
+[![Coverage badge](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/andgineer/dinary/python-coverage-comment-action-data/endpoint.json)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary/blob/python-coverage-comment-action-data/htmlcov/index.html)
 
 Using this one will allow you to [customize](https://shields.io/endpoint) the look of your badge.
 It won't work with private repositories. It won't be refreshed more than once per five minutes.
 
 ### [Shields.io](https://shields.io) Dynamic Badge
 
-[![Coverage badge](https://img.shields.io/badge/dynamic/json?color=brightgreen&label=coverage&query=%24.message&url=https%3A%2F%2Fraw.githubusercontent.com%2Fandgineer%2Fdinary-server%2Fpython-coverage-comment-action-data%2Fendpoint.json)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary-server/blob/python-coverage-comment-action-data/htmlcov/index.html)
+[![Coverage badge](https://img.shields.io/badge/dynamic/json?color=brightgreen&label=coverage&query=%24.message&url=https%3A%2F%2Fraw.githubusercontent.com%2Fandgineer%2Fdinary%2Fpython-coverage-comment-action-data%2Fendpoint.json)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary/blob/python-coverage-comment-action-data/htmlcov/index.html)
 
 This one will always be the same color. It won't work for private repos. I'm not even sure why we included it.
 
