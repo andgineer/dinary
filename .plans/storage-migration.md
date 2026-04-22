@@ -3,8 +3,10 @@
 > **Scope.** This plan documents *why* and *how* we move the server's ledger
 > storage off DuckDB onto SQLite, what replication topology keeps data durable
 > across free-tier infrastructure, and how analytics keeps its DuckDB-shaped
-> OLAP layer on the laptop side. Everything else (PWA, FastAPI surface,
-> sheet logging, category tree, etc.) is unchanged.
+> OLAP layer on the laptop side. User-visible behavior (PWA flows, FastAPI
+> endpoint surface, sheet semantics, category model) is intended to stay the
+> same, but the storage boundary, migrations, runtime repo wiring, operator
+> workflows, and some internal service implementations will change.
 
 ## 1. Context
 
@@ -80,9 +82,10 @@ The new topology must satisfy, in priority order:
 2. **Off-site durability in the face of Oracle reclaiming a free VM.** Oracle
    Free Tier instances can be torn down if idle; the replica must live on
    a different VM or on the laptop — not only on the primary.
-3. **Laptop gets a readable copy that is up to date within seconds when
-   online, and eventually consistent when the laptop comes back online after
-   a multi-week outage.**
+3. **Laptop gets a readable copy that is up to date within a few minutes
+   automatically when online, and on demand within seconds of an explicit
+   refresh.** After a multi-week outage, the same refresh path must converge
+   without any operator-only recovery procedure.
 4. **DuckDB on the laptop must be able to query the replica directly**, with
    no ETL step and no conversion layer.
 5. **Minimum RAM on the server.** Every megabyte the storage stack saves is a
@@ -347,36 +350,52 @@ for "does DuckDB work right now".
 
 ## 10. Migration plan
 
-Phased so that every phase is reversible until the last one.
+Phased so that early phases are fully reversible, and the production
+cutover remains one-step reversible only until the first post-cutover
+SQLite write is accepted.
 
 ### Phase 0 — freeze the current state (prep)
 
 - Snapshot current prod `dinary.duckdb` via the existing `inv backup` task.
   This snapshot is the safety net only; it is *not* the data source for
   Phase 1 (see below).
-- Record current test counts, `inv verify-income-equivalence-all` results,
-  `inv verify-bootstrap-import-all` results as the green baseline the
-  migration must preserve.
+- Record the current green gate as the baseline the migration must preserve:
+  `uv run inv pre`, `uv run pytest`, `inv verify-income-equivalence-all`,
+  and `inv verify-bootstrap-import-all`.
 - Document the exact DuckDB column types used in `src/dinary/migrations/*.sql`
   and cross-check they have SQLite equivalents (principally:
   `DECIMAL(p,s)` → `NUMERIC`, `TIMESTAMP` → `TEXT` with ISO-8601 or
   `INTEGER` with Unix-seconds, everything else is already portable).
-- **Source-of-truth check.** Confirm that every row in the DB is
-  reproducible from Google Sheets, so the SQLite DB can be rebuilt by
-  re-running the existing import pipeline rather than copying DuckDB
-  bytes over (see Phase 1 rationale). Concretely:
+- **State inventory and source-of-truth check.** Split the current DB into
+  three buckets before designing the cutover:
+  1. **Sheet-derived durable state**: catalog, mappings, expenses,
+     expense tags, income, and report-imported rows. These must be
+     reproducible by re-running the existing import pipeline, so the
+     SQLite DB can be rebuilt from sheets rather than from copied
+     DuckDB bytes (see Phase 1 rationale).
+  2. **Server-managed durable state**: `app_metadata`. These keys are
+     not in the sheets and must be re-seeded explicitly as part of the
+     rebuild.
+  3. **Ephemeral/cache state**: `exchange_rates`, `sheet_logging_jobs`,
+     and the migration bookkeeping tables. These are not treated as
+     migrated business data: `exchange_rates` can be repopulated after
+     cutover; `sheet_logging_jobs` must be drained to zero before the
+     final stop; migration tables are recreated by the runner.
+
+  Concretely:
   1. Run `inv verify-bootstrap-import-all` and
      `inv verify-income-equivalence-all` on the live DuckDB — they
      must pass.
-  2. Check `SELECT COUNT(*) FROM expenses WHERE created_at >
-     '<last-verify-run-timestamp>'`. Any rows newer than the last
-     green verify must already be logged to the sheets via the
-     sheet-logging path; `inv verify-bootstrap-import-all` run right
-     before Phase 1 covers this.
-  3. Note the `app_metadata` keys (`accounting_currency`, etc.) —
-     these are server-managed, not in the sheets, and will be
-     re-seeded by the migration runner + a small bootstrap step,
-     not by imports.
+  2. Enumerate the actual `app_metadata` keys in production
+     (`accounting_currency`, `catalog_version`, and any future keys)
+     and decide which are seeded by migrations vs a dedicated
+     bootstrap task.
+  3. Confirm `sheet_logging_jobs` is operationally drainable: no
+     permanently poisoned rows are being relied on as the only record
+     of unsent work, and a pre-cutover drain-to-zero is realistic.
+  4. Confirm `exchange_rates` is acceptable as a warm cache, not a
+     durable source of truth; the post-cutover system must be able to
+     repopulate it lazily without data loss.
 
 ### Phase 1 — prove the storage swap on a branch (no replication yet)
 
@@ -406,52 +425,129 @@ writing a one-off DuckDB-dump → SQLite-load script:
 
 Concrete steps:
 
-- Add a thin `storage/` abstraction if it does not already exist —
-  just enough that `DuckDBRepo` and a new `SQLiteRepo` can be
-  selected from settings.
-- Port `src/dinary/services/duckdb_repo.py` to `sqlite_repo.py` using
-  stdlib `sqlite3` (sync) or `aiosqlite` (async) — pick one
-  consistent with the existing callers. WAL mode: `PRAGMA
-  journal_mode=WAL`, `PRAGMA synchronous=NORMAL`, `PRAGMA
-  busy_timeout=5000`.
-- Port the migrations runner. The SQL itself should be nearly
-  unchanged. Fix any DuckDB-only syntax (`CREATE TABLE IF NOT
-  EXISTS` is shared; `PRAGMA memory_limit` is DuckDB-specific and
-  drops out; array types — if we use them anywhere — need a
-  JSON-text representation in SQLite).
-- Run the full test suite against SQLite. Target: 487 passed, zero
-  regressions. Fix call sites that depend on DuckDB-specific
-  behavior. Expect the bulk of the delta to be in tests that used
-  `DECIMAL` arithmetic with column-precision assumptions.
-- **Rebuild prod data from sheets**, in the same order that Phase 0
-  of the original bootstrap used:
-  1. `inv stop`
-  2. Wipe `data/dinary.db*` (including `-wal` and `-shm` sidecars).
-  3. `inv migrate` — creates fresh SQLite schema.
-  4. Seed `app_metadata` (anchor currency, any other server-managed
-     keys the migration runner doesn't cover) via a small
-     idempotent `inv bootstrap-metadata` task or an explicit
-     `inv sql --write` one-liner. This is the only step that does
-     not come from the importers.
-  5. `inv import-catalog --yes`
-  6. `inv import-budget-all --yes`
-  7. `inv import-income-all --yes`
-  8. `inv import-report-2d-3d` (local path — we are not on the
-     server yet in this phase, this is a dev-laptop rebuild).
-- Run `inv verify-income-equivalence-all` and
-  `inv verify-bootstrap-import-all` against the SQLite copy. They
-  must match the Phase 0 baseline results row-for-row.
-- Reversibility: the DuckDB snapshot taken in Phase 0 is untouched,
-  so if anything looks wrong in the rebuilt SQLite DB we roll
-  back by switching the storage setting, not by un-importing.
+- Treat this as a **repo-wide engine-boundary refactor**, not a thin
+  file swap. The current code imports `duckdb_repo` directly across
+  API handlers, imports, reports, and tests; uses DuckDB connection
+  types in annotations; ships a DuckDB-only yoyo backend; and embeds
+  DuckDB-specific SQL constructs (`CREATE SEQUENCE`, `nextval(...)`,
+  `LIST(...)`, `[]::INTEGER[]`, DuckDB exception classes, and
+  `read_only=True` connection assumptions). Inventory those call
+  sites first so the branch scope is explicit.
+- Introduce the narrowest compatibility boundary that keeps the
+  branch reviewable. That may still preserve the `duckdb_repo`
+  module path temporarily as a facade backed by SQLite; the key is
+  that application code stops depending on DuckDB-only types and
+  behaviors.
+- Port the runtime repository to SQLite using one access model that
+  matches the existing callers. WAL mode: `PRAGMA journal_mode=WAL`,
+  `PRAGMA synchronous=NORMAL`, `PRAGMA busy_timeout=5000`.
+- Port the migrations runner and the schema/query layer. Assume the
+  SQL is **not** "nearly unchanged" until proven otherwise; convert
+  every DuckDB-only construct explicitly:
+  - `CREATE SEQUENCE` / `nextval(...)` → SQLite rowid or explicit id
+    allocation strategy.
+  - `LIST(...)` / `[]::INTEGER[]` → JSON-text storage or Python-side
+    aggregation.
+  - DuckDB-specific exception handling / transaction semantics →
+    SQLite equivalents.
+- Build a branch-local SQLite database from sheets, not from a
+  copied DuckDB file:
+  1. `inv migrate` — creates fresh SQLite schema.
+  2. Seed `app_metadata` via an idempotent bootstrap step.
+  3. `inv import-catalog --yes`
+  4. `inv import-budget-all --yes`
+  5. `inv import-income-all --yes`
+  6. `inv import-report-2d-3d`
+  7. Warm `exchange_rates` only if a test or verify task requires it;
+     otherwise leave it cold and confirm lazy refill works.
+- Update `inv backup` on the branch before any prod cutover work begins.
+  Under SQLite WAL, it must produce a consistent snapshot via `sqlite3
+  .backup` or by restoring from the Litestream target; a raw file copy
+  of `.db` is no longer an acceptable implementation.
+- Run the full project gate against the SQLite branch copy:
+  `uv run inv pre`, `uv run pytest`,
+  `inv verify-income-equivalence-all`, and
+  `inv verify-bootstrap-import-all`. Fix every regression before
+  moving on. This is the **code-health / behavior-regression gate** for
+  the migration branch; it proves the repo is ready to deploy, not that a
+  specific production SQLite file has already been validated.
+- Reversibility: this phase does **not** touch production. The
+  DuckDB snapshot taken in Phase 0 stays untouched, and the branch
+  can be thrown away without any operator action.
 
-### Phase 2 — Litestream on VM 1 → VM 2 (server-side durability only)
+### Phase 1.5 — production cutover rehearsal and final cutover
 
-- Provision VM 2 on Oracle Free. Add to Tailscale, verify SSH reachability
-  from VM 1 over the tailnet hostname.
-- Install Litestream on VM 1 (`apt install` from the Litestream APT repo,
-  or a single binary drop into `/usr/local/bin/`).
-- Add `/etc/litestream.yml`:
+The branch proof above is necessary but not sufficient: production
+needs an explicit "stop writes, rebuild from the latest durable
+inputs, validate, then flip traffic" sequence so no post-verify rows
+or queue state are silently lost.
+
+Concrete steps:
+
+- **Rehearsal on non-prod first.** Run the exact cutover checklist on a
+  staging/dev environment using a recent prod snapshot plus current
+  sheets. Measure wall-clock downtime and document every manual step.
+- **Provision durability infrastructure before first SQLite write is
+  accepted.** VM 2, SSH/Tailscale reachability, the replica directory,
+  and the Litestream binary/service wiring on VM 1 must all be prepared
+  before the prod flip. The post-cutover SQLite primary must never spend
+  time as a single-VM-only source of truth.
+- **Pre-cutover quiescence on prod.**
+  1. Disable external writes (maintenance mode or stop `dinary`
+     cleanly).
+  2. Drain `sheet_logging_jobs` to zero while DuckDB is still the
+     primary. Any poisoned jobs must be resolved or explicitly
+     accepted before proceeding.
+  3. Run the final `inv verify-bootstrap-import-all` and
+     `inv verify-income-equivalence-all` against live DuckDB with the
+     service quiesced, so the sheets and DB are known to agree at the
+     cut line.
+- **Rebuild the new prod SQLite primary on VM 1 from the quiesced
+  source-of-truth inputs**, in the same order as the verified branch
+  flow:
+  1. Create fresh `data/dinary.db` via `inv migrate`.
+  2. Seed `app_metadata`.
+  3. Run the import sequence from sheets.
+  4. Do **not** carry over `sheet_logging_jobs`; it should already be
+     empty. Do **not** copy `exchange_rates`; let it repopulate.
+- **Establish off-site replication while prod is still quiesced.**
+  1. Point Litestream at the freshly-built `data/dinary.db`.
+  2. Start the Litestream service.
+  3. Confirm that VM 2 receives at least one valid snapshot / WAL chain
+     for this SQLite file before production accepts writes again.
+- **Validate before accepting writes.** Split validation into two
+  independent buckets:
+  1. **Code / release validation**: on the exact commit being deployed,
+     `uv run inv pre` and `uv run pytest` must already be green. This
+     is a property of the codebase and release artifact, not of the
+     specific prod DB file.
+  2. **Rebuilt-prod-data validation**: against the just-built SQLite
+     file on VM 1, run direct checks that prove *this database* is
+     usable: `PRAGMA integrity_check`, the sheet-equivalence verifies
+     (`inv verify-income-equivalence-all`,
+     `inv verify-bootstrap-import-all`), explicit validation of
+     server-managed `app_metadata` keys (`accounting_currency`,
+     `catalog_version`, and any other keys inventoried in Phase 0), and
+     a minimal app-level smoke pass against the quiesced service or
+     equivalent local runner.
+  Only after both buckets are green do we enable the app with
+  `DINARY_STORAGE=sqlite`.
+- **Rollback path.**
+  1. **Before first post-cutover write is accepted**: rollback is
+     one-step — stop the SQLite app, switch config back to DuckDB,
+     restart, and discard the rebuilt SQLite file.
+  2. **After SQLite has accepted new writes**: rollback is no longer a
+     one-step config flip. At that point, reverting requires freezing
+     writes again and rebuilding/synchronizing the target engine from
+     the durable source of truth; do not promise instant fallback once
+     the new primary has diverged.
+
+### Phase 2 — Litestream steady state on VM 1 → VM 2
+
+- Precondition: Phase 1.5 has already produced a validated
+  `data/dinary.db` on VM 1, production is serving from SQLite, and VM 2
+  is already receiving Litestream snapshots.
+- Keep `/etc/litestream.yml` on VM 1 as:
 
   ```yaml
   dbs:
@@ -466,7 +562,6 @@ Concrete steps:
           snapshot-interval: 6h
   ```
 
-- Deploy as a systemd unit ordered `After=dinary.service`.
 - Monitor for one week: verify `litestream snapshots` lists healthy
   snapshots on VM 2, WAL catchup time stays under a few seconds, and no
   error bursts during PWA-driven write spikes.
@@ -548,10 +643,13 @@ is the real risk signal.
   `analytics/dinary.db`". Remove the `_remote_snapshot_cmd` path for the
   `sql` task; keep it for the legacy `inv report-*` tasks until they are
   migrated too.
-- Document a laptop cron entry: `*/5 * * * * inv pull-replica` — refreshes
-  the replica continuously while online, fails silently while offline.
-  When the laptop comes back from a holiday of any length, the next cron
-  tick pulls the latest snapshot plus its WAL tail in one go.
+- Document a laptop cron entry: `*/5 * * * * inv pull-replica` — the
+  **automatic freshness** path, good for "within a few minutes when
+  online". Also document that `inv pull-replica` is safe to run on
+  demand before a dashboard/notebook session when the user wants the
+  latest data immediately. When the laptop comes back from a holiday
+  of any length, the next cron tick (or a manual run) pulls the latest
+  snapshot plus its WAL tail in one go.
 
 ### Phase 3.5 — defense-in-depth cloud-drive snapshots
 
@@ -688,7 +786,7 @@ not**:
   switch once we commit).
 - Delete `data/dinary.duckdb` and the `.wal` sidecar from the server once
   the SQLite copy has been live and Litestream-replicated for at least 72 h
-  with green verify-* checks.
+  with green `uv run inv pre`, `uv run pytest`, and verify-* checks.
 - Remove `duckdb` from `pyproject.toml` on the *server* dependency
   section. Keep it in the dev / laptop dependencies — analytics and the
   CLI tools on the laptop side still need it for `ATTACH sqlite`.
@@ -752,11 +850,16 @@ once this migration is green in prod for a few weeks.
 ## 12. What this plan explicitly does *not* change
 
 - FastAPI endpoint surface (`/api/expenses`, `/api/catalog`, admin routes).
-- Sheet logging path — it reads from the repo abstraction and does not
-  care which engine is underneath.
-- PWA behavior, offline queue, catalog cache.
+- PWA behavior, offline queue, catalog cache, and the observable sheet
+  logging contract.
+- The meaning of catalog data, mapping semantics, and imported ledger rows.
+- High-level operator contracts such as "`inv backup` gives me a
+  restorable snapshot of prod state".
+- This is **not** a promise that internals stay untouched. The storage
+  implementation, repo boundary, migrations backend, runtime connection
+  handling, and some service internals *will* change to support SQLite.
 - Imports (`inv import-catalog`, `inv import-income-all`) other than their
-  underlying SQL.
+  storage adapter / underlying SQL.
 - Test shape — the expectation is that the same 487 tests run green
   against SQLite, with the only surface-level change being the engine
   fixture.

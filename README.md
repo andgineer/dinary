@@ -1,14 +1,12 @@
 [![Build Status](https://github.com/andgineer/dinary/workflows/CI/badge.svg)](https://github.com/andgineer/dinary/actions)
 [![Coverage](https://raw.githubusercontent.com/andgineer/dinary/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary/blob/python-coverage-comment-action-data/htmlcov/index.html)
-# Dinary (server)
-
-Server for [Dinary - your dinar diary](https://github.com/andgineer/dinary).
+# Dinary
 
 Track expenses, scan receipts, analyze spending with AI
 
 # Documentation
 
-[Dinary server](https://andgineer.github.io/dinary/)
+[Dinary](https://andgineer.github.io/dinary/)
 
 # Local development
 

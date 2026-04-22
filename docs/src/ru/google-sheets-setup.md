@@ -1,6 +1,6 @@
 # Настройка Google Sheets
 
-Dinary-server хранит runtime-данные в DuckDB, а не в Google Sheets. В
+Dinary server хранит runtime-данные в DuckDB, а не в Google Sheets. В
 пользовательской и админской эксплуатации Google Sheets нужны только для
 опционального append-only sheet logging. Для работы нужен сервисный аккаунт
 Google и таблица, расшаренная на него.

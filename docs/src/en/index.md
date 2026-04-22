@@ -1,10 +1,8 @@
-# Dinary server
-
-Server for [Dinary - your dinar diary](https://github.com/andgineer/dinary).
+# Dinary
 
 Track expenses, scan receipts, analyze spending with AI.
 
-Dinary-server is a FastAPI backend that:
+Dinary server is a FastAPI backend that:
 
 - Stores expenses in a local DuckDB file in EUR (with the original amount and currency preserved for audit)
 - Optionally mirrors every expense to a Google Sheets tab in RSD for pivot-table analytics

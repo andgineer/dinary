@@ -1,6 +1,6 @@
 # Google Sheets Setup
 
-Dinary-server stores runtime data in DuckDB, not in Google Sheets. In the
+Dinary server stores runtime data in DuckDB, not in Google Sheets. In the
 public/admin deployment story, Google Sheets are used only for optional
 append-only sheet logging. You need a Google service account and a spreadsheet
 shared with that account.
