@@ -166,11 +166,11 @@ class TestReadOnlySafety:
         assert columns == ["id", "label"]
         assert rows == [(1, "еда"), (2, None), (3, "транспорт")]
 
-    def test_writes_are_blocked(self, seeded_db):
-        """The whole point of the tool: a typo'd ``UPDATE`` can't
-        clobber the ledger because the connection is opened
-        ``read_only=True``. DuckDB surfaces this as an error from the
-        engine — the runner does not need any extra guard of its own.
+    def test_writes_are_blocked_by_default(self, seeded_db):
+        """The whole point of the tool's default mode: a typo'd
+        ``UPDATE`` can't clobber the ledger because the connection is
+        opened ``read_only=True``. DuckDB surfaces this as an error
+        from the engine — the runner does not need any extra guard.
         """
         with pytest.raises(duckdb.Error):
             sql_tool._execute("UPDATE sample SET label = 'x' WHERE id = 1")
@@ -178,6 +178,48 @@ class TestReadOnlySafety:
         # And the row is actually untouched, belt and suspenders.
         _, rows = sql_tool._execute("SELECT label FROM sample WHERE id = 1")
         assert rows == [("еда",)]
+
+    def test_write_flag_permits_mutation(self, seeded_db):
+        """``--write`` is the explicit opt-in for mutations — an
+        ``UPDATE`` routed through ``_execute(..., write=True)`` must
+        succeed and the change must persist across a follow-up
+        read-only open.
+        """
+        sql_tool._execute("UPDATE sample SET label = 'X' WHERE id = 1", write=True)
+        _, rows = sql_tool._execute("SELECT label FROM sample WHERE id = 1")
+        assert rows == [("X",)]
+
+
+@allure.epic("CLI tools")
+@allure.feature("inv sql — argparse")
+class TestWriteFlag:
+    def test_main_without_write_refuses_update(self, capsys, seeded_db):
+        """End-to-end CLI: running ``--query "UPDATE ..."`` without
+        ``--write`` must bubble up the DuckDB read-only error rather
+        than silently succeed.
+        """
+        with pytest.raises(duckdb.Error):
+            sql_tool.main(["--query", "UPDATE sample SET label='x' WHERE id=1"])
+
+    def test_main_with_write_applies_update(self, capsys, seeded_db):
+        """End-to-end CLI: ``--write`` lets the same UPDATE land.
+        The follow-up SELECT (without ``--write``) still works and
+        sees the new value, proving the write persisted to disk.
+        """
+        rc = sql_tool.main(
+            [
+                "--query",
+                "UPDATE sample SET label='xxx' WHERE id=1",
+                "--write",
+            ],
+        )
+        assert rc == 0
+
+        rc = sql_tool.main(
+            ["--query", "SELECT label FROM sample WHERE id=1", "--csv"],
+        )
+        assert rc == 0
+        assert "xxx" in capsys.readouterr().out
 
 
 @allure.epic("CLI tools")

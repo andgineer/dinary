@@ -1411,21 +1411,26 @@ def report_income(c, csv=False, remote=False):  # noqa: A002
             "Emit JSON envelope {columns, rows, row_count} to stdout. "
             "Mutex with --csv."
         ),
+        "write": (
+            "Open the DB read-write so UPDATE/DELETE/INSERT can run. "
+            "Off by default; forbidden with --remote."
+        ),
         "remote": (
             "Run against a /tmp snapshot of the prod DB over SSH "
             "instead of local data/dinary.duckdb."
         ),
     },
 )
-def sql_query(c, query="", file="", csv=False, json=False, remote=False):  # noqa: A002
-    """Run a read-only SQL query against ``data/dinary.duckdb``.
+def sql_query(c, query="", file="", csv=False, json=False, write=False, remote=False):  # noqa: A002
+    """Run a SQL query against ``data/dinary.duckdb``.
 
-    The connection is always opened ``read_only=True`` — typoing
+    By default the connection is opened ``read_only=True`` — typoing
     ``UPDATE`` / ``DELETE`` errors out at the DuckDB layer instead
-    of quietly mutating the ledger. For free-form inspection of the
-    ``app_metadata`` anchor, per-currency totals in ``expenses``,
-    sheet-logging job state, etc. Report-shaped queries should
-    still live in ``dinary.reports.*``.
+    of quietly mutating the ledger. Pass ``--write`` to explicitly
+    opt into mutations for one-off fixups. For free-form inspection
+    of the ``app_metadata`` anchor, per-currency totals in
+    ``expenses``, sheet-logging job state, etc. Report-shaped queries
+    should still live in ``dinary.reports.*``.
 
     Examples::
 
@@ -1433,6 +1438,20 @@ def sql_query(c, query="", file="", csv=False, json=False, remote=False):  # noq
         inv sql -q "SELECT currency_original, COUNT(*) FROM expenses GROUP BY 1"
         inv sql -f scripts/monthly_summary.sql --csv > out.csv
         inv sql -q "SELECT * FROM app_metadata" --remote
+        inv sql -q "DELETE FROM expenses WHERE id = 999" --write
+
+    ``--write`` is rejected together with ``--remote``: mutating
+    prod through an SSH pipe into a ``/tmp`` snapshot would silently
+    discard the writes when the snapshot is torn down on exit, which
+    is a far worse failure mode than a clear "not allowed" error.
+    Use ``ssh`` + ``inv sql --write`` on the host for real prod fixups,
+    or better — write a proper migration.
+
+    Local DB lock caveat: DuckDB 1.x file-locks on a single
+    read-write process. If ``inv dev`` (uvicorn) is running it owns
+    the lock and a second ``inv sql`` (even read-only) will fail
+    with ``IOException: Could not set lock on file``. Stop the dev
+    server first, or route through the server's HTTP API.
 
     ``--remote`` follows the same JSON-over-SSH snapshot pattern as
     ``inv report-*`` (see :func:`_remote_snapshot_cmd`): the DB is
@@ -1448,6 +1467,13 @@ def sql_query(c, query="", file="", csv=False, json=False, remote=False):  # noq
         raise SystemExit("--csv and --json are mutually exclusive")
     if bool(query) == bool(file):
         raise SystemExit("exactly one of --query / --file is required")
+    if write and remote:
+        raise SystemExit(
+            "--write is not allowed with --remote: the remote runs against a "
+            "/tmp snapshot that is torn down on exit, so any mutations would "
+            "be silently discarded. SSH to the host and run `inv sql --write` "
+            "there, or write a proper migration.",
+        )
 
     if file:
         # Even for ``--remote`` we dereference the file locally and
@@ -1470,6 +1496,8 @@ def sql_query(c, query="", file="", csv=False, json=False, remote=False):  # noq
             local_flags.append("--csv")
         elif json:
             local_flags.append("--json")
+        if write:
+            local_flags.append("--write")
         c.run(f"uv run python -m dinary.tools.sql {' '.join(local_flags)}")
         return
 
