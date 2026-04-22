@@ -11,9 +11,9 @@
  *
  *  - ``GET /api/catalog`` returns *every* row (active + inactive).
  *  - Dropdowns / tag lists show only ``is_active = true`` items by
- *    default. Each picker carries a per-picker ``Показать неактивные``
- *    toggle that surfaces inactive rows next to the picker with a
- *    ``Активировать`` button (which PATCHes ``is_active = true`` via
+ *    default. Each picker carries a per-picker ``Manage`` toggle
+ *    that surfaces inactive rows next to the picker with a
+ *    ``Restore`` button (which PATCHes ``is_active = true`` via
  *    ``adminReactivate*``).
  */
 
@@ -245,7 +245,7 @@ export function populateEventDropdown(selectEl, anchor = new Date()) {
   const active = getActiveEvents(anchor);
   const none = document.createElement("option");
   none.value = "";
-  none.textContent = active.length === 0 ? "— нет активных —" : "— без события —";
+  none.textContent = active.length === 0 ? "— no active events —" : "— no event —";
   selectEl.appendChild(none);
   for (const ev of active) {
     const opt = document.createElement("option");
@@ -301,7 +301,7 @@ export function readSelectedTagIds(containerEl) {
 }
 
 // ---------------------------------------------------------------------------
-// Reactivation (per-picker "Активировать" button)
+// Reactivation (per-picker "Restore" button)
 // ---------------------------------------------------------------------------
 
 export async function reactivateGroup(groupId) {
@@ -329,13 +329,13 @@ export async function reactivateTag(tagId) {
 }
 
 // ---------------------------------------------------------------------------
-// Deactivation (per-picker "Скрыть" button on active rows)
+// Deactivation (per-picker "Hide" button on active rows)
 //
 // Symmetric to reactivation: flips ``is_active`` to false without
 // touching row references. The row disappears from the normal
-// dropdown and becomes surfaced again only in the "Управлять" list
+// dropdown and becomes surfaced again only in the "Manage" list
 // until the operator either reactivates it or hard-deletes via the
-// "Удалить" path.
+// "Delete" path.
 // ---------------------------------------------------------------------------
 
 export async function deactivateGroup(groupId) {
@@ -363,7 +363,7 @@ export async function deactivateTag(tagId) {
 }
 
 // ---------------------------------------------------------------------------
-// Deletion (per-picker "Удалить" button on inactive rows)
+// Deletion (per-picker "Delete" button on inactive rows)
 //
 // Hard-vs-soft is decided server-side: if the row is still referenced
 // by any expense or by a mapping table, the server keeps it

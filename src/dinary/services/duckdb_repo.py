@@ -228,6 +228,104 @@ def init_db() -> None:
         _conn = None
     db_migrations.migrate_db(_get_db_path())
     _conn = duckdb.connect(str(_get_db_path()))
+    _reconcile_accounting_currency(_conn)
+
+
+def _reconcile_accounting_currency(con: duckdb.DuckDBPyConnection) -> None:
+    """Reconcile ``settings.accounting_currency`` with the DB anchor.
+
+    Accounting-currency is a DB-wide invariant: every ``expenses.amount``
+    and ``income.amount`` row on disk is denominated in it. Flipping the
+    setting mid-life (e.g. accidentally writing
+    ``DINARY_ACCOUNTING_CURRENCY=RSD`` into ``.deploy/.env``) would
+    silently start persisting new rows in the new unit while existing
+    rows stay in the old one, quietly corrupting every subsequent sum,
+    report, and sheet-logging RSD derivation.
+
+    Source-of-truth model:
+
+    * ``DINARY_ACCOUNTING_CURRENCY`` (env var -> ``settings.accounting_currency``)
+      is a **first-deploy-only** seed. It is consulted only to populate
+      the anchor row on the very first ``init_db`` against an empty DB.
+    * ``app_metadata.accounting_currency`` is the **runtime source of
+      truth**. Once populated it is authoritative; subsequent boots read
+      it back and broadcast the value to the rest of the codebase via
+      the ``settings`` proxy. Operators can (and should) omit the env
+      var on steady-state servers.
+
+    Resolution matrix:
+
+    * Row absent + env non-empty -> seed: INSERT uppercased env value.
+    * Row absent + env empty -> ``RuntimeError`` (no seed source; the
+      operator must tell us what currency the fresh ledger lives in).
+    * Row present + env empty -> take DB value silently. The happy path
+      on an operational server that has forgotten about the env var.
+    * Row present + env matches (case-insensitive) -> no-op, but snap
+      ``settings.accounting_currency`` to the uppercased canonical form.
+    * Row present + env differs -> ``RuntimeError`` with both values
+      named, actionable next steps. This is the typo-guard: we
+      deliberately refuse to auto-correct either direction because a
+      silent fix would mask the very foot-gun the anchor exists to
+      defend against. Intentional migrations must convert every
+      ``expenses`` / ``income`` row AND update the anchor row manually.
+
+    Side effect: mutates ``settings.accounting_currency`` to the
+    resolved uppercased value so existing call sites that read it
+    (sheet_logging, reports, imports) automatically track the DB
+    anchor without each needing a point-of-use DB lookup.
+    """
+    desired = settings.accounting_currency.strip().upper()
+
+    row = con.execute(
+        "SELECT value FROM app_metadata WHERE key = 'accounting_currency'",
+    ).fetchone()
+
+    if row is None:
+        if not desired:
+            msg = (
+                "Fresh dinary.duckdb and settings.accounting_currency is empty; "
+                "refusing to seed an unknown accounting currency. Set "
+                "DINARY_ACCOUNTING_CURRENCY in .deploy/.env to a valid ISO-4217 "
+                "code (e.g. EUR) for the first deploy; subsequent runs can omit "
+                "it and the value will be read back from app_metadata."
+            )
+            raise RuntimeError(msg)
+        con.execute(
+            "INSERT INTO app_metadata (key, value) VALUES ('accounting_currency', ?)",
+            [desired],
+        )
+        settings.accounting_currency = desired
+        logger.info("anchored accounting_currency=%s in app_metadata", desired)
+        return
+
+    stored = (row[0] or "").strip().upper()
+    if not stored:
+        msg = (
+            "app_metadata.accounting_currency row exists but is empty; the "
+            "DB is in an invalid state. Restore a known-good backup or set "
+            "the row manually (e.g. "
+            "``UPDATE app_metadata SET value='EUR' WHERE key='accounting_currency'``)."
+        )
+        raise RuntimeError(msg)
+
+    if not desired or desired == stored:
+        settings.accounting_currency = stored
+        return
+
+    msg = (
+        f"Refusing to start: DB was initialised with "
+        f"accounting_currency={stored!r} but current config has "
+        f"DINARY_ACCOUNTING_CURRENCY={desired!r} (settings.accounting_currency). "
+        "Mixing them would silently store new expenses/income in a different "
+        "unit from the existing rows and invalidate every sum and report. "
+        "Either revert the env override (.deploy/.env or the systemd unit) "
+        "to match the stored value, unset it entirely (the server reads the "
+        "anchored value from app_metadata when the env var is empty), or, "
+        "if this is an intentional migration, convert every expenses/income "
+        "row to the new currency and update the app_metadata row manually "
+        "before restarting."
+    )
+    raise RuntimeError(msg)
 
 
 def get_connection() -> duckdb.DuckDBPyConnection:

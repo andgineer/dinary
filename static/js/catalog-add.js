@@ -1,5 +1,5 @@
 /**
- * "+ Новый" inline add-only modals for catalog entities.
+ * "+ New" inline add-only modals for catalog entities.
  *
  * One tiny modal shell reused for all four kinds (group, category,
  * event, tag). Admin endpoints are currently unauthenticated — the
@@ -32,8 +32,8 @@ function buildModal(title) {
     <div class="add-modal-body"></div>
     <div class="add-modal-error" style="color:#f87171;font-size:.85rem;margin-top:.5rem;display:none"></div>
     <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem">
-      <button class="add-modal-cancel btn btn-secondary" type="button">Отмена</button>
-      <button class="add-modal-submit btn btn-primary" type="button">Добавить</button>
+      <button class="add-modal-cancel btn btn-secondary" type="button">Cancel</button>
+      <button class="add-modal-submit btn btn-primary" type="button">Add</button>
     </div>
   `;
   overlay.appendChild(box);
@@ -59,7 +59,7 @@ function buildModal(title) {
 function wireEnterToSubmit(modal) {
   // Enter on any <input> inside the modal triggers the Submit button,
   // so a keyboard-only flow (tap-in-field -> type -> Enter) works
-  // without having to reach for the on-screen "Добавить" button. We
+  // without having to reach for the on-screen "Add" button. We
   // skip <textarea> because those legitimately want Enter to insert a
   // newline, but the add-modals only use <input> elements.
   modal.body.addEventListener("keydown", (e) => {
@@ -85,36 +85,33 @@ function showError(errEl, msg) {
 const TAG_NAME_DISALLOWED = /[,\s]/;
 
 function validateTagName(name) {
-  if (!name) return "Введите название";
+  if (!name) return "Enter a name";
   if (TAG_NAME_DISALLOWED.test(name)) {
-    return "Тэг не может содержать пробелы или запятые";
+    return "Tag cannot contain spaces or commas";
   }
   return null;
 }
 
-// Per-kind toast templates. Russian has three grammatical genders; the
-// app.js handler used to splice the bare kind noun into a generic
-// template (``Восстановлена неактивная ${kind}``) which produced
-// broken agreement for neuter ``событие`` and masculine ``тэг``. We
-// render the final message here — the kind is already known at the
-// call site and it keeps the genders with the nouns they agree with.
-// Templates are keyed on ``kind`` plus ``AddResult.status``.
+// Per-kind toast templates, keyed on ``kind`` plus ``AddResult.status``.
+// Kept per-kind (rather than one generic template) so we can tweak
+// wording for a specific entity without forking the template; the
+// call site already knows the kind.
 const ADD_RESULT_TOASTS = {
-  группа: {
-    reactivated: "Восстановлена неактивная группа — проверьте поля",
-    noop: "Такая группа уже существует — без изменений",
+  group: {
+    reactivated: "Inactive group restored — check its fields",
+    noop: "Such a group already exists — no changes",
   },
-  категория: {
-    reactivated: "Восстановлена неактивная категория — проверьте поля",
-    noop: "Такая категория уже существует — без изменений",
+  category: {
+    reactivated: "Inactive category restored — check its fields",
+    noop: "Such a category already exists — no changes",
   },
-  событие: {
-    reactivated: "Восстановлено неактивное событие — проверьте поля",
-    noop: "Такое событие уже существует — без изменений",
+  event: {
+    reactivated: "Inactive event restored — check its fields",
+    noop: "Such an event already exists — no changes",
   },
-  тэг: {
-    reactivated: "Восстановлен неактивный тэг — проверьте поля",
-    noop: "Такой тэг уже существует — без изменений",
+  tag: {
+    reactivated: "Inactive tag restored — check its fields",
+    noop: "Such a tag already exists — no changes",
   },
 };
 
@@ -150,10 +147,10 @@ async function runSubmit(modal, submitFn, kind) {
 }
 
 export function openAddGroup(onAdded) {
-  const modal = buildModal("Новая группа");
+  const modal = buildModal("New group");
   modal.body.innerHTML = `
     <label style="display:block;margin-bottom:.5rem">
-      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">Название</div>
+      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">Name</div>
       <input class="f-name" type="text" style="width:100%;padding:.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#fff">
     </label>
   `;
@@ -161,32 +158,32 @@ export function openAddGroup(onAdded) {
   nameEl.focus();
   modal.submitBtn.onclick = async () => {
     const name = nameEl.value.trim();
-    if (!name) return showError(modal.errEl, "Введите название");
-    const snap = await runSubmit(modal, () => adminAddGroup({ name }), "группа");
+    if (!name) return showError(modal.errEl, "Enter a name");
+    const snap = await runSubmit(modal, () => adminAddGroup({ name }), "group");
     if (snap) onAdded?.(snap.new_id, snap);
   };
   wireEnterToSubmit(modal);
 }
 
 export function openAddCategory(groupId, onAdded) {
-  const modal = buildModal("Новая категория");
+  const modal = buildModal("New category");
   modal.body.innerHTML = `
     <label style="display:block;margin-bottom:.5rem">
-      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">Название</div>
+      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">Name</div>
       <input class="f-name" type="text" style="width:100%;padding:.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#fff">
     </label>
-    <div style="font-size:.75rem;color:#64748b">Группа зафиксирована: выбранная в форме.</div>
+    <div style="font-size:.75rem;color:#64748b">Group is locked to the one selected in the form.</div>
   `;
   const nameEl = modal.body.querySelector(".f-name");
   nameEl.focus();
   modal.submitBtn.onclick = async () => {
     const name = nameEl.value.trim();
-    if (!name) return showError(modal.errEl, "Введите название");
-    if (!groupId) return showError(modal.errEl, "Сначала выберите группу");
+    if (!name) return showError(modal.errEl, "Enter a name");
+    if (!groupId) return showError(modal.errEl, "Select a group first");
     const snap = await runSubmit(
       modal,
       () => adminAddCategory({ name, group_id: Number(groupId) }),
-      "категория",
+      "category",
     );
     if (snap) onAdded?.(snap.new_id, snap);
   };
@@ -195,31 +192,31 @@ export function openAddCategory(groupId, onAdded) {
 
 export function openAddEvent(onAdded) {
   const today = new Date().toISOString().slice(0, 10);
-  const modal = buildModal("Новое событие");
+  const modal = buildModal("New event");
   modal.body.innerHTML = `
     <label style="display:block;margin-bottom:.5rem">
-      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">Название</div>
+      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">Name</div>
       <input class="f-name" type="text" style="width:100%;padding:.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#fff">
     </label>
     <label style="display:block;margin-bottom:.5rem">
-      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">С</div>
+      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">From</div>
       <input class="f-from" type="date" value="${today}" style="width:100%;padding:.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#fff">
     </label>
     <label style="display:block;margin-bottom:.5rem">
-      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">По</div>
+      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">To</div>
       <input class="f-to" type="date" value="${today}" style="width:100%;padding:.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#fff">
     </label>
     <label style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem">
       <input class="f-auto-attach" type="checkbox" style="width:1rem;height:1rem">
-      <span style="font-size:.85rem">Авто-подстановка по дате расхода</span>
+      <span style="font-size:.85rem">Auto-fill when expense date matches</span>
     </label>
     <label style="display:block;margin-bottom:.25rem">
       <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">
-        Авто-теги (через запятую)
+        Auto-tags (comma-separated)
       </div>
-      <input class="f-auto-tags" type="text" placeholder="например: отпуск, путешествия" style="width:100%;padding:.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#fff">
+      <input class="f-auto-tags" type="text" placeholder="e.g.: отпуск, путешествия" style="width:100%;padding:.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#fff">
       <div style="font-size:.7rem;color:#64748b;margin-top:.25rem">
-        Прикрепляются автоматически к расходу при выборе события.
+        Automatically attached to the expense when the event is selected.
       </div>
     </label>
   `;
@@ -231,11 +228,11 @@ export function openAddEvent(onAdded) {
   nameEl.focus();
   modal.submitBtn.onclick = async () => {
     const name = nameEl.value.trim();
-    if (!name) return showError(modal.errEl, "Введите название");
+    if (!name) return showError(modal.errEl, "Enter a name");
     if (!fromEl.value || !toEl.value)
-      return showError(modal.errEl, "Укажите обе даты");
+      return showError(modal.errEl, "Specify both dates");
     if (fromEl.value > toEl.value)
-      return showError(modal.errEl, "Дата начала должна быть <= дате конца");
+      return showError(modal.errEl, "Start date must be <= end date");
     const autoTagsRaw = autoTagsEl.value;
     const autoTags = autoTagsRaw
       .split(/[,\s]+/)
@@ -249,7 +246,7 @@ export function openAddEvent(onAdded) {
     for (const t of autoTags) {
       const tagErr = validateTagName(t);
       if (tagErr) {
-        return showError(modal.errEl, `Авто-тег "${t}": ${tagErr}`);
+        return showError(modal.errEl, `Auto-tag "${t}": ${tagErr}`);
       }
     }
     const snap = await runSubmit(
@@ -262,7 +259,7 @@ export function openAddEvent(onAdded) {
           auto_attach_enabled: autoAttachEl.checked,
           auto_tags: autoTags.length > 0 ? autoTags : null,
         }),
-      "событие",
+      "event",
     );
     if (snap) onAdded?.(snap.new_id, snap);
   };
@@ -270,10 +267,10 @@ export function openAddEvent(onAdded) {
 }
 
 export function openAddTag(onAdded) {
-  const modal = buildModal("Новый тэг");
+  const modal = buildModal("New tag");
   modal.body.innerHTML = `
     <label style="display:block;margin-bottom:.5rem">
-      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">Название</div>
+      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:.25rem">Name</div>
       <input class="f-name" type="text" style="width:100%;padding:.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#fff">
     </label>
   `;
@@ -283,7 +280,7 @@ export function openAddTag(onAdded) {
     const name = nameEl.value.trim();
     const err = validateTagName(name);
     if (err) return showError(modal.errEl, err);
-    const snap = await runSubmit(modal, () => adminAddTag({ name }), "тэг");
+    const snap = await runSubmit(modal, () => adminAddTag({ name }), "tag");
     if (snap) onAdded?.(snap.new_id, snap);
   };
   wireEnterToSubmit(modal);

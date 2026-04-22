@@ -3,9 +3,25 @@
 import asyncio
 from unittest.mock import Mock, patch
 
+import pytest
+
 from dinary.config import settings
 from dinary.main import _lifespan, create_app
-from dinary.services import sheet_logging
+from dinary.services import duckdb_repo, sheet_logging
+
+
+@pytest.fixture(autouse=True)
+def _tmp_db(tmp_path, monkeypatch):
+    """Point lifespan tests at an ephemeral DuckDB file.
+
+    These tests exercise ``dinary.main._lifespan()``, which always calls
+    ``duckdb_repo.init_db()`` on entry. Without overriding ``DB_PATH`` /
+    ``DATA_DIR``, the tests would migrate/open the developer's real
+    ``data/dinary.duckdb`` and fight with any running local server for the
+    file lock. Keep them hermetic by always using ``tmp_path``.
+    """
+    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
 
 
 def _run(coro):

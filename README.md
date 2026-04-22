@@ -18,13 +18,33 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
 uv sync
 
 # Create .deploy/.env from the template (one-time, .deploy/ is gitignored)
-mkdir -p .deploy
-cp .deploy.example/.env .deploy/.env
+cp -r .deploy.example .deploy
 
-uv run dinary
+# First time — or whenever you want a clean slate:
+#   wipes data/dinary.duckdb, runs schema migrations, seeds the
+#   hardcoded 3D taxonomy (groups / categories / events / tags), then
+#   starts uvicorn on http://127.0.0.1:8000 with auto-reload.
+uv run inv dev --reset
+
+# Subsequent runs — DB is preserved, migrations still apply on startup
+# via the FastAPI lifespan, so editing a migration and restarting is
+# enough (no separate ``inv migrate`` needed for the local DB):
+uv run inv dev
 ```
 
-The server starts on `http://localhost:8000` with auto-reload.
+`inv dev` **disables Google-Sheets logging by default** so test expenses
+you create while debugging don't leak into the prod logging spreadsheet
+(the env var from `.deploy/.env` is overridden just for this process).
+Pass `--sheet-logging` if you specifically want to exercise the drain
+loop end-to-end.
+
+To point local dev at a copy of prod data instead of an empty DB:
+
+```bash
+uv run inv backup                         # snapshot prod into ~/Library/dinary/<ts>/
+cp ~/Library/dinary/<ts>/data/dinary.duckdb data/
+uv run inv dev                            # NOT --reset; keep the snapshot
+```
 
 Credentials are read from `~/.config/gspread/service_account.json` (standard gspread location).
 Don't have a service account key yet?

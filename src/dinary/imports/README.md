@@ -40,6 +40,9 @@ Everyone else should stop reading and go to the main README +
 - [`bootstrap.md`](bootstrap.md) — full workflow: copying the template,
   editing it, running the `inv import-*` tasks, layout reference,
   verification.
+- [`income.md`](income.md) — income-specific details: source tabs,
+  currency transitions, verification semantics, and the current
+  year-by-year mapping.
 
 ## Common errors
 

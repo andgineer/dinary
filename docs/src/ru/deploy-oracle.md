@@ -96,14 +96,9 @@ DINARY_DEPLOY_HOST=ubuntu@<PUBLIC_IP>
 # DINARY_SHEET_LOGGING_SPREADSHEET=https://docs.google.com/spreadsheets/d/YOUR_ID/edit
 ```
 
-Опционально — если хотите запускать bootstrap import на сервере — также создайте `.deploy/import_sources.json` из шаблона:
-
-```bash
-cp .deploy.example/import_sources.json .deploy/import_sources.json
-$EDITOR .deploy/import_sources.json  # пропишите реальные spreadsheet_id
-```
-
-`inv setup` синхронизирует локальные `.deploy/.env` и (если есть) `.deploy/import_sources.json` на VM в `/home/ubuntu/dinary-server/.deploy/`, сиды базовую таксономию командой `inv bootstrap-catalog`, и — только если `import_sources.json` присутствует — запускает `inv import-config`. Если ваш деплой не использует bootstrap import, достаточно одного `.deploy/.env`; bootstrap VM корректно отработает без `import_sources.json`. Схема и workflows импорта — в директории `imports/` в корне репо.
+`inv setup` синхронизирует локальные `.deploy/.env` на VM в
+`/home/ubuntu/dinary-server/.deploy/` и сидит базовую таксономию командой
+`inv bootstrap-catalog`.
 
 Проверьте SSH-доступ:
 
@@ -124,10 +119,10 @@ inv setup
 - Устанавливает системные пакеты (python3, git)
 - Устанавливает uv (менеджер пакетов Python)
 - Клонирует репозиторий и устанавливает зависимости
-- Синхронизирует ваш локальный `.deploy/.env` (и `.deploy/import_sources.json`, если есть) на VM
+- Синхронизирует ваш локальный `.deploy/.env` на VM
 - Загружает `~/.config/gspread/service_account.json` на VM
 - Создаёт и запускает systemd-сервис `dinary`
-- Сеет базовую таксономию в `dinary.duckdb` через `inv bootstrap-catalog`, а `inv import-config` запускает только если `.deploy/import_sources.json` присутствует
+- Сеет базовую таксономию в `dinary.duckdb` через `inv bootstrap-catalog`
 - Настраивает туннель (Tailscale по умолчанию, или Cloudflare — в зависимости от `DINARY_TUNNEL`)
 
 ### Tailscale (по умолчанию)

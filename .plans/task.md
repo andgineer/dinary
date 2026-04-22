@@ -1,4 +1,24 @@
-# Project Description
+# Project Description (Historical Problem Statement)
+
+> **Status note (2026-04):** this file is the original problem statement that
+> motivated the project. It no longer describes the live system architecture.
+> Today the active implementation is a FastAPI + single-file DuckDB backend
+> with a same-origin PWA in `static/`, export-only Google Sheets logging, and
+> operator workflows in `tasks.py`. For the current design and runtime
+> contracts, see [architecture.md](architecture.md). Keep this file as product
+> context and requirements history, not as a source of implementation truth.
+
+## Current Status Snapshot
+
+- **Primary store:** `data/dinary.duckdb`, not Google Sheets.
+- **Runtime write path:** `POST /api/expenses` stores 3D expenses
+  (`category_id`, optional `event_id`, `tag_ids[]`) with idempotency on
+  `client_expense_id`.
+- **Mobile client:** installable PWA served by the same FastAPI app.
+- **Google Sheets:** optional append-only logging / legacy import source, not
+  the source of truth.
+- **Income:** imported into the same DuckDB file and stored in
+  `settings.accounting_currency`.
 
 ## Current Setup
 

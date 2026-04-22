@@ -96,14 +96,9 @@ DINARY_DEPLOY_HOST=ubuntu@<PUBLIC_IP>
 # DINARY_SHEET_LOGGING_SPREADSHEET=https://docs.google.com/spreadsheets/d/YOUR_ID/edit
 ```
 
-Optionally — only if you want to run bootstrap import on the server — also create `.deploy/import_sources.json` from the template:
-
-```bash
-cp .deploy.example/import_sources.json .deploy/import_sources.json
-$EDITOR .deploy/import_sources.json  # fill in real spreadsheet_id values
-```
-
-`inv setup` syncs the local `.deploy/.env` and (when present) `.deploy/import_sources.json` to the VM under `/home/ubuntu/dinary-server/.deploy/`, seeds the runtime taxonomy via `inv bootstrap-catalog`, and — only when `import_sources.json` is present — runs `inv import-config` afterwards. Deployments that don't need bootstrap import work with just `.deploy/.env`; the VM bootstrap completes cleanly without `import_sources.json`. Schema and workflows for imports live in the `imports/` directory at the repo root.
+`inv setup` syncs the local `.deploy/.env` to the VM under
+`/home/ubuntu/dinary-server/.deploy/` and seeds the runtime taxonomy via
+`inv bootstrap-catalog`.
 
 Verify SSH access:
 
@@ -124,10 +119,10 @@ This single command performs everything on the VM via SSH:
 - Installs system packages (python3, git)
 - Installs uv (Python package manager)
 - Clones the repo and installs dependencies
-- Syncs your local `.deploy/.env` (and `.deploy/import_sources.json` when present) to the VM
+- Syncs your local `.deploy/.env` to the VM
 - Uploads `~/.config/gspread/service_account.json` to the VM
 - Creates and starts a `dinary` systemd service
-- Seeds the runtime taxonomy into `dinary.duckdb` via `inv bootstrap-catalog`, and runs `inv import-config` only when `.deploy/import_sources.json` exists
+- Seeds the runtime taxonomy into `dinary.duckdb` via `inv bootstrap-catalog`
 - Sets up the tunnel (Tailscale by default, or Cloudflare — depending on `DINARY_TUNNEL`)
 
 ### Tailscale (default)

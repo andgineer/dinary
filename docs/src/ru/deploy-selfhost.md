@@ -14,7 +14,7 @@
 ## Требования
 
 - JSON-ключ сервисного аккаунта Google — см. [Настройка Google Sheets](google-sheets-setup.md).
-- Заполненный `.deploy/.env` с нужными переменными (как минимум `DINARY_GOOGLE_SHEETS_CREDENTIALS_PATH`, опционально `DINARY_SHEET_LOGGING_SPREADSHEET` для sheet logging). Если нужен bootstrap import — дополнительно положите `.deploy/import_sources.json` (см. [Настройка Google Sheets → Источники для bootstrap import](google-sheets-setup.md#bootstrap-import)).
+- Заполненный `.deploy/.env` с нужными переменными (как минимум `DINARY_GOOGLE_SHEETS_CREDENTIALS_PATH`, опционально `DINARY_SHEET_LOGGING_SPREADSHEET` для sheet logging).
 - dinary-server запущен локально (см. [README](https://github.com/andgineer/dinary-server#local-development)).
 
 ## Вариант A: Tailscale Funnel
@@ -44,7 +44,6 @@ mkdir -p .deploy
 cp .deploy.example/.env .deploy/.env
 # Отредактируйте .deploy/.env при необходимости (опциональный
 # `DINARY_SHEET_LOGGING_SPREADSHEET` для sheet logging, путь к credentials и т.д.).
-# Для bootstrap import также скопируйте .deploy.example/import_sources.json → .deploy/import_sources.json
 uv run uvicorn dinary.main:app --host 127.0.0.1 --port 8000
 ```
 

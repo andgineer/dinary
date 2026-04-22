@@ -345,11 +345,21 @@ For each write, the server preserves `(amount_original, currency_original)` verb
 
 Optional sheet logging keeps column B RSD-denominated regardless of the accounting currency: if the expense was typed in RSD (the common case) we write `amount_original` verbatim; otherwise the worker converts `amount` (in the accounting currency) to RSD using the expense-date NBS rate.
 
+**Accounting-currency anchor.** The accounting currency is a **DB-wide invariant** — once the first expense has been written, flipping it mid-life (e.g. accidentally typing `DINARY_ACCOUNTING_CURRENCY=RSD` into `.deploy/.env`) would silently start persisting new `expenses.amount` / `income.amount` in the new unit while existing rows stay in the old one, quietly invalidating every sum, report, and sheet-logging RSD derivation. Pydantic `BaseSettings` has no "immutable after first run" marker, so the guard lives in the DB itself: `init_db` calls `_reconcile_accounting_currency` which pins the value to an `app_metadata` row (`key='accounting_currency'`) on the first run and refuses to start on any subsequent mismatch.
+- **Env var is first-deploy-only.** `DINARY_ACCOUNTING_CURRENCY` is consulted solely to seed the anchor row on a fresh `dinary.duckdb`. After that the env var is purely advisory; operators can (and should) omit it from `.deploy/.env` on steady-state servers.
+- **DB is the runtime source of truth.** Every `init_db` reads the anchored value back and snaps `settings.accounting_currency` to the canonical uppercased form so all downstream call sites (sheet-logging, reports, imports, `api/expenses`) that read the setting transparently track the DB value — no per-call-site DB lookup needed.
+- **Resolution matrix** for `_reconcile_accounting_currency`:
+    - row absent + env non-empty → INSERT seed, copy to settings;
+    - row absent + env empty → `RuntimeError` (no seed source; the operator must pick a currency for the fresh ledger);
+    - row present + env empty → take DB value, copy to settings (steady-state happy path);
+    - row present + env matches (case-insensitive) → no-op, settings snapped to canonical form;
+    - row present + env differs → `RuntimeError` with both values named and an actionable message (revert env, or unset it, or do a deliberate migration that converts every `expenses`/`income` row AND updates the anchor row manually).
+
 **Category group is derived, not stored on expenses.** An expense's group is resolved via `category_id → categories.group_id`. Changing a category's group assignment instantly affects all historical data.
 
 **`expenses` is a committed ledger.** Once a row is written, its `(category_id, event_id, tag set)` is the final decision. There is no silent re-attach/re-detach. Any future receipt queue, raw receipt storage, AI suggestions, or user-resolution tasks will live in *separate* pipeline tables — not as intermediate states overloaded onto `expenses`.
 
-**Catalog vocabulary is user-editable from the PWA (Phase 2).** Groups, categories, events, and tags are all mutable via the Admin API (`POST`/`PATCH`/`DELETE /api/admin/catalog/*`) through `catalog_writer`. Retired rows are soft-deleted (`is_active = FALSE`) so `expenses.*_id` FKs stay walkable; `GET /api/catalog` returns both active and inactive rows (with an `is_active` flag) and the PWA filters them out of the dropdowns by default, offering a per-picker "Показать неактивные" toggle that also exposes "Активировать" / "Удалить" affordances. `inv import-catalog` remains the bulk seeding path from the legacy sheet.
+**Catalog vocabulary is already user-editable from the PWA.** Groups, categories, events, and tags are all mutable via the Admin API (`POST`/`PATCH`/`DELETE /api/admin/catalog/*`) through `catalog_writer`. Retired rows are soft-deleted (`is_active = FALSE`) so `expenses.*_id` FKs stay walkable; `GET /api/catalog` returns both active and inactive rows (with an `is_active` flag) and the PWA filters them out of the dropdowns by default, offering a per-picker "Показать неактивные" toggle that also exposes "Активировать" / "Удалить" affordances. `inv import-catalog` remains the bulk seeding path from the legacy sheet.
 
 **`sheet_category` / `sheet_group` are import provenance, not runtime metadata.** Imported rows populate the pair together (with `sheet_group=''` when the legacy row had no envelope); runtime rows leave both NULL. The async append worker does not read these columns.
 
@@ -460,24 +470,35 @@ For expenses without QR codes (cafés, services, cash payments, foreign purchase
 - Stored in `expenses` — same table as parsed receipt items, just without `receipt_id`, `quantity`, or `unit_price`.
 - Category is assigned at entry time (user picks from a list or types a shortcut).
 
-### Mobile Input Interface (dinary-app)
+### Mobile Input Interface (Current PWA + Future Expansion)
 
-The specific mobile client is a build-time decision.
-The architecture is agnostic — the input layer is a thin client that sends structured data to the backend via a simple REST API.
+The shipped mobile client is the installable PWA in `static/`, served by the
+same FastAPI app as the API. The broader architecture remains thin-client
+friendly, but the current implementation is no longer tool-agnostic in
+practice: the custom PWA is the real runtime surface.
 
-**Phase 0 (MVP) requirements:**
+**Implemented today:**
 
-- Camera access for QR scanning. In the implemented MVP the browser decodes the Serbian fiscal QR locally with `zbar-wasm`, and the client can extract amount/date from the QR URL path without waiting for a backend roundtrip.
-- Fast manual entry: amount + group selector + category selector + optional comment, one tap to submit. Entry saves instantly to IndexedDB first; network send happens only after local persistence is secured.
-- Offline data persistence via IndexedDB (reliable for installed PWAs — iOS Safari eviction only affects non-installed sites). `navigator.storage.persist()` for additional protection.
-- QR scan with parallel processing: while user selects group/category, the app finishes local QR parsing and can still fall back to backend parsing when needed.
+- Camera access for QR scanning. The browser decodes Serbian fiscal QR codes
+  locally with `zbar-wasm`, and the client can extract amount/date from the QR
+  URL path without waiting for a backend roundtrip.
+- Fast manual entry backed by the 3D catalog: category, optional event,
+  optional tags, amount, date, comment.
+- Offline data persistence via IndexedDB. The entry is saved locally before the
+  network send is attempted.
+- Catalog caching keyed by `catalog_version`, with `GET /api/catalog`
+  revalidation via ETag and opportunistic refresh after `POST /api/expenses`.
+- Inline catalog administration for groups, categories, events, and tags,
+  including inactive-row management.
 
-**Full requirements (Phase 3 target):**
+**Future mobile-input expansion:**
 
-- All Phase 0 capabilities, plus:
-- Confirmation screen after QR scan: shows parsed line items, allows quick category corrections before saving.
-- Event selector: if the expense date falls within an active event's date range, auto-suggest it. If multiple active events overlap, show a dropdown. Allow manual assignment/removal.
-- Beneficiary selector: defaults to "семья", quick switch to a specific family member.
+- Confirmation screen after QR scan showing parsed line items and allowing
+  quick corrections before final commit.
+- Receipt-ingestion queue UX where a scan creates a background job first and
+  only later requires review/correction.
+- Richer receipt-specific context and classification helpers beyond today's
+  manual-entry-first flow.
 
 #### Frontend Tool Evaluation
 
@@ -952,25 +973,20 @@ Detailed plan: [phase1.md](phase1.md) (historical; frozen before the single-file
 - Add a separate **receipt-ingestion queue** (out of the `expenses` ledger) where parsing, rule/AI classification, and user disambiguation happen *before* a final expense row lands in `expenses`.
 - Implement AI auto-classification that produces 3D classification directly (`category`, `event`, `tag_ids[]`).
 - Switch the PWA receipt flow so a scan submits the receipt-ingestion job immediately; later user interaction is review/correction, not the initial submission.
-- Reintroduce non-destructive `catalog_version` bumps for tag admin and the receipt pipeline.
+- Extend non-destructive `catalog_version` handling where the receipt pipeline
+  eventually exposes client-visible catalog-adjacent state.
 
-### Phase 3: Mobile Input — Full Version (dinary-app)
-**Done as part of MVP**
+### Phase 3: Mobile Input — Expand the Existing PWA
 
-- **3a: Frontend tool evaluation.
+The frontend-tool decision is complete: the custom PWA won and is already in
+production. Phase 3 is therefore not "choose a tool", but "extend the current
+PWA beyond the manual-entry-first MVP".
 
-  - ** Research the candidate tools from the evaluation table (see "Frontend Tool Evaluation" section) **and any other tools discovered during research**.
-  - Build a minimal MVP (scan QR → send URL → see parsed items with line-item detail) with 1-2 top candidates.
-  - Compare: QR scanning reliability, offline data persistence, speed of manual entry, API connectivity, cross-platform behavior (Android + iOS), overall UX on phone.
-  - Decide on the tool. Note: QR scanning and basic UX are already validated in Phase 0. This step focuses on whether the Phase 0 tool also handles the full line-item review flow, or whether a different tool is needed for Phase 3b.
-
-- **3b: Build the full mobile input layer** with the chosen tool.
-
-  - QR scan → send URL → parse → store.
-  - Manual entry for non-QR expenses.
-  - Event auto-suggestion and selection.
-  - Beneficiary selector.
-  - Offline queue with sync-on-reconnect.
+- Build the full receipt-oriented mobile flow on top of the current PWA.
+- Keep manual entry for non-QR expenses.
+- Improve event suggestion/selection and receipt review ergonomics.
+- Preserve offline-first semantics and sync-on-reconnect behavior while adding
+  richer receipt workflows.
 
 ### Phase 4: AI Classification & Desktop App (dinary)
 
@@ -1002,7 +1018,9 @@ Detailed plan: [phase1.md](phase1.md) (historical; frozen before the single-file
 Each phase is independently useful.
 
 - Phase 0 alone eliminates manual spreadsheet editing, validates QR scanning, and validates the mobile input tool.
-- Phase 1 establishes the 3D ledger with idempotent ingestion, cross-year `expense_id` ownership, persistent sheet-export queue, and one-shot historical bootstrap import.
+- Phase 1 establishes the 3D ledger with idempotent ingestion on
+  `client_expense_id`, a persistent sheet-export queue, and one-shot
+  historical bootstrap import.
 - Phase 2 solves the supermarket opacity problem and adds the receipt-ingestion pipeline that originates `event_id` and richer tag sets.
 - Phase 3 adds full line-item QR flow and complete mobile input.
 - Phase 4 builds the desktop app (daemon + GUI) with AI classification and responsive receipt extraction.

@@ -1,9 +1,9 @@
 # Google Sheets Setup
 
-Dinary-server stores runtime data in DuckDB, not in Google Sheets. Google
-Sheets are used for two auxiliary flows: bootstrap import of historical data and
-optional append-only sheet logging. You need a Google service account and one
-or more spreadsheets shared with that account.
+Dinary-server stores runtime data in DuckDB, not in Google Sheets. In the
+public/admin deployment story, Google Sheets are used only for optional
+append-only sheet logging. You need a Google service account and a spreadsheet
+shared with that account.
 
 ## 1. Create a Google Cloud project
 
@@ -53,53 +53,7 @@ Runtime Google Sheets settings live in `.deploy/.env` (environment variables):
 | Variable | Value |
 |----------|-------|
 | `DINARY_GOOGLE_SHEETS_CREDENTIALS_PATH` | path to `service_account.json` (default: `~/.config/gspread/service_account.json`) |
-| `DINARY_SHEET_LOGGING_SPREADSHEET` | optional spreadsheet ID or URL for append-only runtime logging (see section 7) |
-
-Bootstrap-import configuration has been moved out of `.env` into a dedicated file — see the next section.
-
-### Bootstrap import sources
-
-The bootstrap import flow (`inv import-config`, `inv import-catalog`, `inv import-budget`, `inv import-budget-all`, `inv import-income`, `inv import-income-all`, `inv verify-bootstrap-import`, `inv verify-bootstrap-import-all`, `inv verify-income-equivalence-all`) reads the list of source spreadsheets from an **optional** file at `.deploy/import_sources.json` in the repo root. The file is gitignored — only the placeholder template at `.deploy.example/import_sources.json` is committed.
-
-If you don't plan to run bootstrap import (e.g. you start from an empty DuckDB and enter expenses only through the PWA), skip this file entirely — the runtime works without it. Seed the runtime taxonomy with `inv bootstrap-catalog` in that case.
-
-To enable bootstrap import, copy the template and edit it:
-
-```bash
-cp .deploy.example/import_sources.json .deploy/import_sources.json
-$EDITOR .deploy/import_sources.json
-```
-
-The schema is a JSON array, one object per year:
-
-```json
-[
-  {
-    "year": 2026,
-    "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
-    "worksheet_name": "Sheet1",
-    "layout_key": "default"
-  },
-  {
-    "year": 2019,
-    "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
-    "income_worksheet_name": "Balance",
-    "income_layout_key": "balance_rub"
-  }
-]
-```
-
-Per-object fields:
-
-- `year` — budget year.
-- `spreadsheet_id` — Google Sheets spreadsheet ID.
-- `worksheet_name` — worksheet tab for expense import (defaults to empty → first visible tab).
-- `layout_key` — sheet layout parser (`default`, `rub_6col`, `rub_2016`, `rub_2014`, `rub_2012`, `rub_fallback`); defaults by year.
-- `income_worksheet_name` — optional worksheet tab for income import.
-- `income_layout_key` — optional parser for income import (`balance_rub`, `balance_rub_rsd`, `balance_rsd`, `income_rsd`).
-- `notes` — optional free-form operator comment.
-
-`.deploy/import_sources.json` is the single source of truth for which years exist: `inv import-*` and `inv verify-*` compute their year list from this file (it used to live in a DuckDB table called `import_sources`; that table was removed in the 2026-04 reset and the config now lives next to the service-account JSON instead of inside derived DB state). Any `inv import-*` command invoked without the file raises a clear error pointing at the repo-root `imports/` directory, which documents the schema and workflows in full.
+| `DINARY_SHEET_LOGGING_SPREADSHEET` | optional spreadsheet ID or URL for append-only runtime logging (see below) |
 
 ## 7. Sheet logging (optional)
 

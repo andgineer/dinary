@@ -261,7 +261,7 @@ export async function adminPatchTag(tag_id, body) {
 
 // Convenience reactivation / deactivation helpers: one PATCH flipping
 // ``is_active``. Deactivation is the symmetric operation the picker
-// "Управлять" list exposes for active rows — no destructive semantics,
+// "Manage" list exposes for active rows — no destructive semantics,
 // no usage check; the row is simply hidden from normal dropdowns and
 // can be re-surfaced via reactivation. Hard vs soft delete stays on
 // the DELETE endpoint.
@@ -301,8 +301,8 @@ export async function adminDeactivateTag(tag_id) {
 // DELETE helpers. Server decides hard vs soft based on whether the row
 // is still referenced by expenses or any mapping table; the caller
 // just asks for "remove" and inspects ``delete_status`` / ``usage_count``
-// on the returned snapshot to phrase the toast ("удалено" vs
-// "скрыто — ещё используется в N расходах").
+// on the returned snapshot to phrase the toast ("deleted" vs
+// "hidden — still used in N expenses").
 
 export async function adminDeleteGroup(group_id) {
   return adminRequest(`/api/admin/catalog/groups/${group_id}`, {

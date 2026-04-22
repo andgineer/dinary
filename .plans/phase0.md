@@ -1,5 +1,14 @@
 # Phase 0 Implementation Plan
 
+> **Status note (2026-04):** this file is historical implementation history for
+> the direct-to-Google-Sheets MVP. The live system has moved on: FastAPI now
+> serves the same-origin PWA plus a DuckDB-backed API, static assets are built
+> from `static/` into `_static/` via `inv build-static`, runtime configuration
+> lives in `.deploy/.env`, and operator workflows are centered on `tasks.py`
+> plus the single-file `data/dinary.duckdb` design documented in
+> [architecture.md](architecture.md). Keep this file as Phase 0 context, not as
+> current operational guidance.
+
 ## Current State
 
 - **Phase 0 is superseded by Phase 1.** The DuckDB-backed architecture is now the active system. Phase 0 code (direct Google Sheets writes) remains in the codebase for rollback purposes but is no longer the active write path.
@@ -12,7 +21,8 @@
 - **Backend**: FastAPI API writes to the existing Google Sheets workbook without changing the spreadsheet mental model.
 - **Frontend**: installed PWA with two cascading dropdowns (`group -> category`), manual amount entry, live QR scan, and a queue modal for unsent expenses.
 - **Offline safety**: expense is first saved to IndexedDB and only removed after confirmed server success. Network/server failures must never drop user input.
-- **Deployment**: `inv setup` for one-time provisioning, `inv deploy` for code updates, `inv status`, `inv logs`, `inv ssh`, and `inv test`.
+- **Deployment**: `inv setup` for one-time provisioning, `inv deploy` for code
+  updates, `inv status`, `inv logs`, `inv ssh`, and `inv test`.
 - **Access model**: Tailscale is the default deployment mode, using tailnet-only `tailscale serve`; `cloudflare` and `none` remain supported options.
 
 ---

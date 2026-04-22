@@ -13,6 +13,7 @@ from dinary.__about__ import __version__
 from dinary.reports import expenses as expenses_report
 from dinary.reports import income as income_report
 from dinary.reports import verify_budget, verify_income
+from dinary.tools import sql as sql_module
 from dotenv import dotenv_values
 from invoke import Collection, Context, task
 
@@ -421,6 +422,92 @@ def test(c):
 def pre(c):
     """Run pre-commit checks."""
     c.run("pre-commit run --verbose --all-files")
+
+
+@task(help={
+    "port": "TCP port to listen on (default 8000).",
+    "sheet-logging": (
+        "Opt back into Google-Sheets logging. OFF by default so debug "
+        "expenses don't leak to the prod logging spreadsheet."
+    ),
+    "reset": (
+        "Wipe ``data/dinary.duckdb`` before starting, then re-seed "
+        "the catalog from the hardcoded taxonomy (groups, categories, "
+        "events, tags) so PWA dropdowns have rows. Best-effort kills "
+        "any lingering local uvicorn process holding the DB lock. "
+        "Non-destructive if no DB exists yet."
+    ),
+})
+def dev(c, port=8000, sheet_logging=False, reset=False):
+    """Run the FastAPI server locally with auto-reload for PWA debugging.
+
+    - Listens on http://127.0.0.1:<port> — open that URL in your
+      browser instead of pushing to Oracle Cloud on every iteration.
+    - ``uvicorn --reload`` watches ``src/`` and re-imports on Python
+      changes. Static files (``static/``) are served straight from
+      disk on every request, so editing ``static/css/style.css`` or
+      ``static/js/app.js`` only needs a browser refresh — no server
+      restart, no rebuild.
+    - Sheet-logging is **disabled** by default
+      (``DINARY_SHEET_LOGGING_SPREADSHEET=`` overrides the value
+      from ``.deploy/.env``), so test expenses you create in dev
+      do NOT show up in the prod Google Sheet. Pass
+      ``--sheet-logging`` to opt in (rare; for debugging the drain
+      loop itself).
+    - Uses ``data/dinary.duckdb`` as the local DB. Schema migrations
+      run automatically on server startup via the FastAPI lifespan
+      (``_lifespan -> duckdb_repo.init_db``), so editing a migration
+      and restarting ``inv dev`` is enough — no separate ``migrate``
+      step. For a clean slate use ``--reset``.
+    - To work against real prod data: run ``inv backup`` first to
+      fetch a snapshot into ``~/Library/dinary/<ts>/data/``, then
+      ``cp`` the resulting ``dinary.duckdb`` into ``data/``.
+
+    PWA caching tip: once the service worker is registered the
+    browser will serve cached assets even after you edit them. In
+    Chrome DevTools open ``Application -> Service Workers`` and
+    tick ``Update on reload`` (or ``Bypass for network``) for fast
+    iteration. Hard-refresh (Cmd-Shift-R) also bypasses the SW
+    for that one navigation.
+    """
+    if reset:
+        # Kill any orphaned local uvicorn that would otherwise hold
+        # the DuckDB lock while we try to remove the file. ``pkill
+        # -f`` exits 1 when nothing matches, which is not an error
+        # condition for us; ``check=False`` absorbs that.
+        subprocess.run(
+            ["pkill", "-f", "uvicorn dinary"],
+            check=False,
+        )
+        for fn in ("data/dinary.duckdb", "data/dinary.duckdb.wal"):
+            p = Path(fn)
+            if p.exists():
+                p.unlink()
+                print(f"Removed {p}")
+        # ``bootstrap_catalog()`` internally calls ``init_db()`` so
+        # migrations run as part of seeding — no separate migrate
+        # call needed. It's also idempotent, so running ``--reset``
+        # on an already-seeded DB is safe (it just no-ops after the
+        # file rm path above wipes it).
+        c.run(
+            "uv run python -c 'from dinary.services.seed_config "
+            "import bootstrap_catalog; import json; "
+            "print(json.dumps(bootstrap_catalog()))'",
+        )
+
+    overrides = []
+    if not sheet_logging:
+        overrides += [
+            "DINARY_SHEET_LOGGING_SPREADSHEET=",
+            "DINARY_SHEET_LOGGING_DRAIN_INTERVAL_SEC=0",
+        ]
+    prefix = (" ".join(overrides) + " ") if overrides else ""
+    cmd = (
+        f"{prefix}uv run uvicorn dinary.main:app "
+        f"--reload --reload-dir src "
+        f"--host 127.0.0.1 --port {port}"
+    )
+    c.run(cmd, pty=True)
 
 
 @task
@@ -1312,6 +1399,98 @@ def report_income(c, csv=False, remote=False):  # noqa: A002
     if csv:
         flags.append("--csv")
     _run_report_module(c, "income", flags, remote=remote)
+
+
+@task(
+    name="sql",
+    help={
+        "query": "SQL query string (mutex with --file).",
+        "file": "Read SQL from file at this path (mutex with --query).",
+        "csv": "Emit CSV to stdout instead of a rich table.",
+        "json": (
+            "Emit JSON envelope {columns, rows, row_count} to stdout. "
+            "Mutex with --csv."
+        ),
+        "remote": (
+            "Run against a /tmp snapshot of the prod DB over SSH "
+            "instead of local data/dinary.duckdb."
+        ),
+    },
+)
+def sql_query(c, query="", file="", csv=False, json=False, remote=False):  # noqa: A002
+    """Run a read-only SQL query against ``data/dinary.duckdb``.
+
+    The connection is always opened ``read_only=True`` — typoing
+    ``UPDATE`` / ``DELETE`` errors out at the DuckDB layer instead
+    of quietly mutating the ledger. For free-form inspection of the
+    ``app_metadata`` anchor, per-currency totals in ``expenses``,
+    sheet-logging job state, etc. Report-shaped queries should
+    still live in ``dinary.reports.*``.
+
+    Examples::
+
+        inv sql -q "SELECT * FROM app_metadata ORDER BY key"
+        inv sql -q "SELECT currency_original, COUNT(*) FROM expenses GROUP BY 1"
+        inv sql -f scripts/monthly_summary.sql --csv > out.csv
+        inv sql -q "SELECT * FROM app_metadata" --remote
+
+    ``--remote`` follows the same JSON-over-SSH snapshot pattern as
+    ``inv report-*`` (see :func:`_remote_snapshot_cmd`): the DB is
+    ``cp``'d to ``/tmp`` on the server so the running ``dinary``
+    service's exclusive lock doesn't block us, the module emits a
+    JSON envelope, and the local process either forwards those
+    bytes (``--csv`` / ``--json``) or renders a rich table.
+
+    ``--file`` + ``--remote`` reads the SQL file locally and ships
+    its contents as ``--query`` over SSH — no SCP round-trip.
+    """
+    if csv and json:
+        raise SystemExit("--csv and --json are mutually exclusive")
+    if bool(query) == bool(file):
+        raise SystemExit("exactly one of --query / --file is required")
+
+    if file:
+        # Even for ``--remote`` we dereference the file locally and
+        # ship its contents as ``--query``; that keeps the SSH
+        # transport path uniform and sidesteps having to SCP a
+        # throwaway ``.sql`` before each run.
+        sql_text = Path(file).read_text(encoding="utf-8")
+    else:
+        sql_text = query
+
+    # ``shlex.quote`` is the pivot that makes arbitrary SQL survive
+    # the space-join in ``_remote_snapshot_cmd`` → ``bash`` decode.
+    # Without it, a query containing a space or quote would be
+    # re-split by the remote shell and argparse would see garbage.
+    sql_flags = ["--query", shlex.quote(sql_text)]
+
+    if not remote:
+        local_flags = [*sql_flags]
+        if csv:
+            local_flags.append("--csv")
+        elif json:
+            local_flags.append("--json")
+        c.run(f"uv run python -m dinary.tools.sql {' '.join(local_flags)}")
+        return
+
+    # Remote path: the server always emits the JSON envelope. When
+    # the operator asked for ``--csv`` / ``--json`` we just forward
+    # bytes (for ``--json``) or re-render client-side; for the
+    # default rich path we render locally against the JSON so ANSI
+    # colours aren't stripped by the SSH transport.
+    remote_flags = [*sql_flags, "--json"]
+    raw = _ssh_capture_bytes(_remote_snapshot_cmd("dinary.tools.sql", remote_flags))
+
+    if json:
+        sys.stdout.buffer.write(raw)
+        return
+
+    payload = _json.loads(raw.decode("utf-8"))
+    columns, rows = sql_module.rows_from_json(payload)
+    if csv:
+        sql_module.render_csv(columns, rows, stream=sys.stdout)
+    else:
+        sql_module.render_rich(columns, rows, stream=sys.stdout)
 
 
 namespace = Collection.from_module(sys.modules[__name__])

@@ -25,11 +25,14 @@ CREATE TABLE income (
 Defined in `src/dinary/migrations/0001_initial_schema.sql` alongside every
 other ledger and catalog table — the per-year `budget_YYYY.duckdb` /
 `config.duckdb` split was removed in the single-file reset, so there is
-exactly one migration stream. `income.amount` is stored in the configured
-accounting currency (default `"EUR"`, i.e. the value of
-`settings.accounting_currency`); the column is dimensionless at the schema
-level because the accounting-currency choice is a deployment-wide setting,
-not a per-row attribute.
+exactly one migration stream. `income.amount` is stored in the DB-wide
+accounting currency (default `"EUR"`), anchored in
+`app_metadata.accounting_currency` on first `init_db` and read back via
+`settings.accounting_currency` at runtime — see the "Accounting-currency
+anchor" subsection in `.plans/architecture.md` for the invariant and the
+operator migration path. The column is dimensionless at the schema level
+because the accounting-currency choice is a deployment-wide constant, not
+a per-row attribute.
 
 ### `.deploy/import_sources.json` — operator-local source registry
 
@@ -133,8 +136,11 @@ All destructive income-import tasks require explicit `--yes` confirmation:
 The table below is the import log at the time income was last fully
 re-imported against the EUR accounting currency (the current default).
 It should be re-checked with `inv verify-income-equivalence-all` after
-any re-import, and after any change to `settings.accounting_currency`
-(which would shift every stored row and invalidate these totals).
+any re-import, and after any deliberate accounting-currency migration
+(`app_metadata.accounting_currency` is normally immutable — see the
+"Accounting-currency anchor" subsection in `.plans/architecture.md` —
+but a planned change to the DB-wide unit would shift every stored row
+and invalidate the totals below).
 
 | Year | Months | Total EUR |
 |------|--------|-----------|

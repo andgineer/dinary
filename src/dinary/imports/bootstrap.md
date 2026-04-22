@@ -120,9 +120,9 @@ Only years whose entry has `income_worksheet_name` are imported;
 years without structured income data (e.g. 2012–2018) are skipped.
 Income amounts are stored in the configured accounting currency
 (`DINARY_ACCOUNTING_CURRENCY`, default `EUR`) using NBS middle rates
-for the 1st of each month. See [`.plans/income.md`](../../../.plans/income.md)
-for the full layout reference (`balance_rub`, `balance_rub_rsd`,
-`balance_rsd`, `income_rsd`) and the mid-2022 RUB→RSD transition.
+for the 1st of each month. See [`income.md`](income.md) for the full
+layout reference (`balance_rub`, `balance_rub_rsd`, `balance_rsd`,
+`income_rsd`) and the mid-2022 RUB→RSD transition.
 
 ## 6. Verify
 
