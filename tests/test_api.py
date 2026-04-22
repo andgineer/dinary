@@ -1,19 +1,19 @@
-"""API tests against the unified dinary.duckdb (GET /api/catalog, POST /api/expenses)."""
+"""API tests against the unified dinary.db (GET /api/catalog, POST /api/expenses)."""
 
 import asyncio
 import contextlib
+import sqlite3
 import threading
 from decimal import Decimal
 from unittest.mock import patch
 
 import allure
-import duckdb
 import httpx
 import pytest
 
 from dinary.config import settings
 from dinary.main import create_app
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 
 
 @contextlib.contextmanager
@@ -22,9 +22,9 @@ def _count_race_recoveries():
 
     Yields a ``{"count": int}`` dict that callers read *after* the
     ``with`` block exits. Works by wrapping
-    ``duckdb_repo.best_effort_rollback`` with a counter that
+    ``ledger_repo.best_effort_rollback`` with a counter that
     increments on contexts containing ``"race-recovery"`` — the
-    substring both INSERT-time and COMMIT-time ``_DUCKDB_RACE_EXCS``
+    substring both INSERT-time and COMMIT-time ``_RACE_EXCS``
     branches embed in their context string. The outer
     ``except Exception: best_effort_rollback(...)`` in
     ``insert_expense`` uses a different context string and is not
@@ -39,7 +39,7 @@ def _count_race_recoveries():
     """
     counter = {"count": 0}
     lock = threading.Lock()
-    original = duckdb_repo.best_effort_rollback
+    original = ledger_repo.best_effort_rollback
 
     def counting_rollback(con, *, context: str) -> None:
         if "race-recovery" in context:
@@ -47,22 +47,22 @@ def _count_race_recoveries():
                 counter["count"] += 1
         original(con, context=context)
 
-    with patch.object(duckdb_repo, "best_effort_rollback", new=counting_rollback):
+    with patch.object(ledger_repo, "best_effort_rollback", new=counting_rollback):
         yield counter
 
 
 @pytest.fixture(autouse=True)
-def _tmp_duckdb(tmp_path, monkeypatch):
+def _tmp_db(tmp_path, monkeypatch):
     """Point the repo at a fresh per-test DB and seed a minimal catalog.
 
     The ``client`` fixture's lifespan calls ``init_db`` again, which is
     idempotent and reuses the already-migrated file in ``tmp_path``.
     """
-    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
-    duckdb_repo.init_db()
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+    ledger_repo.init_db()
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -160,9 +160,9 @@ class TestPostExpense:
         )
         assert resp.status_code == 200, resp.text
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            assert duckdb_repo.list_logging_jobs(con) == []
+            assert ledger_repo.list_logging_jobs(con) == []
         finally:
             con.close()
 
@@ -193,9 +193,9 @@ class TestPostExpense:
         )
         assert resp.status_code == 200, resp.text
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            pks = duckdb_repo.list_logging_jobs(con)
+            pks = ledger_repo.list_logging_jobs(con)
             expected_pk_row = con.execute(
                 "SELECT id FROM expenses WHERE client_expense_id = ?",
                 ["e_log"],
@@ -224,7 +224,7 @@ class TestPostExpense:
         assert second.json()["status"] == "duplicate"
 
         # The idempotent replay does not create a second row.
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             count = con.execute(
                 "SELECT COUNT(*) FROM expenses WHERE client_expense_id = 'e2'",
@@ -298,14 +298,14 @@ class TestPostExpense:
             },
         )
         assert resp.status_code == 200, resp.text
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             row = con.execute(
                 "SELECT id, event_id FROM expenses WHERE client_expense_id = 'e_evt'",
             ).fetchone()
             assert row is not None
             assert int(row[1]) == 1
-            tags = sorted(duckdb_repo.get_expense_tags(con, int(row[0])))
+            tags = sorted(ledger_repo.get_expense_tags(con, int(row[0])))
         finally:
             con.close()
         assert tags == [1, 2]
@@ -321,7 +321,7 @@ class TestPostExpense:
         main "same-invariant-on-both-paths" contract tests around
         ``events.auto_tags`` rely on.
         """
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "UPDATE events SET auto_tags = ? WHERE id = 1",
@@ -345,13 +345,13 @@ class TestPostExpense:
         )
         assert resp.status_code == 200, resp.text
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             row = con.execute(
                 "SELECT id FROM expenses WHERE client_expense_id = 'e_auto'",
             ).fetchone()
             assert row is not None
-            stored = sorted(duckdb_repo.get_expense_tags(con, int(row[0])))
+            stored = sorted(ledger_repo.get_expense_tags(con, int(row[0])))
         finally:
             con.close()
         assert stored == [1, 2]
@@ -445,7 +445,7 @@ class TestPostExpense:
         resp = client.post("/api/expenses", json=post_body)
         assert resp.status_code == 200, resp.text
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             # Simulate the FK-safe reseed path: mark the category inactive
             # rather than deleting (which would violate the FK held by
@@ -513,7 +513,7 @@ class TestPostExpense:
         resp = client.post("/api/expenses", json=post_body)
         assert resp.status_code == 200, resp.text
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute("UPDATE tags SET is_active = FALSE WHERE id = 1")
         finally:
@@ -562,7 +562,7 @@ class TestPostExpense:
         resp = client.post("/api/expenses", json=post_body)
         assert resp.status_code == 200, resp.text
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute("UPDATE tags SET is_active = FALSE WHERE id = 1")
         finally:
@@ -591,13 +591,13 @@ class TestPostExpense:
         }
         resp = client.post("/api/expenses", json=bad)
         assert resp.status_code == 422
-        assert duckdb_repo.lookup_existing_expense("e_leak") is None
+        assert ledger_repo.lookup_existing_expense("e_leak") is None
 
         good = {**bad, "category_id": 1}
         resp = client.post("/api/expenses", json=good)
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
-        assert duckdb_repo.lookup_existing_expense("e_leak") is not None
+        assert ledger_repo.lookup_existing_expense("e_leak") is not None
 
     @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
     def test_response_echoes_original_amount_and_currency(
@@ -684,7 +684,7 @@ class TestPostExpense:
         assert data["currency_original"] == "RSD"
 
         # The stored ``amount`` is in accounting currency (1170 / 117 = 10 EUR).
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             row = con.execute(
                 "SELECT amount, amount_original, currency_original"
@@ -760,7 +760,7 @@ class TestPostExpense:
             raise RuntimeError(msg)
 
         with (
-            patch.object(duckdb_repo, "insert_expense", side_effect=boom),
+            patch.object(ledger_repo, "insert_expense", side_effect=boom),
             patch("dinary.api.expenses.convert", side_effect=_mock_convert),
         ):
             resp = client.post(
@@ -776,19 +776,19 @@ class TestPostExpense:
             )
         assert resp.status_code == 500
         # No ledger row: a legitimate retry must be allowed to succeed.
-        assert duckdb_repo.lookup_existing_expense("e_boom") is None
+        assert ledger_repo.lookup_existing_expense("e_boom") is None
 
     def test_concurrent_replays_are_serialized_without_transaction_errors(
         self,
     ):
-        """Smoke test for the ``asyncio.to_thread`` + DuckDB-singleton
-        interaction: fire N concurrent POSTs with the same
-        ``client_expense_id`` and same body, and verify that:
+        """Smoke test for the ``asyncio.to_thread`` + per-request
+        SQLite-connection interaction: fire N concurrent POSTs with
+        the same ``client_expense_id`` and same body, and verify that:
 
-        - no request returns 5xx (the singleton-with-cursors model
+        - no request returns 5xx (the per-request-connection model
           survives real cross-thread concurrency — no leaked
-          ``duckdb.TransactionException`` from two threads both calling
-          BEGIN on the same connection);
+          ``sqlite3.OperationalError`` from ``BEGIN IMMEDIATE`` write
+          contention between two worker threads);
         - exactly one request returns ``{status: "ok"}`` (the creator);
         - every other request returns ``{status: "duplicate"}`` (the
           ON CONFLICT compare path);
@@ -804,7 +804,7 @@ class TestPostExpense:
         demonstrate the property under test.
 
         No per-test ``DATA_DIR`` / ``DB_PATH`` override is needed:
-        the autouse ``_tmp_duckdb`` fixture already points the repo
+        the autouse ``_tmp_db`` fixture already points the repo
         at a fresh per-test DB and seeded the catalog, and the
         ``create_app`` lifespan reuses that same path.
         """
@@ -839,8 +839,8 @@ class TestPostExpense:
             responses = asyncio.run(_run())
 
         # Primary invariant: no server errors. A leaked
-        # ``TransactionException`` from shared-connection contention
-        # would land here as 500.
+        # ``OperationalError`` from BEGIN IMMEDIATE contention or a
+        # mis-handled ``IntegrityError`` would land here as 500.
         for r in responses:
             assert r.status_code == 200, f"{r.status_code}: {r.text}"
 
@@ -848,7 +848,7 @@ class TestPostExpense:
         assert statuses.count("ok") == 1, statuses
         assert statuses.count("duplicate") == n_requests - 1, statuses
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             count = con.execute(
                 "SELECT COUNT(*) FROM expenses WHERE client_expense_id = 'e_concurrent'",
@@ -857,21 +857,25 @@ class TestPostExpense:
             con.close()
         assert count == 1
 
-        # Observability check: the primary assertions above pass even
-        # when all racers hit the serial ``ON CONFLICT DO NOTHING``
-        # absorb path (no real contention). That would leave the
-        # ``_DUCKDB_RACE_EXCS`` recovery branches uncovered while the
-        # test looks green. Confirm at least one racer took the
-        # recovery path so a future scheduling change that silently
-        # serializes the coroutines fails this test instead of passing
-        # vacuously. If this ever flakes on CI, don't relax it blindly
-        # — investigate *why* the scheduling changed first.
-        assert race_counter["count"] >= 1, (
-            f"None of the {n_requests} concurrent racers took the "
-            f"race-recovery branch — all hit the classic ON CONFLICT "
-            f"DO NOTHING absorb path. Test invariants passed, but "
-            f"insert_expense's ConstraintException/TransactionException "
-            f"handlers were not exercised this run."
+        # Observability: under SQLite's single-writer model
+        # (``BEGIN IMMEDIATE`` + ``busy_timeout``), concurrent writers
+        # serialize on the database-level write lock and the winner
+        # commits before any loser's INSERT runs. Losers therefore
+        # hit ``ON CONFLICT (client_expense_id) DO NOTHING`` on an
+        # already-committed row and absorb the conflict without ever
+        # raising ``IntegrityError`` — so ``_RACE_EXCS`` recovery is
+        # structurally unreachable from this coroutine-gather. The
+        # recovery branches in ``insert_expense`` remain as defensive
+        # code for any future writer that bypasses ``ON CONFLICT``;
+        # they have dedicated unit coverage elsewhere. Assert the
+        # counter stays at 0 so a regression that *does* start
+        # surfacing ``IntegrityError`` here (e.g. a busy_timeout drop
+        # or an ON CONFLICT removal) trips this test loudly.
+        assert race_counter["count"] == 0, (
+            f"Unexpectedly saw {race_counter['count']} race-recovery "
+            f"rollbacks under SQLite's serialized-writer model — "
+            f"concurrent POSTs should absorb through ON CONFLICT "
+            f"DO NOTHING, not surface as IntegrityError/OperationalError."
         )
 
     def test_concurrent_mixed_bodies_are_serialized_with_conflict(
@@ -883,7 +887,7 @@ class TestPostExpense:
         The atomic ON CONFLICT compare inside ``insert_expense`` must
         still pick exactly one winner (the first writer to commit),
         and every other racer must land in the compare branch and
-        surface a **409 Conflict** — not a 500 ``TransactionException``
+        surface a **409 Conflict** — not a 500 ``OperationalError``
         leak, and not a silent 200 duplicate that would hide an actual
         payload disagreement from the PWA.
 
@@ -893,7 +897,7 @@ class TestPostExpense:
         bodies -> 200 duplicate for the losers), this one covers the
         conflicting-body branch (different bodies -> 409 for the
         losers). Together they exercise both recovery exits from the
-        ``duckdb.ConstraintException`` / ``duckdb.TransactionException``
+        ``sqlite3.IntegrityError`` / ``sqlite3.OperationalError``
         compare path.
         """
         base_body = {
@@ -939,7 +943,7 @@ class TestPostExpense:
         assert len(conflicts) == n_requests - 1, [r.status_code for r in responses]
         assert oks[0].json()["status"] == "ok"
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             row = con.execute(
                 "SELECT COUNT(*), MIN(amount), MAX(amount) FROM expenses"
@@ -966,22 +970,21 @@ class TestPostExpense:
             f"the committed row?"
         )
 
-        # Observability check: see the companion sibling test
+        # Observability: see the companion sibling
         # ``test_concurrent_replays_are_serialized_without_transaction_errors``
-        # for the rationale. In the mixed-bodies variant every
-        # loser lands on a *conflict* (409), so if all racers took
-        # the classic absorb path the only outcome that preserves
-        # "1 OK + 5 conflicts" is that each loser's compare saw the
-        # same committed-winner row — still correct behavior, but
-        # without exercising either of the ``_DUCKDB_RACE_EXCS``
-        # recovery branches. Fail loudly rather than passing
-        # vacuously if that ever happens.
-        assert race_counter["count"] >= 1, (
-            f"None of the {n_requests} concurrent racers took the "
-            f"race-recovery branch — conflict behavior was driven "
-            f"entirely by the serial ON CONFLICT DO NOTHING absorb "
-            f"path, leaving the insert_expense race-recovery handlers "
-            f"uncovered this run."
+        # for the rationale. Under SQLite's serialized-writer model
+        # every loser absorbs the conflict through ON CONFLICT DO NOTHING
+        # and then falls into the compare path without raising. A
+        # non-zero counter would mean a regression started surfacing
+        # ``IntegrityError`` / ``OperationalError`` at this layer,
+        # which is exactly what ``BEGIN IMMEDIATE`` + ``busy_timeout``
+        # is meant to prevent.
+        assert race_counter["count"] == 0, (
+            f"Unexpectedly saw {race_counter['count']} race-recovery "
+            f"rollbacks under SQLite's serialized-writer model — "
+            f"concurrent mixed-body POSTs should absorb through ON "
+            f"CONFLICT DO NOTHING, not surface as "
+            f"IntegrityError/OperationalError."
         )
 
     @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
@@ -990,17 +993,17 @@ class TestPostExpense:
         _mock_convert_fn,
         client,
     ):
-        """A ``ConstraintException`` from ``insert_expense`` that is not
-        the natural UNIQUE-on-client-expense-id race (e.g. an FK
+        """A ``sqlite3.IntegrityError`` from ``insert_expense`` that is
+        not the natural UNIQUE-on-client-expense-id race (e.g. an FK
         violation on ``category_id`` in the micro-window between resolve
         and insert) must propagate as 500 — we must not silently swallow
         it and return 200/duplicate."""
 
         def bad_insert(*_args, **_kwargs):
             msg = "simulated constraint"
-            raise duckdb.ConstraintException(msg)
+            raise sqlite3.IntegrityError(msg)
 
-        with patch.object(duckdb_repo, "insert_expense", side_effect=bad_insert):
+        with patch.object(ledger_repo, "insert_expense", side_effect=bad_insert):
             resp = client.post(
                 "/api/expenses",
                 json={

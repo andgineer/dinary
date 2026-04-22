@@ -1,7 +1,7 @@
 """Historical bootstrap import logic.
 
 Modules in this package handle the one-time (``inv import-budget``)
-import of year-by-year Google Sheet data into DuckDB. They are
+import of year-by-year Google Sheet data into the SQLite ledger. They are
 year-aware and use ``import_mapping`` for 2D→3D resolution.
 
 Runtime sheet logging (the append-only path triggered by

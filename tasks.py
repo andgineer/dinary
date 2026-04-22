@@ -1,6 +1,5 @@
 import base64
 import json as _json
-import os
 import re as _re
 import shlex
 import shutil
@@ -72,15 +71,83 @@ RestartSec=5
 WantedBy=multi-user.target
 """
 
+# systemd unit that runs the Litestream replicator sidecar on VM 1.
+# ``User=ubuntu`` matches the app service so the sidecar shares the
+# ``data/`` file ACL and can read WAL segments without sudo. The config
+# lives at ``/etc/litestream.yml`` (uploaded by ``inv litestream-setup``)
+# because that is Litestream's default search path and operators editing
+# by hand find it where the upstream docs say it should be.
+LITESTREAM_SERVICE = """\
+[Unit]
+Description=Litestream replicator for dinary
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/bin/litestream replicate -config /etc/litestream.yml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+"""
+
 VALID_TUNNELS = ("tailscale", "cloudflare", "none")
 
 LOCAL_ENV_PATH = ".deploy/.env"
 LOCAL_ENV_EXAMPLE_PATH = ".deploy.example/.env"
 LOCAL_IMPORT_SOURCES_PATH = ".deploy/import_sources.json"
+LOCAL_LITESTREAM_CONFIG_PATH = ".deploy/litestream.yml"
+LOCAL_LITESTREAM_EXAMPLE_PATH = ".deploy.example/litestream.yml"
 REMOTE_DEPLOY_DIR = "/home/ubuntu/dinary/.deploy"
 REMOTE_ENV_PATH = f"{REMOTE_DEPLOY_DIR}/.env"
 REMOTE_LEGACY_ENV_PATH = "/home/ubuntu/dinary/.env"
 REMOTE_IMPORT_SOURCES_PATH = f"{REMOTE_DEPLOY_DIR}/import_sources.json"
+REMOTE_LITESTREAM_CONFIG_PATH = "/etc/litestream.yml"
+
+# Pinned Litestream release we install on VM 1. Keeping this as a
+# module-level constant — rather than inlined into the shell script
+# below — lets tests pin the exact version independently of the
+# asset-URL construction, and makes a future upgrade a one-line
+# diff that cannot get out of sync with the asset filenames.
+LITESTREAM_VERSION = "0.5.1"
+
+
+def _litestream_install_script(version: str = LITESTREAM_VERSION) -> str:
+    """Return the shell snippet that installs Litestream on the VM.
+
+    Extracted as a pure helper so ``tests/test_tasks.py`` can assert
+    the arch-detection branches without booting an SSH session.
+
+    The filename suffix contract comes from the upstream release page:
+    assets are published as ``litestream-<version>-linux-x86_64.deb``
+    and ``litestream-<version>-linux-arm64.deb``. We map ``uname -m``
+    outputs (``x86_64`` / ``amd64`` on Intel-style hosts, ``aarch64``
+    / ``arm64`` on Ampere) to those canonical suffixes. Other
+    architectures exit 1 with an actionable error instead of silently
+    downloading a non-existent asset.
+    """
+    base_url = (
+        f"https://github.com/benbjohnson/litestream/releases/download/v{version}"
+    )
+    return (
+        "set -e; "
+        "if ! command -v litestream >/dev/null; then "
+        'ARCH="$(uname -m)"; '
+        'case "$ARCH" in '
+        f"  x86_64|amd64) ASSET=litestream-{version}-linux-x86_64.deb ;; "
+        f"  aarch64|arm64) ASSET=litestream-{version}-linux-arm64.deb ;; "
+        f'  *) echo "Unsupported arch $ARCH for litestream {version}" >&2; exit 1 ;; '
+        "esac; "
+        "TMP=$(mktemp -d); "
+        "curl -fsSL -o $TMP/litestream.deb "
+        f'"{base_url}/$ASSET"; '
+        "sudo dpkg -i $TMP/litestream.deb; "
+        "rm -rf $TMP; "
+        "fi"
+    )
 
 
 def _env():
@@ -431,11 +498,11 @@ def pre(c):
         "expenses don't leak to the prod logging spreadsheet."
     ),
     "reset": (
-        "Wipe ``data/dinary.duckdb`` before starting, then re-seed "
-        "the catalog from the hardcoded taxonomy (groups, categories, "
-        "events, tags) so PWA dropdowns have rows. Best-effort kills "
-        "any lingering local uvicorn process holding the DB lock. "
-        "Non-destructive if no DB exists yet."
+        "Wipe ``data/dinary.db`` (plus its WAL / SHM sidecars) before "
+        "starting, then re-seed the catalog from the hardcoded "
+        "taxonomy (groups, categories, events, tags) so PWA dropdowns "
+        "have rows. Best-effort kills any lingering local uvicorn "
+        "process holding the DB. Non-destructive if no DB exists yet."
     ),
 })
 def dev(c, port=8000, sheet_logging=False, reset=False):
@@ -454,14 +521,14 @@ def dev(c, port=8000, sheet_logging=False, reset=False):
       do NOT show up in the prod Google Sheet. Pass
       ``--sheet-logging`` to opt in (rare; for debugging the drain
       loop itself).
-    - Uses ``data/dinary.duckdb`` as the local DB. Schema migrations
-      run automatically on server startup via the FastAPI lifespan
-      (``_lifespan -> duckdb_repo.init_db``), so editing a migration
-      and restarting ``inv dev`` is enough — no separate ``migrate``
-      step. For a clean slate use ``--reset``.
+    - Uses ``data/dinary.db`` as the local DB (SQLite in WAL mode).
+      Schema migrations run automatically on server startup via the
+      FastAPI lifespan (``_lifespan -> ledger_repo.init_db``), so
+      editing a migration and restarting ``inv dev`` is enough — no
+      separate ``migrate`` step. For a clean slate use ``--reset``.
     - To work against real prod data: run ``inv backup`` first to
-      fetch a snapshot into ``~/Library/dinary/<ts>/data/``, then
-      ``cp`` the resulting ``dinary.duckdb`` into ``data/``.
+      fetch a consistent snapshot into ``~/Library/dinary/<ts>/``,
+      then copy the resulting ``dinary.db`` into ``data/``.
 
     PWA caching tip: once the service worker is registered the
     browser will serve cached assets even after you edit them. In
@@ -472,14 +539,23 @@ def dev(c, port=8000, sheet_logging=False, reset=False):
     """
     if reset:
         # Kill any orphaned local uvicorn that would otherwise hold
-        # the DuckDB lock while we try to remove the file. ``pkill
-        # -f`` exits 1 when nothing matches, which is not an error
-        # condition for us; ``check=False`` absorbs that.
+        # the SQLite WAL connection while we try to remove the file.
+        # ``pkill -f`` exits 1 when nothing matches, which is not an
+        # error condition for us; ``check=False`` absorbs that.
         subprocess.run(
             ["pkill", "-f", "uvicorn dinary"],
             check=False,
         )
-        for fn in ("data/dinary.duckdb", "data/dinary.duckdb.wal"):
+        # Remove the SQLite DB and its WAL sidecars. The three-file
+        # set (``.db`` + ``-wal`` + ``-shm``) is the canonical WAL
+        # footprint; leaving the sidecars around after deleting the
+        # main file would confuse a subsequent connect into
+        # reconstructing a stale partial state.
+        for fn in (
+            "data/dinary.db",
+            "data/dinary.db-wal",
+            "data/dinary.db-shm",
+        ):
             p = Path(fn)
             if p.exists():
                 p.unlink()
@@ -578,6 +654,25 @@ def setup(c):
     else:
         print("=== No tunnel configured (DINARY_TUNNEL=none) ===")
 
+    # Litestream bootstrap is intentionally NOT auto-invoked here. The
+    # sidecar requires an already-reachable SFTP replica host whose
+    # ``authorized_keys`` accepts VM 1's ed25519 public key — a
+    # cross-host trust relationship we cannot set up from this
+    # machine. Operators opt in explicitly with ``inv litestream-setup``
+    # once that prerequisite is in place. See
+    # ``docs/src/en/operations.md`` for the end-to-end bootstrap.
+    if Path(LOCAL_LITESTREAM_CONFIG_PATH).exists():
+        print(
+            "=== .deploy/litestream.yml present — run `inv litestream-setup` ===\n"
+            "=== manually once the SFTP replica host trusts VM 1's ssh key. ==="
+        )
+    else:
+        print(
+            "=== Skipping Litestream (no .deploy/litestream.yml locally). ===\n"
+            "=== Copy .deploy.example/litestream.yml and run `inv litestream-setup` "
+            "when you have an SFTP replica target. ==="
+        )
+
     print("=== Done! Checking health... ===")
     _ssh(c, "sleep 15 && curl -s http://localhost:8000/api/health")
 
@@ -589,13 +684,20 @@ def deploy(c, ref="", no_restart=False):
     Use --ref to deploy a specific version. Use --no-restart for the coordinated
     reset flow: it skips both the post-deploy systemctl restart and the
     auto-applied schema migration, because the very next step in that flow is
-    `inv stop` followed by `rm -f ~/dinary/data/*.duckdb` +
+    `inv stop` followed by `rm -f ~/dinary/data/dinary.db*` +
     `inv migrate` + `inv import-catalog --yes` which rebuilds the single DB
     anyway.
 
     Pipeline (ordering matters — see ``.plans/architecture.md`` and the
     original inline-fk-drop-and-reset-db plan for the constraints):
 
+    * Pre-deploy safety-net backup uses ``sqlite3 .backup`` on the
+      server (same mechanism as ``inv backup``) to take a
+      transactionally consistent snapshot of ``dinary.db``. A raw
+      ``scp -r data/`` of the live WAL triple
+      (``.db`` + ``-wal`` + ``-shm``) would not produce a consistent
+      image because in-flight WAL frames could be mid-write while
+      the files are being copied.
     * ``_sync_remote_env`` writes to
       ``~/dinary/.deploy/.env`` via ``sudo tee``, which does
       not ``mkdir -p`` — ``_sync_remote_env`` itself now runs
@@ -613,11 +715,73 @@ def deploy(c, ref="", no_restart=False):
     """
     print("=== Pre-deploy backup ===")
     ts = _dt.now().strftime("%Y%m%d-%H%M%S")
-    backup_dir = f"backups/pre-deploy-{ts}"
-    os.makedirs(backup_dir, exist_ok=True)
+    backup_dir = Path(f"backups/pre-deploy-{ts}")
+    backup_dir.mkdir(parents=True, exist_ok=True)
     host = _host()
     tunnel = _tunnel()
-    c.run(f"scp -r {host}:~/dinary/data/ {backup_dir}/", warn=True)
+    # Stream a transactionally consistent SQLite snapshot from the
+    # server into ``backup_dir/dinary.db``. Same mechanism as
+    # ``inv backup`` / ``_remote_snapshot_cmd``: ``sqlite3 .backup``
+    # runs against a consistent view of the live DB even under WAL,
+    # and the trap tears the snapshot down on the server on every
+    # exit path so a failed deploy never leaks a large ``/tmp``
+    # file.
+    #
+    # The ``test -f`` guard is the first-deploy safety net: on a
+    # pristine server the source DB does not exist yet, and running
+    # ``sqlite3 "$missing" ".backup ..."`` would silently open the
+    # path read-write, create a zero-row DB there, and produce a
+    # valid-but-empty backup. The guard prints ``__SKIP_NO_DB__``
+    # on stderr and exits 0 so the Python side can detect "no DB
+    # yet" vs. "real failure"; either way we clean up the local
+    # placeholder so the operator never sees an empty
+    # ``backups/pre-deploy-.../dinary.db`` they might mistake for
+    # a valid snapshot.
+    remote_cmd = (
+        # The ``test -f`` guard runs BEFORE the shared snapshot
+        # prologue: ``set -e`` from the prologue would otherwise
+        # abort the whole script on a missing source DB, losing the
+        # chance to emit the ``__SKIP_NO_DB__`` marker the Python
+        # side needs to distinguish "no DB yet" from "real failure".
+        "set -e; "
+        f'if [ ! -f "{_REMOTE_DB_PATH}" ]; then '
+        "  echo __SKIP_NO_DB__ 1>&2; exit 0; "
+        "fi; "
+        + _sqlite_backup_to_tmp_snapshot_prologue("dinary-pre-deploy-backup")
+        + 'cat "$SNAP"'
+    )
+    b64 = base64.b64encode(remote_cmd.encode()).decode()
+    local_db = backup_dir / "dinary.db"
+    need_cleanup = False
+    with local_db.open("wb") as fh:
+        try:
+            subprocess.run(
+                ["ssh", host, f"echo {b64} | base64 -d | bash"],
+                stdout=fh,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            # Real failure (SFTP disconnect mid-stream, sqlite3
+            # error, ssh transport issue). The file may be
+            # partially written; remove it so the operator never
+            # sees a corrupted placeholder. The deploy itself is
+            # allowed to continue — this is a best-effort safety
+            # net, not a gate.
+            print(
+                "=== Pre-deploy backup failed; continuing with deploy. ===",
+            )
+            need_cleanup = True
+    # Zero-byte output means the remote guard printed
+    # ``__SKIP_NO_DB__`` and exited 0 — treat that as "no DB yet"
+    # and clean up the empty file.
+    if not need_cleanup and local_db.exists() and local_db.stat().st_size == 0:
+        print(
+            f"=== Pre-deploy backup skipped (no {_REMOTE_DB_PATH} yet); "
+            "continuing with deploy. ===",
+        )
+        need_cleanup = True
+    if need_cleanup:
+        local_db.unlink(missing_ok=True)
 
     print("=== Deploying dinary ===")
     if ref:
@@ -653,8 +817,8 @@ def deploy(c, ref="", no_restart=False):
         _ssh(
             c,
             "cd ~/dinary && source ~/.local/bin/env && "
-            "uv run python -c 'from dinary.services import duckdb_repo; duckdb_repo.init_db(); "
-            'print("Migrated data/dinary.duckdb")\'',
+            "uv run python -c 'from dinary.services import ledger_repo; ledger_repo.init_db(); "
+            'print("Migrated data/dinary.db")\'',
         )
         print("=== Bootstrapping runtime catalog (idempotent) ===")
         bootstrap_catalog(c)
@@ -667,7 +831,7 @@ def deploy(c, ref="", no_restart=False):
             "=== --no-restart set: SKIPPING systemctl restart and schema migration. ===\n"
             "=== Next steps in the coordinated reset flow:   ===\n"
             "===   inv stop                                  ===\n"
-            "===   ssh $HOST 'rm -f ~/dinary/data/*.duckdb'  ===\n"
+            "===   ssh $HOST 'rm -f ~/dinary/data/dinary.db*'  ===\n"
             "===   inv migrate                               ===\n"
             "===   inv import-catalog --yes                  ===\n"
             "===   inv import-budget-all --yes               ===\n"
@@ -763,12 +927,12 @@ def import_config(c):
 
 @task(name="migrate")
 def migrate(c):
-    """Apply pending migrations to ``data/dinary.duckdb`` on the server."""
+    """Apply pending migrations to ``data/dinary.db`` on the server."""
     _ssh(
         c,
         "cd ~/dinary && source ~/.local/bin/env && "
-        "uv run python -c 'from dinary.services import duckdb_repo; "
-        'duckdb_repo.init_db(); print("Migrated data/dinary.duckdb")\'',
+        "uv run python -c 'from dinary.services import ledger_repo; "
+        'ledger_repo.init_db(); print("Migrated data/dinary.db")\'',
     )
 
 
@@ -822,7 +986,7 @@ def _require_year(year) -> int:
 def import_catalog(c, yes=False):
     """FK-safe in-place catalog sync: re-seed taxonomy without deleting the DB.
 
-    Never deletes ``data/dinary.duckdb``. Ledger tables
+    Never deletes ``data/dinary.db``. Ledger tables
     (``expenses``/``expense_tags``/``sheet_logging_jobs``/``income``)
     stay intact; catalog rows are upserted by natural key so existing
     integer ids are preserved. Vocabulary no longer present in the
@@ -857,7 +1021,7 @@ def import_catalog(c, yes=False):
 def import_budget(c, year="", yes=False):
     """DESTRUCTIVE: Delete every expense for the given year and re-import from Sheet.
 
-    Operates on the single ``data/dinary.duckdb`` file: the year's rows in
+    Operates on the single ``data/dinary.db`` file: the year's rows in
     ``expenses``/``expense_tags``/``sheet_logging_jobs`` are removed and
     re-imported from Google Sheets. Other years stay untouched.
     """
@@ -865,7 +1029,7 @@ def import_budget(c, year="", yes=False):
     if not _require_yes(
         yes,
         f"WARNING: import-budget will DELETE every expense for {year_int} in "
-        "data/dinary.duckdb and re-import from the Google Sheet. Other years "
+        "data/dinary.db and re-import from the Google Sheet. Other years "
         "are untouched. There is no manual-vs-import distinction anymore; "
         "nothing in the targeted year is preserved.",
     ):
@@ -1088,14 +1252,205 @@ def build_static(c):
 
 @task
 def backup(c):
-    """Download DuckDB data files from the server to ~/Library/dinary/."""
+    """Take a consistent SQLite snapshot on the server and download it.
+
+    Under SQLite WAL a raw ``scp data/dinary.db`` from a live server
+    would copy a stale main file and miss whatever committed pages
+    only live in the WAL yet — the resulting download would look
+    valid on open (SQLite replays the WAL, if present) but silently
+    lose the tail of the write history.
+
+    Instead we invoke ``sqlite3 "$DB" ".backup $SNAP"`` on the server,
+    which uses SQLite's online-backup API and captures a
+    transactionally consistent snapshot while the service keeps
+    writing. The snapshot is written into ``/tmp`` on the server,
+    ``scp``'d home, and torn down via ``trap`` on exit so a failure
+    never leaks a multi-hundred-MB file into ``/tmp``.
+
+    Output lands in ``~/Library/dinary/<ts>/dinary.db`` — matching
+    the default layout so operators can copy the file straight into
+    ``data/`` and point ``inv dev`` at it.
+    """
     dest = Path.home() / "Library" / "dinary"
     ts = _dt.now().strftime("%Y%m%d-%H%M%S")
     backup_dir = dest / ts
     backup_dir.mkdir(parents=True, exist_ok=True)
     host = _host()
-    c.run(f"scp -r {host}:~/dinary/data/ {backup_dir}/")
-    print(f"Backed up to {backup_dir}/")
+    # See ``_sqlite_backup_to_tmp_snapshot_prologue`` for why this
+    # goes through ``sqlite3 .backup`` instead of ``scp``.
+    remote_cmd = (
+        _sqlite_backup_to_tmp_snapshot_prologue("dinary-backup") + 'cat "$SNAP"'
+    )
+    # Use a base64 envelope as with ``_ssh_capture_bytes`` but stream
+    # the bytes of the snapshot straight into a local file — the
+    # backup file is potentially large and we don't want to buffer
+    # it in memory.
+    b64 = base64.b64encode(remote_cmd.encode()).decode()
+    local_db = backup_dir / "dinary.db"
+    with local_db.open("wb") as fh:
+        subprocess.run(
+            ["ssh", host, f"echo {b64} | base64 -d | bash"],
+            stdout=fh,
+            check=True,
+        )
+    print(f"Backed up to {local_db}")
+
+
+@task(name="verify-db")
+def verify_db(c, remote=False):
+    """Run SQLite's ``PRAGMA integrity_check`` + ``PRAGMA foreign_key_check``.
+
+    Both pragmas are read-only and cheap for a DB on the order of a
+    few hundred MB. ``integrity_check`` walks every btree page and
+    reports structural damage (torn pages, index/table mismatches,
+    orphan freelist entries); ``foreign_key_check`` lists every row
+    that violates a declared FK. A healthy DB prints ``ok`` for the
+    first and zero rows for the second. This is the
+    ``.plans/storage-migration.md`` verification gate for the post-
+    migration rollout: a silent corruption that slipped past
+    ``inv verify-bootstrap-import-all`` would still be caught here.
+
+    Flags:
+        --remote   run against a ``/tmp`` snapshot of the prod DB
+                   over SSH (same snapshot wrapper as
+                   ``inv report-*``). Default runs locally against
+                   ``data/dinary.db``.
+
+    Exits non-zero when ``integrity_check`` prints anything other
+    than ``ok`` or when ``foreign_key_check`` reports at least one
+    offending row, so CI / coordinated-reset flows can fail loud.
+    """
+    if remote:
+        # See ``_sqlite_backup_to_tmp_snapshot_prologue`` for why we
+        # snapshot first instead of pragma-ing the live file.
+        remote_cmd = (
+            _sqlite_backup_to_tmp_snapshot_prologue("dinary-verify-db")
+            + 'sqlite3 "$SNAP" "PRAGMA integrity_check; PRAGMA foreign_key_check;"'
+        )
+        raw = _ssh_capture_bytes(remote_cmd)
+        output = raw.decode("utf-8", errors="replace")
+    else:
+        db_path = Path("data/dinary.db")
+        if not db_path.exists():
+            print(f"No local DB at {db_path}; run `inv dev` or `inv backup` first.", file=sys.stderr)
+            sys.exit(1)
+        # Preflight: the task shells out to the system ``sqlite3``
+        # CLI (instead of the stdlib bindings) because the two pragmas
+        # below are easier to consume as plain text than as cursor
+        # rows. A dev laptop without the CLI installed would otherwise
+        # surface as a cryptic ``FileNotFoundError`` from
+        # ``subprocess.run``; match the "no local DB" UX with an
+        # actionable hint.
+        if shutil.which("sqlite3") is None:
+            print(
+                "No `sqlite3` CLI on PATH; `inv verify-db` shells out to it. "
+                "Install via `brew install sqlite` (macOS) or "
+                "`apt install sqlite3` (Debian/Ubuntu) and retry.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        result = subprocess.run(
+            [
+                "sqlite3",
+                str(db_path),
+                "PRAGMA integrity_check; PRAGMA foreign_key_check;",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+            text=True,
+        )
+        output = result.stdout
+    print(output, end="" if output.endswith("\n") else "\n")
+    # ``integrity_check`` prints a single ``ok`` line when the DB is
+    # healthy and one line per problem otherwise.
+    # ``foreign_key_check`` prints nothing when every FK resolves and
+    # ``table|rowid|parent|fkid`` rows otherwise. Either deviation is
+    # a hard failure.
+    lines = [line for line in output.splitlines() if line.strip()]
+    if lines != ["ok"]:
+        print("=== verify-db FAILED ===", file=sys.stderr)
+        sys.exit(1)
+    print("=== verify-db OK ===")
+
+
+@task(name="litestream-setup")
+def litestream_setup(c):
+    """Install Litestream on VM 1 and start the replicator sidecar.
+
+    One-time bootstrap for the Phase 2 hot replica (see
+    ``.plans/storage-migration.md``). This is a passive sidecar: it
+    reads WAL segments from ``data/dinary.db`` and ships them to the
+    SFTP replica declared in ``.deploy/litestream.yml``. The app
+    service never talks to Litestream — if the sidecar is down the
+    app still writes fine, it just stops being replicated until
+    ``systemctl start litestream`` is called.
+
+    Preconditions on the operator's side:
+        1. ``.deploy/litestream.yml`` exists locally, copied from
+           ``.deploy.example/litestream.yml`` and edited with the
+           SFTP target (``host``, ``user``, ``path``, ``key-path``).
+        2. The ``id_ed25519.pub`` on VM 1 is in the replica host's
+           ``~/.ssh/authorized_keys`` (run ``ssh-copy-id`` manually
+           once; we do not automate cross-host trust here because
+           the replica host is operator-picked and out of scope).
+
+    The task is idempotent: re-running it upgrades Litestream, re-
+    uploads the config, and restarts the sidecar. It does NOT try
+    to bootstrap the replica target — first writes happen naturally
+    once the sidecar is up and the app issues its next commit.
+    """
+    if not Path(LOCAL_LITESTREAM_CONFIG_PATH).exists():
+        print(
+            f"No {LOCAL_LITESTREAM_CONFIG_PATH} locally.\n"
+            f"Copy {LOCAL_LITESTREAM_EXAMPLE_PATH} to {LOCAL_LITESTREAM_CONFIG_PATH} "
+            "and fill in the SFTP target, then retry.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print("=== Installing Litestream binary ===")
+    # Litestream ships prebuilt ``.deb`` files per release; pinning
+    # explicitly rather than using the ``latest`` shortcut makes
+    # ``inv litestream-setup`` reproducible across VMs (two operators
+    # bootstrapping VMs a week apart end up on the same binary).
+    #
+    # Architecture detection is non-trivial because Oracle Free Tier
+    # offers both x86_64 Micro and Ampere (arm64) shapes, and the
+    # release assets use ``x86_64`` / ``arm64`` as filename suffixes
+    # (NOT the dpkg ``amd64`` / ``arm64`` names — mismatched on
+    # x86_64). ``uname -m`` returns the upstream-friendly name on both.
+    _ssh(c, _litestream_install_script())
+
+    print(f"=== Uploading {LOCAL_LITESTREAM_CONFIG_PATH} to {REMOTE_LITESTREAM_CONFIG_PATH} ===")
+    content = Path(LOCAL_LITESTREAM_CONFIG_PATH).read_text(encoding="utf-8")
+    _write_remote_file(c, REMOTE_LITESTREAM_CONFIG_PATH, content)
+    _ssh_sudo(c, f"chown root:root {REMOTE_LITESTREAM_CONFIG_PATH} "
+                 f"&& chmod 644 {REMOTE_LITESTREAM_CONFIG_PATH}")
+
+    print("=== Creating litestream systemd service ===")
+    _create_service(c, "litestream", LITESTREAM_SERVICE)
+
+    print("=== Checking status ===")
+    _ssh(c, "sleep 3 && systemctl is-active litestream && "
+            "sudo journalctl -u litestream -n 20 --no-pager")
+
+
+@task(name="litestream-status")
+def litestream_status(c):
+    """Show the remote Litestream sidecar's health and replica state.
+
+    Prints the systemd unit status, the most recent journal lines,
+    and the replicator's own view of the managed DB
+    (``litestream databases`` — the v0.5 replacement for the old
+    ``snapshots`` inventory subcommand, which was removed when the
+    storage layer was rewritten around LTX files). A healthy sidecar
+    prints the DB path and at least one generation; a silent output
+    means the sidecar either never ran or lost SFTP credentials.
+    """
+    _ssh(c, "systemctl status litestream --no-pager || true")
+    _ssh(c, "sudo journalctl -u litestream -n 30 --no-pager || true")
+    _ssh(c, f"litestream databases -config {REMOTE_LITESTREAM_CONFIG_PATH} || true")
 
 
 def _render_2d3d_locally(raw: bytes, *, as_csv: bool) -> None:
@@ -1133,13 +1488,14 @@ def import_report_2d_3d(
         --json     emit a JSON envelope to stdout (mutex with --csv)
         --year Y   restrict to a single calendar year
         --remote   run the report on the server over SSH (default:
-                   runs locally against ``data/dinary.duckdb``)
+                   runs locally against ``data/dinary.db``)
 
     ``--remote`` uses the same JSON-over-SSH transport as
     ``inv report-*`` (see :func:`_run_report_module`): the server
-    always emits ``--json`` against a snapshot of the live DB and
-    the local process renders. That is the only way to keep Cyrillic
-    / box-drawing glyphs intact across the SSH pipe.
+    always emits ``--json`` against a consistent SQLite snapshot of
+    the live DB and the local process renders. That is the only way
+    to keep Cyrillic / box-drawing glyphs intact across the SSH
+    pipe.
     """
     if csv and json:
         print("--csv and --json are mutually exclusive", file=sys.stderr)
@@ -1165,9 +1521,9 @@ def import_report_2d_3d(
         c.run(cmd)
         return
 
-    # Same snapshot wrapper the ``inv report-*`` tasks use: the live
-    # DB is held under an exclusive DuckDB lock by the service, so the
-    # report module runs against a ``/tmp`` copy instead.
+    # Same snapshot wrapper the ``inv report-*`` tasks use so the
+    # report module always runs against a transactionally-consistent
+    # copy of the live DB, avoiding any races with in-flight writers.
     raw = _ssh_capture_bytes(
         _remote_snapshot_cmd("dinary.imports.report_2d_3d", _build_flags(force_json=True))
     )
@@ -1182,32 +1538,66 @@ def import_report_2d_3d(
     _render_2d3d_locally(raw, as_csv=csv)
 
 
-#: Remote path of the live DuckDB file the server process keeps
-#: exclusively locked (single-writer DuckDB 1.x).
-_REMOTE_DB_PATH = "/home/ubuntu/dinary/data/dinary.duckdb"
+#: Remote path of the live SQLite ledger file.
+_REMOTE_DB_PATH = "/home/ubuntu/dinary/data/dinary.db"
+
+
+def _sqlite_backup_to_tmp_snapshot_prologue(snap_prefix: str) -> str:
+    """Return the common prologue that snapshots ``_REMOTE_DB_PATH`` to ``/tmp``.
+
+    Four call sites (``inv deploy`` pre-backup, ``inv backup``,
+    ``inv verify-db --remote``, and ``_remote_snapshot_cmd`` for the
+    report tasks) all need the same shape: enable ``set -e``, stake
+    out a per-invocation ``/tmp`` path in ``$SNAP``, register a
+    ``trap`` so the snapshot is torn down on every exit path
+    (success, failure, ``SIGINT``), and then invoke
+    ``sqlite3 "$DB" ".backup \\"$SNAP\\""`` to materialize a
+    transactionally consistent copy of the live DB.
+
+    The trap is deliberately registered **before** the
+    ``sqlite3 .backup`` so an interrupt between the two cannot leak
+    the snapshot file. ``$$`` expands to the remote shell's PID so
+    two parallel invocations from the same operator don't stomp on
+    each other's snapshot path.
+
+    ``snap_prefix`` lets each caller carry a self-identifying path
+    (``dinary-backup``, ``dinary-verify-db``, ...) so a stale
+    snapshot in ``/tmp`` after a crashed invocation is traceable to
+    the task that created it.
+
+    Returns a string that ends with ``"; "`` so callers can
+    concatenate their epilogue (``cat "$SNAP"`` to stream bytes home,
+    a second ``sqlite3 "$SNAP" "PRAGMA ..."`` to validate the
+    snapshot, or a full ``DINARY_DATA_PATH=$SNAP python -m ...``
+    report invocation) without worrying about separator bookkeeping.
+    """
+    return (
+        "set -e; "
+        f"SNAP=/tmp/{snap_prefix}-$$.db; "
+        'trap "rm -f \\"$SNAP\\"" EXIT; '
+        f'sqlite3 "{_REMOTE_DB_PATH}" ".backup \\"$SNAP\\""; '
+    )
 
 
 def _remote_snapshot_cmd(module_path: str, flags: list[str]) -> str:
     """Build a remote shell command that runs a read-only report module
-    against a ``/tmp`` snapshot of the live DB.
+    against a consistent SQLite snapshot of the live DB.
 
-    DuckDB 1.x holds a single-writer exclusive file lock on the
-    primary DB file, so a second process — even one opened
-    ``read_only=True`` — cannot attach while the server is up
-    (``IOException: Could not set lock on file ...``). The workaround:
-    ``cp``-snapshot the primary file (and its ``.wal`` sidecar when
-    present) into ``/tmp``, point ``DINARY_DATA_PATH`` at the
+    SQLite in WAL mode would let a reader open the live file
+    concurrently with the running writer, but doing so races with
+    in-flight checkpoints and with Litestream's replication cadence
+    — the reader could land on a page mid-rewrite and surface an
+    ephemeral inconsistency. Instead we ``sqlite3 .backup`` the
+    primary file into ``/tmp``, point ``DINARY_DATA_PATH`` at the
     snapshot, and run the read-only report module against that
     isolated copy. The snapshot is torn down on every exit path via
     ``trap`` so a failed report never leaks a multi-hundred-MB file.
 
-    Snapshot staleness: the ``cp`` captures whatever bytes are on
-    disk at that moment. A write mid-checkpoint can leave the main
-    file and WAL slightly out of sync, but DuckDB replays the WAL
-    on open and converges to the latest *committed* state — so the
-    operator sees a consistent point-in-time view, at most a single
-    uncommitted transaction stale. Acceptable for operator-triggered
-    read-only reporting.
+    Snapshot consistency: SQLite's online-backup API copies the
+    database page-by-page while holding just enough locks to keep
+    the reader's view transactionally consistent, even while the
+    service keeps writing. The snapshot reflects the last
+    committed transaction at the moment ``.backup`` released.
 
     Unique per-invocation snapshot path: ``$$`` expands to the
     remote shell's PID so two parallel ``inv report-*`` runs from
@@ -1220,19 +1610,13 @@ def _remote_snapshot_cmd(module_path: str, flags: list[str]) -> str:
     report = f"uv run python -m {module_path}"
     if flags:
         report = f"{report} {' '.join(flags)}"
-    # ``set -e`` propagates a failed ``cp`` as a non-zero exit so the
-    # operator sees it rather than silently running the report
-    # against a stale / missing snapshot. The trap is registered
-    # *before* the copy so an interrupt between ``cp`` and ``trap``
-    # cannot leak the snapshot.
+    # Prologue (``set -e`` + trap + ``sqlite3 .backup``) is shared
+    # with ``inv backup`` / ``inv verify-db --remote`` / ``inv deploy``
+    # pre-backup — see ``_sqlite_backup_to_tmp_snapshot_prologue``.
     return (
-        "set -e; "
-        "SNAP=/tmp/dinary-report-snapshot-$$.duckdb; "
-        'trap "rm -f ${SNAP} ${SNAP}.wal" EXIT; '
-        f"cp {_REMOTE_DB_PATH} ${{SNAP}}; "
-        f"cp {_REMOTE_DB_PATH}.wal ${{SNAP}}.wal 2>/dev/null || true; "
-        "cd ~/dinary && source ~/.local/bin/env && "
-        f"DINARY_DATA_PATH=${{SNAP}} {report}"
+        _sqlite_backup_to_tmp_snapshot_prologue("dinary-report-snapshot")
+        + "cd ~/dinary && source ~/.local/bin/env && "
+        + f'DINARY_DATA_PATH="$SNAP" {report}'
     )
 
 
@@ -1292,12 +1676,11 @@ def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> Non
     Both modes follow the same shape: fetch rows → render locally.
 
     * Local: ``uv run python -m dinary.reports.<module> <flags>`` —
-      a single process fetches from ``data/dinary.duckdb`` and
-      renders.
+      a single process fetches from ``data/dinary.db`` and renders.
     * Remote: the same module runs on the server in ``--json`` mode
       via the SSH snapshot wrapper (see :func:`_remote_snapshot_cmd`
-      for why the DuckDB snapshot is needed), the JSON bytes come
-      back through :func:`_ssh_capture_bytes`, and the module's
+      for why a SQLite snapshot is used), the JSON bytes come back
+      through :func:`_ssh_capture_bytes`, and the module's
       ``render`` runs on the local terminal.
 
     JSON is the wire format so stdout over SSH only ever carries
@@ -1360,7 +1743,7 @@ def report_expenses(c, year="", month="", csv=False, remote=False):  # noqa: A00
         --month YYYY-MM    restrict to a single month (mutex with --year)
         --csv              emit CSV to stdout instead of a rich table
         --remote           query the production DB over SSH. Default
-                           runs locally against ``data/dinary.duckdb``
+                           runs locally against ``data/dinary.db``
                            — useful after ``inv backup`` or during
                            local development.
 
@@ -1390,7 +1773,7 @@ def report_income(c, csv=False, remote=False):  # noqa: A002
     Flags (all optional):
         --csv      emit CSV to stdout instead of a rich table
         --remote   query the production DB over SSH. Default runs
-                   locally against ``data/dinary.duckdb``.
+                   locally against ``data/dinary.db``.
 
     One row per calendar year, with per-year total, count of
     months-with-data, and average per data-month.
@@ -1417,20 +1800,21 @@ def report_income(c, csv=False, remote=False):  # noqa: A002
         ),
         "remote": (
             "Run against a /tmp snapshot of the prod DB over SSH "
-            "instead of local data/dinary.duckdb."
+            "instead of local data/dinary.db."
         ),
     },
 )
 def sql_query(c, query="", file="", csv=False, json=False, write=False, remote=False):  # noqa: A002
-    """Run a SQL query against ``data/dinary.duckdb``.
+    """Run a SQL query against ``data/dinary.db``.
 
-    By default the connection is opened ``read_only=True`` — typoing
-    ``UPDATE`` / ``DELETE`` errors out at the DuckDB layer instead
-    of quietly mutating the ledger. Pass ``--write`` to explicitly
-    opt into mutations for one-off fixups. For free-form inspection
-    of the ``app_metadata`` anchor, per-currency totals in
-    ``expenses``, sheet-logging job state, etc. Report-shaped queries
-    should still live in ``dinary.reports.*``.
+    By default the connection is opened ``mode=ro`` via the SQLite
+    URI form — typoing ``UPDATE`` / ``DELETE`` errors out at the
+    SQLite layer instead of quietly mutating the ledger. Pass
+    ``--write`` to explicitly opt into mutations for one-off fixups.
+    For free-form inspection of the ``app_metadata`` anchor,
+    per-currency totals in ``expenses``, sheet-logging job state,
+    etc. Report-shaped queries should still live in
+    ``dinary.reports.*``.
 
     Examples::
 
@@ -1447,18 +1831,20 @@ def sql_query(c, query="", file="", csv=False, json=False, write=False, remote=F
     Use ``ssh`` + ``inv sql --write`` on the host for real prod fixups,
     or better — write a proper migration.
 
-    Local DB lock caveat: DuckDB 1.x file-locks on a single
-    read-write process. If ``inv dev`` (uvicorn) is running it owns
-    the lock and a second ``inv sql`` (even read-only) will fail
-    with ``IOException: Could not set lock on file``. Stop the dev
-    server first, or route through the server's HTTP API.
+    Local concurrency: SQLite in WAL mode lets an ``inv sql --`` run
+    read concurrently with a live ``inv dev`` uvicorn writer, so
+    you don't need to stop the dev server first. ``--write`` locally
+    still needs exclusive file access to the page it writes, so
+    running ``--write`` concurrently with the dev server may either
+    block briefly (busy_timeout) or surface a ``database is locked``
+    error — stop the dev server first for anything non-trivial.
 
     ``--remote`` follows the same JSON-over-SSH snapshot pattern as
-    ``inv report-*`` (see :func:`_remote_snapshot_cmd`): the DB is
-    ``cp``'d to ``/tmp`` on the server so the running ``dinary``
-    service's exclusive lock doesn't block us, the module emits a
-    JSON envelope, and the local process either forwards those
-    bytes (``--csv`` / ``--json``) or renders a rich table.
+    ``inv report-*`` (see :func:`_remote_snapshot_cmd`): a
+    transactionally consistent SQLite snapshot is taken on the
+    server via ``sqlite3 .backup``, the module emits a JSON
+    envelope, and the local process either forwards those bytes
+    (``--csv`` / ``--json``) or renders a rich table.
 
     ``--file`` + ``--remote`` reads the SQL file locally and ships
     its contents as ``--query`` over SSH — no SCP round-trip.

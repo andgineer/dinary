@@ -15,7 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from dinary import __version__
 from dinary.api import admin_catalog, catalog, expenses, qr
 from dinary.config import settings
-from dinary.services import duckdb_repo, sheet_logging, sheet_mapping
+from dinary.services import ledger_repo, sheet_logging, sheet_mapping
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _BUILT_STATIC = _PROJECT_ROOT / "_static"
@@ -144,7 +144,7 @@ async def _warm_sheet_mapping() -> None:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    duckdb_repo.init_db()
+    ledger_repo.init_db()
     await _warm_sheet_mapping()
     drain_task = asyncio.create_task(_drain_loop(), name="sheet-logging-drain")
     try:

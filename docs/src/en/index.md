@@ -4,7 +4,7 @@ Track expenses, scan receipts, analyze spending with AI.
 
 Dinary server is a FastAPI backend that:
 
-- Stores expenses in a local DuckDB file in EUR (with the original amount and currency preserved for audit)
+- Stores expenses in a local SQLite file in EUR (with the original amount and currency preserved for audit)
 - Optionally mirrors every expense to a Google Sheets tab in RSD for pivot-table analytics
 - Parses Serbian fiscal receipt QR codes (total + date)
 - Serves a mobile PWA for quick expense entry in dinars

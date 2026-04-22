@@ -10,4 +10,5 @@ SELECT e.id,
        e.sheet_category,
        e.sheet_group
 FROM expenses e
-WHERE YEAR(e.datetime) = ? AND MONTH(e.datetime) = ?
+WHERE CAST(strftime('%Y', e.datetime) AS INTEGER) = ?
+  AND CAST(strftime('%m', e.datetime) AS INTEGER) = ?

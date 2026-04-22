@@ -23,11 +23,10 @@ reaches into this module; non-import deployments never import it.
 """
 
 import logging
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
-
-import duckdb
 
 from dinary import config
 from dinary.config import (
@@ -35,7 +34,7 @@ from dinary.config import (
     KNOWN_LAYOUT_KEYS,
     ImportSourceRow,
 )
-from dinary.services import catalog_writer, duckdb_repo, sheet_mapping
+from dinary.services import catalog_writer, ledger_repo, sheet_mapping
 from dinary.services.seed_config import (
     BUSINESS_TRIP_EVENT_LAST_YEAR,
     BUSINESS_TRIP_EVENT_PREFIX,
@@ -73,12 +72,11 @@ class Category:
 # ---------------------------------------------------------------------------
 # Legacy (sheet_category, sheet_group) -> 3D derivation rules
 #
-# These rules used to live in seed/import code split between beneficiary,
-# sphere, and event helpers. In the 3D model they collapse into a single
-# (category_name, tag_set, event_name) tuple per legacy pair, and the result
-# is pre-baked into ``import_mapping`` + ``import_mapping_tags`` rows during
-# the import-catalog rebuild. ``imports/expense_import.py`` only does table
-# lookups at import time.
+# In the 3D model each legacy (sheet_category, sheet_group) pair collapses
+# into a single (category_name, tag_set, event_name) tuple. The result is
+# pre-baked into ``import_mapping`` + ``import_mapping_tags`` rows during
+# the import-catalog rebuild; ``imports/expense_import.py`` then only does
+# table lookups at import time.
 # ---------------------------------------------------------------------------
 
 LEGACY_FOOD_CATEGORY = "еда&бытовые"
@@ -462,9 +460,9 @@ class MappingSeedRow:
 
 
 EXPLICIT_MAPPING_OVERRIDES: list[MappingSeedRow] = [
-    # ("приложения", "") and ("приложения", "профессиональное") are now resolved
-    # entirely by canonical_category_for_source + tags_for_source, so the
-    # year=0 entries that used to live here are intentionally absent.
+    # ("приложения", "") and ("приложения", "профессиональное") are resolved
+    # entirely by canonical_category_for_source + tags_for_source, so no
+    # year=0 entries are needed for them.
     MappingSeedRow(2023, "professional", "apps", "продуктивность", ("профессиональное",)),
     MappingSeedRow(2018, "Работа", "App", "продуктивность", ("профессиональное",)),
     MappingSeedRow(2018, "Parallels", "", "развлечения"),
@@ -562,7 +560,7 @@ def _collect_categories() -> list[Category]:
 # ---------------------------------------------------------------------------
 
 
-def _purge_mapping_tables(con: duckdb.DuckDBPyConnection) -> None:
+def _purge_mapping_tables(con: sqlite3.Connection) -> None:
     """Clear all import-mapping rows; they are rebuilt from current active taxonomy.
 
     Ledger tables do NOT FK into mapping tables, so this is safe under
@@ -571,17 +569,14 @@ def _purge_mapping_tables(con: duckdb.DuckDBPyConnection) -> None:
     new active id, and doing that by DELETE+INSERT is simpler and more
     correct than tracking per-row deltas.
 
-    MUST be called outside an open write transaction. DuckDB 1.5 does
-    not see intra-transaction DELETEs in the FK index, so a ``DELETE
-    FROM import_mapping_tags`` followed by ``DELETE FROM import_mapping``
-    inside a single ``BEGIN`` / ``COMMIT`` block raises a FK violation
-    on the second statement. Running each DELETE in its own implicit
-    auto-commit transaction sidesteps the limitation. Losing
-    transactional atomicity here is acceptable because mapping tables
-    are pure derived state: if the subsequent rebuild crashes we end
-    up with empty mapping tables, which is the same state a fresh
-    migration would produce and the very next seed run would
-    re-populate.
+    Callers are expected to invoke this INSIDE the same write
+    transaction that rebuilds the rows (see ``seed_from_sheet``). The
+    ``import_mapping_tags`` FK into ``import_mapping`` is honoured
+    transactionally by SQLite, so children are deleted before
+    parents and the single ``BEGIN`` / ``COMMIT`` envelope keeps the
+    rebuild atomic: either the whole table is the pre-rebuild set or
+    the whole table is the post-rebuild set, never a window where a
+    concurrent reader would see an empty ``import_mapping``.
     """
     con.execute("DELETE FROM import_mapping_tags")
     con.execute("DELETE FROM import_mapping")
@@ -595,16 +590,16 @@ def _rebuild_import_mapping(  # noqa: C901, PLR0915
     # Splitting it further would fragment the single transactional
     # boundary that owns the ``import_mapping`` rebuild, so we preserve
     # the pre-split complexity as-is.
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     id_maps: TaxonomyIdMaps,
     pairs: list[Category],
 ) -> dict:
     """Rebuild ``import_mapping`` + ``import_mapping_tags`` from discovered pairs.
 
     Assumes the caller has already called ``_purge_mapping_tables``
-    (outside the write transaction, per the DuckDB 1.5 FK-in-txn
-    limitation) and holds the write cursor inside ``BEGIN``. Tables
-    are therefore empty on entry.
+    inside the same write transaction (``BEGIN`` … ``COMMIT``). Tables
+    are therefore empty on entry and every INSERT emitted below is
+    made atomic with the purge.
 
     Steps:
 
@@ -793,7 +788,7 @@ def _validate_latest_import_source() -> int:
     return latest
 
 
-def _validate_import_coverage(con: duckdb.DuckDBPyConnection, latest_year: int) -> None:
+def _validate_import_coverage(con: sqlite3.Connection, latest_year: int) -> None:
     """Every category must have at least one ``import_mapping`` row in the latest year.
 
     This protects the bootstrap import pipeline (which needs
@@ -828,7 +823,7 @@ def _validate_import_coverage(con: duckdb.DuckDBPyConnection, latest_year: int) 
 def seed_from_sheet(
     year: int | None = None,
     *,
-    finalize: Callable[[duckdb.DuckDBPyConnection], dict] | None = None,
+    finalize: Callable[[sqlite3.Connection], dict] | None = None,
 ) -> dict:
     """Seed the catalog + ``import_mapping`` from the configured sheets.
 
@@ -868,7 +863,7 @@ def seed_from_sheet(
         )
         raise ValueError(msg)
 
-    duckdb_repo.init_db()
+    ledger_repo.init_db()
 
     # Step 1: pull categories from each registered sheet. Pure HTTP
     # against Google Sheets; no DB lock held.
@@ -879,14 +874,17 @@ def seed_from_sheet(
         )
         raise ValueError(msg)
 
-    # Step 2: apply the catalog rows. Mapping-table purge runs BEFORE
-    # BEGIN because of a DuckDB 1.5 FK-in-transaction limitation (see
-    # ``_purge_mapping_tables`` docstring).
-    con = duckdb_repo.get_connection()
+    # Step 2: apply the catalog rows. Mapping-table purge and rebuild
+    # run inside a single write transaction so concurrent readers
+    # (inv sql --remote, report modules, the API) never observe an
+    # empty ``import_mapping`` state: SQLite's WAL mode gives each
+    # reader a snapshot at transaction-start, and the whole rebuild
+    # is committed atomically.
+    con = ledger_repo.get_connection()
     try:
-        _purge_mapping_tables(con)
-        con.execute("BEGIN")
+        con.execute("BEGIN IMMEDIATE")
         try:
+            _purge_mapping_tables(con)
             summary, id_maps = seed_classification_catalog(con, year=year)
             summary.update(_rebuild_import_mapping(con, id_maps, pairs))
 
@@ -897,7 +895,7 @@ def seed_from_sheet(
 
             con.execute("COMMIT")
         except Exception:
-            duckdb_repo.best_effort_rollback(con, context="seed_from_sheet write")
+            ledger_repo.best_effort_rollback(con, context="seed_from_sheet write")
             raise
         logger.info("Seed complete: %s", summary)
 
@@ -940,17 +938,17 @@ def rebuild_config_from_sheets() -> dict:
     (value before the bump, never less than 1) and ``catalog_version``
     (the new value).
     """
-    duckdb_repo.init_db()
+    ledger_repo.init_db()
 
     previous_version = 0
     try:
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            previous_version = duckdb_repo.get_catalog_version(con)
+            previous_version = ledger_repo.get_catalog_version(con)
         finally:
             con.close()
-    except (duckdb.Error, OSError, RuntimeError) as exc:
-        # Only expected failure modes: DuckDB errors (file corruption,
+    except (sqlite3.Error, OSError, RuntimeError) as exc:
+        # Only expected failure modes: sqlite3 errors (file corruption,
         # schema drift, locked DB), filesystem errors, and RuntimeError
         # raised by get_catalog_version when app_metadata is missing.
         # Anything else (KeyboardInterrupt, MemoryError) should propagate.
@@ -960,7 +958,7 @@ def rebuild_config_from_sheets() -> dict:
         )
         previous_version = 0
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         # Snapshot the catalog hash BEFORE ``seed_from_sheet`` mutates
         # the catalog tables. We use the same canonical state that
@@ -975,7 +973,7 @@ def rebuild_config_from_sheets() -> dict:
     finally:
         con.close()
 
-    def finalize(write_con: duckdb.DuckDBPyConnection) -> dict:
+    def finalize(write_con: sqlite3.Connection) -> dict:
         """Atomic post-rebuild steps (inside ``seed_from_sheet`` write txn).
 
         Validation and the version bump MUST be in the same
@@ -986,7 +984,7 @@ def rebuild_config_from_sheets() -> dict:
         """
         latest_year = _validate_latest_import_source()
         _validate_import_coverage(write_con, latest_year)
-        effective_previous = max(previous_version, duckdb_repo.get_catalog_version(write_con))
+        effective_previous = max(previous_version, ledger_repo.get_catalog_version(write_con))
         after_hash = catalog_writer.hash_catalog_state(write_con)
         if before_hash == after_hash:
             # No observable catalog change — skip the bump. The

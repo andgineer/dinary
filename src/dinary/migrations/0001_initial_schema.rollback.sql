@@ -2,7 +2,6 @@ DROP TABLE IF EXISTS income;
 DROP TABLE IF EXISTS sheet_logging_jobs;
 DROP TABLE IF EXISTS expense_tags;
 DROP TABLE IF EXISTS expenses;
-DROP SEQUENCE IF EXISTS expenses_id_seq;
 DELETE FROM app_metadata WHERE key = 'catalog_version';
 DROP TABLE IF EXISTS app_metadata;
 DROP TABLE IF EXISTS sheet_mapping_tags;

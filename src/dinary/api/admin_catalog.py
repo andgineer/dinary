@@ -13,7 +13,7 @@ Write helpers live in ``catalog_writer.py``; this module is a thin
 HTTP veneer that:
 
 * Validates request bodies.
-* Opens a DuckDB cursor.
+* Opens a SQLite connection.
 * Delegates to ``catalog_writer`` in a single call per request (PATCH
   is atomic: if a body carries both ``name`` and ``is_active``, the
   catalog_writer runs them in one transaction).
@@ -36,7 +36,7 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from dinary.config import settings, spreadsheet_id_from_setting
-from dinary.services import catalog_writer, duckdb_repo, sheet_mapping
+from dinary.services import catalog_writer, ledger_repo, sheet_mapping
 
 from .catalog import (
     CategoryGroupItem,
@@ -164,7 +164,7 @@ def _snapshot_response(  # noqa: PLR0913
 ) -> AdminCatalogResponse:
     """Build the full catalog snapshot response every admin write returns.
 
-    Takes the caller's already-open DuckDB connection so a single
+    Takes the caller's already-open SQLite connection so a single
     request uses exactly one DB connection (write + snapshot).
     """
     snapshot = build_catalog_snapshot(con)
@@ -188,7 +188,7 @@ def add_group(
     body: GroupAddBody,
     response: Response,
 ) -> AdminCatalogResponse:
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         try:
             result = catalog_writer.add_group(
@@ -209,7 +209,7 @@ def edit_group(
     body: GroupPatchBody,
     response: Response,
 ) -> AdminCatalogResponse:
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         try:
             catalog_writer.edit_group(
@@ -231,7 +231,7 @@ def delete_group(
     group_id: int,
     response: Response,
 ) -> AdminCatalogResponse:
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         try:
             result = catalog_writer.delete_group(con, group_id)
@@ -257,7 +257,7 @@ def add_category(
     body: CategoryAddBody,
     response: Response,
 ) -> AdminCatalogResponse:
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         try:
             result = catalog_writer.add_category(
@@ -280,7 +280,7 @@ def edit_category(
     body: CategoryPatchBody,
     response: Response,
 ) -> AdminCatalogResponse:
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         try:
             catalog_writer.edit_category(
@@ -307,7 +307,7 @@ def delete_category(
     category_id: int,
     response: Response,
 ) -> AdminCatalogResponse:
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         try:
             result = catalog_writer.delete_category(con, category_id)
@@ -333,7 +333,7 @@ def add_event(
     body: EventAddBody,
     response: Response,
 ) -> AdminCatalogResponse:
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         try:
             result = catalog_writer.add_event(
@@ -357,7 +357,7 @@ def edit_event(
     body: EventPatchBody,
     response: Response,
 ) -> AdminCatalogResponse:
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         try:
             catalog_writer.edit_event(
@@ -382,7 +382,7 @@ def delete_event(
     event_id: int,
     response: Response,
 ) -> AdminCatalogResponse:
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         try:
             result = catalog_writer.delete_event(con, event_id)
@@ -408,7 +408,7 @@ def add_tag(
     body: TagAddBody,
     response: Response,
 ) -> AdminCatalogResponse:
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         try:
             result = catalog_writer.add_tag(con, name=body.name)
@@ -425,7 +425,7 @@ def edit_tag(
     body: TagPatchBody,
     response: Response,
 ) -> AdminCatalogResponse:
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         try:
             catalog_writer.edit_tag(
@@ -446,7 +446,7 @@ def delete_tag(
     tag_id: int,
     response: Response,
 ) -> AdminCatalogResponse:
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         try:
             result = catalog_writer.delete_tag(con, tag_id)

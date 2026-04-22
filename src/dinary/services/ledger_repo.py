@@ -1,21 +1,26 @@
-"""DuckDB repository: single data/dinary.duckdb for catalog + ledger.
+"""Storage repository: single data/dinary.db SQLite file for catalog + ledger.
 
-Process-wide single connection opened once on init, shared across all
-callers via ``get_connection()``. No ATTACH, no per-year files.
+Connection model: each ``get_connection()`` call opens a fresh sqlite3
+connection against the ``DB_PATH`` file with our standard PRAGMAs
+applied. Callers are responsible for closing it in a ``try/finally``.
+``init_db()`` runs migrations and reconciles the accounting-currency
+anchor before any caller takes a connection.
 """
 
+import contextlib
 import dataclasses
+import json
 import logging
+import sqlite3
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
-import duckdb
-
 from dinary.config import settings
 from dinary.services import db_migrations
+from dinary.services import sqlite_types as _sqlite_types
 from dinary.services.sql_loader import fetchall_as, fetchone_as, load_sql
 
 logger = logging.getLogger(__name__)
@@ -50,10 +55,7 @@ def default_claim_stale_timeout() -> timedelta:
     )
 
 
-_conn: duckdb.DuckDBPyConnection | None = None
-
-
-def best_effort_rollback(con: duckdb.DuckDBPyConnection, *, context: str) -> None:
+def best_effort_rollback(con: sqlite3.Connection, *, context: str) -> None:
     """Issue ROLLBACK without letting a failed rollback mask the original error."""
     try:
         con.execute("ROLLBACK")
@@ -62,66 +64,39 @@ def best_effort_rollback(con: duckdb.DuckDBPyConnection, *, context: str) -> Non
 
 
 def _is_unique_violation_of_client_expense_id(exc: BaseException) -> bool:
-    """True iff ``exc`` is the UNIQUE race on ``expenses.client_expense_id``.
+    """True iff ``exc`` is a UNIQUE violation on ``expenses.client_expense_id``.
 
-    Concurrent POSTs with the same UUID surface as a ``ConstraintException``
-    *or* a ``TransactionException`` at either the INSERT statement
-    (the winner's write is in-flight and their uncommitted snapshot
-    holds the UNIQUE key) or at COMMIT (the winner committed between
-    our INSERT and our COMMIT). DuckDB picks the class based on when
-    in transaction lifecycle the conflict is detected; both carry the
-    same duplicate-key diagnostic, and both mean "fall through to the
-    compare path against the now-committed winner". Any other
-    constraint/transaction error — FK violation on ``category_id``,
-    disk I/O error, etc. — must propagate as-is.
+    Under SQLite WAL the only way to reach this branch is via a
+    concurrent transaction that committed ahead of ours *without*
+    ``ON CONFLICT DO NOTHING`` absorbing the duplicate. SQLite itself
+    absorbs the common "winner already committed" case silently (the
+    RETURNING clause returns an empty result set), so the loser
+    rarely reaches here under ``insert_expense.sql``. The branch is
+    retained as a defensive backstop so that a future writer using
+    bare ``INSERT`` (without ON CONFLICT) on a UNIQUE ``client_expense_id``
+    column still lands in the race-recovery compare path instead of
+    bubbling an ``IntegrityError`` to the API layer.
 
-    Implementation note. DuckDB's duplicate-key diagnostic doesn't
-    include the column name (just the offending value), so we key off
-    the "unique / primary-key / duplicate-key" phrasing. This is
-    safe-but-permissive: within ``insert_expense`` the statement-level
-    ``ON CONFLICT (client_expense_id) DO NOTHING`` target already
-    scopes the only silently-absorbed conflict to that column; the
-    auto-incremented ``expenses.id`` is never supplied by callers,
-    and the sibling ``expense_tags`` / ``sheet_logging_jobs`` inserts
-    are each scoped to their own PK (``ON CONFLICT (expense_id,
-    tag_id)`` / ``ON CONFLICT (expense_id)`` respectively), so a
-    future UNIQUE added to either of those tables would raise
-    cleanly instead of being laundered through this classifier.
-
-    The explicit ``"foreign"``-keyword exclusion is **defensive**, not
-    currently load-bearing: as of the DuckDB version this refactor
-    was written against, FK-violation messages look like
-    ``"Constraint Error: Violates foreign key constraint because key
-    ... does not exist in the referenced table"`` and carry none of
-    our positive keywords. The carve-out is a cheap forward-compat
-    hedge — if a future DuckDB release rewords FK diagnostics to
-    mention "primary key" (the parent's column) or "unique
-    constraint" (the referenced UNIQUE index), the guard prevents a
-    true FK violation from being silently laundered into a
-    duplicate/conflict response. Keep the guard in sync with the
-    ``test_classifies_real_fk_violation_as_not_a_race`` test: if
-    DuckDB ever emits an FK message without the word ``foreign``,
-    that test fails loudly, and this classifier needs a new
-    discriminator.
+    SQLite's diagnostic for a UNIQUE violation on
+    ``expenses.client_expense_id`` is
+    ``"UNIQUE constraint failed: expenses.client_expense_id"``. We
+    match on the qualified column name so an unrelated UNIQUE added
+    to any other table would raise cleanly rather than be silently
+    laundered through this classifier. Foreign-key violations raise
+    ``IntegrityError`` with a ``"FOREIGN KEY constraint failed"``
+    message and are explicitly excluded.
     """
     message = str(exc).lower()
-    if "foreign" in message:
+    if "foreign key" in message:
         return False
-    return "duplicate key" in message or "unique constraint" in message or "primary key" in message
+    return "unique constraint failed" in message and "expenses.client_expense_id" in message
 
 
-# Exception classes DuckDB may raise for the ``client_expense_id`` UNIQUE
-# race, at either the INSERT statement or the COMMIT. Kept as a module
-# constant so the ``insert_expense`` try/except blocks stay symmetric:
-# historically only COMMIT needed both classes, but DuckDB is free to
-# pick either at either point, and the cost of the extra class at
-# INSERT is zero (``_is_unique_violation_of_client_expense_id`` is the
-# real decision helper; the except clause just gates which errors it
-# gets to inspect).
-_DUCKDB_RACE_EXCS: tuple[type[duckdb.Error], ...] = (
-    duckdb.ConstraintException,
-    duckdb.TransactionException,
-)
+# Exception classes SQLite may raise when an ``ON CONFLICT DO NOTHING``
+# can't silently absorb a duplicate (e.g. a future writer that issues
+# a bare ``INSERT``). Kept as a tuple so adding sibling classes later
+# (e.g. ``OperationalError`` for a retry ladder) stays a one-line edit.
+_RACE_EXCS: tuple[type[sqlite3.Error], ...] = (sqlite3.IntegrityError,)
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +165,12 @@ class LoggingProjectionCandidateRow:
     wildcard sentinel ("don't decide here"); the Python resolver in
     ``logging_projection`` picks the first non-wildcard value per
     column scanning rows in ``row_order`` ASC.
+
+    ``tag_ids_json`` arrives as a JSON-encoded string from
+    ``json_group_array`` in ``logging_projection.sql``; the Python
+    consumer parses it once per row. The field is named with the
+    ``_json`` suffix so the raw-string shape is obvious at call
+    sites and does not get confused with a decoded ``list[int]``.
     """
 
     row_order: int
@@ -197,7 +178,7 @@ class LoggingProjectionCandidateRow:
     event_id: int | None
     sheet_category: str
     sheet_group: str
-    tag_ids: list[int]
+    tag_ids_json: str
 
 
 # ---------------------------------------------------------------------------
@@ -215,23 +196,22 @@ def _get_db_path() -> Path:
 
 
 def init_db() -> None:
-    """Create or migrate dinary.duckdb to the latest schema, then open the connection.
+    """Create or migrate data/dinary.db to the latest schema, and reconcile metadata.
 
     Must be called once per process before ``get_connection()``. The FastAPI
     lifespan in ``dinary.main`` invokes it on startup; ``invoke`` tasks and
-    tests do so explicitly (see ``tests/conftest.py::_reset_duckdb_connection``).
+    tests do so explicitly (see ``tests/conftest.py::_reset_db_connection``).
     """
-    global _conn  # noqa: PLW0603
     ensure_data_dir()
-    if _conn is not None:
-        _conn.close()
-        _conn = None
     db_migrations.migrate_db(_get_db_path())
-    _conn = duckdb.connect(str(_get_db_path()))
-    _reconcile_accounting_currency(_conn)
+    con = _sqlite_types.connect(str(_get_db_path()))
+    try:
+        _reconcile_accounting_currency(con)
+    finally:
+        con.close()
 
 
-def _reconcile_accounting_currency(con: duckdb.DuckDBPyConnection) -> None:
+def _reconcile_accounting_currency(con: sqlite3.Connection) -> None:
     """Reconcile ``settings.accounting_currency`` with the DB anchor.
 
     Accounting-currency is a DB-wide invariant: every ``expenses.amount``
@@ -283,17 +263,38 @@ def _reconcile_accounting_currency(con: duckdb.DuckDBPyConnection) -> None:
     if row is None:
         if not desired:
             msg = (
-                "Fresh dinary.duckdb and settings.accounting_currency is empty; "
+                "Fresh data/dinary.db and settings.accounting_currency is empty; "
                 "refusing to seed an unknown accounting currency. Set "
                 "DINARY_ACCOUNTING_CURRENCY in .deploy/.env to a valid ISO-4217 "
                 "code (e.g. EUR) for the first deploy; subsequent runs can omit "
                 "it and the value will be read back from app_metadata."
             )
             raise RuntimeError(msg)
-        con.execute(
-            "INSERT INTO app_metadata (key, value) VALUES ('accounting_currency', ?)",
-            [desired],
-        )
+        # Codebase-wide rule is "writers take ``BEGIN IMMEDIATE``", and the
+        # first-boot anchor is no exception: wrapping the seed INSERT in an
+        # explicit write transaction lets ``busy_timeout`` absorb any
+        # accidentally-concurrent writer (e.g. a migration runner still
+        # holding the write lock) instead of surfacing ``SQLITE_BUSY`` at
+        # COMMIT. At runtime ``init_db`` is invoked once per process from
+        # the FastAPI lifespan, so contention is not expected — the
+        # ``BEGIN IMMEDIATE`` is pure belt-and-braces.
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            con.execute(
+                "INSERT INTO app_metadata (key, value) VALUES ('accounting_currency', ?)",
+                [desired],
+            )
+        except BaseException:
+            # Shield the ROLLBACK: if SQLite has already auto-rolled back
+            # (or the connection is otherwise unable to roll back), letting
+            # the ROLLBACK exception bubble would mask the original INSERT
+            # error the operator actually needs to see. Same idiom as
+            # ``best_effort_rollback`` below and ``SQLiteBackend.rollback``
+            # in ``db_migrations``.
+            with contextlib.suppress(sqlite3.Error):
+                con.execute("ROLLBACK")
+            raise
+        con.execute("COMMIT")
         settings.accounting_currency = desired
         logger.info("anchored accounting_currency=%s in app_metadata", desired)
         return
@@ -328,54 +329,48 @@ def _reconcile_accounting_currency(con: duckdb.DuckDBPyConnection) -> None:
     raise RuntimeError(msg)
 
 
-def get_connection() -> duckdb.DuckDBPyConnection:
-    """Return a per-call cursor on the shared singleton connection.
+def get_connection() -> sqlite3.Connection:
+    """Return a fresh sqlite3 connection on ``DB_PATH``.
 
-    **Concurrency model.** DuckDB allows at most one writer per file
-    across processes, so the server runs a single uvicorn worker. The
-    cursor returned here shares the underlying engine (and its
-    write-set) with the singleton connection, but carries its own
-    transaction state — ``BEGIN``/``COMMIT`` on one cursor does not
-    affect another. Multiple cursors can run simultaneously because
-    ``POST /api/expenses`` offloads its blocking DB work via
-    ``asyncio.to_thread``, so several thread-pool workers may each
-    hold a cursor at once.
+    **Concurrency model.** SQLite in WAL mode supports many readers
+    and one writer per file; multiple processes or threads can share
+    the file safely. Each call opens its own file handle with
+    ``PRAGMA busy_timeout`` configured, so writers serialize on
+    ``BEGIN IMMEDIATE`` / first-write and readers never block on
+    them. Each caller gets an independent transaction context
+    without a process-wide singleton.
 
-    **UNIQUE races are real and are recovered, not prevented.** Under
-    real concurrent writers (e.g. two PWA clients — or one PWA + one
-    retry — submitting the same ``client_expense_id`` through the
-    event loop at the same time), ``ON CONFLICT DO NOTHING`` alone
-    isn't enough: DuckDB's MVCC only absorbs conflicts with rows
-    already committed at statement time, so racing cursors can both
-    see "no row yet" and the loser later surfaces either as a
-    ``ConstraintException`` at INSERT or a ``TransactionException``
-    at COMMIT (DuckDB picks the class based on when it notices the
-    conflict). ``insert_expense`` catches both classes, issues the
-    explicit ``ROLLBACK`` DuckDB needs to clear the aborted cursor,
-    and drops through to a compare-outside-tx path against the
-    committed winner. Any new writer module that takes a cursor from
-    here and uses ``ON CONFLICT`` on a user-supplied UNIQUE key must
-    apply the same recovery pattern; relying on "single-worker server
-    means no contention" is wrong because of ``asyncio.to_thread``.
+    **UNIQUE races.** ``insert_expense.sql`` uses
+    ``ON CONFLICT (client_expense_id) DO NOTHING RETURNING id``.
+    Under SQLite, if the winner has already committed, the RETURNING
+    clause yields no rows and we fall through to the compare-outside-tx
+    path naturally — no exception to handle. If a concurrent writer is
+    still in-flight, the loser either blocks up to ``busy_timeout`` or
+    (if it timed out) raises ``OperationalError`` which
+    ``insert_expense`` lets propagate. Any new writer module that
+    takes a cursor from here and uses ``ON CONFLICT`` on a
+    user-supplied UNIQUE key inherits this behaviour automatically;
+    writers that skip ``ON CONFLICT`` must apply the same
+    compare-path recovery pattern as ``insert_expense`` does via
+    ``_is_unique_violation_of_client_expense_id``.
 
-    **Lifecycle.** ``get_connection()`` will lazily open the DB file
-    without running migrations — callers that need a schema-guaranteed
-    DB (e.g. ``dinary.main`` lifespan, ``invoke migrate``, tests) must
-    call ``init_db()`` first. The returned cursor **must** be closed by
-    the caller (``try ... finally: con.close()``).
+    **Lifecycle.** ``get_connection()`` does not run migrations.
+    Callers that need a schema-guaranteed DB (``dinary.main`` lifespan,
+    ``invoke migrate``, tests) must call ``init_db()`` first. The
+    returned connection **must** be closed by the caller
+    (``try ... finally: con.close()``).
     """
-    global _conn  # noqa: PLW0603
-    if _conn is None:
-        _conn = duckdb.connect(str(_get_db_path()))
-    return _conn.cursor()
+    return _sqlite_types.connect(str(_get_db_path()))
 
 
 def close_connection() -> None:
-    """Close the singleton connection (for clean shutdown in tests)."""
-    global _conn  # noqa: PLW0603
-    if _conn is not None:
-        _conn.close()
-        _conn = None
+    """No-op tear-down hook for fixtures.
+
+    Each ``get_connection`` call opens a fresh sqlite3 handle that the
+    caller owns and closes itself, so there is no process-wide handle
+    to release here. The function is kept so fixtures have a stable
+    hook if a connection-pool-style cache is ever introduced.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -383,12 +378,12 @@ def close_connection() -> None:
 # ---------------------------------------------------------------------------
 
 
-def list_categories(con: duckdb.DuckDBPyConnection) -> list[CategoryListRow]:
+def list_categories(con: sqlite3.Connection) -> list[CategoryListRow]:
     """Return active categories with active group info, ordered by group sort then name."""
     return fetchall_as(CategoryListRow, con, load_sql("list_categories.sql"))
 
 
-def get_catalog_version(con: duckdb.DuckDBPyConnection) -> int:
+def get_catalog_version(con: sqlite3.Connection) -> int:
     row = con.execute(
         "SELECT value FROM app_metadata WHERE key = 'catalog_version'",
     ).fetchone()
@@ -398,7 +393,7 @@ def get_catalog_version(con: duckdb.DuckDBPyConnection) -> int:
     return int(row[0])
 
 
-def set_catalog_version(con: duckdb.DuckDBPyConnection, value: int) -> None:
+def set_catalog_version(con: sqlite3.Connection, value: int) -> None:
     """Public write for ``app_metadata.catalog_version``.
 
     Only two callers are expected: ``seed_config._bump_catalog_version``
@@ -412,11 +407,7 @@ def set_catalog_version(con: duckdb.DuckDBPyConnection, value: int) -> None:
     )
 
 
-# Backward-compatible alias (previous name was underscored-private).
-_set_catalog_version = set_catalog_version
-
-
-def get_category_name(con: duckdb.DuckDBPyConnection, category_id: int) -> str | None:
+def get_category_name(con: sqlite3.Connection, category_id: int) -> str | None:
     row = con.execute(
         "SELECT name FROM categories WHERE id = ?",
         [category_id],
@@ -430,7 +421,7 @@ def get_category_name(con: duckdb.DuckDBPyConnection, category_id: int) -> str |
 
 
 def resolve_mapping(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     category: str,
     group: str,
 ) -> MappingRow | None:
@@ -438,7 +429,7 @@ def resolve_mapping(
 
 
 def resolve_mapping_for_year(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     category: str,
     group: str,
     year: int,
@@ -452,7 +443,7 @@ def resolve_mapping_for_year(
 
 
 def get_mapping_tag_ids(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     mapping_id: int,
 ) -> list[int]:
     rows = con.execute(
@@ -471,7 +462,7 @@ _PROJECTION_WILDCARD = "*"
 
 
 def logging_projection(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     category_id: int,
     event_id: int | None,
@@ -522,7 +513,7 @@ def logging_projection(
     for cand in candidates:
         if cand.event_id is not None and cand.event_id != event_id:
             continue
-        required_tags = {int(t) for t in cand.tag_ids}
+        required_tags = {int(t) for t in json.loads(cand.tag_ids_json)}
         if not required_tags.issubset(expense_tag_set):
             continue
         if resolved_category is None and cand.sheet_category != _PROJECTION_WILDCARD:
@@ -546,29 +537,29 @@ def logging_projection(
 def lookup_existing_expense(
     client_expense_id: str,
     *,
-    con: duckdb.DuckDBPyConnection | None = None,
+    con: sqlite3.Connection | None = None,
 ) -> ExistingExpenseRow | None:
     """Look up a stored expense by client_expense_id.
 
-    When ``con`` is provided, run the SELECT on the caller's cursor —
+    When ``con`` is provided, run the SELECT on the caller's connection —
     this lets ``POST /api/expenses`` do the active-category /
-    idempotent-replay check on the same cursor it's about to pass to
-    ``insert_expense``, instead of opening a second short-lived cursor
-    on every write that hits an inactive category.
+    idempotent-replay check on the same connection it's about to pass to
+    ``insert_expense``, instead of opening a second short-lived
+    connection on every write that hits an inactive category.
 
     When ``con`` is omitted, we fall back to opening and closing a
-    fresh cursor, for callers (tests, debugging utilities) that don't
+    fresh connection, for callers (tests, debugging utilities) that don't
     have one handy.
 
     **Snapshot invariant.** For the two branches to return equivalent
-    data, the caller-supplied cursor must be in auto-commit mode (no
-    open ``BEGIN``). The fresh-cursor branch always sees only
+    data, the caller-supplied connection must be in auto-commit mode
+    (no open ``BEGIN``). The fresh-connection branch always sees only
     committed rows; the ``con=`` branch sees the caller's snapshot,
     which inside an open transaction includes that transaction's own
     uncommitted writes. Today's only ``con=`` caller
     (``api.expenses._resolve_category_for_write``) is invoked before
     ``insert_expense`` opens its ``BEGIN``, so the invariant holds.
-    Any future caller that threads this cursor through an already-
+    Any future caller that threads this connection through an already-
     open transaction must understand the divergence or explicitly
     drop to auto-commit first.
     """
@@ -629,8 +620,26 @@ def _format_expense_diff(stored: tuple, incoming: tuple) -> str:
     return "; ".join(diffs) if diffs else "(no field difference observed)"
 
 
+def _to_decimal(value: float | Decimal) -> Decimal:
+    """Coerce amount-shaped inputs to ``Decimal`` for consistent storage.
+
+    ``dinary.services.sqlite_types`` registers a ``Decimal`` adapter
+    that always stores ``Decimal`` as the ``str(value)`` TEXT form,
+    and a matching ``DECIMAL`` converter that parses it back. Handing
+    a ``float`` to ``con.execute`` would bypass that adapter and
+    persist the column as SQLite's native REAL instead, so the same
+    ``DECIMAL(p,s)`` column would end up with mixed REAL/TEXT values
+    and the converter would either lose precision or choke on
+    readback. Coerce here so every bind parameter that lands in a
+    ``DECIMAL`` column travels through the registered adapter.
+    """
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
 def describe_expense_conflict(  # noqa: PLR0913
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     client_expense_id: str,
     expense_datetime: datetime,
@@ -681,8 +690,8 @@ def describe_expense_conflict(  # noqa: PLR0913
         existing_tag_ids,
     )
     incoming = (
-        Decimal(str(amount)),
-        Decimal(str(amount_original)),
+        _to_decimal(amount),
+        _to_decimal(amount_original),
         currency_original,
         category_id,
         event_id,
@@ -696,7 +705,7 @@ def describe_expense_conflict(  # noqa: PLR0913
 
 
 def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     client_expense_id: str | None,
     expense_datetime: datetime,
@@ -728,9 +737,11 @@ def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
 
     tag_ids = tag_ids or []
     incoming_tag_ids = sorted(int(t) for t in tag_ids)
+    amount_dec = _to_decimal(amount)
+    amount_original_dec = _to_decimal(amount_original)
     incoming = (
-        Decimal(str(amount)),
-        Decimal(str(amount_original)),
+        amount_dec,
+        amount_original_dec,
         currency_original,
         category_id,
         event_id,
@@ -741,7 +752,15 @@ def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
         incoming_tag_ids,
     )
 
-    con.execute("BEGIN")
+    # ``BEGIN IMMEDIATE`` makes this transaction a writer from the start
+    # (upgrades the SHARED lock to RESERVED), which forces any other
+    # concurrent writer to serialize on the SQLite file lock instead of
+    # deferring the contention to the first UPDATE/INSERT. That lets
+    # the ``busy_timeout`` we set at connect time actually kick in
+    # here (the default "DEFERRED" transaction would upgrade lazily
+    # at the first write statement, which can give a BUSY on commit
+    # that is harder to recover cleanly).
+    con.execute("BEGIN IMMEDIATE")
     tx_active = True
     try:
         if not con.execute(
@@ -764,28 +783,19 @@ def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
             ).fetchone():
                 raise ValueError(f"tag_id {tid} not found in tags")
 
-        # Under DuckDB's optimistic MVCC, ``ON CONFLICT DO NOTHING``
-        # only silently absorbs conflicts with rows that are already
-        # *committed* at statement time. A concurrent in-flight writer
-        # holding the same UNIQUE key instead surfaces immediately as
-        # a ``ConstraintException`` here; if that in-flight writer
-        # commits *after* our INSERT statement but *before* our COMMIT,
-        # our commit itself fails (as a ``TransactionException`` or
-        # a ``ConstraintException`` — DuckDB picks the class based on
-        # when it notices the conflict) with a message that wraps the
-        # same duplicate-key violation. Both cases reduce to "the
-        # winner is committed, we should compare against their row" —
-        # fall through to the compare-outside-tx path.
+        # Under SQLite's single-writer model, ``ON CONFLICT DO NOTHING``
+        # silently absorbs conflicts with rows already committed at
+        # statement time; the RETURNING clause returns an empty result
+        # set in that case and we fall through to the compare-outside-
+        # tx path. A concurrent in-flight writer holding the same
+        # UNIQUE key either blocks us (via busy_timeout) or raises
+        # ``OperationalError`` ("database is locked") — those are
+        # NOT duplicate-key races and must propagate.
         #
-        # Important: DuckDB marks the TX as aborted after either
-        # failure but does **not** clear the cursor state. Any
-        # subsequent statement on the same cursor rejects with
-        # ``TransactionContext Error: Current transaction is aborted
-        # (please ROLLBACK)`` until we issue an explicit ROLLBACK.
-        # The race-recovery branches below do exactly that via
-        # ``best_effort_rollback`` before falling through to the
-        # compare path, which is why those ROLLBACKs look redundant
-        # but are load-bearing.
+        # The ``_RACE_EXCS`` branch below is a defensive backstop for
+        # any future writer that skips ``ON CONFLICT`` and bubbles an
+        # IntegrityError. We clean up the aborted TX and fall through
+        # to the compare-against-winner path.
         inserted: tuple | None
         try:
             inserted = con.execute(
@@ -793,8 +803,8 @@ def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
                 [
                     client_expense_id,
                     expense_datetime,
-                    amount,
-                    amount_original,
+                    amount_dec,
+                    amount_original_dec,
                     currency_original,
                     category_id,
                     event_id,
@@ -803,14 +813,9 @@ def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
                     sheet_group,
                 ],
             ).fetchone()
-        except _DUCKDB_RACE_EXCS as exc:
+        except _RACE_EXCS as exc:
             if not _is_unique_violation_of_client_expense_id(exc):
                 raise
-            # Same aborted-TX cleanup as the COMMIT branch below:
-            # DuckDB leaves the cursor in an aborted state after a
-            # failed INSERT, and every subsequent statement on it
-            # rejects with "Current transaction is aborted (please
-            # ROLLBACK)" until we issue an explicit ROLLBACK.
             best_effort_rollback(
                 con,
                 context=(
@@ -824,25 +829,12 @@ def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
         if inserted is not None:
             expense_pk = int(inserted[0])
             for tid in tag_ids:
-                # Narrow the conflict target to the composite PK.
-                # Bare ``ON CONFLICT`` would work identically today
-                # (only one conflict target exists), but would silently
-                # absorb any future UNIQUE added to ``expense_tags``
-                # with no recovery net to notice — unlike
-                # ``insert_expense.sql`` whose compare-against-winner
-                # path would at least catch a mis-classified
-                # duplicate. Keep it scoped so an unexpected UNIQUE
-                # on, say, ``(expense_id, sort_order)`` raises cleanly.
                 con.execute(
                     "INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)"
                     " ON CONFLICT (expense_id, tag_id) DO NOTHING",
                     [expense_pk, tid],
                 )
             if enqueue_logging:
-                # Same reasoning: narrow to the PK target explicitly
-                # so any future UNIQUE on ``sheet_logging_jobs``
-                # (e.g. per-drain-run dedup) raises instead of being
-                # silently swallowed by an over-broad ON CONFLICT.
                 con.execute(
                     "INSERT INTO sheet_logging_jobs (expense_id, status)"
                     " VALUES (?, 'pending') ON CONFLICT (expense_id) DO NOTHING",
@@ -850,14 +842,9 @@ def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
                 )
             try:
                 con.execute("COMMIT")
-            except _DUCKDB_RACE_EXCS as exc:
+            except _RACE_EXCS as exc:
                 if not _is_unique_violation_of_client_expense_id(exc):
                     raise
-                # DuckDB marks the TX as aborted on a failed commit;
-                # subsequent statements on the same cursor would reject
-                # with "Current transaction is aborted (please
-                # ROLLBACK)". An explicit ROLLBACK drops us back to
-                # auto-commit so the compare path below can run.
                 best_effort_rollback(
                     con,
                     context=(
@@ -868,21 +855,17 @@ def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
             else:
                 return "created"
         elif tx_active:
-            # Classic ON CONFLICT DO NOTHING hit: the winner committed
-            # before our INSERT ran, so we never allocated a PK but
-            # our validation SELECTs are still sitting in an open TX.
-            # Close it cleanly before running the compare in
-            # auto-commit — keeping it open has no benefit and makes
-            # the cleanup at the bottom of this function harder to
-            # reason about.
+            # ON CONFLICT DO NOTHING hit on an already-committed winner:
+            # close our still-open read transaction cleanly before
+            # running the compare in auto-commit.
             con.execute("ROLLBACK")
             tx_active = False
 
         # Compare path — runs in auto-commit against the committed
-        # winner row (whichever leg we arrived on). client_expense_id
-        # is guaranteed non-None here: NULL rows can't trigger either
-        # branch because UNIQUE allows multiple NULLs, so a NULL
-        # incoming UUID always ends up in the happy-path above.
+        # winner row. client_expense_id is guaranteed non-None here:
+        # NULL rows can't trigger either branch because UNIQUE allows
+        # multiple NULLs, so a NULL incoming UUID always ends up in
+        # the happy-path above.
         existing = fetchone_as(
             ExistingExpenseRow,
             con,
@@ -890,12 +873,6 @@ def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
             [client_expense_id],
         )
         if existing is None:
-            # Defensive: if the winner's commit got rolled back between
-            # our failed COMMIT and this SELECT, treat the condition
-            # as an unrecoverable internal error with a loud,
-            # traceable message (``assert`` is stripped by ``python -O``
-            # and would swallow this class of bug in a production
-            # build).
             msg = (
                 f"insert_expense: client_expense_id={client_expense_id!r} "
                 "disappeared between ON CONFLICT/race recovery and the "
@@ -944,7 +921,7 @@ def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
         raise
 
 
-def get_expense_tags(con: duckdb.DuckDBPyConnection, expense_id: int) -> list[int]:
+def get_expense_tags(con: sqlite3.Connection, expense_id: int) -> list[int]:
     """Return the tag_ids attached to an expense, sorted ascending."""
     rows = con.execute(
         "SELECT tag_id FROM expense_tags WHERE expense_id = ? ORDER BY tag_id",
@@ -953,7 +930,7 @@ def get_expense_tags(con: duckdb.DuckDBPyConnection, expense_id: int) -> list[in
     return [int(r[0]) for r in rows]
 
 
-def get_expense_by_id(con: duckdb.DuckDBPyConnection, expense_id: int) -> ExpenseRow | None:
+def get_expense_by_id(con: sqlite3.Connection, expense_id: int) -> ExpenseRow | None:
     """Read a stored expense row by integer PK."""
     return fetchone_as(
         ExpenseRow,
@@ -972,7 +949,7 @@ def get_expense_by_id(con: duckdb.DuckDBPyConnection, expense_id: int) -> Expens
 
 
 def list_logging_jobs(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     now: datetime | None = None,
     stale_before: datetime | None = None,
@@ -1001,13 +978,13 @@ def list_logging_jobs(
     return [int(r[0]) for r in rows]
 
 
-def count_logging_jobs(con: duckdb.DuckDBPyConnection) -> int:
+def count_logging_jobs(con: sqlite3.Connection) -> int:
     row = con.execute("SELECT count(*) FROM sheet_logging_jobs").fetchone()
     return int(row[0]) if row else 0
 
 
 def claim_logging_job(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     expense_id: int,
     *,
     claim_token: str | None = None,
@@ -1022,7 +999,17 @@ def claim_logging_job(
     if stale_before is None:
         stale_before = now - default_claim_stale_timeout()
 
-    con.execute("BEGIN")
+    # ``BEGIN IMMEDIATE`` serializes multiple drain workers on the
+    # SQLite write lock from the start of the txn, so the race
+    # between SELECT and UPDATE can't be won by two workers at once.
+    # A contending worker either waits up to ``busy_timeout`` or
+    # surfaces as ``OperationalError`` ("database is locked"), which
+    # we treat as "another worker won".
+    try:
+        con.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError:
+        logger.debug("BEGIN IMMEDIATE lost the write-lock race claiming %s", expense_id)
+        return None
     try:
         row = con.execute(
             "SELECT status, claim_token, claimed_at FROM sheet_logging_jobs WHERE expense_id = ?",
@@ -1046,9 +1033,9 @@ def claim_logging_job(
         )
         con.execute("COMMIT")
         return claim_token
-    except duckdb.TransactionException:
-        best_effort_rollback(con, context=f"claim_logging_job({expense_id}) txn conflict")
-        logger.debug("Transaction conflict claiming %s; another worker won", expense_id)
+    except sqlite3.OperationalError:
+        best_effort_rollback(con, context=f"claim_logging_job({expense_id}) lock conflict")
+        logger.debug("Lock conflict claiming %s; another worker won", expense_id)
         return None
     except Exception:
         best_effort_rollback(con, context=f"claim_logging_job({expense_id}) generic error")
@@ -1056,7 +1043,7 @@ def claim_logging_job(
 
 
 def release_logging_claim(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     expense_id: int,
     claim_token: str,
 ) -> bool:
@@ -1069,7 +1056,7 @@ def release_logging_claim(
 
 
 def poison_logging_job(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     expense_id: int,
     error: str,
 ) -> None:
@@ -1081,7 +1068,7 @@ def poison_logging_job(
 
 
 def _delete_logging_job(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     expense_id: int,
     *,
     claim_token: str | None,
@@ -1101,19 +1088,19 @@ def _delete_logging_job(
 
 
 def clear_logging_job(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     expense_id: int,
     claim_token: str,
 ) -> bool:
     return _delete_logging_job(con, expense_id, claim_token=claim_token)
 
 
-def force_clear_logging_job(con: duckdb.DuckDBPyConnection, expense_id: int) -> bool:
+def force_clear_logging_job(con: sqlite3.Connection, expense_id: int) -> bool:
     return _delete_logging_job(con, expense_id, claim_token=None)
 
 
 def get_month_expenses(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     year: int,
     month: int,
 ) -> list[ExpenseRow]:

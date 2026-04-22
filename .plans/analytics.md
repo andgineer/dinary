@@ -1,11 +1,11 @@
 # Analytics layer (OLAP on the laptop)
 
 > **Status.** Stub. This document captures architectural decisions that
-> are already firm (monorepo placement, runtime tiering, SQL-first
-> design) and leaves placeholders for decisions to be made once
-> implementation starts. Implementation itself is expected to begin
-> only after the storage migration (`storage-migration.md` Phases
-> 0–4) has landed.
+> are already firm (monorepo placement with a separate
+> `dinary-analytics` package, runtime tiering, SQL-first design) and
+> leaves placeholders for decisions to be made once implementation
+> starts. Implementation itself is expected to begin only after the
+> storage migration (`storage-migration.md` Phases 0–4) has landed.
 
 ## 1. Scope
 
@@ -60,28 +60,62 @@ produced this plan):
 - Single `inv` task surface for both sides.
 
 Heavyweight analytical dependencies (DuckDB, Polars, Marimo,
-plotting, LLM SDKs) are isolated via `[project.optional-dependencies]`
-in `pyproject.toml`, not via a separate repo. VM 1 installs without
-the `analytics` extra; the laptop installs with it. Install commands
-and the exact split live in §7 below (TBD).
+plotting, LLM SDKs) are kept out of the server's dependency tree by
+shipping analytics as a **separate Python package** inside the
+monorepo, with its own `pyproject.toml` and its own dependency
+closure. VM 1 never installs that package and therefore never
+resolves any of its transitive deps; the laptop installs both.
 
-Proposed layout under `src/`:
+Reasons for separate-package over a same-package optional extra:
+
+- **Architectural isolation**, not conventional. An optional
+  `[project.optional-dependencies]` extra relies on every contributor
+  (and every future AI-generated patch) remembering to not `import
+  dinary.analytics` from server code. A separate package makes the
+  mistake impossible at install time: the analytics package is simply
+  not on the server's `sys.path`.
+- **No runtime guards needed.** The §6 invariant "server-side code
+  must remain import-clean when the analytics group is not installed"
+  collapses from a CI rule we have to police into a property the
+  build system enforces by construction.
+- **Independent version pins.** DuckDB / Polars / Marimo can move on
+  their own cadence without touching the server's lock. A CVE or
+  breaking bump in an analytics transitive dep does not freeze
+  server deploys.
+- **Cleaner VM 1 image.** No dead weight in the server venv and no
+  accidental `import duckdb` from server code surviving a review.
+
+Proposed layout under the repo root:
 
 ```
-src/dinary/
-  analytics/
-    __init__.py
-    connection.py     # open_ledger() helper: duckdb + ATTACH sqlite
-    queries/          # named reusable SQL (.sql files or constants)
-    reports/          # Python functions returning DataFrames
-    caches.py         # optional CREATE TABLE AS SELECT definitions
-notebooks/            # Marimo *.py notebooks (tracked in git)
-analytics/            # laptop runtime data: replica + caches (gitignored)
+packages/
+  dinary/                  # server (FastAPI, ledger_repo, imports, tasks)
+    pyproject.toml
+    src/dinary/...
+  dinary-analytics/        # laptop-only: DuckDB-over-SQLite, reports, notebooks
+    pyproject.toml
+    src/dinary_analytics/
+      __init__.py
+      connection.py        # open_ledger() helper: duckdb + ATTACH sqlite
+      queries/             # named reusable SQL (.sql files or constants)
+      reports/             # Python functions returning DataFrames
+      caches.py            # optional CREATE TABLE AS SELECT definitions
+notebooks/                 # Marimo *.py notebooks (tracked in git)
+analytics/                 # laptop runtime data: replica + caches (gitignored)
 ```
 
-An import-time guard will ensure `dinary.analytics` is never imported
-from server-side modules, so the `analytics` extra stays truly
-optional on VM 1.
+Shared, engine-agnostic code (schema-level types, Decimal/Currency
+coercers, category-tree walkers, envelope classifiers) lives in
+`dinary` and is consumed by `dinary-analytics` via an ordinary
+dependency declaration. The dependency only goes one way:
+`dinary-analytics` depends on `dinary`; `dinary` **never** depends on
+`dinary-analytics`.
+
+Workspace tooling: both packages are managed as a
+[uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/)
+(or equivalent) so `uv sync` on the laptop resolves both together
+and `uv sync --package dinary` on VM 1 resolves only the server.
+The exact workspace wiring is in §7.
 
 ## 4. Runtime tiers
 
@@ -91,10 +125,11 @@ Tier 2 is deferred until a concrete need arises; Tier 3 is rejected.
 
 ### 4.1 Tier 1 — Python on developer laptop (primary, decided)
 
-- Dependencies installed via `uv sync --extra analytics` into the
-  existing project venv. Incremental footprint ~200 MB (DuckDB,
-  Polars, Marimo, Altair/matplotlib). Zero additional install for
-  the developer who already runs `inv dev`.
+- Dependencies installed by `uv sync` from the workspace root,
+  which resolves both `dinary` and `dinary-analytics` into the
+  laptop venv. Incremental footprint over the server-only set
+  ~200 MB (DuckDB, Polars, Marimo, Altair/matplotlib). Zero
+  additional install for the developer who already runs `inv dev`.
 - Notebooks are [Marimo](https://marimo.io/) reactive `*.py` files —
   dif-friendly, tracked in git, executed via `inv notebook`
   (`marimo edit notebooks/<name>.py`).
@@ -200,18 +235,35 @@ in Python.
   `CREATE TABLE ... AS SELECT`) are regenerated from the replica,
   never hand-edited. They are treated as disposable; a valid
   recovery from any cache bug is `DROP TABLE` + rerun the builder.
-- The `analytics` dependency group is optional. Server-side code
-  must remain import-clean when that group is not installed. CI
-  should enforce this by running a server-only test profile without
-  the extra.
+- Analytics ships as a separate Python package (`dinary-analytics`);
+  the server package (`dinary`) does not depend on it. VM 1 installs
+  only `dinary`, so analytics deps (DuckDB, Polars, Marimo, plotting,
+  LLM SDKs) are physically absent from the server venv — no runtime
+  guard or CI lint needed to keep them out.
 
-## 7. Dependency groups in `pyproject.toml` (to be finalized)
+## 7. Package layout and dependency wiring (to be finalized)
 
-Exact split to be decided when implementation starts. Sketch:
+Exact split to be decided when implementation starts. Sketch of the
+two `pyproject.toml` files:
 
 ```toml
-[project.optional-dependencies]
-analytics = [
+# packages/dinary/pyproject.toml — server, runs on VM 1
+[project]
+name = "dinary"
+dependencies = [
+    "fastapi",
+    "pydantic",
+    "gspread",
+    # ... existing server deps; NO duckdb, polars, marimo, plotting, LLM
+]
+```
+
+```toml
+# packages/dinary-analytics/pyproject.toml — laptop only
+[project]
+name = "dinary-analytics"
+dependencies = [
+    "dinary",                # shared types, Decimal/Currency helpers, schema
     "duckdb>=1.1",
     "polars>=1.5",
     "marimo>=0.9",
@@ -220,16 +272,26 @@ analytics = [
 ]
 ```
 
+Workspace root `pyproject.toml` declares both as uv workspace
+members so a single `uv sync` on the laptop resolves the combined
+closure, while `uv sync --package dinary` on VM 1 pulls only the
+server side.
+
 Outstanding decisions before committing this to the repo:
 
-- Sync vs async SQLite driver on the server (decided in storage-
-  migration.md Phase 1; mirrored here for the analytics connection
-  helper).
+- Concrete workspace tool choice (uv workspaces vs hatch
+  workspaces vs plain editable installs) and the resulting
+  `uv.lock` / CI layout.
 - Exact DuckDB version pin and extension list (sqlite, json, icu).
 - Plotting stack: Altair + Vega alone, or also matplotlib for
   static exports.
 - LLM SDK choice (Anthropic / OpenAI / litellm wrapper): drives
-  how `src/dinary/analytics/ai/` is shaped.
+  how `dinary_analytics.ai` is shaped.
+- Migration of any existing analytics-ish code (current CLI report
+  renderers in `src/dinary/reports/`) — decide whether those move
+  into `dinary-analytics` or stay in `dinary` because they back
+  `inv report-*` tasks that must run on the laptop against the
+  replica, not on VM 1.
 
 ## 8. Placeholder: dashboard framework
 
@@ -266,9 +328,9 @@ Deferred until there is a concrete dashboard that needs it.
 When implementation starts, the first wave will likely be:
 
 1. Port `inv report-expenses` and `inv report-income` to read
-   through `src/dinary/analytics/connection.py` (DuckDB + ATTACH)
-   instead of the current DuckDB server-local read. Zero semantic
-   change; mechanical.
+   through `dinary_analytics.connection` (DuckDB + ATTACH) instead
+   of the current server-local SQLite read. Zero semantic change;
+   mechanical.
 2. Port `inv import-report-2d-3d` similarly.
 3. Add a first exploratory Marimo notebook (e.g.
    `notebooks/expenses-explore.py`) to exercise the connection

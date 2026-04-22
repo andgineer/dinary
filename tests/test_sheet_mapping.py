@@ -27,15 +27,15 @@ import allure
 import pytest
 
 from dinary.config import settings
-from dinary.services import duckdb_repo, sheet_mapping
+from dinary.services import ledger_repo, sheet_mapping
 
 
 @pytest.fixture(autouse=True)
 def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
-    duckdb_repo.init_db()
-    con = duckdb_repo.get_connection()
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+    ledger_repo.init_db()
+    con = ledger_repo.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -339,7 +339,7 @@ class TestAtomicSwap:
             event_id_by_name=events,
             tag_id_by_name=tags,
         )
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             sheet_mapping._atomic_swap(con, rows)
             result = con.execute(
@@ -364,7 +364,7 @@ class TestAtomicSwap:
             event_id_by_name=events,
             tag_id_by_name=tags,
         )
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             sheet_mapping._atomic_swap(con, first)
             sheet_mapping._atomic_swap(con, second)
@@ -376,18 +376,11 @@ class TestAtomicSwap:
         assert rows == [(2, "Car")]
 
     def test_swap_survives_preexisting_tag_rows(self):
-        """Regression: when the previous swap inserted ``sheet_mapping_tags``
-        rows, a follow-up swap must successfully DELETE them and their
-        parent ``sheet_mapping`` rows. DuckDB 1.5 used to mis-validate
-        the FK ``sheet_mapping_tags.mapping_row_order -> sheet_mapping.row_order``
-        inside a single transaction (the validator reflects only
-        committed state, so the freshly-deleted child rows still
-        registered as live references), which silently aborted the
-        reload and left the in-DB mapping stale. The initial schema
-        (migration 0001) deliberately omits that FK to break the
-        deadlock; this test pins the fix by exercising the exact
-        sequence that used to trip it: swap with tags → swap without
-        tags, on the same cursor.
+        """When a prior swap inserted ``sheet_mapping_tags`` rows, a
+        follow-up swap must successfully DELETE both them and their
+        parent ``sheet_mapping`` rows. This test exercises the
+        sequence ``swap with tags → swap without tags`` on the same
+        cursor to pin that behaviour.
         """
         cats, events, tags = _catalog()
         first = sheet_mapping.parse_rows(
@@ -402,7 +395,7 @@ class TestAtomicSwap:
             event_id_by_name=events,
             tag_id_by_name=tags,
         )
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             sheet_mapping._atomic_swap(con, first)
             first_tags = con.execute(
@@ -670,7 +663,7 @@ class TestLoadCatalog:
     """
 
     def test_loads_inactive_tags(self):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute("UPDATE tags SET is_active = FALSE WHERE id = 3")
             _, _, tag_id_by_name = sheet_mapping._load_catalog(con)
@@ -679,7 +672,7 @@ class TestLoadCatalog:
         assert tag_id_by_name.get("путешествия") == 3
 
     def test_loads_inactive_categories(self):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute("UPDATE categories SET is_active = FALSE WHERE id = 2")
             cat_id_by_name, _, _ = sheet_mapping._load_catalog(con)
@@ -688,7 +681,7 @@ class TestLoadCatalog:
         assert cat_id_by_name.get("машина") == 2
 
     def test_loads_inactive_events(self):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute("UPDATE events SET is_active = FALSE WHERE id = 1")
             _, event_id_by_name, _ = sheet_mapping._load_catalog(con)
@@ -703,7 +696,7 @@ class TestLoadCatalog:
         row ``*,*,отпуск,*,путешествия`` surviving the operator
         deactivating "отпуск" via the PWA "Управлять" list.
         """
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute("UPDATE tags SET is_active = FALSE WHERE id = 3")
             cats, events, tags = sheet_mapping._load_catalog(con)
@@ -723,7 +716,7 @@ class TestLoadCatalog:
 @allure.feature("event auto_tags helpers")
 class TestEventAutoTags:
     def test_resolve_returns_active_tag_ids(self):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "UPDATE events SET auto_tags = '[\"путешествия\"]' WHERE id = 1",
@@ -734,14 +727,14 @@ class TestEventAutoTags:
         assert ids == [3]
 
     def test_missing_event_returns_empty(self):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             assert sheet_mapping.resolve_event_auto_tag_ids(con, 999) == []
         finally:
             con.close()
 
     def test_malformed_json_is_treated_as_empty(self):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute("UPDATE events SET auto_tags = 'not-json' WHERE id = 1")
             assert sheet_mapping.resolve_event_auto_tag_ids(con, 1) == []
@@ -749,7 +742,7 @@ class TestEventAutoTags:
             con.close()
 
     def test_unknown_tag_names_are_dropped(self):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 'UPDATE events SET auto_tags = \'["путешествия", "missing"]\' WHERE id = 1',
@@ -767,7 +760,7 @@ class TestEventAutoTags:
         vacation-only tag like "отпуск" silently breaks the
         event-based auto-attach pipeline (the direct complaint behind
         this regression test)."""
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute("UPDATE tags SET is_active = FALSE WHERE id = 3")
             con.execute(

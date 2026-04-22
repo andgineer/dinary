@@ -19,7 +19,7 @@ uv sync
 cp -r .deploy.example .deploy
 
 # First time — or whenever you want a clean slate:
-#   wipes data/dinary.duckdb, runs schema migrations, seeds the
+#   wipes data/dinary.db (and the WAL/SHM sidecars), runs schema migrations, seeds the
 #   hardcoded 3D taxonomy (groups / categories / events / tags), then
 #   starts uvicorn on http://127.0.0.1:8000 with auto-reload.
 uv run inv dev --reset
@@ -40,7 +40,7 @@ To point local dev at a copy of prod data instead of an empty DB:
 
 ```bash
 uv run inv backup                         # snapshot prod into ~/Library/dinary/<ts>/
-cp ~/Library/dinary/<ts>/data/dinary.duckdb data/
+cp ~/Library/dinary/<ts>/data/dinary.db data/
 uv run inv dev                            # NOT --reset; keep the snapshot
 ```
 

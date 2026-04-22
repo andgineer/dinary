@@ -14,7 +14,7 @@ from dinary.imports.income_import import (
     INCOME_LAYOUTS,
     aggregate_from_sheet,
 )
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ def verify_income_equivalence(year: int) -> dict:
     layout = INCOME_LAYOUTS[layout_key]
     sheet_monthly, _rows = aggregate_from_sheet(year, source, layout)
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         db_rows = con.execute(
             "SELECT month, amount FROM income WHERE year = ? ORDER BY month",

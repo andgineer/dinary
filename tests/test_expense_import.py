@@ -1,4 +1,4 @@
-"""Tests for the bootstrap budget import against the unified dinary.duckdb."""
+"""Tests for the bootstrap budget import against the unified dinary.db."""
 
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
@@ -10,13 +10,13 @@ from dinary import config
 from dinary.config import ImportSourceRow
 from dinary.imports import expense_import
 from dinary.imports.expense_import import import_year
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 
 
 @pytest.fixture(autouse=True)
 def _tmp_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
 
 
 @pytest.fixture(autouse=True)
@@ -47,8 +47,8 @@ def _seed_catalog():
     trip) and ``"релокация-в-Сербию"`` — the importer looks them up by
     name.
     """
-    duckdb_repo.init_db()
-    con = duckdb_repo.get_connection()
+    ledger_repo.init_db()
+    con = ledger_repo.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -138,7 +138,7 @@ class TestImportYear:
         assert result["expenses_created"] == 4
         assert result["errors"] == 0
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             rows = con.execute(
                 "SELECT category_id, event_id, sheet_category, sheet_group,"
@@ -164,7 +164,7 @@ class TestImportYear:
         mock_sheet.return_value = _mock_sheet()
         import_year(2026)
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             tag_rows = con.execute(
                 "SELECT t.tag_id FROM expense_tags t"
@@ -185,9 +185,9 @@ class TestImportYear:
         mock_sheet.return_value = _mock_sheet()
         import_year(2026)
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            assert duckdb_repo.list_logging_jobs(con) == []
+            assert ledger_repo.list_logging_jobs(con) == []
         finally:
             con.close()
 
@@ -204,12 +204,12 @@ class TestImportYear:
         assert first["expenses_created"] == second["expenses_created"]
 
         # NULL client_expense_id is legal multiple times; the re-import
-        # wipes YEAR(datetime)=year rows first so we still end up with
-        # exactly four expenses, not eight.
-        con = duckdb_repo.get_connection()
+        # wipes rows whose datetime-year matches *year* first so we
+        # still end up with exactly four expenses, not eight.
+        con = ledger_repo.get_connection()
         try:
             total = con.execute(
-                "SELECT COUNT(*) FROM expenses WHERE YEAR(datetime) = 2026",
+                "SELECT COUNT(*) FROM expenses WHERE strftime('%Y', datetime) = '2026'",
             ).fetchone()[0]
         finally:
             con.close()
@@ -233,10 +233,10 @@ class TestImportYear:
         mock_sheet.return_value = _mock_sheet()
         import_year(2026)
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             existing_id = con.execute(
-                "SELECT id FROM expenses WHERE YEAR(datetime) = 2026 LIMIT 1",
+                "SELECT id FROM expenses WHERE strftime('%Y', datetime) = '2026' LIMIT 1",
             ).fetchone()[0]
             con.execute(
                 "INSERT INTO sheet_logging_jobs (expense_id, status) VALUES (?, 'pending')",
@@ -247,9 +247,9 @@ class TestImportYear:
 
         result = import_year(2026)
         assert result["errors"] == 0
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            assert duckdb_repo.list_logging_jobs(con) == []
+            assert ledger_repo.list_logging_jobs(con) == []
         finally:
             con.close()
 

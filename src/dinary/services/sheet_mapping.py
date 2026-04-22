@@ -30,14 +30,14 @@ atomically.
 import json
 import logging
 import re
+import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-import duckdb
 import gspread
 
 from dinary.config import settings, spreadsheet_id_from_setting
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 from dinary.services.sheets import drive_get_modified_time, get_sheet
 
 logger = logging.getLogger(__name__)
@@ -255,7 +255,7 @@ def resolve_projection(
     resolved ``(sheet_category, sheet_group)`` pair; an empty string
     is a legitimate per-column result (explicit clear).
 
-    NOTE: ``duckdb_repo.logging_projection`` contains a second copy of
+    NOTE: ``ledger_repo.logging_projection`` contains a second copy of
     this same semantics (running directly against ``sheet_mapping`` /
     ``sheet_mapping_tags`` rows fetched from the DB). The two live
     apart so this pure helper can stay as a dependency-free building
@@ -296,7 +296,7 @@ def resolve_projection(
 
 
 def _load_catalog(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
 ) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
     """Load every catalog row (active or inactive) by name.
 
@@ -318,9 +318,9 @@ def _load_catalog(
     )
 
 
-def _atomic_swap(con: duckdb.DuckDBPyConnection, rows: list[MapRow]) -> None:
+def _atomic_swap(con: sqlite3.Connection, rows: list[MapRow]) -> None:
     """Wipe ``sheet_mapping(_tags)`` and repopulate in a single transaction."""
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         con.execute("DELETE FROM sheet_mapping_tags")
         con.execute("DELETE FROM sheet_mapping")
@@ -344,7 +344,7 @@ def _atomic_swap(con: duckdb.DuckDBPyConnection, rows: list[MapRow]) -> None:
                 )
         con.execute("COMMIT")
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="sheet_mapping._atomic_swap")
+        ledger_repo.best_effort_rollback(con, context="sheet_mapping._atomic_swap")
         raise
 
 
@@ -390,7 +390,7 @@ def reload_now(*, check_after: bool = True) -> dict:
 
     raw = ws.get_all_values()[1:]
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         cat_id_by_name, event_id_by_name, tag_id_by_name = _load_catalog(con)
         rows = parse_rows(
@@ -473,7 +473,7 @@ def ensure_fresh() -> None:
 
 def _warn_if_existing_map_tab_is_stale(
     ws: gspread.Worksheet,
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
 ) -> None:
     """Dry-run the parser against an existing tab and WARN on stale names."""
     try:
@@ -529,7 +529,7 @@ _TAG_RULES: list[tuple[str, str]] = [
 # Конверт is not the resolver's default blank. ``Расходы`` is left as
 # ``WILDCARD`` because the "no rule matched" fallback in both
 # ``resolve_projection`` (sheet_mapping.py) and
-# ``logging_projection`` (duckdb_repo.py) already substitutes the
+# ``logging_projection`` (ledger_repo.py) already substitutes the
 # category's canonical name — so a literal ``cname`` here would just
 # be noise duplicating a fallback that is exercised by tests.
 _CATEGORY_ENVELOPES: dict[str, str] = {
@@ -612,14 +612,14 @@ def ensure_default_map_tab() -> None:
     except gspread.WorksheetNotFound:
         pass
     else:
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             _warn_if_existing_map_tab_is_stale(existing_ws, con)
         finally:
             con.close()
         return
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         cat_rows = con.execute(
             "SELECT c.name FROM categories c"
@@ -707,7 +707,7 @@ def decode_auto_tags_value(raw: object, *, context: str = "") -> list[str]:
 
 
 def load_event_auto_tag_names(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     event_id: int,
 ) -> list[str]:
     """Return the JSON-decoded ``events.auto_tags`` list for ``event_id``.
@@ -725,7 +725,7 @@ def load_event_auto_tag_names(
 
 
 def resolve_event_auto_tag_ids(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     event_id: int,
 ) -> list[int]:
     """Return catalog ids for the event's ``auto_tags`` names.

@@ -1,23 +1,22 @@
--- Unified schema for data/dinary.duckdb.
--- Replaces the former config.duckdb + budget_YYYY.duckdb split and absorbs
--- the phase-2 runtime mapping tables under their final name `sheet_mapping`.
+-- Unified schema for data/dinary.db (SQLite).
+-- Data values in comments stay in their original script to remain grep-able.
 
 -- =========================================================================
--- Catalog tables (formerly in config.duckdb)
+-- Catalog tables
 -- =========================================================================
 
 CREATE TABLE category_groups (
     id         INTEGER PRIMARY KEY,
     name       TEXT UNIQUE NOT NULL,
     sort_order INTEGER NOT NULL,
-    is_active  BOOLEAN NOT NULL DEFAULT TRUE
+    is_active  BOOLEAN NOT NULL DEFAULT 1
 );
 
 CREATE TABLE categories (
     id        INTEGER PRIMARY KEY,
     name      TEXT UNIQUE NOT NULL,
     group_id  INTEGER REFERENCES category_groups(id),
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_active BOOLEAN NOT NULL DEFAULT 1,
     sheet_name  TEXT,
     sheet_group TEXT
 );
@@ -31,15 +30,15 @@ CREATE TABLE events (
     name                TEXT UNIQUE NOT NULL,
     date_from           DATE NOT NULL,
     date_to             DATE NOT NULL,
-    auto_attach_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+    auto_attach_enabled BOOLEAN NOT NULL DEFAULT 0,
+    is_active           BOOLEAN NOT NULL DEFAULT 1,
     auto_tags           TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE tags (
     id        INTEGER PRIMARY KEY,
     name      TEXT UNIQUE NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE
+    is_active BOOLEAN NOT NULL DEFAULT 1
 );
 
 CREATE TABLE exchange_rates (
@@ -50,7 +49,7 @@ CREATE TABLE exchange_rates (
 );
 
 -- NOTE: ``import_sources`` used to live here as a per-year source
--- registry. It has been moved out of DuckDB entirely — the operator's
+-- registry. It has been moved out of the DB entirely — the operator's
 -- local file ``.deploy/import_sources.json`` is now the sole source of
 -- truth. The file is OPTIONAL and only consumed by ``inv import-*``
 -- tasks; runtime (POST /api/expenses, sheet logging, map reload)
@@ -102,26 +101,16 @@ CREATE TABLE sheet_mapping (
 );
 
 -- NOTE: ``sheet_mapping_tags.mapping_row_order`` deliberately does NOT
--- carry a FOREIGN KEY to ``sheet_mapping(row_order)``. ``sheet_mapping``
--- and ``sheet_mapping_tags`` are a cache of the ``map`` Google Sheet
--- tab, atomically wiped and repopulated by
--- ``sheet_mapping._atomic_swap`` on every reload. The FK was originally
--- added for data hygiene, but DuckDB 1.5 mis-validates it inside a
--- transaction that first deletes the child rows and then the parent
--- rows (the FK validator reflects only committed state, so the
--- freshly-deleted ``sheet_mapping_tags`` rows still register as live
--- references to ``sheet_mapping.row_order`` and the parent delete
--- raises). That silently broke reloads: ``reload_now()`` aborted with
--- a ConstraintException, the drain loop logged
--- ``reload_now() failed; keeping cached mapping`` and kept serving
--- the stale in-DB mapping, so edits to the ``map`` tab never took
--- effect. Do not reinstate the FK "for data hygiene" — the cache is
--- derived state owned by one module, orphans are harmless because
--- ``logging_projection.sql`` reads tag filters via
--- ``(SELECT LIST(tag_id) FROM sheet_mapping_tags WHERE mapping_row_order = m.row_order)``
--- which naturally returns an empty list for any orphan, and every
--- successful ``_atomic_swap`` reinserts both tables under one
--- transaction so orphans cannot persist across a successful reload.
+-- carry a FOREIGN KEY to ``sheet_mapping(row_order)``. The two tables
+-- form a cache of the ``map`` Google Sheet tab, atomically wiped and
+-- repopulated by ``sheet_mapping._atomic_swap`` on every reload.
+-- Keeping the FK off is safe because the cache is derived state owned
+-- by one module: orphans are harmless because the Python-side
+-- ``logging_projection`` consumer reads the tag set for each row
+-- through a separate SELECT and naturally yields an empty set for any
+-- orphan, and every successful ``_atomic_swap`` reinserts both tables
+-- under one transaction so orphans cannot persist across a successful
+-- reload.
 CREATE TABLE sheet_mapping_tags (
     mapping_row_order INTEGER NOT NULL,
     tag_id            INTEGER NOT NULL REFERENCES tags(id),
@@ -136,13 +125,14 @@ CREATE TABLE app_metadata (
 INSERT INTO app_metadata (key, value) VALUES ('catalog_version', '1');
 
 -- =========================================================================
--- Ledger tables (formerly in budget_YYYY.duckdb)
+-- Ledger tables
 -- =========================================================================
 
-CREATE SEQUENCE expenses_id_seq;
-
+-- SQLite assigns autoincrementing PKs automatically for INTEGER PRIMARY KEY
+-- columns; AUTOINCREMENT is used explicitly to forbid id reuse after DELETE,
+-- keeping the audit trail monotonic across re-imports.
 CREATE TABLE expenses (
-    id                 INTEGER PRIMARY KEY DEFAULT nextval('expenses_id_seq'),
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     client_expense_id  TEXT UNIQUE,
     datetime           TIMESTAMP NOT NULL,
     amount             DECIMAL(12,2) NOT NULL,

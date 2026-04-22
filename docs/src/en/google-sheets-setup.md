@@ -1,6 +1,6 @@
 # Google Sheets Setup
 
-Dinary server stores runtime data in DuckDB, not in Google Sheets. In the
+Dinary server stores runtime data in a local SQLite database, not in Google Sheets. In the
 public/admin deployment story, Google Sheets are used only for optional
 append-only sheet logging. You need a Google service account and a spreadsheet
 shared with that account.
@@ -83,7 +83,7 @@ The spreadsheet must be shared with the service account from step 4 (Editor role
 
 ### Disabling
 
-Leave `DINARY_SHEET_LOGGING_SPREADSHEET` empty or unset. Expenses are still saved to DuckDB; only the Google Sheets append is skipped.
+Leave `DINARY_SHEET_LOGGING_SPREADSHEET` empty or unset. Expenses are still saved to SQLite; only the Google Sheets append is skipped.
 
 ### Retries are automatic
 
@@ -91,7 +91,7 @@ Pending jobs are retried automatically by the in-process periodic drain task tha
 
 **Rate limiting.** Each periodic sweep attempts at most `DINARY_SHEET_LOGGING_DRAIN_MAX_ATTEMPTS_PER_ITERATION` queue rows (default 15) with `DINARY_SHEET_LOGGING_DRAIN_INTER_ROW_DELAY_SEC` seconds pause between attempts (default 1.0). One attempt makes 1-3 Google Sheets API calls (read the idempotency marker, optional append, optional dedupe-cleanup), so steady-state Sheets API usage is between ~3 and ~9 calls/min — comfortably inside the 60/min per-user quota. A backlog of 60 rows recovers in about 20 minutes after a restart; a backlog of 1000 rows takes a few hours. Raise the cap only if you are sure your Sheets quota headroom allows it.
 
-**TTL.** Rows for expenses older than `DINARY_SHEET_LOGGING_DRAIN_MAX_AGE_DAYS` days (default 90) are silently skipped and left in `sheet_logging_jobs`. If you need to log an older expense, delete and re-create it, or manually delete the skipped queue row with DuckDB CLI while the server is stopped.
+**TTL.** Rows for expenses older than `DINARY_SHEET_LOGGING_DRAIN_MAX_AGE_DAYS` days (default 90) are silently skipped and left in `sheet_logging_jobs`. If you need to log an older expense, delete and re-create it, or manually delete the skipped queue row with the `sqlite3` CLI while the server is stopped.
 
 !!! warning
-    There is no external CLI to drain the queue while the server is running. DuckDB enforces single-writer per file across processes, so an external drainer would have to be coordinated with a server stop. The lifespan task is the supported recovery path.
+    There is no external CLI to drain the queue while the server is running. SQLite allows only one writer per file at a time, so an external drainer would have to be coordinated with a server stop. The lifespan task is the supported recovery path.

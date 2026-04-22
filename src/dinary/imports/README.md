@@ -3,11 +3,11 @@
 > **Most operators don't need anything in this directory.**
 >
 > Runtime dinary — the FastAPI service, the PWA, Sheet logging,
-> the DuckDB ledger — works perfectly without ever reading any file
+> the SQLite ledger — works perfectly without ever reading any file
 > documented here. This directory covers the one-shot **bootstrap
 > import** that migrates the author's legacy Google Sheets budgets
-> (2012–present) into DuckDB. A fresh deployment that starts from an
-> empty DuckDB and enters expenses through the PWA should skip it
+> (2012–present) into SQLite. A fresh deployment that starts from an
+> empty SQLite DB and enters expenses through the PWA should skip it
 > entirely and seed the taxonomy with `inv bootstrap-catalog`.
 
 ## When you need this
@@ -17,8 +17,8 @@ You need the bootstrap import path only if **all** of these are true:
 1. You have historical year-by-year Google Sheets budgets with a
    column layout that matches one of the supported parsers (see
    [`bootstrap.md`](bootstrap.md) → Layouts), **and**
-2. You want those historical rows inside DuckDB so cross-year
-   analytics works, **and**
+2. You want those historical rows inside the SQLite ledger so
+   cross-year analytics works, **and**
 3. You are willing to register each year's spreadsheet ID in a
    local, non-committed config file.
 
@@ -84,22 +84,20 @@ real, accessible sheet — that check happens naturally the first time
 an `inv import-*` or `inv verify-*` task opens it via gspread, where
 a 404 / permission error is the signal that the entry is wrong.
 
-## Why not a DuckDB table?
+## Why not a DB table?
 
-Up to 2026-04 the per-year registry lived as an `import_sources`
-DuckDB table, seeded from a `DINARY_IMPORT_SOURCES_JSON` env var.
-Two problems with that:
+Keeping the per-year registry as a file avoids two problems that a
+DB-table registry would create:
 
-1. Operator config was stored inside derived DB state, so
-   `inv import-catalog` had to snapshot + restore the table across
-   the catalog-rebuild transaction. The snapshot dance was complex,
-   error-prone, and made the "atomic catalog rebuild" boundary
-   fuzzier than it needed to be.
-2. A genuinely optional feature (bootstrap import) was wired into
-   the shape of the catalog DB. Operators who never imported still
-   had an empty table sitting there, and the deployment surface
-   pretended bootstrap import was first-class when in reality it is
-   a niche operator path.
+1. Operator config would be stored inside derived DB state,
+   forcing `inv import-catalog` to snapshot + restore the table
+   across the catalog-rebuild transaction and fuzzying the "atomic
+   catalog rebuild" boundary.
+2. A genuinely optional feature (bootstrap import) would be wired
+   into the shape of the catalog DB. Operators who never imported
+   would still have an empty table sitting there, and the
+   deployment surface would pretend bootstrap import is first-class
+   when it is a niche operator path.
 
 The file-backed loader collapses both away: config is config,
 derived state is derived state, and the absence of the file is the

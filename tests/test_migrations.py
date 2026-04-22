@@ -1,48 +1,54 @@
-"""Tests for the unified DuckDB migration in ``db_migrations.migrate_db``.
+"""Tests for the unified SQLite migration in ``db_migrations.migrate_db``.
 
-After the single-DB refactor there is only one migration target:
-``data/dinary.duckdb``. These tests verify that applying the bundled
+After the storage-engine port there is only one migration target:
+``data/dinary.db``. These tests verify that applying the bundled
 migrations to a fresh file produces the expected schema and seed rows.
 """
 
+import sqlite3
+
 import allure
-import duckdb
 import pytest
 
 from dinary.config import settings
-from dinary.services import db_migrations, duckdb_repo
+from dinary.services import db_migrations, ledger_repo
 
 
 @pytest.fixture
 def fresh_db(tmp_path, monkeypatch):
-    """Point ``duckdb_repo`` at an empty tmp file and apply all migrations."""
-    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
-    db_migrations.migrate_db(duckdb_repo.DB_PATH)
-    return duckdb_repo.DB_PATH
+    """Point ``ledger_repo`` at an empty tmp file and apply all migrations."""
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+    db_migrations.migrate_db(ledger_repo.DB_PATH)
+    return ledger_repo.DB_PATH
 
 
-def _table_names(con: duckdb.DuckDBPyConnection) -> set[str]:
+def _connect(path) -> sqlite3.Connection:
+    # Foreign-key enforcement matches runtime; the yoyo bookkeeping
+    # table is tolerated in listings below.
+    con = sqlite3.connect(str(path))
+    con.execute("PRAGMA foreign_keys=ON")
+    return con
+
+
+def _table_names(con: sqlite3.Connection) -> set[str]:
     rows = con.execute(
-        "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()",
+        "SELECT name FROM sqlite_master WHERE type = 'table'",
     ).fetchall()
     return {r[0] for r in rows}
 
 
-def _column_names(con: duckdb.DuckDBPyConnection, table: str) -> set[str]:
-    rows = con.execute(
-        "SELECT column_name FROM information_schema.columns"
-        " WHERE table_name = ? AND table_schema = current_schema()",
-        [table],
-    ).fetchall()
-    return {r[0] for r in rows}
+def _column_names(con: sqlite3.Connection, table: str) -> set[str]:
+    rows = con.execute(f"PRAGMA table_info({table})").fetchall()
+    # PRAGMA table_info returns (cid, name, type, notnull, dflt_value, pk)
+    return {r[1] for r in rows}
 
 
 @allure.epic("Migrations")
 @allure.feature("Initial schema")
 class TestInitialSchema:
     def test_creates_expected_catalog_tables(self, fresh_db):
-        con = duckdb.connect(str(fresh_db))
+        con = _connect(fresh_db)
         try:
             tables = _table_names(con)
         finally:
@@ -62,12 +68,12 @@ class TestInitialSchema:
         }
         assert expected.issubset(tables)
         assert "import_sources" not in tables, (
-            "import_sources migrated out of DuckDB — the registry now "
+            "import_sources migrated out of the ledger — the registry now "
             "lives in .deploy/import_sources.json (see dinary.config)."
         )
 
     def test_creates_expected_ledger_tables(self, fresh_db):
-        con = duckdb.connect(str(fresh_db))
+        con = _connect(fresh_db)
         try:
             tables = _table_names(con)
         finally:
@@ -77,7 +83,7 @@ class TestInitialSchema:
 
     def test_no_old_config_or_budget_tables(self, fresh_db):
         """The old split-DB refactor dropped these legacy artefacts."""
-        con = duckdb.connect(str(fresh_db))
+        con = _connect(fresh_db)
         try:
             tables = _table_names(con)
         finally:
@@ -86,7 +92,7 @@ class TestInitialSchema:
         assert "expense_id_registry" not in tables
 
     def test_catalog_tables_have_is_active_column(self, fresh_db):
-        con = duckdb.connect(str(fresh_db))
+        con = _connect(fresh_db)
         try:
             for table in ("category_groups", "categories", "events", "tags"):
                 assert "is_active" in _column_names(con, table), table
@@ -94,7 +100,7 @@ class TestInitialSchema:
             con.close()
 
     def test_app_metadata_is_key_value(self, fresh_db):
-        con = duckdb.connect(str(fresh_db))
+        con = _connect(fresh_db)
         try:
             cols = _column_names(con, "app_metadata")
             row = con.execute(
@@ -107,7 +113,7 @@ class TestInitialSchema:
         assert row[0] == "1"
 
     def test_expenses_has_client_expense_id_unique(self, fresh_db):
-        con = duckdb.connect(str(fresh_db))
+        con = _connect(fresh_db)
         try:
             assert "client_expense_id" in _column_names(con, "expenses")
             con.execute(
@@ -123,7 +129,7 @@ class TestInitialSchema:
                 ["cid-1", "2026-04-15 12:00:00", 100, 100, "RSD", 1],
             )
             # Re-inserting the same client_expense_id must violate UNIQUE.
-            with pytest.raises(duckdb.ConstraintException):
+            with pytest.raises(sqlite3.IntegrityError):
                 con.execute(
                     "INSERT INTO expenses (client_expense_id, datetime, amount,"
                     " amount_original, currency_original, category_id)"
@@ -147,7 +153,7 @@ class TestInitialSchema:
             con.close()
 
     def test_sheet_logging_jobs_is_keyed_by_expense_id(self, fresh_db):
-        con = duckdb.connect(str(fresh_db))
+        con = _connect(fresh_db)
         try:
             cols = _column_names(con, "sheet_logging_jobs")
         finally:
@@ -161,7 +167,7 @@ class TestInitialSchema:
         db_migrations.migrate_db(fresh_db)
         db_migrations.migrate_db(fresh_db)
 
-        con = duckdb.connect(str(fresh_db))
+        con = _connect(fresh_db)
         try:
             row = con.execute(
                 "SELECT value FROM app_metadata WHERE key = 'catalog_version'",
@@ -176,16 +182,16 @@ class TestInitialSchema:
 @allure.feature("init_db integration")
 class TestInitDbIntegration:
     def test_init_db_creates_file_and_connects(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-        monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
+        monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
 
-        assert not duckdb_repo.DB_PATH.exists()
-        duckdb_repo.init_db()
-        assert duckdb_repo.DB_PATH.exists()
+        assert not ledger_repo.DB_PATH.exists()
+        ledger_repo.init_db()
+        assert ledger_repo.DB_PATH.exists()
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            version = duckdb_repo.get_catalog_version(con)
+            version = ledger_repo.get_catalog_version(con)
         finally:
             con.close()
         assert version == 1
@@ -201,8 +207,8 @@ class TestAccountingCurrencyAnchor:
     """
 
     def _point_repo_at_tmp(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-        monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
+        monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
 
     def test_fresh_db_persists_anchor_uppercased(self, tmp_path, monkeypatch):
         """First ``init_db`` on an empty file must stamp the canonical
@@ -214,9 +220,9 @@ class TestAccountingCurrencyAnchor:
         self._point_repo_at_tmp(tmp_path, monkeypatch)
         monkeypatch.setattr(settings, "accounting_currency", "eur")
 
-        duckdb_repo.init_db()
+        ledger_repo.init_db()
 
-        con = duckdb.connect(str(duckdb_repo.DB_PATH))
+        con = _connect(ledger_repo.DB_PATH)
         try:
             row = con.execute(
                 "SELECT value FROM app_metadata WHERE key = 'accounting_currency'",
@@ -235,10 +241,10 @@ class TestAccountingCurrencyAnchor:
         self._point_repo_at_tmp(tmp_path, monkeypatch)
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
 
-        duckdb_repo.init_db()
-        duckdb_repo.init_db()
+        ledger_repo.init_db()
+        ledger_repo.init_db()
 
-        con = duckdb.connect(str(duckdb_repo.DB_PATH))
+        con = _connect(ledger_repo.DB_PATH)
         try:
             rows = con.execute(
                 "SELECT value FROM app_metadata WHERE key = 'accounting_currency'",
@@ -257,11 +263,11 @@ class TestAccountingCurrencyAnchor:
         self._point_repo_at_tmp(tmp_path, monkeypatch)
 
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        duckdb_repo.init_db()
+        ledger_repo.init_db()
 
         monkeypatch.setattr(settings, "accounting_currency", "RSD")
         with pytest.raises(RuntimeError, match="accounting_currency") as excinfo:
-            duckdb_repo.init_db()
+            ledger_repo.init_db()
         assert "'EUR'" in str(excinfo.value)
         assert "'RSD'" in str(excinfo.value)
 
@@ -273,10 +279,10 @@ class TestAccountingCurrencyAnchor:
         self._point_repo_at_tmp(tmp_path, monkeypatch)
 
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        duckdb_repo.init_db()
+        ledger_repo.init_db()
 
         monkeypatch.setattr(settings, "accounting_currency", "eur")
-        duckdb_repo.init_db()
+        ledger_repo.init_db()
         assert settings.accounting_currency == "EUR"
 
     def test_fresh_db_without_env_rejects(self, tmp_path, monkeypatch):
@@ -288,7 +294,7 @@ class TestAccountingCurrencyAnchor:
         monkeypatch.setattr(settings, "accounting_currency", "  ")
 
         with pytest.raises(RuntimeError, match="Fresh"):
-            duckdb_repo.init_db()
+            ledger_repo.init_db()
 
     def test_populated_db_without_env_reads_anchor(self, tmp_path, monkeypatch):
         """The steady-state path: DB is already anchored, operator
@@ -301,13 +307,13 @@ class TestAccountingCurrencyAnchor:
         self._point_repo_at_tmp(tmp_path, monkeypatch)
 
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        duckdb_repo.init_db()
+        ledger_repo.init_db()
 
         monkeypatch.setattr(settings, "accounting_currency", "")
-        duckdb_repo.init_db()
+        ledger_repo.init_db()
 
         assert settings.accounting_currency == "EUR"
-        con = duckdb.connect(str(duckdb_repo.DB_PATH))
+        con = _connect(ledger_repo.DB_PATH)
         try:
             row = con.execute(
                 "SELECT value FROM app_metadata WHERE key = 'accounting_currency'",

@@ -1,9 +1,10 @@
 # Bootstrap import workflow
 
 > **Bootstrap import is optional operator tooling.** If you are not
-> migrating historical year-by-year Google Sheets into DuckDB, you do
-> not need anything in this directory. See [`README.md`](README.md) for
-> the full context and the "when you need this" checklist.
+> migrating historical year-by-year Google Sheets into the SQLite
+> ledger, you do not need anything in this directory. See
+> [`README.md`](README.md) for the full context and the "when you
+> need this" checklist.
 
 This document is the end-to-end recipe for a one-shot bootstrap
 import of historical data. It covers: registering per-year sources,
@@ -106,7 +107,7 @@ deterministically from the legacy row contents.
 
 The `-all` task reads the year list directly from
 `.deploy/import_sources.json` via `dinary.config.read_import_sources`,
-not from a DuckDB table. If the file is missing or empty the task
+not from a DB table. If the file is missing or empty the task
 exits immediately with a clear error pointing back here.
 
 ## 5. Import income
@@ -135,11 +136,11 @@ inv report-2d-3d
 ```
 
 - `verify-bootstrap-import` re-reads the sheet, re-runs the 3D
-  mapping, and asserts that DuckDB rows match the resolved
+  mapping, and asserts that ledger rows match the resolved
   `(category_id, event_id, tag set)` for every non-skipped legacy
   row.
 - `verify-income-equivalence` re-aggregates the income worksheet in
-  the accounting currency and compares month-by-month to DuckDB's
+  the accounting currency and compares month-by-month to the
   `income` table with a ±0.02 tolerance.
 - `report-2d-3d` renders a cross-year grid of every legacy
   `(sheet_category, sheet_group)` pair against its resolved 3D
@@ -168,9 +169,10 @@ inv verify-income-equivalence-all
 inv start                               # bring the service back
 ```
 
-Keep the service stopped for the entire reset — DuckDB allows only
-one writer per file between processes, and bootstrap import holds
-the write slot for non-trivial durations.
+Keep the service stopped for the entire reset — SQLite allows only
+one writer per file at a time, and bootstrap import holds the
+writer slot (via ``BEGIN IMMEDIATE`` transactions) for non-trivial
+durations.
 
 ## Layouts (expense import)
 
@@ -216,4 +218,4 @@ There is no auto-guess for income layouts — either set
   is no generic "column mapper" UI.
 - **Running bootstrap import in production request paths.** Every
   `inv import-*` task assumes the FastAPI service is stopped and
-  holds the DuckDB writer slot for its full duration.
+  holds the SQLite writer slot for its full duration.

@@ -1,7 +1,7 @@
 """Bootstrap historical Google Sheets import (one-time, destructive).
 
 This is the only path that reads from sheets and writes expenses. Once a
-year has been imported into ``data/dinary.duckdb``, runtime traffic
+year has been imported into ``data/dinary.db``, runtime traffic
 (``POST /api/expenses`` plus the async sheet-append worker) takes over and
 the sheet becomes append-only.
 
@@ -21,7 +21,7 @@ The importer:
     every historical vacation row ends up carrying both ``отпуск`` and
     ``путешествия`` without relying on the legacy sheet tag columns;
   * inserts one expense row + tags + provenance pair into
-    ``data/dinary.duckdb`` with ``enqueue_logging=False`` (rows are
+    ``data/dinary.db`` with ``enqueue_logging=False`` (rows are
     already in the sheet — re-uploading them is a bug) and
     ``client_expense_id=None`` (legacy rows have no PWA-generated
     idempotency key; ``UNIQUE`` allows multiple NULLs).
@@ -47,7 +47,7 @@ from dinary.imports.seed import (
     event_name_for_source,
     tags_for_source,
 )
-from dinary.services import duckdb_repo, sheet_mapping
+from dinary.services import ledger_repo, sheet_mapping
 from dinary.services.nbs import get_rate
 from dinary.services.seed_config import (
     BUSINESS_TRIP_EVENT_LAST_YEAR,
@@ -303,7 +303,7 @@ def _prefetch_monthly_rates(
         (``settings.accounting_currency``, EUR by default). Used as
         the target rate for ``expenses.amount``.
 
-    ``con`` is the single shared ``data/dinary.duckdb`` cursor. Passing
+    ``con`` is the single shared ``data/dinary.db`` cursor. Passing
     it is purely an optimization for long-running callers (the 2D-to-3D
     report) to avoid one extra ``cursor()`` round-trip per year. When
     ``con`` is ``None`` we cut a fresh cursor ourselves.
@@ -311,7 +311,7 @@ def _prefetch_monthly_rates(
     accounting_currency = settings.accounting_currency.upper()
     own_con = con is None
     if own_con:
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
     try:
         rates: dict[int, dict[str, Decimal]] = {}
         for month in range(1, MONTHS_IN_YEAR + 1):
@@ -531,11 +531,11 @@ def _resolve_dimensions(  # noqa: C901, PLR0913, PLR0912
     classification, RUB fallback). Returns None when no mapping exists at
     all (caller logs+skips).
     """
-    mapping = duckdb_repo.resolve_mapping_for_year(con, source_type, source_envelope, year)
+    mapping = ledger_repo.resolve_mapping_for_year(con, source_type, source_envelope, year)
     if mapping is not None:
         category_id = mapping.category_id
         event_id = mapping.event_id
-        tag_ids = duckdb_repo.get_mapping_tag_ids(con, mapping.id)
+        tag_ids = ledger_repo.get_mapping_tag_ids(con, mapping.id)
         canonical_default_name = con.execute(
             "SELECT name FROM categories WHERE id = ?",
             [category_id],
@@ -775,7 +775,7 @@ def resolve_row_to_3d(  # noqa: PLR0913
     Combines ``_resolve_dimensions``, beneficiary tagging, and
     post-import fix simulation into one call for the 2D-to-3D report.
     """
-    mapping = duckdb_repo.resolve_mapping_for_year(
+    mapping = ledger_repo.resolve_mapping_for_year(
         con,
         sheet_category,
         sheet_group,
@@ -876,21 +876,14 @@ def _apply_post_import_fixes(
     *,
     russia_trip_event_id: int | None = None,
 ) -> None:
-    """Apply post-import category/event rewrites for *year* in auto-commit.
+    """Apply post-import category/event rewrites for *year*.
 
-    Originally wrapped in ``BEGIN``/``COMMIT`` for atomicity, but DuckDB
-    1.5's FK validator only honours the post-COMMIT child-table state:
-    detaching every ``expense_tags`` row for an expense inside the same
-    transaction as the subsequent ``UPDATE expenses`` still raises
-    "expense_id: N is still referenced" because the FK index has not
-    been refreshed from the uncommitted DELETE. Running each statement
-    in its own implicit transaction lets the FK index catch up between
-    DELETE, UPDATE, and re-INSERT; we give up atomicity of the fix
-    pass, but the enclosing ``import_year`` is already non-transactional
-    (its leading wipe-then-insert is self-healing), so a mid-fix crash
-    simply leaves the year in a consistent-but-partially-rewritten
-    state that the next ``inv import-budget --year YYYY`` rebuilds from
-    scratch.
+    The enclosing ``import_year`` is already non-transactional (its
+    leading wipe-then-insert is self-healing), so this pass runs in
+    auto-commit: each rewrite statement lands independently, and a
+    mid-fix crash simply leaves the year in a consistent-but-
+    partially-rewritten state that the next
+    ``inv import-budget --year YYYY`` rebuilds from scratch.
     """
     _apply_post_import_fixes_body(
         year,
@@ -899,7 +892,7 @@ def _apply_post_import_fixes(
     )
 
 
-def _fk_safe_update_expenses(  # noqa: PLR0913
+def _update_expenses(  # noqa: PLR0913
     con,
     *,
     where_clause: str,
@@ -908,22 +901,21 @@ def _fk_safe_update_expenses(  # noqa: PLR0913
     set_params: list,
     tag_id_rewrite=None,
 ) -> list[int]:
-    """Run ``UPDATE expenses SET <set_clause> WHERE <where_clause>`` in a
-    way that dodges DuckDB 1.5's FK-on-UPDATE limitation.
+    """Run ``UPDATE expenses SET <set_clause> WHERE <where_clause>``.
 
-    DuckDB 1.5 implements ``UPDATE`` as DELETE+INSERT under the hood, and
-    its FK validator rejects the statement whenever the parent row is
-    still referenced from ``expense_tags`` — even when the UPDATE does
-    not touch the primary key. We work around it by snapshotting every
-    ``expense_tags`` row for the affected expenses, detaching them,
-    running the UPDATE against an FK-clear parent set, and re-attaching
-    the children afterwards.
+    Under SQLite this is a plain UPDATE — the engine honours FKs
+    from ``expense_tags`` transparently and does not require
+    detaching children first. When ``tag_id_rewrite`` is ``None``
+    we issue the UPDATE directly and return the affected ids.
 
-    ``tag_id_rewrite`` is an optional ``(expense_id, tag_ids) ->
-    Iterable[int]`` callback that rewrites the tag set per expense
-    before the re-attach step (e.g. to strip a previous event's
-    ``auto_tags`` and union the new event's ``auto_tags``). Returns
-    the list of affected expense ids so callers can do follow-up work.
+    When ``tag_id_rewrite`` is provided it is a ``(expense_id,
+    tag_ids) -> Iterable[int]`` callback that rewrites the tag set
+    per expense (e.g. to strip a previous event's ``auto_tags`` and
+    union the new event's ``auto_tags``). In that mode the helper
+    snapshots each affected expense's current tag set BEFORE the
+    UPDATE (so the callback sees the pre-rewrite state), runs the
+    UPDATE, replaces the tag rows with the callback's output, and
+    returns the list of affected expense ids.
     """
     affected_ids = [
         row[0]
@@ -933,6 +925,13 @@ def _fk_safe_update_expenses(  # noqa: PLR0913
         ).fetchall()
     ]
     if not affected_ids:
+        return affected_ids
+
+    if tag_id_rewrite is None:
+        con.execute(
+            f"UPDATE expenses SET {set_clause} WHERE {where_clause}",  # noqa: S608
+            [*set_params, *where_params],
+        )
         return affected_ids
 
     placeholders = ",".join(["?"] * len(affected_ids))
@@ -945,18 +944,16 @@ def _fk_safe_update_expenses(  # noqa: PLR0913
         tags_by_expense.setdefault(expense_id, []).append(tag_id)
 
     con.execute(
-        f"DELETE FROM expense_tags WHERE expense_id IN ({placeholders})",  # noqa: S608
-        affected_ids,
-    )
-    con.execute(
         f"UPDATE expenses SET {set_clause} WHERE {where_clause}",  # noqa: S608
         [*set_params, *where_params],
     )
+    con.execute(
+        f"DELETE FROM expense_tags WHERE expense_id IN ({placeholders})",  # noqa: S608
+        affected_ids,
+    )
 
     for expense_id in affected_ids:
-        tag_ids = tags_by_expense.get(expense_id, [])
-        if tag_id_rewrite is not None:
-            tag_ids = list(tag_id_rewrite(expense_id, tag_ids))
+        tag_ids = list(tag_id_rewrite(expense_id, tags_by_expense.get(expense_id, [])))
         for tag_id in dict.fromkeys(tag_ids):
             con.execute(
                 "INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)"
@@ -976,20 +973,21 @@ def _apply_post_import_fixes_body(
         category_id = _resolve_category_id(con, category_name)
         if category_id is None:
             continue
-        _fk_safe_update_expenses(
+        _update_expenses(
             con,
-            where_clause="YEAR(datetime) = ? AND LOWER(COALESCE(comment, '')) = ?",
-            where_params=[year, comment_text],
+            where_clause=("strftime('%Y', datetime) = ? AND LOWER(COALESCE(comment, '')) = ?"),
+            where_params=[f"{year:04d}", comment_text],
             set_clause="category_id = ?",
             set_params=[category_id],
         )
 
     rent_category_id = _resolve_category_id(con, "аренда")
     if rent_category_id is not None:
-        _fk_safe_update_expenses(
+        _update_expenses(
             con,
             where_clause=(
-                "YEAR(datetime) = 2018 AND LOWER(COALESCE(comment, '')) = 'покупка валюты'"
+                "strftime('%Y', datetime) = '2018' "
+                "AND LOWER(COALESCE(comment, '')) = 'покупка валюты'"
             ),
             where_params=[],
             set_clause="category_id = ?",
@@ -1014,7 +1012,7 @@ def _apply_post_import_fixes_body(
                     """
                     SELECT id, event_id
                     FROM expenses
-                    WHERE YEAR(datetime) = 2026
+                    WHERE strftime('%Y', datetime) = '2026'
                       AND LOWER(COALESCE(comment, '')) = 'билеты в россию август 2026'
                     """,
                 ).fetchall()
@@ -1044,10 +1042,10 @@ def _apply_post_import_fixes_body(
                         kept.append(auto_id)
                 return kept
 
-            _fk_safe_update_expenses(
+            _update_expenses(
                 con,
                 where_clause=(
-                    "YEAR(datetime) = 2026 "
+                    "strftime('%Y', datetime) = '2026' "
                     "AND LOWER(COALESCE(comment, '')) = 'билеты в россию август 2026'"
                 ),
                 where_params=[],
@@ -1163,10 +1161,10 @@ def iter_parsed_sheet_rows(year: int, *, con=None):
 
 
 def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
-    """Import all months for *year* from the configured sheet into DuckDB.
+    """Import all months for *year* from the configured sheet into SQLite.
 
-    Always destructive for rows whose ``YEAR(datetime) = year`` in the
-    single ``data/dinary.duckdb`` (DELETE expense_tags + expenses +
+    Always destructive for rows whose year matches ``year`` in the
+    single ``data/dinary.db`` (DELETE expense_tags + expenses +
     sheet_logging_jobs for *year*, then re-insert). Runtime rows from
     other years are not touched; the single-file DB is shared with the
     runtime POST path and with every other historical year.
@@ -1175,22 +1173,23 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
     multiple NULL values, so re-imports don't collide on the idempotency
     key. There is no server-side stable id for legacy rows anymore; if
     you need to reach a single legacy row, filter by
-    ``(YEAR(datetime), sheet_category, sheet_group, amount_original,
-    comment)``.
+    ``(strftime('%Y', datetime), sheet_category, sheet_group,
+    amount_original, comment)``.
 
     Failure semantics: this function is destructive-then-populate and
-    each call wipes every ledger row whose ``YEAR(datetime) = year``
-    before inserting anything. A mid-import crash therefore leaves the
-    year partially populated, and the operator's recovery is simply to
-    re-run ``inv import-budget --year YYYY``: the leading DELETEs make
-    the next attempt self-healing without needing a multi-thousand-row
-    transactional envelope around every INSERT. ``insert_expense``
-    still owns its own small transaction per row so a single bad row
-    (FK miss, constraint violation) does not corrupt its siblings.
+    each call wipes every ledger row whose datetime-year matches
+    *year* before inserting anything. A mid-import crash therefore
+    leaves the year partially populated, and the operator's recovery
+    is simply to re-run ``inv import-budget --year YYYY``: the
+    leading DELETEs make the next attempt self-healing without
+    needing a multi-thousand-row transactional envelope around every
+    INSERT. ``insert_expense`` still owns its own small transaction
+    per row so a single bad row (FK miss, constraint violation) does
+    not corrupt its siblings.
     """
-    duckdb_repo.init_db()
+    ledger_repo.init_db()
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         ctx = build_resolution_context(con, year)
         if ctx is None:
@@ -1207,24 +1206,29 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
             raise ValueError(msg)
 
         # Wipe order matters: sheet_logging_jobs -> expense_tags ->
-        # expenses. DuckDB has no ON DELETE CASCADE; child tables FK
-        # into expenses. Restricting each DELETE to rows that belong to
-        # *year* leaves runtime rows and other historical years
-        # untouched. These three statements run outside an explicit
-        # transaction; each DELETE auto-commits. Their combination is
-        # idempotent, so a crash between them just leaves a smaller
-        # ledger for *year* that the next DELETE will reduce further.
+        # expenses. SQLite has no ON DELETE CASCADE in the current
+        # schema; child tables FK into expenses. Restricting each
+        # DELETE to rows that belong to *year* leaves runtime rows
+        # and other historical years untouched. These three
+        # statements run outside an explicit transaction; each DELETE
+        # auto-commits. Their combination is idempotent, so a crash
+        # between them just leaves a smaller ledger for *year* that
+        # the next DELETE will reduce further.
+        year_str = f"{year:04d}"
         con.execute(
             "DELETE FROM sheet_logging_jobs WHERE expense_id IN"
-            " (SELECT id FROM expenses WHERE YEAR(datetime) = ?)",
-            [year],
+            " (SELECT id FROM expenses WHERE strftime('%Y', datetime) = ?)",
+            [year_str],
         )
         con.execute(
             "DELETE FROM expense_tags WHERE expense_id IN"
-            " (SELECT id FROM expenses WHERE YEAR(datetime) = ?)",
-            [year],
+            " (SELECT id FROM expenses WHERE strftime('%Y', datetime) = ?)",
+            [year_str],
         )
-        con.execute("DELETE FROM expenses WHERE YEAR(datetime) = ?", [year])
+        con.execute(
+            "DELETE FROM expenses WHERE strftime('%Y', datetime) = ?",
+            [year_str],
+        )
 
         created = 0
         errors = 0
@@ -1290,7 +1294,7 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
             expense_dt = datetime(year, parsed.month, 1, 12, 0, 0)
 
             try:
-                duckdb_repo.insert_expense(
+                ledger_repo.insert_expense(
                     con,
                     client_expense_id=None,
                     expense_datetime=expense_dt,

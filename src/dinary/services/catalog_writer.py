@@ -3,7 +3,7 @@
 Every mutation that flows through ``dinary.api.admin_catalog`` lands
 here. Each public method:
 
-1. Opens one DuckDB transaction.
+1. Opens one SQLite write transaction (``BEGIN IMMEDIATE``).
 2. Computes ``before_hash`` — sha256 of a canonical state tuple over
    all four catalog tables (``category_groups`` / ``categories`` /
    ``events`` / ``tags``).
@@ -27,10 +27,11 @@ Integrity rules enforced here (never at SQL level):
 * ``edit_category`` / ``edit_event`` / ``edit_tag`` treat a referenced
   row like any other: any subset of columns, including
   ``is_active=FALSE`` combined with a rename or ``group_id`` move, is
-  allowed. DuckDB's FK engine enforces referential integrity on
-  ``DELETE`` only — ``UPDATE`` of non-key columns on a row that still
-  has incoming references is accepted, so no extra guard is needed
-  here to stay FK-safe.
+  allowed. SQLite's FK engine enforces referential integrity on
+  ``DELETE`` and on ``UPDATE`` of referenced key columns; ``UPDATE``
+  of non-key columns on a row that still has incoming references is
+  accepted unchanged, so no extra guard is needed here to stay
+  FK-safe.
 * ``delete_group`` refuses when the group still has any child
   categories (active or inactive) — surfaces as
   ``CatalogInUseError`` with the child-category count so admin API
@@ -77,7 +78,7 @@ different path. The two write paths are kept separate because
 inside the seed's outer ``BEGIN/COMMIT``. A future unification would
 require restructuring the seed to commit per entity; that refactor is
 out of scope here. Until then, both paths funnel version writes
-through ``duckdb_repo.set_catalog_version`` so any future audit hook
+through ``ledger_repo.set_catalog_version`` so any future audit hook
 can intercept them uniformly.
 """
 
@@ -85,13 +86,12 @@ import hashlib
 import json
 import logging
 import re
+import sqlite3
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
-import duckdb
-
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 from dinary.services.sheet_mapping import decode_auto_tags_value
 
 logger = logging.getLogger(__name__)
@@ -162,9 +162,9 @@ class CatalogInUseError(CatalogWriteError):
     ``DeleteResult.status``) and ``edit_*`` on a referenced row
     accepts any column mix including ``is_active=FALSE`` combined with
     rename / ``group_id`` move. The former is a policy choice ("retire
-    but keep pointable"); the latter is safe because DuckDB enforces FK
-    constraints on ``DELETE`` only, not on ``UPDATE`` of non-key
-    columns.
+    but keep pointable"); the latter is safe because SQLite enforces
+    FK constraints on ``DELETE`` (and on ``UPDATE`` of referenced key
+    columns) only, not on ``UPDATE`` of non-key columns.
     """
 
     http_status = 409
@@ -195,7 +195,7 @@ class CatalogConflictError(CatalogWriteError):
 # ---------------------------------------------------------------------------
 
 
-def hash_catalog_state(con: duckdb.DuckDBPyConnection) -> str:
+def hash_catalog_state(con: sqlite3.Connection) -> str:
     """Return a hex sha256 over the canonical catalog state.
 
     Public re-export of ``_hash_state`` so write paths outside this
@@ -208,7 +208,7 @@ def hash_catalog_state(con: duckdb.DuckDBPyConnection) -> str:
     return _hash_state(con)
 
 
-def _canonical_state(con: duckdb.DuckDBPyConnection) -> bytes:
+def _canonical_state(con: sqlite3.Connection) -> bytes:
     """Serialise the full catalog to a deterministic byte string.
 
     The hash of this buffer before and after the mutation tells
@@ -258,12 +258,12 @@ def _canonical_state(con: duckdb.DuckDBPyConnection) -> bytes:
     return "\n".join(parts).encode("utf-8")
 
 
-def _hash_state(con: duckdb.DuckDBPyConnection) -> str:
+def _hash_state(con: sqlite3.Connection) -> str:
     return hashlib.sha256(_canonical_state(con)).hexdigest()
 
 
 def _commit_with_bump(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     before_hash: str,
     *,
     context: str,
@@ -275,8 +275,8 @@ def _commit_with_bump(
     after_hash = _hash_state(con)
     bumped = False
     if before_hash != after_hash:
-        previous = duckdb_repo.get_catalog_version(con)
-        duckdb_repo.set_catalog_version(con, previous + 1)
+        previous = ledger_repo.get_catalog_version(con)
+        ledger_repo.set_catalog_version(con, previous + 1)
         bumped = True
     con.execute("COMMIT")
     logger.info(
@@ -287,7 +287,7 @@ def _commit_with_bump(
     return bumped
 
 
-def _next_id(con: duckdb.DuckDBPyConnection, table: str) -> int:
+def _next_id(con: sqlite3.Connection, table: str) -> int:
     row = con.execute(f"SELECT COALESCE(MAX(id), 0) + 1 FROM {table}").fetchone()  # noqa: S608
     return int(row[0]) if row else 1
 
@@ -297,7 +297,7 @@ def _next_id(con: duckdb.DuckDBPyConnection, table: str) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _category_usage_count(con: duckdb.DuckDBPyConnection, category_id: int) -> int:
+def _category_usage_count(con: sqlite3.Connection, category_id: int) -> int:
     row = con.execute(
         "SELECT COUNT(*) FROM expenses WHERE category_id = ?",
         [category_id],
@@ -305,7 +305,7 @@ def _category_usage_count(con: duckdb.DuckDBPyConnection, category_id: int) -> i
     return int(row[0]) if row else 0
 
 
-def _event_usage_count(con: duckdb.DuckDBPyConnection, event_id: int) -> int:
+def _event_usage_count(con: sqlite3.Connection, event_id: int) -> int:
     row = con.execute(
         "SELECT COUNT(*) FROM expenses WHERE event_id = ?",
         [event_id],
@@ -313,7 +313,7 @@ def _event_usage_count(con: duckdb.DuckDBPyConnection, event_id: int) -> int:
     return int(row[0]) if row else 0
 
 
-def _tag_usage_count(con: duckdb.DuckDBPyConnection, tag_id: int) -> int:
+def _tag_usage_count(con: sqlite3.Connection, tag_id: int) -> int:
     row = con.execute(
         "SELECT COUNT(*) FROM expense_tags WHERE tag_id = ?",
         [tag_id],
@@ -321,7 +321,7 @@ def _tag_usage_count(con: duckdb.DuckDBPyConnection, tag_id: int) -> int:
     return int(row[0]) if row else 0
 
 
-def _group_usage_count(con: duckdb.DuckDBPyConnection, group_id: int) -> int:
+def _group_usage_count(con: sqlite3.Connection, group_id: int) -> int:
     """Active child count for observability in ``edit_group``.
 
     Distinct from ``_group_child_category_count`` (used by
@@ -362,7 +362,7 @@ def _group_usage_count(con: duckdb.DuckDBPyConnection, group_id: int) -> int:
 
 
 def _category_mapping_reference_count(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     category_id: int,
 ) -> int:
     row = con.execute(
@@ -375,7 +375,7 @@ def _category_mapping_reference_count(
 
 
 def _event_mapping_reference_count(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     event_id: int,
 ) -> int:
     row = con.execute(
@@ -388,14 +388,14 @@ def _event_mapping_reference_count(
 
 
 def _tag_mapping_reference_count(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     tag_id: int,
 ) -> int:
     """Mapping-table reference count for a tag.
 
     Includes ``sheet_mapping_tags`` + ``import_mapping_tags`` (both FK
     into ``tags``) **and** ``events.auto_tags`` — which is denormalised
-    JSON of tag *names*, not ids, so DuckDB's FK engine won't catch it.
+    JSON of tag *names*, not ids, so SQLite's FK engine won't catch it.
     Counting the name reference here means hard-delete refuses while
     any event still lists the tag, keeping the runtime auto-attach
     contract ("event carrying this tag in ``auto_tags`` unions it
@@ -420,12 +420,12 @@ def _tag_mapping_reference_count(
 
 
 def _events_auto_tags_reference_count(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     tag_name: str,
 ) -> int:
     """Count events whose ``auto_tags`` JSON array contains ``tag_name``.
 
-    DuckDB does not enforce JSON-array semantics, so we load + decode
+    SQLite does not enforce JSON-array semantics, so we load + decode
     every non-empty ``auto_tags`` payload and check membership in
     Python. The table is small (one row per historical year plus a
     handful of explicit events) so scanning is cheap. Decoding goes
@@ -450,7 +450,7 @@ def _events_auto_tags_reference_count(
 
 
 def add_group(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     name: str,
     sort_order: int | None = None,
@@ -461,7 +461,7 @@ def add_group(
     docstring for the reactivate contract). To change ``sort_order``,
     use ``edit_group``.
     """
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
         existing = con.execute(
@@ -496,12 +496,12 @@ def add_group(
         _commit_with_bump(con, before, context=f"add_group(name={name!r})")
         return AddResult(id=gid, status="created")
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="catalog_writer.add_group")
+        ledger_repo.best_effort_rollback(con, context="catalog_writer.add_group")
         raise
 
 
 def edit_group(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     group_id: int,
     *,
     name: str | None = None,
@@ -517,7 +517,7 @@ def edit_group(
     row half-edited even if the caller PATCHes multiple columns at
     once.
     """
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
         row = con.execute(
@@ -558,12 +558,12 @@ def edit_group(
             )
         _commit_with_bump(con, before, context=f"edit_group(id={group_id})")
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="catalog_writer.edit_group")
+        ledger_repo.best_effort_rollback(con, context="catalog_writer.edit_group")
         raise
 
 
 def set_group_active(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     group_id: int,
     active: bool,
 ) -> None:
@@ -577,7 +577,7 @@ def set_group_active(
 
 
 def add_category(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     name: str,
     group_id: int,
@@ -605,7 +605,7 @@ def add_category(
       is exactly the kind of hidden destruction the admin API is
       supposed to prevent.
     """
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
         _require_active_group(con, group_id)
@@ -647,12 +647,12 @@ def add_category(
         _commit_with_bump(con, before, context=f"add_category(name={name!r})")
         return AddResult(id=cid, status="created")
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="catalog_writer.add_category")
+        ledger_repo.best_effort_rollback(con, context="catalog_writer.add_category")
         raise
 
 
 def edit_category(  # noqa: PLR0912, PLR0913, C901
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     category_id: int,
     *,
     name: str | None = None,
@@ -675,7 +675,7 @@ def edit_category(  # noqa: PLR0912, PLR0913, C901
     was a confusing asymmetry. Operators use PATCH to flip the flag
     either direction; DELETE is for "actually try to remove the row".
     """
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
         row = con.execute(
@@ -733,12 +733,12 @@ def edit_category(  # noqa: PLR0912, PLR0913, C901
             )
         _commit_with_bump(con, before, context=f"edit_category(id={category_id})")
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="catalog_writer.edit_category")
+        ledger_repo.best_effort_rollback(con, context="catalog_writer.edit_category")
         raise
 
 
 def set_category_active(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     category_id: int,
     active: bool,
 ) -> None:
@@ -763,7 +763,7 @@ def _encode_auto_tags(auto_tags: list[str] | tuple[str, ...] | None) -> str:
 
 
 def add_event(  # noqa: PLR0913
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     name: str,
     date_from: date,
@@ -793,7 +793,7 @@ def add_event(  # noqa: PLR0913
             f"event date_from ({date_from}) must be <= date_to ({date_to})",
             http_status=422,
         )
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
         _require_known_tag_names(con, auto_tags or ())
@@ -833,12 +833,12 @@ def add_event(  # noqa: PLR0913
         _commit_with_bump(con, before, context=f"add_event(name={name!r})")
         return AddResult(id=eid, status="created")
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="catalog_writer.add_event")
+        ledger_repo.best_effort_rollback(con, context="catalog_writer.add_event")
         raise
 
 
 def edit_event(  # noqa: PLR0912, PLR0913, C901
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     event_id: int,
     *,
     name: str | None = None,
@@ -859,7 +859,7 @@ def edit_event(  # noqa: PLR0912, PLR0913, C901
     values" so patching only one of ``date_from`` / ``date_to`` is
     still validated correctly.
     """
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
         row = con.execute(
@@ -918,12 +918,12 @@ def edit_event(  # noqa: PLR0912, PLR0913, C901
             )
         _commit_with_bump(con, before, context=f"edit_event(id={event_id})")
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="catalog_writer.edit_event")
+        ledger_repo.best_effort_rollback(con, context="catalog_writer.edit_event")
         raise
 
 
 def set_event_active(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     event_id: int,
     active: bool,
 ) -> None:
@@ -936,13 +936,13 @@ def set_event_active(
 # ---------------------------------------------------------------------------
 
 
-def add_tag(con: duckdb.DuckDBPyConnection, *, name: str) -> AddResult:
+def add_tag(con: sqlite3.Connection, *, name: str) -> AddResult:
     """Create a new tag, or reactivate-in-place if the name exists."""
     # Name validation is a pure string check — run it before we open a
     # transaction so an invalid name does not cost a BEGIN/ROLLBACK
     # round-trip. Kept consistent with ``edit_tag``.
     _validate_tag_name(name)
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
         existing = con.execute(
@@ -969,12 +969,12 @@ def add_tag(con: duckdb.DuckDBPyConnection, *, name: str) -> AddResult:
         _commit_with_bump(con, before, context=f"add_tag(name={name!r})")
         return AddResult(id=tid, status="created")
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="catalog_writer.add_tag")
+        ledger_repo.best_effort_rollback(con, context="catalog_writer.add_tag")
         raise
 
 
 def edit_tag(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     tag_id: int,
     *,
     name: str | None = None,
@@ -1001,7 +1001,7 @@ def edit_tag(
     # does not cost a transaction (mirrors ``add_tag``).
     if name is not None:
         _validate_tag_name(name)
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
         row = con.execute("SELECT id, name FROM tags WHERE id = ?", [tag_id]).fetchone()
@@ -1030,12 +1030,12 @@ def edit_tag(
             )
         _commit_with_bump(con, before, context=f"edit_tag(id={tag_id})")
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="catalog_writer.edit_tag")
+        ledger_repo.best_effort_rollback(con, context="catalog_writer.edit_tag")
         raise
 
 
 def _rename_tag_in_events_auto_tags(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     old_name: str,
     new_name: str,
@@ -1069,7 +1069,7 @@ def _rename_tag_in_events_auto_tags(
 
 
 def set_tag_active(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     tag_id: int,
     active: bool,
 ) -> None:
@@ -1082,7 +1082,7 @@ def set_tag_active(
 # ---------------------------------------------------------------------------
 
 
-def _require_active_group(con: duckdb.DuckDBPyConnection, group_id: int) -> None:
+def _require_active_group(con: sqlite3.Connection, group_id: int) -> None:
     row = con.execute(
         "SELECT is_active FROM category_groups WHERE id = ?",
         [group_id],
@@ -1118,7 +1118,7 @@ def _validate_tag_name(name: str) -> None:
 
 
 def _require_known_tag_names(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     names: list[str] | tuple[str, ...],
 ) -> None:
     """422 if any name is not present in the ``tags`` table at all.
@@ -1168,7 +1168,7 @@ def _require_known_tag_names(
 
 
 def _group_child_category_count(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     group_id: int,
 ) -> int:
     """Total categories (active or inactive) pointing at this group.
@@ -1186,7 +1186,7 @@ def _group_child_category_count(
 
 
 def delete_group(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     group_id: int,
 ) -> DeleteResult:
     """Hard-delete a category group iff it has no (active or inactive)
@@ -1198,7 +1198,7 @@ def delete_group(
     combination outright and forces the operator to relocate (or
     delete) the categories first.
     """
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
         row = con.execute(
@@ -1214,12 +1214,12 @@ def delete_group(
         _commit_with_bump(con, before, context=f"delete_group(id={group_id})")
         return DeleteResult(status="hard", usage_count=0)
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="catalog_writer.delete_group")
+        ledger_repo.best_effort_rollback(con, context="catalog_writer.delete_group")
         raise
 
 
 def delete_category(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     category_id: int,
 ) -> DeleteResult:
     """Hard-delete iff nothing references this category; otherwise flip
@@ -1230,7 +1230,7 @@ def delete_category(
     references would otherwise trip the FK constraint at COMMIT time
     even when the ledger is clean.
     """
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
         row = con.execute(
@@ -1252,12 +1252,12 @@ def delete_category(
         _commit_with_bump(con, before, context=f"delete_category(soft id={category_id})")
         return DeleteResult(status="soft", usage_count=usage)
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="catalog_writer.delete_category")
+        ledger_repo.best_effort_rollback(con, context="catalog_writer.delete_category")
         raise
 
 
 def delete_event(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     event_id: int,
 ) -> DeleteResult:
     """Hard-delete iff nothing references this event; otherwise flip
@@ -1266,7 +1266,7 @@ def delete_event(
     See ``delete_category`` for the expanded "nothing references"
     definition — mapping rows must also be absent.
     """
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
         row = con.execute(
@@ -1288,12 +1288,12 @@ def delete_event(
         _commit_with_bump(con, before, context=f"delete_event(soft id={event_id})")
         return DeleteResult(status="soft", usage_count=usage)
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="catalog_writer.delete_event")
+        ledger_repo.best_effort_rollback(con, context="catalog_writer.delete_event")
         raise
 
 
 def delete_tag(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     tag_id: int,
 ) -> DeleteResult:
     """Hard-delete iff nothing references this tag; otherwise flip
@@ -1303,7 +1303,7 @@ def delete_tag(
     and ``import_mapping_tags`` — any surviving row would trip the FK
     constraint at COMMIT.
     """
-    con.execute("BEGIN")
+    con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
         row = con.execute(
@@ -1325,5 +1325,5 @@ def delete_tag(
         _commit_with_bump(con, before, context=f"delete_tag(soft id={tag_id})")
         return DeleteResult(status="soft", usage_count=usage)
     except Exception:
-        duckdb_repo.best_effort_rollback(con, context="catalog_writer.delete_tag")
+        ledger_repo.best_effort_rollback(con, context="catalog_writer.delete_tag")
         raise

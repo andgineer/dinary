@@ -1,4 +1,4 @@
-"""Tests for the 3D-catalog seeding logic on the unified dinary.duckdb.
+"""Tests for the 3D-catalog seeding logic on the unified dinary.db.
 
 These exercise both halves of the post-split pipeline:
 
@@ -22,7 +22,7 @@ from dinary.imports.seed import (
     rebuild_config_from_sheets,
     seed_from_sheet,
 )
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 from dinary.services.seed_config import (
     ENTRY_GROUPS,
     EXPLICIT_EVENTS,
@@ -55,8 +55,8 @@ SAMPLE_IMPORT_SOURCES = [
 
 @pytest.fixture(autouse=True)
 def _tmp_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
 
 
 @pytest.fixture(autouse=True)
@@ -96,7 +96,7 @@ class TestBootstrapCatalog:
         assert summary["tags"] == len(PHASE1_TAGS)
         assert summary["events"] >= 1
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             mapping_count = con.execute("SELECT COUNT(*) FROM import_mapping").fetchone()[0]
         finally:
@@ -117,7 +117,7 @@ class TestBootstrapCatalog:
 class TestSeedFromSheet:
     def test_creates_groups(self):
         _patched_seed()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             names = {
                 r[0]
@@ -132,7 +132,7 @@ class TestSeedFromSheet:
 
     def test_creates_categories_with_group_links(self):
         _patched_seed()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             rows = con.execute(
                 "SELECT c.name, g.name FROM categories c"
@@ -147,7 +147,7 @@ class TestSeedFromSheet:
 
     def test_creates_phase1_tags(self):
         _patched_seed()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             names = {
                 r[0]
@@ -162,7 +162,7 @@ class TestSeedFromSheet:
 
     def test_creates_per_year_synthetic_events(self):
         _patched_seed()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             names = {r[0] for r in con.execute("SELECT name FROM events").fetchall()}
         finally:
@@ -173,7 +173,7 @@ class TestSeedFromSheet:
 
     def test_creates_import_mappings(self):
         _patched_seed()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             count = con.execute("SELECT COUNT(*) FROM import_mapping").fetchone()[0]
         finally:
@@ -187,7 +187,7 @@ class TestSeedFromSheet:
         worksheet tab."""
         _patched_seed()
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             runtime_count = con.execute(
                 "SELECT COUNT(*) FROM sheet_mapping",
@@ -211,7 +211,7 @@ class TestSeedFromSheet:
 
     def test_seeds_explicit_events(self):
         _patched_seed()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             names = {r[0] for r in con.execute("SELECT name FROM events").fetchall()}
         finally:
@@ -228,10 +228,7 @@ class TestRebuildConfigFromSheets:
         """First rebuild on a freshly-migrated DB bumps catalog_version
         from the initial 1 up to 2.
 
-        Multi-rebuild coverage lives in TestSeedFromSheet. The DuckDB
-        FK-in-transaction quirk that used to block this is worked
-        around in ``imports.seed._purge_mapping_tables`` (it must run
-        outside a write transaction).
+        Multi-rebuild coverage lives in TestSeedFromSheet.
         """
         with patch(
             "dinary.imports.seed._load_categories_for_sheet",
@@ -271,14 +268,14 @@ class TestRebuildConfigFromSheets:
         # that references it. ``client_expense_id=NULL`` mimics the
         # bootstrap importer; ``enqueue_logging=False`` keeps the queue
         # out of this test.
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             row = con.execute(
                 "SELECT id FROM categories WHERE name = 'кафе' AND is_active",
             ).fetchone()
             assert row is not None, "sample catalog must seed 'кафе' active"
             kafe_id = int(row[0])
-            duckdb_repo.insert_expense(
+            ledger_repo.insert_expense(
                 con,
                 client_expense_id=None,
                 expense_datetime=datetime(2024, 6, 1, 12, 0),
@@ -315,7 +312,7 @@ class TestRebuildConfigFromSheets:
         ):
             rebuild_config_from_sheets()
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             # The id survives — FK from the legacy expense keeps the row
             # reachable, so ``is_active`` is the only thing that flips.

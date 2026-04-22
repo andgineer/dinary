@@ -1,9 +1,9 @@
-"""Import monthly income from Google Sheets into DuckDB.
+"""Import monthly income from Google Sheets into the SQLite ledger.
 
 Reads the Income/Balance worksheet for a given year, aggregates totals
 per month in the accounting currency (``settings.accounting_currency``,
-EUR by default), and stores one row per (year, month) in
-``data/dinary.duckdb.income``.
+EUR by default), and stores one row per (year, month) in the
+``income`` table inside ``data/dinary.db``.
 
 Destructive re-import: wipes existing ``income`` rows for the target
 year before inserting.
@@ -18,7 +18,7 @@ from decimal import Decimal, InvalidOperation
 
 from dinary.config import IMPORT_SOURCES_DOC_HINT, ImportSourceRow, get_import_source, settings
 from dinary.imports.expense_import import MONTHS_IN_YEAR
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 from dinary.services.nbs import get_rate
 from dinary.services.sheets import get_sheet
 
@@ -142,13 +142,11 @@ def _prefetch_monthly_rates(
     will need, then close the writer connection BEFORE iterating the
     sheet rows.
 
-    Why prefetch: ``aggregate_from_sheet`` used to hold a DB writer
-    connection across the entire row loop, calling ``get_rate`` (which
-    may hit NBS HTTP) per row. Holding the writer slot across
-    multi-second HTTP round-trips blocks every other writer on the
-    single ``data/dinary.duckdb``. The writer slot is now held only
-    during this short prefetch (12 months x <=3 currencies, mostly
-    cache hits).
+    Why prefetch: ``get_rate`` may hit NBS HTTP on a cache miss, and
+    the aggregation loop spans hundreds of rows. Holding a writer
+    slot across HTTP round-trips would block every other writer on
+    the single ``data/dinary.db``. Prefetching bounds the writer
+    lifetime to 12 months x <=3 currencies (mostly cache hits).
 
     Resilience: a missing rate for some ``(month, currency)`` produces a
     ``None`` entry instead of raising. ``_convert_to_accounting_from_cache``
@@ -163,7 +161,7 @@ def _prefetch_monthly_rates(
     currencies_to_fetch.discard("RSD")
 
     rates: dict[int, dict[str, Decimal | None]] = {}
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         for month in range(1, MONTHS_IN_YEAR + 1):
             rate_date = date(year, month, 1)
@@ -300,9 +298,9 @@ def import_year_income(year: int) -> dict:
     layout = _resolve_layout(year, source)
     monthly_acc, rows_aggregated = aggregate_from_sheet(year, source, layout)
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
-        con.execute("BEGIN")
+        con.execute("BEGIN IMMEDIATE")
         try:
             con.execute("DELETE FROM income WHERE year = ?", [year])
             for month in sorted(monthly_acc):
@@ -312,7 +310,7 @@ def import_year_income(year: int) -> dict:
                 )
             con.execute("COMMIT")
         except Exception:
-            duckdb_repo.best_effort_rollback(con, context=f"import_year_income({year})")
+            ledger_repo.best_effort_rollback(con, context=f"import_year_income({year})")
             raise
     finally:
         con.close()

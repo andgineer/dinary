@@ -29,15 +29,15 @@ import allure
 import pytest
 
 from dinary.config import settings
-from dinary.services import duckdb_repo, sheet_mapping
+from dinary.services import ledger_repo, sheet_mapping
 
 
 @pytest.fixture(autouse=True)
 def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
-    duckdb_repo.init_db()
-    con = duckdb_repo.get_connection()
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+    ledger_repo.init_db()
+    con = ledger_repo.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -152,9 +152,9 @@ class TestAdminPatch:
             json={"name": "pinned", "group_id": 1},
         )
         cid = create.json()["new_id"]
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            duckdb_repo.insert_expense(
+            ledger_repo.insert_expense(
                 con,
                 client_expense_id="pin-cat-e2e",
                 expense_datetime=datetime(2026, 4, 20, 10, 0, 0),
@@ -213,7 +213,7 @@ class TestAdminPatch:
             json={"name": "newname"},
         )
         assert resp.status_code == 200, resp.text
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             row = con.execute(
                 "SELECT auto_tags FROM events WHERE id = ?",
@@ -266,9 +266,9 @@ class TestAdminDelete:
             json={"name": "cat-for-tag", "group_id": 1},
         )
         cid = cat.json()["new_id"]
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            duckdb_repo.insert_expense(
+            ledger_repo.insert_expense(
                 con,
                 client_expense_id="tag-soft-1",
                 expense_datetime=datetime(2026, 4, 20, 10, 0, 0),
@@ -299,9 +299,9 @@ class TestAdminDelete:
             json={"name": "pinned-cat", "group_id": 1},
         )
         cid = cat.json()["new_id"]
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            duckdb_repo.insert_expense(
+            ledger_repo.insert_expense(
                 con,
                 client_expense_id="cat-soft-1",
                 expense_datetime=datetime(2026, 4, 20, 10, 0, 0),
@@ -364,7 +364,7 @@ class TestAdminDelete:
             json={"name": "mapped-only", "group_id": 1},
         )
         cid = cat.json()["new_id"]
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO sheet_mapping"
@@ -387,7 +387,7 @@ class TestAdminDelete:
     def test_delete_tag_referenced_by_sheet_mapping_tags_is_soft(self, client):
         tag = client.post("/api/admin/catalog/tags", json={"name": "mapped-tag"})
         tid = tag.json()["new_id"]
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO sheet_mapping"
@@ -441,7 +441,7 @@ class TestAdminDelete:
         # auto_tags name list on the event is unchanged: the tag row is
         # retired (is_active=FALSE) but still reachable by id, and the
         # name reference in events.auto_tags stays intact.
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             row = con.execute(
                 "SELECT auto_tags FROM events WHERE id = ?",
@@ -462,7 +462,7 @@ class TestAdminDelete:
             },
         )
         eid = ev.json()["new_id"]
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO sheet_mapping"

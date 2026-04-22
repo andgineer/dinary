@@ -1,7 +1,7 @@
-"""NBS exchange rate client with DuckDB caching.
+"""NBS exchange rate client with SQLite caching.
 
 Fetches middle rates from kurs.resenje.org (National Bank of Serbia).
-Rates are cached in the ``exchange_rates`` table in ``data/dinary.duckdb``.
+Rates are cached in the ``exchange_rates`` table in ``data/dinary.db``.
 """
 
 import logging
@@ -136,7 +136,7 @@ def _resolve_from_frankfurter(con, rate_date: date, currency: str) -> Decimal | 
 def get_rate(con, rate_date: date, currency: str) -> Decimal:
     """Get NBS middle rate for currency on date (1 unit = ? RSD).
 
-    Uses DuckDB cache in data/dinary.duckdb. Falls back to previous working days
+    Uses SQLite cache in data/dinary.db. Falls back to previous working days
     if the target date is a weekend/holiday, then to Frankfurter (ECB) when
     NBS has no data for the currency (e.g. RUB before Dec 2012).
     Returns Decimal(1) for RSD.

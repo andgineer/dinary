@@ -1,21 +1,21 @@
-"""Tests for the queue-based sheet logging layer on the unified dinary.duckdb."""
+"""Tests for the queue-based sheet logging layer on the unified dinary.db."""
 
+import sqlite3
 from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import allure
-import duckdb
 import pytest
 
 from dinary.config import settings
-from dinary.services import duckdb_repo, sheet_logging
+from dinary.services import ledger_repo, sheet_logging
 
 
 @pytest.fixture(autouse=True)
 def _tmp_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
     monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "test-spreadsheet-id")
 
 
@@ -37,8 +37,8 @@ def setup() -> int:
     now keys queue rows on ``expenses.id`` rather than on a legacy
     string id.
     """
-    duckdb_repo.init_db()
-    con = duckdb_repo.get_connection()
+    ledger_repo.init_db()
+    con = ledger_repo.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -54,9 +54,9 @@ def setup() -> int:
     finally:
         con.close()
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
-        duckdb_repo.insert_expense(
+        ledger_repo.insert_expense(
             con,
             client_expense_id="exp1-client-key",
             expense_datetime=datetime(2026, 4, 14, 10),
@@ -85,14 +85,14 @@ def _expense_row(
     amount: Decimal,
     amount_original: Decimal,
     currency_original: str,
-) -> duckdb_repo.ExpenseRow:
+) -> ledger_repo.ExpenseRow:
     """Minimal ``ExpenseRow`` factory for pure-helper tests.
 
     ``_derive_rsd_for_sheet`` only reads ``amount``, ``amount_original``
     and ``currency_original``; the rest exists solely to satisfy the
     dataclass slots.
     """
-    return duckdb_repo.ExpenseRow(
+    return ledger_repo.ExpenseRow(
         id=1,
         client_expense_id="x",
         datetime=datetime(2026, 4, 14, 10),
@@ -299,9 +299,9 @@ class TestDrainPending:
         call_kwargs = mock_append.call_args.kwargs
         assert call_kwargs.get("marker_key") == "exp1-client-key"
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            assert duckdb_repo.list_logging_jobs(con) == []
+            assert ledger_repo.list_logging_jobs(con) == []
         finally:
             con.close()
 
@@ -331,7 +331,7 @@ class TestDrainPendingPoisonsUnresolvedCategory:
         _sheet,
         setup,
     ):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute("DELETE FROM sheet_mapping_tags")
             con.execute("DELETE FROM sheet_mapping")
@@ -339,15 +339,15 @@ class TestDrainPendingPoisonsUnresolvedCategory:
             con.close()
 
         expense_pk = setup
-        with patch.object(duckdb_repo, "get_category_name", return_value=None):
+        with patch.object(ledger_repo, "get_category_name", return_value=None):
             result = sheet_logging.drain_pending()
 
         assert result["poisoned"] == 1
         assert result["appended"] == 0
         assert result["failed"] == 0
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            assert duckdb_repo.list_logging_jobs(con) == []
+            assert ledger_repo.list_logging_jobs(con) == []
             # The queue row is still on disk but in status='poisoned',
             # which is why ``list_logging_jobs`` (pending + stale
             # in_progress) doesn't surface it. The expense ledger row
@@ -392,7 +392,7 @@ class TestDrainPendingPoisonsNullClientExpenseId:
         _gr,
         _sheet,
     ):
-        duckdb_repo.init_db()
+        ledger_repo.init_db()
 
         # Seed minimal catalog + a single expense with
         # client_expense_id = NULL, then force a queue row for it so we
@@ -400,7 +400,7 @@ class TestDrainPendingPoisonsNullClientExpenseId:
         # ``insert_expense(enqueue_logging=True)`` for this leg because
         # the public path refuses to let NULL + enqueue coexist on a
         # runtime call — which is exactly the invariant we're testing.
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -409,7 +409,7 @@ class TestDrainPendingPoisonsNullClientExpenseId:
             con.execute(
                 "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'еда', 1, TRUE)",
             )
-            duckdb_repo.insert_expense(
+            ledger_repo.insert_expense(
                 con,
                 client_expense_id=None,
                 expense_datetime=datetime(2026, 4, 14, 10),
@@ -441,9 +441,9 @@ class TestDrainPendingPoisonsNullClientExpenseId:
         assert result["failed"] == 0
         mock_append.assert_not_called()
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            assert duckdb_repo.list_logging_jobs(con) == []
+            assert ledger_repo.list_logging_jobs(con) == []
             row = con.execute(
                 "SELECT status, last_error FROM sheet_logging_jobs WHERE expense_id = ?",
                 [expense_pk],
@@ -475,7 +475,7 @@ class TestDrainPendingCategoryFallback:
         mock_sheet,
         setup,
     ):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute("DELETE FROM sheet_mapping_tags")
             con.execute("DELETE FROM sheet_mapping")
@@ -540,9 +540,9 @@ class TestDrainOneJobReturnContract:
 
         # Queue row remains ``pending`` (claim released) so the next
         # sweep retries.
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            assert duckdb_repo.list_logging_jobs(con) == [expense_pk]
+            assert ledger_repo.list_logging_jobs(con) == [expense_pk]
         finally:
             con.close()
 
@@ -580,16 +580,16 @@ class TestDrainOneJobClaimStolen:
         mock_ecr.return_value = (3, values)
 
         expense_pk = setup
-        with patch.object(duckdb_repo, "clear_logging_job", return_value=False):
+        with patch.object(ledger_repo, "clear_logging_job", return_value=False):
             result = sheet_logging._drain_one_job(
                 expense_pk,
                 spreadsheet_id="test-spreadsheet-id",
             )
 
         assert result is sheet_logging.DrainResult.RECOVERED_WITH_DUPLICATE
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            assert duckdb_repo.list_logging_jobs(con) == []
+            assert ledger_repo.list_logging_jobs(con) == []
         finally:
             con.close()
 
@@ -620,8 +620,8 @@ class TestDrainOneJobClaimStolen:
 
         expense_pk = setup
         with (
-            patch.object(duckdb_repo, "clear_logging_job", return_value=False),
-            patch.object(duckdb_repo, "force_clear_logging_job", return_value=False),
+            patch.object(ledger_repo, "clear_logging_job", return_value=False),
+            patch.object(ledger_repo, "force_clear_logging_job", return_value=False),
         ):
             result = sheet_logging._drain_one_job(
                 expense_pk,
@@ -658,7 +658,7 @@ class TestDrainPendingCounters:
         mock_sheet.return_value.sheet1 = ws
         mock_ecr.return_value = (3, values)
 
-        with patch.object(duckdb_repo, "clear_logging_job", return_value=False):
+        with patch.object(ledger_repo, "clear_logging_job", return_value=False):
             result = sheet_logging.drain_pending()
 
         assert result["appended"] == 0
@@ -699,9 +699,9 @@ class TestIdempotencyMarker:
         assert result["failed"] == 0
         assert result["recovered_with_duplicate"] == 0
 
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            assert duckdb_repo.list_logging_jobs(con) == []
+            assert ledger_repo.list_logging_jobs(con) == []
         finally:
             con.close()
 
@@ -731,45 +731,39 @@ class TestCircuitBreaker:
         assert result == {"backoff_active": True}
 
 
-@allure.epic("DuckDB")
-@allure.feature("claim_logging_job (TransactionException handling)")
-class TestClaimLoggingJobTransactionConflict:
-    """A ``duckdb.TransactionException`` raised by DuckDB's
-    optimistic-concurrency layer when two workers race on the same row
-    surfaces as a clean ``None`` return — the caller treats ``None`` as
-    "skip this row, the winner will handle it"."""
+@allure.epic("SheetLogging")
+@allure.feature("claim_logging_job (lock-conflict handling)")
+class TestClaimLoggingJobLockConflict:
+    """A ``sqlite3.OperationalError`` raised by SQLite's write-lock
+    timeout when two workers race on the same row surfaces as a clean
+    ``None`` return — the caller treats ``None`` as "skip this row, the
+    winner will handle it"."""
 
-    def test_transaction_exception_returns_none(self, setup):
+    def test_lock_conflict_on_begin_returns_none(self, setup):
         expense_pk = setup
-        con = duckdb_repo.get_connection()
+        # Provoke a real SQLite write-lock conflict, not a mock: one
+        # connection holds ``BEGIN IMMEDIATE`` (the write lock); a
+        # second connection opened with ``timeout=0`` cannot wait for
+        # it and ``BEGIN IMMEDIATE`` from ``claim_logging_job`` surfaces
+        # as ``OperationalError("database is locked")`` immediately.
+        # This is the exact runtime shape two drain workers hit when
+        # they race on the same queue row.
+        holder = ledger_repo.get_connection()
+        loser = sqlite3.connect(
+            str(ledger_repo.DB_PATH),
+            isolation_level=None,
+            detect_types=sqlite3.PARSE_DECLTYPES,
+            check_same_thread=False,
+            timeout=0,
+        )
         try:
-
-            class _Exploding:
-                """Connection wrapper that raises TransactionException on
-                the SELECT inside ``claim_logging_job`` so the caught
-                branch fires deterministically. We can't easily provoke a
-                real conflict from a single-threaded test."""
-
-                def __init__(self, real):
-                    self._real = real
-                    self._calls = 0
-
-                def execute(self, sql, *args, **kwargs):
-                    self._calls += 1
-                    # 1st call is BEGIN, 2nd is the SELECT we want to
-                    # fail. After that ROLLBACK is passed through.
-                    if self._calls == 2:  # noqa: PLR2004
-                        raise duckdb.TransactionException("simulated conflict")
-                    return self._real.execute(sql, *args, **kwargs)
-
-                def __getattr__(self, name):
-                    return getattr(self._real, name)
-
-            exploding = _Exploding(con)
-            token = duckdb_repo.claim_logging_job(exploding, expense_pk)
+            holder.execute("BEGIN IMMEDIATE")
+            token = ledger_repo.claim_logging_job(loser, expense_pk)
             assert token is None
+            holder.execute("COMMIT")
         finally:
-            con.close()
+            loser.close()
+            holder.close()
 
 
 @allure.epic("SheetLogging")
@@ -781,10 +775,10 @@ class TestDrainRateLimit:
     ``inter_row_delay_sec``."""
 
     def _insert_additional_expenses(self, n: int) -> None:
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             for i in range(n):
-                duckdb_repo.insert_expense(
+                ledger_repo.insert_expense(
                     con,
                     client_expense_id=f"extra-{i:03d}",
                     expense_datetime=datetime(2026, 6, 1 + i % 25, 10),

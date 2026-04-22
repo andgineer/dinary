@@ -1,14 +1,14 @@
-"""Interactive SQL runner against ``data/dinary.duckdb``.
+"""Interactive SQL runner against ``data/dinary.db``.
 
 Invoked via ``inv sql`` (locally or over ``--remote``). By default
-the module opens the DB ``read_only=True`` — ``UPDATE`` / ``DELETE``
-/ ``INSERT`` statements error out at the DuckDB layer — so an
-operator peeking at prod cannot accidentally mutate the ledger by
-typoing a query. ``--write`` is the explicit opt-in for mutation
-(one-off fixups, ad-hoc cleanups) and is deliberately absent from
-the ``--remote`` path so the opt-in can never ride an SSH pipe
-into a snapshot that gets torn down on exit. Three output formats
-keep parity with ``inv report-*``:
+the module opens the SQLite DB with a ``file:...?mode=ro`` URI so
+``UPDATE`` / ``DELETE`` / ``INSERT`` statements error out at the
+SQLite layer — so an operator peeking at prod cannot accidentally
+mutate the ledger by typoing a query. ``--write`` is the explicit
+opt-in for mutation (one-off fixups, ad-hoc cleanups) and is
+deliberately absent from the ``--remote`` path so the opt-in can
+never ride an SSH pipe into a snapshot that gets torn down on exit.
+Three output formats keep parity with ``inv report-*``:
 
 * default (``--``): rich table to stdout, one-line footer with row count
 * ``--csv``: CSV with header row, suitable for piping into ``wc`` /
@@ -16,14 +16,16 @@ keep parity with ``inv report-*``:
 * ``--json``: a single envelope ``{"columns": [...], "rows": [[...], ...],
   "row_count": N}``. Non-primitive values (``Decimal``, ``date``,
   ``datetime``) are stringified — callers that need typed JSON should
-  cast in SQL (``amount::DOUBLE``).
+  cast in SQL (``CAST(amount AS REAL)``).
 
 The ``--remote`` dispatch lives in ``tasks.py::sql_task`` and goes
 through the same ``_remote_snapshot_cmd`` wrapper as ``inv report-*``:
-a ``/tmp`` snapshot of the live DB is opened read-only on the server,
+a ``/tmp`` snapshot of the live DB is opened read-only on the server
+(via ``sqlite3 .backup``, not a raw file copy, to honour the WAL),
 the JSON envelope comes back over SSH, and the local process renders.
-That avoids the DuckDB single-writer lock while the ``dinary`` service
-is up and keeps Cyrillic/box-drawing bytes intact across the wire.
+Reading a snapshot rather than the live file avoids any interaction
+with the in-flight Litestream replication and keeps Cyrillic /
+box-drawing bytes intact across the wire.
 """
 
 import argparse
@@ -34,29 +36,29 @@ from decimal import Decimal
 from pathlib import Path
 from typing import IO, Any
 
-import duckdb
 from rich.console import Console
 from rich.table import Table
 
 from dinary.config import settings
+from dinary.services import sqlite_types
 
 
 def _execute(sql: str, *, write: bool = False) -> tuple[list[str], list[tuple]]:
     """Open ``settings.data_path`` and run ``sql``.
 
-    ``write=False`` (default) connects ``read_only=True`` so the DuckDB
-    engine itself refuses any ``INSERT`` / ``UPDATE`` / ``DELETE``;
-    ``write=True`` opens in the default read-write mode — used for
-    explicit operator-triggered fixups and only reachable through
+    ``write=False`` (default) connects via the read-only URI mode so
+    the SQLite engine itself refuses any ``INSERT`` / ``UPDATE`` /
+    ``DELETE``; ``write=True`` opens read-write — used for explicit
+    operator-triggered fixups and only reachable through
     ``inv sql --write`` locally (never over ``--remote``).
 
     Returns ``(columns, rows)``. ``columns == []`` means the statement
-    had no result set (DuckDB returns ``cursor.description is None`` for
+    had no result set (SQLite returns ``cursor.description is None`` for
     DDL / pragma / no-op statements). The connection is closed on every
     exit path so a repeated ``inv sql`` doesn't pile up file handles
     against the DB.
     """
-    con = duckdb.connect(str(Path(settings.data_path)), read_only=not write)
+    con = sqlite_types.connect(str(Path(settings.data_path)), read_only=not write)
     try:
         cursor = con.execute(sql)
         columns = [d[0] for d in cursor.description] if cursor.description else []
@@ -67,14 +69,15 @@ def _execute(sql: str, *, write: bool = False) -> tuple[list[str], list[tuple]]:
 
 
 def _coerce_for_json(value: Any) -> Any:
-    """Coerce DuckDB row values into JSON-serialisable primitives.
+    """Coerce row values into JSON-serialisable primitives.
 
-    DuckDB returns ``Decimal`` for ``DECIMAL`` columns, ``date`` /
-    ``datetime`` / ``time`` for temporal columns, ``bytes`` for ``BLOB``,
-    and ``UUID`` / ``Interval`` for their respective types. None of these
-    survive ``json.dumps`` natively. Primitive types (``int``, ``float``,
-    ``str``, ``bool``, ``None``) pass through verbatim so downstream
-    ``jq`` filters see native JSON numbers rather than strings.
+    SQLite round-trips ``Decimal`` for ``DECIMAL`` columns via the
+    converters registered in ``dinary.services.sqlite_types``,
+    ``date`` / ``datetime`` for temporal columns, and ``bytes`` for
+    ``BLOB``. None of these survive ``json.dumps`` natively.
+    Primitive types (``int``, ``float``, ``str``, ``bool``, ``None``)
+    pass through verbatim so downstream ``jq`` filters see native
+    JSON numbers rather than strings.
     """
     if value is None or isinstance(value, int | float | str | bool):
         return value
@@ -146,7 +149,7 @@ def rows_from_json(payload: dict) -> tuple[list[str], list[tuple]]:
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Parses args, runs the query, renders."""
     parser = argparse.ArgumentParser(
-        description="Read-only SQL runner against data/dinary.duckdb",
+        description="Read-only SQL runner against data/dinary.db",
     )
     src = parser.add_mutually_exclusive_group(required=True)
     src.add_argument("--query", "-q", help="SQL query string")

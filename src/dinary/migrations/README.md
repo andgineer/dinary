@@ -1,10 +1,11 @@
 ## Database Migrations
 
-Schema versioning for DuckDB via [yoyo-migrations](https://ollycope.com/software/yoyo/latest/).
+Schema versioning for SQLite via [yoyo-migrations](https://ollycope.com/software/yoyo/latest/),
+driven by the `SQLiteBackend` in `src/dinary/services/db_migrations.py`.
 
 ### Layout
 
-Single migration stream against `data/dinary.duckdb` (unified catalog + ledger).
+Single migration stream against `data/dinary.db` (unified catalog + ledger).
 
 ### Adding a new migration
 

@@ -1,4 +1,4 @@
-"""Runtime classification taxonomy for ``dinary.duckdb``.
+"""Runtime classification taxonomy for ``dinary.db``.
 
 This file is the authoritative source of truth for the runtime catalog
 tables: ``category_groups``, ``categories``, ``tags``, and ``events``.
@@ -52,11 +52,10 @@ The sync algorithm:
 import dataclasses
 import json
 import logging
+import sqlite3
 from datetime import date
 
-import duckdb
-
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 from dinary.services.sql_loader import fetchall_as, load_sql
 
 logger = logging.getLogger(__name__)
@@ -172,7 +171,7 @@ VACATION_EVENT_2026_END = date(2026, 4, 20)
 class ExplicitEvent:
     """One-off event row that the bootstrap importer references by name.
 
-    Lives in the catalog (``events`` table in ``dinary.duckdb``) so
+    Lives in the catalog (``events`` table in ``dinary.db``) so
     ``catalog_version`` reflects its presence; ``imports/expense_import.py``
     looks events up by name and never mutates the catalog directly.
 
@@ -229,14 +228,14 @@ def _category_group_lookup() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _next_id(con: duckdb.DuckDBPyConnection, table: str) -> int:
+def _next_id(con: sqlite3.Connection, table: str) -> int:
     """Return the next available integer id for a catalog table."""
     row = con.execute(f"SELECT COALESCE(MAX(id), 0) FROM {table}").fetchone()  # noqa: S608
     return int(row[0]) + 1 if row else 1
 
 
 def _upsert_category_group(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     name: str,
     sort_order: int,
@@ -262,27 +261,16 @@ def _upsert_category_group(
 
 
 def _upsert_category(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     name: str,
     group_id: int,
 ) -> int:
     """UPSERT a category by natural key (name); return its stable id.
 
-    DuckDB 1.5 caveat: any UPDATE that touches ``categories.group_id``
-    (an FK column) is internally implemented as DELETE+INSERT of the
-    row, which fails FK validation when ``expenses.category_id`` (or
-    the mapping tables) already reference that category id. Non-FK
-    columns like ``is_active`` update in place and are safe. So:
-
-    * always flip ``is_active`` back to TRUE in its own UPDATE — this
-      always succeeds, even on FK-referenced rows;
-    * only issue a ``group_id`` UPDATE when the value actually
-      changed, and only when no FK-referenced child row would block
-      it. When the category is already referenced by a ledger row,
-      ``group_id`` is left pinned to whatever the DB has: a natural
-      consequence of ``is_active=FALSE`` being the only way Phase 1
-      retires catalog rows.
+    A single ``UPDATE`` is enough even when child rows in ``expenses``
+    or mapping tables reference this category's id — updates on
+    non-key columns are FK-safe.
     """
     row = con.execute(
         "SELECT id, group_id, is_active FROM categories WHERE name = ?",
@@ -300,39 +288,16 @@ def _upsert_category(
     existing_group = int(row[1]) if row[1] is not None else None
     existing_active = bool(row[2])
 
-    if not existing_active:
+    if existing_group != group_id or not existing_active:
         con.execute(
-            "UPDATE categories SET is_active = TRUE WHERE id = ?",
-            [cid],
+            "UPDATE categories SET group_id = ?, is_active = TRUE WHERE id = ?",
+            [group_id, cid],
         )
-
-    if existing_group != group_id:
-        try:
-            con.execute(
-                "UPDATE categories SET group_id = ? WHERE id = ?",
-                [group_id, cid],
-            )
-        except duckdb.ConstraintException:
-            # DuckDB 1.5 refuses to DELETE+INSERT an FK-referenced
-            # row even when the target FK column is unchanged at
-            # SQL level. Leaving group_id pinned is the lesser evil:
-            # the category is still reachable via its stable id and
-            # the live taxonomy (ENTRY_GROUPS) rarely re-homes a
-            # name between groups in production anyway.
-            logger.warning(
-                "Cannot re-home category %r (id=%d) from group_id=%s to %s: "
-                "row is FK-referenced and DuckDB 1.5 cannot UPDATE FK columns "
-                "on such rows. Leaving group_id unchanged.",
-                name,
-                cid,
-                existing_group,
-                group_id,
-            )
     return cid
 
 
 def _upsert_event(  # noqa: PLR0913
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     name: str,
     date_from: date,
@@ -370,7 +335,7 @@ def _upsert_event(  # noqa: PLR0913
     return eid
 
 
-def _upsert_tag(con: duckdb.DuckDBPyConnection, *, name: str) -> int:
+def _upsert_tag(con: sqlite3.Connection, *, name: str) -> int:
     """UPSERT a tag by natural key (name); return its stable id."""
     row = con.execute("SELECT id FROM tags WHERE name = ?", [name]).fetchone()
     if row is not None:
@@ -391,11 +356,11 @@ def _upsert_tag(con: duckdb.DuckDBPyConnection, *, name: str) -> int:
 
 
 def seed_classification_catalog(  # noqa: PLR0915
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     year: int | None = None,
 ) -> tuple[dict, TaxonomyIdMaps]:
-    """FK-safe in-place sync of the runtime taxonomy into ``dinary.duckdb``.
+    """FK-safe in-place sync of the runtime taxonomy into ``dinary.db``.
 
     Seeding order: deactivate-all -> category_groups -> categories ->
     tags -> events. Integer ids for pre-existing vocabulary are
@@ -448,7 +413,7 @@ def seed_classification_catalog(  # noqa: PLR0915
     # to the existing id rather than silently failing. Retired rows
     # deliberately keep their ids so mapping rebuilds can point at
     # them if a rule explicitly does (tests cover the rename path).
-    for r in fetchall_as(duckdb_repo.IdNameRow, con, load_sql("seed_load_categories.sql")):
+    for r in fetchall_as(ledger_repo.IdNameRow, con, load_sql("seed_load_categories.sql")):
         cat_id_by_name.setdefault(r.name, r.id)
 
     # 3. tags (stable ids by name). Upserted BEFORE events so that
@@ -539,16 +504,16 @@ def bootstrap_catalog(year: int | None = None) -> dict:
     transitions from the schema-default ``0`` to the initial post-seed
     state; subsequent runs are proper no-ops.
     """
-    duckdb_repo.init_db()
+    ledger_repo.init_db()
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
-        con.execute("BEGIN")
+        con.execute("BEGIN IMMEDIATE")
         try:
             summary, _ = seed_classification_catalog(con, year=year)
             con.execute("COMMIT")
         except Exception:
-            duckdb_repo.best_effort_rollback(con, context="bootstrap_catalog")
+            ledger_repo.best_effort_rollback(con, context="bootstrap_catalog")
             raise
     finally:
         con.close()
@@ -562,17 +527,17 @@ def bootstrap_catalog(year: int | None = None) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _bump_catalog_version(con: duckdb.DuckDBPyConnection, *, previous: int) -> int:
+def _bump_catalog_version(con: sqlite3.Connection, *, previous: int) -> int:
     """Increment ``catalog_version`` on the seed path (``inv import-catalog``).
 
     One of the two write paths that touch ``catalog_version`` — the
     other is ``catalog_writer._commit_with_bump`` on the admin-API
-    path. Both funnel through ``duckdb_repo.set_catalog_version`` so
+    path. Both funnel through ``ledger_repo.set_catalog_version`` so
     future auditing hooks can intercept writes uniformly. See
     ``.plans/architecture.md`` §Catalog versioning.
     """
     new_version = previous + 1
-    duckdb_repo.set_catalog_version(con, new_version)
+    ledger_repo.set_catalog_version(con, new_version)
     return new_version
 
 
@@ -582,7 +547,7 @@ def _bump_catalog_version(con: duckdb.DuckDBPyConnection, *, previous: int) -> i
 
 
 def _rebuild_logging_mapping_from_latest_year(
-    con: duckdb.DuckDBPyConnection,  # noqa: ARG001
+    con: sqlite3.Connection,  # noqa: ARG001
     *,
     latest_year: int,  # noqa: ARG001
     cat_id_by_name: dict[str, int],  # noqa: ARG001

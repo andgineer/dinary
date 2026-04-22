@@ -3,7 +3,7 @@
 import dataclasses
 
 import allure
-import duckdb
+import sqlite3
 import pytest
 
 from dinary.services.sql_loader import _cache, fetchall_as, fetchone_as, load_sql
@@ -64,7 +64,7 @@ class TestLoadSql:
 @allure.feature("Row Mapping")
 class TestRowMapper:
     def test_fetchone_as_maps_columns(self):
-        con = duckdb.connect(":memory:")
+        con = sqlite3.connect(":memory:")
         result = fetchone_as(_PairRow, con, "SELECT 42 AS x, 'hello' AS y")
         con.close()
 
@@ -73,7 +73,7 @@ class TestRowMapper:
         assert result.y == "hello"
 
     def test_fetchone_as_returns_none_on_empty(self):
-        con = duckdb.connect(":memory:")
+        con = sqlite3.connect(":memory:")
         con.execute("CREATE TABLE t (x INT)")
         result = fetchone_as(_PairRow, con, "SELECT x, '' AS y FROM t")
         con.close()
@@ -81,14 +81,14 @@ class TestRowMapper:
         assert result is None
 
     def test_fetchone_as_validates_columns_on_empty(self):
-        con = duckdb.connect(":memory:")
+        con = sqlite3.connect(":memory:")
         con.execute("CREATE TABLE t (x INT)")
         with pytest.raises(RuntimeError, match="SQL/dataclass mismatch"):
             fetchone_as(_PairRow, con, "SELECT x FROM t")
         con.close()
 
     def test_fetchall_as_maps_multiple(self):
-        con = duckdb.connect(":memory:")
+        con = sqlite3.connect(":memory:")
         rows = fetchall_as(_PairRow, con, "SELECT 1 AS x, 'a' AS y UNION ALL SELECT 2, 'b'")
         con.close()
 
@@ -97,7 +97,7 @@ class TestRowMapper:
         assert rows[1].y == "b"
 
     def test_fetchall_as_returns_empty_list(self):
-        con = duckdb.connect(":memory:")
+        con = sqlite3.connect(":memory:")
         con.execute("CREATE TABLE t (x INT, y TEXT)")
         rows = fetchall_as(_PairRow, con, "SELECT x, y FROM t")
         con.close()
@@ -105,26 +105,26 @@ class TestRowMapper:
         assert rows == []
 
     def test_fetchall_as_validates_columns_on_empty(self):
-        con = duckdb.connect(":memory:")
+        con = sqlite3.connect(":memory:")
         con.execute("CREATE TABLE t (x INT)")
         with pytest.raises(RuntimeError, match="SQL/dataclass mismatch"):
             fetchall_as(_PairRow, con, "SELECT x FROM t")
         con.close()
 
     def test_column_mismatch_raises(self):
-        con = duckdb.connect(":memory:")
+        con = sqlite3.connect(":memory:")
         with pytest.raises(RuntimeError, match="SQL/dataclass mismatch"):
             fetchone_as(_WrongRow, con, "SELECT 42 AS x, 'hello' AS y")
         con.close()
 
     def test_extra_column_raises(self):
-        con = duckdb.connect(":memory:")
+        con = sqlite3.connect(":memory:")
         with pytest.raises(RuntimeError, match="extra"):
             fetchone_as(_PairRow, con, "SELECT 1 AS x, 'a' AS y, 99 AS z")
         con.close()
 
     def test_missing_column_raises(self):
-        con = duckdb.connect(":memory:")
+        con = sqlite3.connect(":memory:")
         with pytest.raises(RuntimeError, match="missing"):
             fetchone_as(_PairRow, con, "SELECT 1 AS x")
         con.close()

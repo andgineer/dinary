@@ -19,15 +19,15 @@ payload download, silently undoing the Phase 2 cache design.
 import allure
 import pytest
 
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 
 
 @pytest.fixture(autouse=True)
 def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
-    duckdb_repo.init_db()
-    con = duckdb_repo.get_connection()
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+    ledger_repo.init_db()
+    con = ledger_repo.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -140,7 +140,7 @@ class TestCatalogRemovableFlag:
         assert groups[2] is True
 
     def test_category_becomes_non_removable_when_referenced_by_expense(self, client):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO expenses (id, client_expense_id, datetime, amount,"
@@ -161,7 +161,7 @@ class TestCatalogRemovableFlag:
         # payload. The FK engine won't see the name->name link, but
         # the snapshot builder scans auto_tags and must mark the tag
         # as non-removable.
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO tags (id, name, is_active) VALUES (99, 'vacation', TRUE)",

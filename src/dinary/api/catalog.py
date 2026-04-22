@@ -44,13 +44,13 @@ events).
 """
 
 import logging
+import sqlite3
 from collections import Counter
 
-import duckdb
 from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel
 
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 from dinary.services.sheet_mapping import decode_auto_tags_value
 
 logger = logging.getLogger(__name__)
@@ -122,7 +122,7 @@ def _if_none_match_matches(header_value: str, etag: str) -> bool:
 
 
 def _sum_counts_by_id(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     tables_and_cols: tuple[tuple[str, str], ...],
 ) -> Counter[int]:
     """Union of ``SELECT col, COUNT(*) ... GROUP BY col`` across tables.
@@ -141,10 +141,10 @@ def _sum_counts_by_id(
     return out
 
 
-def _auto_tag_refs_by_tag_id(con: duckdb.DuckDBPyConnection) -> Counter[int]:
+def _auto_tag_refs_by_tag_id(con: sqlite3.Connection) -> Counter[int]:
     """Count events whose ``auto_tags`` JSON array contains each tag name.
 
-    ``events.auto_tags`` stores tag names (not ids), so DuckDB's FK
+    ``events.auto_tags`` stores tag names (not ids), so SQLite's FK
     engine misses it. Scan once, build a name->count Counter, then
     translate to ids via the ``tags`` table. Cheap: the events table
     is small.
@@ -168,7 +168,7 @@ def _auto_tag_refs_by_tag_id(con: duckdb.DuckDBPyConnection) -> Counter[int]:
 
 
 def _reference_counts(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
 ) -> tuple[dict[int, int], dict[int, int], dict[int, int], dict[int, int]]:
     """Aggregate FK/reference counts needed for the ``removable`` flag.
 
@@ -217,7 +217,7 @@ def _reference_counts(
     return dict(cat_refs), dict(event_refs), dict(tag_refs), group_child_counts
 
 
-def build_catalog_snapshot(con: duckdb.DuckDBPyConnection) -> dict:
+def build_catalog_snapshot(con: sqlite3.Connection) -> dict:
     """Shared by GET /api/catalog and the admin POST/PATCH responses.
 
     Returns a dict-of-lists suitable for embedding directly in a
@@ -230,7 +230,7 @@ def build_catalog_snapshot(con: duckdb.DuckDBPyConnection) -> dict:
     PWA uses it to hide the ``Удалить`` button on still-referenced
     rows.
     """
-    version = duckdb_repo.get_catalog_version(con)
+    version = ledger_repo.get_catalog_version(con)
     cat_refs, event_refs, tag_refs, group_children = _reference_counts(con)
 
     group_rows = con.execute(
@@ -310,7 +310,7 @@ def get_catalog(
     if_none_match: str | None = Header(default=None),
 ) -> CatalogResponse | Response:
     try:
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             snapshot = build_catalog_snapshot(con)
         finally:

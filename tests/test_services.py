@@ -11,7 +11,7 @@ import pytest
 class TestNbsExchangeRate:
     @patch("dinary.services.nbs.httpx.get")
     def test_get_rate_fetches_and_caches(self, mock_get, tmp_path):
-        from dinary.services import duckdb_repo
+        from dinary.services import ledger_repo
         from dinary.services.nbs import get_rate
 
         mock_resp = MagicMock()
@@ -19,15 +19,13 @@ class TestNbsExchangeRate:
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
-        duckdb_repo.ensure_data_dir()
-        from dinary.services import db_migrations
+        ledger_repo.ensure_data_dir()
+        from dinary.services import db_migrations, sqlite_types
 
-        db_path = tmp_path / "dinary.duckdb"
+        db_path = tmp_path / "dinary.db"
         db_migrations.migrate_db(db_path)
 
-        import duckdb
-
-        con = duckdb.connect(str(db_path))
+        con = sqlite_types.connect(str(db_path))
         try:
             rate = get_rate(con, date(2026, 4, 1), "EUR")
             assert rate == Decimal("117.32")
@@ -43,13 +41,12 @@ class TestNbsExchangeRate:
         """EUR to EUR conversion should be identity with rate 1.0."""
         from dinary.services.nbs import convert
 
-        import duckdb
-        from dinary.services import db_migrations
+        from dinary.services import db_migrations, sqlite_types
 
-        db_path = tmp_path / "dinary.duckdb"
+        db_path = tmp_path / "dinary.db"
         db_migrations.migrate_db(db_path)
 
-        con = duckdb.connect(str(db_path))
+        con = sqlite_types.connect(str(db_path))
         try:
             converted, rate = convert(
                 con,
@@ -67,10 +64,9 @@ class TestNbsExchangeRate:
     def test_convert_rsd_to_eur(self, mock_get, tmp_path):
         from dinary.services.nbs import convert
 
-        import duckdb
-        from dinary.services import db_migrations
+        from dinary.services import db_migrations, sqlite_types
 
-        db_path = tmp_path / "dinary.duckdb"
+        db_path = tmp_path / "dinary.db"
         db_migrations.migrate_db(db_path)
 
         def mock_responses(*args, **kwargs):
@@ -87,7 +83,7 @@ class TestNbsExchangeRate:
 
         mock_get.side_effect = mock_responses
 
-        con = duckdb.connect(str(db_path))
+        con = sqlite_types.connect(str(db_path))
         try:
             converted, _rate = convert(
                 con,

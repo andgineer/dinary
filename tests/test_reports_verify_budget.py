@@ -3,7 +3,7 @@
 Deliberately self-contained: we build fixture payloads in Python
 that match the shape of
 :func:`dinary.imports.verify_equivalence.verify_bootstrap_import`
-and exercise the renderer without touching SSH, DuckDB, or sheet
+and exercise the renderer without touching SSH, SQLite, or sheet
 APIs. That keeps the suite fast and pins the payload→UI contract
 against accidental drift.
 """

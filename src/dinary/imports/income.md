@@ -1,8 +1,8 @@
 # Income import reference
 
 > **Internal operator documentation.** This file documents the
-> historical Google-Sheets-to-DuckDB income import path. It is not part
-> of the user/admin docs site under `docs/`.
+> historical Google-Sheets-to-SQLite income import path. It is not
+> part of the user/admin docs site under `docs/`.
 
 ## Purpose
 
@@ -36,7 +36,7 @@ inv import-income --year=2024 --yes
 ```
 
 Destructive re-import: deletes the target year's rows from the `income`
-table in `data/dinary.duckdb` and inserts fresh monthly totals from the
+table in `data/dinary.db` and inserts fresh monthly totals from the
 source worksheet.
 
 ### Import all registered years
@@ -56,7 +56,8 @@ inv verify-income-equivalence --year=2024
 ```
 
 Re-reads the source worksheet and compares month-by-month totals against
-DuckDB with a tolerance of `+-0.02` in the accounting currency.
+the SQLite `income` table with a tolerance of `+-0.02` in the
+accounting currency.
 
 ## Stored shape
 
@@ -83,6 +84,6 @@ configured income worksheet per year.
 
 ## Current operational note
 
-Current income still originates in Google Sheets and is imported into
-DuckDB through `inv import-income`. The PWA does not yet provide direct
-income entry.
+Current income still originates in Google Sheets and is imported
+into SQLite through `inv import-income`. The PWA does not yet
+provide direct income entry.

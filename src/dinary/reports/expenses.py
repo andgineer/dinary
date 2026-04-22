@@ -1,6 +1,6 @@
 """Aggregated expense viewer grouped by the 3D classification coord.
 
-Reads ``expenses`` + ``expense_tags`` from the runtime DuckDB ledger
+Reads ``expenses`` + ``expense_tags`` from the runtime SQLite ledger
 and groups by the unique ``(category, event, tags)`` tuple — the
 "3D coordinate" the catalog is organized around. Two optional,
 mutually exclusive filters narrow the window: ``--year YYYY`` or
@@ -10,26 +10,27 @@ Output is a ``rich`` table by default; ``--csv`` emits plain CSV to
 stdout instead, which is what ``inv report-expenses --csv`` consumes
 to pipe the result into downstream tooling.
 
-Strictly read-only. Opens the shared ``duckdb_repo`` cursor, runs one
-aggregation SELECT, closes the cursor. Safe to run against live
-production data while the FastAPI service is serving HTTP.
+Strictly read-only. Opens a short-lived ``ledger_repo`` cursor, runs
+one aggregation SELECT, closes the cursor. Safe to run against live
+production data while the FastAPI service is serving HTTP — SQLite's
+WAL mode lets readers and the single writer coexist without blocking.
 """
 
 import argparse
 import csv
 import dataclasses
 import json
+import sqlite3
 import sys
 from collections.abc import Iterable
 from decimal import Decimal
 from typing import TextIO
 
-import duckdb
 from rich.console import Console
 from rich.table import Table
 
 from dinary.config import settings
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -65,10 +66,14 @@ _EXPENSES_AGGREGATION_SQL = """
             e.event_id,
             e.amount,
             COALESCE(
-                (SELECT STRING_AGG(t.name, ', ' ORDER BY t.name)
-                 FROM expense_tags et
-                 JOIN tags t ON t.id = et.tag_id
-                 WHERE et.expense_id = e.id),
+                (SELECT group_concat(t.name, ', ')
+                 FROM (
+                     SELECT t.name
+                     FROM expense_tags et
+                     JOIN tags t ON t.id = et.tag_id
+                     WHERE et.expense_id = e.id
+                     ORDER BY t.name
+                 ) t),
                 ''
             ) AS tags_joined
         FROM expenses e
@@ -120,19 +125,27 @@ def _build_filter(
     this helper accepts either alone or both ``None`` (= no filter)
     and keeps the SQL short. ``month`` accepts a pre-validated
     ``(year, month)`` pair so invalid values cannot reach the DB.
+
+    Year/month parameters are bound as integers to match the shape
+    used by ``src/dinary/sql/get_month_expenses.sql`` — both sides
+    of the comparison are integers in SQL (``strftime`` output is
+    cast to ``INTEGER``) so the query planner can compare without
+    a per-row string coercion, and the two call sites agree on
+    parameter type.
     """
     if month is not None:
         return (
-            "WHERE EXTRACT(YEAR FROM e.datetime) = ? AND EXTRACT(MONTH FROM e.datetime) = ?",
+            "WHERE CAST(strftime('%Y', e.datetime) AS INTEGER) = ?"
+            " AND CAST(strftime('%m', e.datetime) AS INTEGER) = ?",
             [month[0], month[1]],
         )
     if year is not None:
-        return "WHERE EXTRACT(YEAR FROM e.datetime) = ?", [year]
+        return "WHERE CAST(strftime('%Y', e.datetime) AS INTEGER) = ?", [year]
     return "", []
 
 
 def aggregate_expenses(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     *,
     year: int | None = None,
     month: tuple[int, int] | None = None,
@@ -140,7 +153,8 @@ def aggregate_expenses(
     """Aggregate matching expense rows by the 3D coord.
 
     The tag set is joined into a canonical, deterministic string
-    (``STRING_AGG(..., ', ' ORDER BY t.name)``) so two expenses whose
+    (``group_concat(t.name, ', ')`` over a pre-sorted subquery) so
+    two expenses whose
     tags are the same set but inserted in different orders collapse
     into one summary row. ``event`` is ``''`` when the expense has
     no event; this matches the project's convention of rendering
@@ -299,7 +313,7 @@ def render(  # noqa: PLR0913 — all args are cosmetic format knobs dispatched i
 ) -> None:
     """Render prefetched rows in the requested format.
 
-    Single entry point used by both :func:`run` (local DuckDB path)
+    Single entry point used by both :func:`run` (local SQLite path)
     and the ``tasks.py`` remote transport (JSON payload over SSH).
     ``year`` / ``month`` are cosmetic — they land in the rich table
     title only. Row filtering has already happened upstream.
@@ -331,7 +345,7 @@ def run(
 ) -> int:
     """Headless entry point used by ``main()`` and tests.
 
-    Thin ``fetch → render`` composition: open the local DuckDB,
+    Thin ``fetch → render`` composition: open the local SQLite DB,
     aggregate (optionally filtered by ``year`` / ``month``), render.
     Returns ``0`` unconditionally — "no matching expenses" is a
     valid report outcome, not an error.
@@ -342,16 +356,16 @@ def run(
     if as_csv and as_json:
         msg = "--csv and --json are mutually exclusive"
         raise ValueError(msg)
-    if not duckdb_repo.DB_PATH.exists():
+    if not ledger_repo.DB_PATH.exists():
         msg = (
-            f"DB not found at {duckdb_repo.DB_PATH}. Either point "
-            "DINARY_DATA_PATH at an existing DuckDB file, or use "
+            f"DB not found at {ledger_repo.DB_PATH}. Either point "
+            "DINARY_DATA_PATH at an existing SQLite file, or use "
             "`inv report-expenses --remote` to query the server."
         )
         print(msg, file=sys.stderr)
         return 1
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         rows = aggregate_expenses(con, year=year, month=month)
     finally:

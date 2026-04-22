@@ -12,17 +12,17 @@ import argparse
 import csv
 import dataclasses
 import json
+import sqlite3
 import sys
 from collections.abc import Iterable
 from decimal import Decimal
 from typing import TextIO
 
-import duckdb
 from rich.console import Console
 from rich.table import Table
 
 from dinary.config import settings
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -39,7 +39,7 @@ class IncomeSummaryRow:
 COLUMNS: tuple[str, ...] = ("year", "months", "total", "avg_month")
 
 
-def aggregate_income(con: duckdb.DuckDBPyConnection) -> list[IncomeSummaryRow]:
+def aggregate_income(con: sqlite3.Connection) -> list[IncomeSummaryRow]:
     """Return one summary row per year present in the ``income`` table.
 
     ``avg_month`` divides the per-year total by the count of
@@ -200,7 +200,7 @@ def render(
 ) -> None:
     """Render prefetched rows in the requested format.
 
-    Single entry point used by both :func:`run` (local DuckDB path)
+    Single entry point used by both :func:`run` (local SQLite path)
     and the ``tasks.py`` remote transport (JSON payload over SSH).
     Keeping fetch separate from render is what lets the same row
     set produce bit-identical output from either path.
@@ -225,7 +225,7 @@ def run(
 ) -> int:
     """Headless entry point used by ``main()`` and tests.
 
-    Thin ``fetch → render`` composition: open the local DuckDB,
+    Thin ``fetch → render`` composition: open the local SQLite DB,
     aggregate, render. Exists as a module-level function so the
     module is callable via ``python -m`` without pulling in the
     operator-tooling layer in ``tasks.py``.
@@ -240,16 +240,16 @@ def run(
     if as_csv and as_json:
         msg = "--csv and --json are mutually exclusive"
         raise ValueError(msg)
-    if not duckdb_repo.DB_PATH.exists():
+    if not ledger_repo.DB_PATH.exists():
         msg = (
-            f"DB not found at {duckdb_repo.DB_PATH}. Either point "
-            "DINARY_DATA_PATH at an existing DuckDB file, or use "
+            f"DB not found at {ledger_repo.DB_PATH}. Either point "
+            "DINARY_DATA_PATH at an existing SQLite file, or use "
             "`inv report-income --remote` to query the server."
         )
         print(msg, file=sys.stderr)
         return 1
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         rows = aggregate_income(con)
     finally:

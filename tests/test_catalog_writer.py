@@ -2,8 +2,8 @@
 
 Every mutation must:
 
-* Run inside a single DuckDB transaction (COMMIT or ROLLBACK, never
-  leave dangling state).
+* Run inside a single SQLite write transaction (COMMIT or ROLLBACK,
+  never leave dangling state).
 * Conditionally bump ``catalog_version`` using a canonical-state hash:
   observable changes bump, no-op rewrites don't.
 * Refuse to soft-delete a row still referenced by any ``expenses``
@@ -18,16 +18,16 @@ from datetime import date, datetime
 import allure
 import pytest
 
-from dinary.services import catalog_writer, duckdb_repo
+from dinary.services import catalog_writer, ledger_repo
 
 _DT = datetime(2026, 4, 20, 10, 0, 0)
 
 
 @pytest.fixture
 def fresh_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
-    duckdb_repo.init_db()
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+    ledger_repo.init_db()
 
 
 def _seed_minimal(con):
@@ -43,11 +43,11 @@ def _seed_minimal(con):
 @allure.feature("Version bump invariants")
 class TestVersionBump:
     def test_add_group_bumps_version(self, fresh_db):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
-            v0 = duckdb_repo.get_catalog_version(con)
+            v0 = ledger_repo.get_catalog_version(con)
             result = catalog_writer.add_group(con, name="new")
-            v1 = duckdb_repo.get_catalog_version(con)
+            v1 = ledger_repo.get_catalog_version(con)
         finally:
             con.close()
         assert v1 == v0 + 1
@@ -55,16 +55,16 @@ class TestVersionBump:
         assert result.id > 0
 
     def test_idempotent_add_of_existing_active_group_is_noop(self, fresh_db):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             _seed_minimal(con)
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
                 " VALUES (2, 'already_here', 2, TRUE)",
             )
-            v1 = duckdb_repo.get_catalog_version(con)
+            v1 = ledger_repo.get_catalog_version(con)
             result = catalog_writer.add_group(con, name="already_here")
-            v2 = duckdb_repo.get_catalog_version(con)
+            v2 = ledger_repo.get_catalog_version(con)
         finally:
             con.close()
         assert v2 == v1
@@ -72,15 +72,15 @@ class TestVersionBump:
         assert result.id == 2
 
     def test_reactivate_inactive_group_bumps(self, fresh_db):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
                 " VALUES (1, 'retired', 1, FALSE)",
             )
-            v0 = duckdb_repo.get_catalog_version(con)
+            v0 = ledger_repo.get_catalog_version(con)
             result = catalog_writer.add_group(con, name="retired")
-            v1 = duckdb_repo.get_catalog_version(con)
+            v1 = ledger_repo.get_catalog_version(con)
             row = con.execute(
                 "SELECT is_active FROM category_groups WHERE id = ?",
                 [result.id],
@@ -97,7 +97,7 @@ class TestVersionBump:
 @allure.feature("Reactivate preserves optional columns")
 class TestReactivatePreserves:
     def test_add_category_reactivate_preserves_sheet_columns(self, fresh_db):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -123,7 +123,7 @@ class TestReactivatePreserves:
         assert row[2] == "custom_group"
 
     def test_add_event_reactivate_preserves_dates_and_auto_attach(self, fresh_db):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO events"
@@ -160,10 +160,10 @@ class TestIntegrityRules:
         allowed (soft-retire). This mirrors the ``DELETE`` endpoint's
         soft-delete behaviour so PATCH and DELETE don't disagree on
         the same end-state; see ``edit_category`` docstring."""
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             _seed_minimal(con)
-            duckdb_repo.insert_expense(
+            ledger_repo.insert_expense(
                 con,
                 client_expense_id="pin-cat",
                 expense_datetime=_DT,
@@ -187,7 +187,7 @@ class TestIntegrityRules:
         assert bool(row[0]) is False
 
     def test_cannot_rename_into_existing_name(self, fresh_db):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             _seed_minimal(con)
             con.execute(
@@ -200,7 +200,7 @@ class TestIntegrityRules:
             con.close()
 
     def test_event_date_from_must_be_le_date_to(self, fresh_db):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             with pytest.raises(catalog_writer.CatalogWriteError):
                 catalog_writer.add_event(
@@ -226,7 +226,7 @@ class TestIntegrityRules:
         hits the add-or-reactivate path or the dedicated edit endpoint.
         Stored fields stay frozen on reactivate (see docstring) — the
         caller must use ``edit_event`` to actually change them."""
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO events"
@@ -255,17 +255,17 @@ class TestIntegrityRules:
         different group must 409, not silently move the row. The
         operator has to use edit_category(group_id=...) for an
         intentional relocation."""
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             _seed_minimal(con)
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
                 " VALUES (2, 'g2', 2, TRUE)",
             )
-            v0 = duckdb_repo.get_catalog_version(con)
+            v0 = ledger_repo.get_catalog_version(con)
             with pytest.raises(catalog_writer.CatalogConflictError):
                 catalog_writer.add_category(con, name="food", group_id=2)
-            v1 = duckdb_repo.get_catalog_version(con)
+            v1 = ledger_repo.get_catalog_version(con)
             row = con.execute(
                 "SELECT group_id, is_active FROM categories WHERE id = 1",
             ).fetchone()
@@ -279,7 +279,7 @@ class TestIntegrityRules:
         """An *inactive* match in a different group is legitimately
         reactivated and moved — the row wasn't serving any user-visible
         purpose, and the add action's group_id is authoritative."""
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             _seed_minimal(con)
             con.execute(
@@ -289,9 +289,9 @@ class TestIntegrityRules:
             con.execute(
                 "UPDATE categories SET is_active = FALSE WHERE id = 1",
             )
-            v0 = duckdb_repo.get_catalog_version(con)
+            v0 = ledger_repo.get_catalog_version(con)
             result = catalog_writer.add_category(con, name="food", group_id=2)
-            v1 = duckdb_repo.get_catalog_version(con)
+            v1 = ledger_repo.get_catalog_version(con)
             row = con.execute(
                 "SELECT group_id, is_active FROM categories WHERE id = 1",
             ).fetchone()
@@ -312,7 +312,7 @@ class TestAtomicPatch:
         ``sheet_group`` back to NULL. Needed by the future in-app
         editor so an operator can remove a stale mapping without
         having to delete and re-add the category."""
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -338,17 +338,17 @@ class TestAtomicPatch:
         assert row[1] is None
 
     def test_edit_category_applies_name_and_deactivate_in_one_tx(self, fresh_db):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             _seed_minimal(con)
-            v0 = duckdb_repo.get_catalog_version(con)
+            v0 = ledger_repo.get_catalog_version(con)
             catalog_writer.edit_category(
                 con,
                 1,
                 name="food-renamed",
                 is_active=False,
             )
-            v1 = duckdb_repo.get_catalog_version(con)
+            v1 = ledger_repo.get_catalog_version(con)
             row = con.execute(
                 "SELECT name, is_active FROM categories WHERE id = 1",
             ).fetchone()
@@ -364,7 +364,7 @@ class TestAtomicPatch:
         and must not commit any other column change in the same PATCH
         — the writer validates all inputs before any UPDATE so a
         partial commit is not possible."""
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             _seed_minimal(con)
             # Sibling row the rename would collide with.
@@ -372,7 +372,7 @@ class TestAtomicPatch:
                 "INSERT INTO categories (id, name, group_id, is_active)"
                 " VALUES (2, 'drink', 1, TRUE)",
             )
-            v0 = duckdb_repo.get_catalog_version(con)
+            v0 = ledger_repo.get_catalog_version(con)
             with pytest.raises(catalog_writer.CatalogConflictError):
                 catalog_writer.edit_category(
                     con,
@@ -380,7 +380,7 @@ class TestAtomicPatch:
                     name="drink",
                     is_active=False,
                 )
-            v1 = duckdb_repo.get_catalog_version(con)
+            v1 = ledger_repo.get_catalog_version(con)
             row = con.execute(
                 "SELECT name, is_active FROM categories WHERE id = 1",
             ).fetchone()
@@ -396,7 +396,7 @@ class TestAtomicPatch:
         self,
         fresh_db,
     ):
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO events"
@@ -430,12 +430,12 @@ class TestTagUsage:
         the ``tags`` table, so events and the map tab must keep
         resolving it by name.
 
-        This pins the direct user-reported failure mode: hiding
-        "отпуск" (a tag set only by vacation events, never manually)
-        used to trip 422 in ``_require_known_tag_names`` on every
-        subsequent event-edit that still named it.
+        This pins the failure mode where hiding "отпуск" (a tag set
+        only by vacation events, never manually) would trip 422 in
+        ``_require_known_tag_names`` on every subsequent event-edit
+        that still named it.
         """
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             _seed_minimal(con)
             con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'отпуск', FALSE)")
@@ -455,7 +455,7 @@ class TestTagUsage:
         gate stays: a typo or a hard-deleted tag name still 422s so
         ``resolve_event_auto_tag_ids`` never silently drops at runtime.
         """
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             _seed_minimal(con)
             con.execute(
@@ -476,11 +476,11 @@ class TestTagUsage:
         inactive tags — that's the whole point of "hide from picker,
         keep as an event auto_tags anchor".
         """
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             _seed_minimal(con)
             con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 't1', TRUE)")
-            duckdb_repo.insert_expense(
+            ledger_repo.insert_expense(
                 con,
                 client_expense_id="tag-pin",
                 expense_datetime=_DT,

@@ -7,10 +7,10 @@ round-trip that backs ``inv sql --remote``, and the safety contract
 
 import io
 import json as _json
+import sqlite3
 from decimal import Decimal
 
 import allure
-import duckdb
 import pytest
 
 from dinary.config import settings
@@ -27,12 +27,17 @@ def seeded_db(tmp_path, monkeypatch):
     coercion paths without coupling these tests to every migration.
     Only ``settings.data_path`` needs monkeypatching because
     ``sql._execute`` reads that directly rather than going through
-    ``duckdb_repo.DB_PATH`` (the stored-SQL runner is not relevant to
+    ``ledger_repo.DB_PATH`` (the stored-SQL runner is not relevant to
     this ad-hoc tool).
     """
-    db_path = tmp_path / "dinary.duckdb"
-    con = duckdb.connect(str(db_path))
+    db_path = tmp_path / "dinary.db"
+    # Open read-write with foreign keys + WAL so the seed shape
+    # matches what the runtime repo produces; otherwise the subsequent
+    # read-only open might surface a "database is locked" on
+    # legacy rollback-journal mode.
+    con = sqlite3.connect(str(db_path))
     try:
+        con.execute("PRAGMA journal_mode=WAL")
         con.execute("""
             CREATE TABLE sample (
                 id    INTEGER PRIMARY KEY,
@@ -43,6 +48,7 @@ def seeded_db(tmp_path, monkeypatch):
         con.execute(
             "INSERT INTO sample VALUES (1, 'еда', 12.34), (2, NULL, -5.00), (3, 'транспорт', 0)",
         )
+        con.commit()
     finally:
         con.close()
 
@@ -169,10 +175,11 @@ class TestReadOnlySafety:
     def test_writes_are_blocked_by_default(self, seeded_db):
         """The whole point of the tool's default mode: a typo'd
         ``UPDATE`` can't clobber the ledger because the connection is
-        opened ``read_only=True``. DuckDB surfaces this as an error
-        from the engine — the runner does not need any extra guard.
+        opened read-only (``file:...?mode=ro`` URI). SQLite surfaces
+        this as an ``OperationalError`` — the runner does not need
+        any extra guard.
         """
-        with pytest.raises(duckdb.Error):
+        with pytest.raises(sqlite3.OperationalError):
             sql_tool._execute("UPDATE sample SET label = 'x' WHERE id = 1")
 
         # And the row is actually untouched, belt and suspenders.
@@ -195,10 +202,10 @@ class TestReadOnlySafety:
 class TestWriteFlag:
     def test_main_without_write_refuses_update(self, capsys, seeded_db):
         """End-to-end CLI: running ``--query "UPDATE ..."`` without
-        ``--write`` must bubble up the DuckDB read-only error rather
+        ``--write`` must bubble up the SQLite read-only error rather
         than silently succeed.
         """
-        with pytest.raises(duckdb.Error):
+        with pytest.raises(sqlite3.OperationalError):
             sql_tool.main(["--query", "UPDATE sample SET label='x' WHERE id=1"])
 
     def test_main_with_write_applies_update(self, capsys, seeded_db):
@@ -228,7 +235,7 @@ class TestArgparse:
     def test_requires_query_or_file(self, capsys):
         """``inv sql`` with neither ``--query`` nor ``--file`` must
         exit 2 — argparse's "required" error — instead of silently
-        running an empty statement that would crash DuckDB later.
+        running an empty statement that would crash SQLite later.
         """
         with pytest.raises(SystemExit):
             sql_tool.main([])

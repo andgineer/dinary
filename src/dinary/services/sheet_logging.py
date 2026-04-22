@@ -18,7 +18,7 @@ from decimal import Decimal
 import gspread
 
 from dinary.config import settings, spreadsheet_id_from_setting
-from dinary.services import duckdb_repo, sheet_mapping
+from dinary.services import ledger_repo, sheet_mapping
 from dinary.services.nbs import get_rate
 from dinary.services.sheets import (
     append_expense_atomic,
@@ -144,7 +144,7 @@ def _reset_backoff() -> None:
 
 def _derive_rsd_for_sheet(
     con,
-    expense: duckdb_repo.ExpenseRow,
+    expense: ledger_repo.ExpenseRow,
     eur_rsd_rate: Decimal | None,
     expense_date: date,
 ) -> float | None:
@@ -191,18 +191,18 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
     spreadsheet_id: str,
 ) -> DrainResult:
     """Atomically claim, append, and clear one queue row."""
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     claim_token: str | None = None
     try:
         try:
-            claim_token = duckdb_repo.claim_logging_job(con, expense_pk)
+            claim_token = ledger_repo.claim_logging_job(con, expense_pk)
             if claim_token is None:
                 return DrainResult.FAILED
 
-            expense = duckdb_repo.get_expense_by_id(con, expense_pk)
+            expense = ledger_repo.get_expense_by_id(con, expense_pk)
             if expense is None:
                 logger.warning("Queue row for missing expense pk=%d; clearing", expense_pk)
-                duckdb_repo.clear_logging_job(con, expense_pk, claim_token)
+                ledger_repo.clear_logging_job(con, expense_pk, claim_token)
                 return DrainResult.NOOP_ORPHAN
 
             # The J-marker contract is "UUID of the last expense appended
@@ -221,7 +221,7 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
                     "poisoning (runtime rows must carry a UUID)",
                     expense_pk,
                 )
-                duckdb_repo.poison_logging_job(
+                ledger_repo.poison_logging_job(
                     con,
                     expense_pk,
                     f"Runtime expense pk={expense_pk} has no client_expense_id",
@@ -230,9 +230,9 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
 
             marker_key = expense.client_expense_id
 
-            tag_ids = duckdb_repo.get_expense_tags(con, expense_pk)
+            tag_ids = ledger_repo.get_expense_tags(con, expense_pk)
 
-            projection = duckdb_repo.logging_projection(
+            projection = ledger_repo.logging_projection(
                 con,
                 category_id=expense.category_id,
                 event_id=expense.event_id,
@@ -251,7 +251,7 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
                     expense.category_id,
                     expense_pk,
                 )
-                duckdb_repo.poison_logging_job(
+                ledger_repo.poison_logging_job(
                     con,
                     expense_pk,
                     f"No sheet_mapping fallback possible for category_id={expense.category_id}",
@@ -262,7 +262,7 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
         except Exception:
             if claim_token is not None:
                 try:
-                    duckdb_repo.release_logging_claim(con, expense_pk, claim_token)
+                    ledger_repo.release_logging_claim(con, expense_pk, claim_token)
                 except Exception:
                     logger.exception("Failed to release claim for pk=%d", expense_pk)
             raise
@@ -272,8 +272,7 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
         # projection via ``=B/H``, so H must be the RSD-per-1-EUR rate
         # for the expense date regardless of what the expense was
         # originally priced in. Reuse the already-open cursor ``con``
-        # — the singleton engine allows unlimited cursors on the same
-        # connection, so opening a second one here was just noise.
+        # rather than opening a second connection.
         expense_date = expense.datetime.date()
         rate: Decimal | None = None
         rate_str: str | None = None
@@ -302,7 +301,7 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
             )
             if claim_token is not None:
                 try:
-                    duckdb_repo.release_logging_claim(con, expense_pk, claim_token)
+                    ledger_repo.release_logging_claim(con, expense_pk, claim_token)
                 except Exception:
                     logger.exception("Failed to release claim for pk=%d", expense_pk)
             return DrainResult.FAILED
@@ -320,9 +319,9 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
                 expense_date=expense_date,
                 rate=rate_str,
             )
-            cleared = duckdb_repo.clear_logging_job(con, expense_pk, claim_token)
+            cleared = ledger_repo.clear_logging_job(con, expense_pk, claim_token)
             if not cleared:
-                deleted = duckdb_repo.force_clear_logging_job(con, expense_pk)
+                deleted = ledger_repo.force_clear_logging_job(con, expense_pk)
                 if deleted:
                     logger.error(
                         "Append succeeded for pk=%d but claim stolen; force-deleted",
@@ -333,7 +332,7 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
         except Exception:
             logger.exception("Append to sheet failed for expense pk=%d", expense_pk)
             try:
-                duckdb_repo.release_logging_claim(con, expense_pk, claim_token)
+                ledger_repo.release_logging_claim(con, expense_pk, claim_token)
             except Exception:
                 logger.exception("Failed to release claim for pk=%d", expense_pk)
             raise
@@ -418,7 +417,7 @@ def _append_row_to_sheet(  # noqa: PLR0913
 
 
 def drain_pending() -> dict:  # noqa: C901, PLR0912, PLR0915
-    """Drain ``sheet_logging_jobs`` from the single dinary.duckdb."""
+    """Drain ``sheet_logging_jobs`` from the single ``dinary.db``."""
     spreadsheet_id = get_logging_spreadsheet_id()
     if spreadsheet_id is None:
         return {"disabled": True}
@@ -437,9 +436,9 @@ def drain_pending() -> dict:  # noqa: C901, PLR0912, PLR0915
         "poisoned": 0,
     }
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
-        expense_pks = duckdb_repo.list_logging_jobs(con)
+        expense_pks = ledger_repo.list_logging_jobs(con)
     finally:
         con.close()
 
@@ -473,9 +472,9 @@ def drain_pending() -> dict:  # noqa: C901, PLR0912, PLR0915
                 summary["failed"] += 1
                 summary["cap_reached"] = cap_reached
                 return summary
-            con2 = duckdb_repo.get_connection()
+            con2 = ledger_repo.get_connection()
             try:
-                duckdb_repo.poison_logging_job(
+                ledger_repo.poison_logging_job(
                     con2,
                     expense_pk,
                     f"{type(exc).__name__}: {exc}",

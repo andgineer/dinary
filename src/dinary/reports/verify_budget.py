@@ -2,9 +2,7 @@
 
 Takes the pre-parsed dict (or list of dicts) that
 :func:`dinary.imports.verify_equivalence.verify_bootstrap_import`
-returns and renders it as a compact summary + drill-down tables,
-instead of dumping the raw ``json.dumps(..., indent=2)`` blob that
-the old ``inv verify-bootstrap-import*`` output used to be.
+returns and renders it as a compact summary + drill-down tables.
 
 This module is dev-only tooling: it lives inside ``dinary.reports``
 (never imported by the FastAPI runtime) so depending on ``rich`` at

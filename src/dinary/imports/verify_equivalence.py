@@ -6,7 +6,7 @@ Run after `inv import-budget --year=YYYY`. Aggregates by
   * sheet side — re-reads the historical worksheet exactly as
     `imports/expense_import.py` does (same layout, same RUB/RSD
     currency rules);
-  * DB side — sums `amount_original` on every row of `data/dinary.duckdb`
+  * DB side — sums `amount_original` on every row of `data/dinary.db`
     that belongs to *year*, grouped by the `(sheet_category, sheet_group)`
     provenance pair that `imports/expense_import.py` baked in.
 
@@ -28,7 +28,7 @@ from dinary.imports.expense_import import (
     parse_display_amount,
     resolve_currency,
 )
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 from dinary.services.sheets import (
     HEADER_ROWS,
     _cell,
@@ -105,14 +105,15 @@ def _read_db_aggregates(year: int) -> dict[int, dict[tuple[str, str], dict]]:
     """Aggregate every bootstrap-imported expense row by sheet provenance."""
     result: dict[int, dict[tuple[str, str], dict]] = defaultdict(dict)
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         rows = con.execute(
-            "SELECT MONTH(datetime), sheet_category, sheet_group, amount_original, comment"
+            "SELECT CAST(strftime('%m', datetime) AS INTEGER),"
+            " sheet_category, sheet_group, amount_original, comment"
             " FROM expenses"
-            " WHERE YEAR(datetime) = ?"
+            " WHERE strftime('%Y', datetime) = ?"
             "   AND sheet_category IS NOT NULL AND sheet_group IS NOT NULL",
-            [year],
+            [f"{year:04d}"],
         ).fetchall()
     finally:
         con.close()
@@ -135,7 +136,7 @@ def verify_bootstrap_import(year: int) -> dict:
     but do not flip `ok` (sheet-side comments are concatenated with `;` and
     the import path may have applied normalization).
     """
-    duckdb_repo.init_db()
+    ledger_repo.init_db()
     sheet_data = _read_sheet_aggregates(year)
     db_data = _read_db_aggregates(year)
 

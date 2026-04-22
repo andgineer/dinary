@@ -54,7 +54,7 @@ _DEPRECATED_ENV_RENAMES = {
     "DINARY_GOOGLE_SHEETS_SPREADSHEET_ID": "DINARY_SHEET_LOGGING_SPREADSHEET",
 }
 
-#: Env vars that used to be supported and are now gone with no successor.
+#: Env vars that are no longer recognised and have no successor.
 #: Unlike ``_DEPRECATED_ENV_RENAMES`` the warning does not suggest a new
 #: name — the feature was removed outright. Kept separate so the loop
 #: below can format its message appropriately.
@@ -151,8 +151,10 @@ def _default_layout_for_year(year: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Import sources loader — the file-backed replacement for the
-# ``import_sources`` DuckDB table.
+# Import sources loader — file-backed registry at
+# ``.deploy/import_sources.json``. Kept out of the DB so non-import
+# deployments don't need any rows to function and operator edits
+# don't require a DB migration.
 # ---------------------------------------------------------------------------
 
 
@@ -340,7 +342,7 @@ class Settings(BaseSettings):
     # RSD because the user types in dinars; this setting is what the
     # DB is denominated in.
     accounting_currency: str = "EUR"
-    data_path: str = "data/dinary.duckdb"
+    data_path: str = "data/dinary.db"
 
     sheet_logging_drain_interval_sec: float = 300.0
     sheet_logging_drain_max_attempts_per_iteration: int = 15

@@ -3,30 +3,27 @@ from fastapi.testclient import TestClient
 
 from dinary.config import settings
 from dinary.main import create_app
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 
 
-def _reset_duckdb_singleton() -> None:
-    """Tear down the process-wide DuckDB connection between tests.
+def _reset_db_singleton() -> None:
+    """Reset repo-level DB state between tests.
 
-    Lives in conftest (not in production ``duckdb_repo``) because
-    nothing in production should ever close the singleton out from
-    under live callers; only the test harness needs this hook. The
-    production repo keeps a single connection to ``data/dinary.duckdb``
-    for the whole process; most tests monkeypatch ``DB_PATH`` (and
-    ``DATA_DIR``) to a per-test ``tmp_path``, so the singleton from
-    the previous test must be closed or it would still point at the
-    previous test's tmp file.
+    ``ledger_repo.get_connection`` returns a fresh ``sqlite3``
+    connection per call, so there is no singleton to close today —
+    ``close_connection`` is a no-op. The fixture hook is retained as
+    a known tear-down point if any future connection-pool-style
+    caching is added.
     """
-    duckdb_repo.close_connection()
+    ledger_repo.close_connection()
 
 
 @pytest.fixture(autouse=True)
-def _reset_duckdb_connection():
-    """Reset the singleton connection before AND after each test."""
-    _reset_duckdb_singleton()
+def _reset_db_connection():
+    """Reset repo-level DB state before AND after each test."""
+    _reset_db_singleton()
     yield
-    _reset_duckdb_singleton()
+    _reset_db_singleton()
 
 
 @pytest.fixture(autouse=True)

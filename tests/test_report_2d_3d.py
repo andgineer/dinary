@@ -29,13 +29,13 @@ from dinary.imports.report_2d_3d import (
     render_rich,
     render_years,
 )
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 
 
 @pytest.fixture(autouse=True)
 def _tmp_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
 
 
 @pytest.fixture(autouse=True)
@@ -58,9 +58,9 @@ def _stub_import_sources(monkeypatch):
 
 
 def _seed_catalog():
-    """Seed a minimal catalog into ``dinary.duckdb`` for resolution tests."""
-    duckdb_repo.init_db()
-    con = duckdb_repo.get_connection()
+    """Seed a minimal catalog into ``dinary.db`` for resolution tests."""
+    ledger_repo.init_db()
+    con = ledger_repo.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -129,7 +129,7 @@ def _seed_catalog():
 class TestResolveRowTo3d:
     def test_mapping_resolution_kind(self):
         _seed_catalog()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -152,7 +152,7 @@ class TestResolveRowTo3d:
 
     def test_event_from_mapping(self):
         _seed_catalog()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -174,7 +174,7 @@ class TestResolveRowTo3d:
     def test_heuristic_detection_small_amount(self):
         """Amount < 200 EUR on 'аренда'+'релокация' → 'коммунальные' via heuristic."""
         _seed_catalog()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -196,7 +196,7 @@ class TestResolveRowTo3d:
     def test_no_heuristic_for_large_amount(self):
         """Amount >= 200 EUR on 'аренда'+'релокация' stays 'аренда'."""
         _seed_catalog()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -217,7 +217,7 @@ class TestResolveRowTo3d:
 
     def test_beneficiary_tag_added(self):
         _seed_catalog()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -238,7 +238,7 @@ class TestResolveRowTo3d:
 
     def test_returns_none_for_unknown_pair(self):
         _seed_catalog()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -266,7 +266,7 @@ class TestResolveRowTo3d:
 class TestPostImportFixViaResolve:
     def test_comment_keyed_fix_overrides_mapping(self):
         _seed_catalog()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -288,7 +288,7 @@ class TestPostImportFixViaResolve:
 
     def test_unmatched_comment_keeps_mapping(self):
         _seed_catalog()
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -566,7 +566,7 @@ class TestCollectDetailRows:
     def test_missing_resolution_context_skips_year(self, monkeypatch):
         """No catalog seeded → build_resolution_context returns None and
         the year is skipped without consulting the iterator."""
-        duckdb_repo.init_db()
+        ledger_repo.init_db()
 
         called = {"value": False}
 
@@ -621,7 +621,7 @@ class TestCollectDetailRows:
         # resolution context. Without this, build_resolution_context
         # would itself skip 2025 and we couldn't tell the two skip
         # paths apart.
-        con = duckdb_repo.get_connection()
+        con = ledger_repo.get_connection()
         try:
             con.execute(
                 "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"

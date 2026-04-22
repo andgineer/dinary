@@ -8,13 +8,13 @@ import allure
 import pytest
 
 from dinary.reports import income as income_report
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 
 
 @pytest.fixture(autouse=True)
 def _tmp_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
 
 
 def _seed_income(con) -> None:
@@ -39,8 +39,8 @@ def _seed_income(con) -> None:
 
 @pytest.fixture
 def _seeded_con():
-    duckdb_repo.init_db()
-    con = duckdb_repo.get_connection()
+    ledger_repo.init_db()
+    con = ledger_repo.get_connection()
     try:
         _seed_income(con)
         yield con
@@ -69,8 +69,8 @@ class TestAggregate:
         assert years == sorted(years, reverse=True)
 
     def test_empty_income_table_returns_empty_list(self):
-        duckdb_repo.init_db()
-        con = duckdb_repo.get_connection()
+        ledger_repo.init_db()
+        con = ledger_repo.get_connection()
         try:
             rows = income_report.aggregate_income(con)
         finally:
@@ -121,7 +121,7 @@ class TestRenderRich:
 @allure.feature("income — run()")
 class TestRun:
     def test_missing_db_returns_nonzero(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "absent.duckdb")
+        monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "absent.db")
         buf = io.StringIO()
         rc = income_report.run(as_csv=False, stream=buf)
         captured = capsys.readouterr()

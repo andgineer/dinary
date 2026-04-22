@@ -35,7 +35,7 @@ from dinary.imports.expense_import import (
     iter_parsed_sheet_rows,
     resolve_row_to_3d,
 )
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +272,7 @@ def collect_detail_rows(
     """
     if stats is None:
         stats = CollectStats()
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         years_to_process = years if years is not None else _get_import_years()
         all_details: list[DetailRow] = []
@@ -525,7 +525,7 @@ def generate_report(
 ) -> CollectStats:
     """Generate and render the 2D-to-3D resolution report to stdout.
 
-    Strictly read-only: assumes ``data/dinary.duckdb`` already exists
+    Strictly read-only: assumes ``data/dinary.db`` already exists
     (populated by ``inv import-catalog``). Raises ``FileNotFoundError``
     if it doesn't, instead of silently creating an empty database.
 
@@ -535,8 +535,8 @@ def generate_report(
     if as_csv and as_json:
         msg = "--csv and --json are mutually exclusive"
         raise ValueError(msg)
-    if not duckdb_repo.DB_PATH.exists():
-        msg = f"DB not found at {duckdb_repo.DB_PATH}. Run `inv import-catalog` first."
+    if not ledger_repo.DB_PATH.exists():
+        msg = f"DB not found at {ledger_repo.DB_PATH}. Run `inv import-catalog` first."
         raise FileNotFoundError(msg)
 
     out = stream if stream is not None else sys.stdout

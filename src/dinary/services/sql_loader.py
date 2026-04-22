@@ -1,14 +1,27 @@
-"""SQL file loader and typed row mapper for DuckDB queries.
+"""SQL file loader and typed row mapper for the server's SQLite queries.
 
-Loads .sql files from the dinary.sql package and maps DuckDB tuple results
-to typed dataclass instances using con.description column names.
+Loads .sql files from the dinary.sql package and maps stdlib sqlite3 tuple
+results to typed dataclass instances using the cursor's ``description``
+column names.
+
+Contributor contract: every ``SELECT`` column consumed through
+``fetchone_as`` / ``fetchall_as`` MUST carry an explicit ``AS <name>``
+alias whose value matches the corresponding dataclass field. SQLite's
+``cursor.description[i][0]`` returns whatever text appears in the
+``SELECT`` list for the column — for a bare column reference
+(``e.amount``) that is the column name, but for a computed expression
+(``COALESCE(...)``, ``CASE ...``, ``json_group_array(...)``,
+``strftime(...)``) it is the raw expression source. Without an alias
+``_validate_columns`` would reject the query with a "SQL/dataclass
+mismatch" error that points at a confusing expression string instead
+of the field name the author meant. Aliases keep the SQL ↔ dataclass
+pairing explicit and survive SQL-formatter round-trips unchanged.
 """
 
 import dataclasses
+import sqlite3
 from importlib import resources
 from typing import TypeVar
-
-import duckdb
 
 _cache: dict[str, str] = {}
 
@@ -34,20 +47,17 @@ def _validate_columns(cls: type[T], columns: list[str]) -> None:
         )
 
 
-def _columns(con: duckdb.DuckDBPyConnection) -> list[str]:
-    return [desc[0] for desc in con.description]
-
-
 def fetchone_as(
     cls: type[T],
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     sql: str,
     params: list | None = None,
 ) -> T | None:
     """Execute SQL, map the first result row to a dataclass instance."""
-    row = con.execute(sql, params or []).fetchone()
-    columns = _columns(con)
+    cursor = con.execute(sql, params or [])
+    columns = [desc[0] for desc in cursor.description]
     _validate_columns(cls, columns)
+    row = cursor.fetchone()
     if row is None:
         return None
     return cls(**dict(zip(columns, row, strict=False)))
@@ -55,14 +65,15 @@ def fetchone_as(
 
 def fetchall_as(
     cls: type[T],
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     sql: str,
     params: list | None = None,
 ) -> list[T]:
     """Execute SQL, map all result rows to dataclass instances."""
-    rows = con.execute(sql, params or []).fetchall()
-    columns = _columns(con)
+    cursor = con.execute(sql, params or [])
+    columns = [desc[0] for desc in cursor.description]
     _validate_columns(cls, columns)
+    rows = cursor.fetchall()
     if not rows:
         return []
     return [cls(**dict(zip(columns, r, strict=False))) for r in rows]

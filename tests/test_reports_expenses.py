@@ -9,13 +9,13 @@ import allure
 import pytest
 
 from dinary.reports import expenses as expenses_report
-from dinary.services import duckdb_repo
+from dinary.services import ledger_repo
 
 
 @pytest.fixture(autouse=True)
 def _tmp_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(duckdb_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "dinary.duckdb")
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
 
 
 def _seed_catalog(con) -> None:
@@ -58,8 +58,8 @@ def _seed_catalog(con) -> None:
 
 @pytest.fixture
 def _seeded_con():
-    duckdb_repo.init_db()
-    con = duckdb_repo.get_connection()
+    ledger_repo.init_db()
+    con = ledger_repo.get_connection()
     try:
         _seed_catalog(con)
         yield con
@@ -103,14 +103,17 @@ class TestBuildFilter:
 
     def test_year_only(self):
         where, params = expenses_report._build_filter(year=2026, month=None)
-        assert "EXTRACT(YEAR FROM e.datetime) = ?" in where
-        assert "MONTH" not in where
+        # ``CAST(... AS INTEGER)`` matches ``get_month_expenses.sql``
+        # so the single param is a plain ``int`` rather than a
+        # zero-padded string.
+        assert "CAST(strftime('%Y', e.datetime) AS INTEGER) = ?" in where
+        assert "%m" not in where
         assert params == [2026]
 
     def test_month_and_year(self):
         where, params = expenses_report._build_filter(year=None, month=(2026, 6))
-        assert "EXTRACT(YEAR FROM e.datetime) = ?" in where
-        assert "EXTRACT(MONTH FROM e.datetime) = ?" in where
+        assert "CAST(strftime('%Y', e.datetime) AS INTEGER) = ?" in where
+        assert "CAST(strftime('%m', e.datetime) AS INTEGER) = ?" in where
         assert params == [2026, 6]
 
 
@@ -217,7 +220,7 @@ class TestRun:
         # Point DB_PATH at a path that does NOT exist. run() must
         # refuse to silently init an empty DB — the CLI already
         # offers --remote for the "no local snapshot" case.
-        monkeypatch.setattr(duckdb_repo, "DB_PATH", tmp_path / "absent.duckdb")
+        monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "absent.db")
         buf = io.StringIO()
         rc = expenses_report.run(year=None, month=None, as_csv=False, stream=buf)
         captured = capsys.readouterr()

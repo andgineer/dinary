@@ -18,7 +18,7 @@ Oracle Cloud Always Free предоставляет бессрочные VM — 
     **ARM Ampere A1** (`VM.Standard.A1.Flex`, до 24 ГБ RAM) — мощнее, но часто недоступен ("Out of host capacity"). Если удалось создать — отлично, если нет — берите AMD Micro.
 
 !!! warning
-    Oracle может отключить неактивные Always Free инстансы. Работающий сервер dinary поддерживает инстанс активным. Если инстанс отключён, VM можно пересоздать, но runtime source of truth лежит в `data/*.duckdb` на диске, а не в Google Sheets. Перед деструктивными операциями делайте backup `~/dinary/data/` и не считайте sheet logging таблицу полноценным источником восстановления.
+    Oracle может отключить неактивные Always Free инстансы. Работающий сервер dinary поддерживает инстанс активным. Если инстанс отключён, VM можно пересоздать, но runtime source of truth лежит в `data/dinary.db` на диске, а не в Google Sheets. Перед деструктивными операциями делайте backup `~/dinary/data/` и не считайте sheet logging таблицу полноценным источником восстановления.
 
 ## Требования
 
@@ -122,7 +122,7 @@ inv setup
 - Синхронизирует ваш локальный `.deploy/.env` на VM
 - Загружает `~/.config/gspread/service_account.json` на VM
 - Создаёт и запускает systemd-сервис `dinary`
-- Сеет базовую таксономию в `dinary.duckdb` через `inv bootstrap-catalog`
+- Сеет базовую таксономию в `dinary.db` через `inv bootstrap-catalog`
 - Настраивает туннель (Tailscale по умолчанию, или Cloudflare — в зависимости от `DINARY_TUNNEL`)
 
 ### Tailscale (по умолчанию)

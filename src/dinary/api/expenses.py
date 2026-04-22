@@ -23,16 +23,16 @@ Errors:
 """
 
 import asyncio
+import sqlite3
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-import duckdb
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from dinary.config import settings
-from dinary.services import duckdb_repo, sheet_mapping
+from dinary.services import ledger_repo, sheet_mapping
 from dinary.services.nbs import convert
 from dinary.services.sheet_logging import is_sheet_logging_enabled, notify_new_work
 
@@ -63,7 +63,7 @@ class ExpenseResponse(BaseModel):
 
 @router.post("/api/expenses", response_model=ExpenseResponse)
 async def create_expense(req: ExpenseRequest) -> ExpenseResponse:
-    # DuckDB / NBS calls are synchronous and would otherwise block every
+    # SQLite / NBS calls are synchronous and would otherwise block every
     # other request on the single-worker event loop. Offload the whole
     # body to the default thread pool; the lifespan drain already does
     # the same for its own blocking work.
@@ -80,7 +80,7 @@ async def create_expense(req: ExpenseRequest) -> ExpenseResponse:
 def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
     currency = req.currency or settings.app_currency
 
-    con = duckdb_repo.get_connection()
+    con = ledger_repo.get_connection()
     try:
         _resolve_category_for_write(con, req)
         _validate_event(con, req)
@@ -134,7 +134,7 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
         amount_orig_f = float(req.amount)
         comment = req.comment or ""
         try:
-            result = duckdb_repo.insert_expense(
+            result = ledger_repo.insert_expense(
                 con,
                 client_expense_id=req.client_expense_id,
                 expense_datetime=expense_dt,
@@ -159,7 +159,7 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
             # the original POST and a replay — lands here as a
             # tag_ids-only diff, which lets the client distinguish it
             # from a real body-drift conflict without guessing.
-            diff = duckdb_repo.describe_expense_conflict(
+            diff = ledger_repo.describe_expense_conflict(
                 con,
                 client_expense_id=req.client_expense_id,
                 expense_datetime=expense_dt,
@@ -180,7 +180,7 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
                 detail = f"{detail}: {diff}"
             raise HTTPException(status_code=409, detail=detail)
 
-        catalog_version = duckdb_repo.get_catalog_version(con)
+        catalog_version = ledger_repo.get_catalog_version(con)
     finally:
         con.close()
 
@@ -195,7 +195,7 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
 
 
 def _is_replay(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     client_expense_id: str,
 ) -> bool:
     """True if an ``expenses`` row already exists for ``client_expense_id``.
@@ -206,7 +206,7 @@ def _is_replay(
     for correct duplicate-vs-conflict classification (200 or 409).
 
     The actual duplicate-vs-conflict decision is made in a single place
-    (``duckdb_repo.insert_expense``) so we never drift two compare
+    (``ledger_repo.insert_expense``) so we never drift two compare
     implementations apart.
 
     Race window (single-worker deployment, very narrow):
@@ -235,11 +235,11 @@ def _is_replay(
     ``insert_expense``'s ``BEGIN``; deferred because the refactor
     touches every catalog validation path in this module.
     """
-    return duckdb_repo.lookup_existing_expense(client_expense_id, con=con) is not None
+    return ledger_repo.lookup_existing_expense(client_expense_id, con=con) is not None
 
 
 def _resolve_category_for_write(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     req: ExpenseRequest,
 ) -> None:
     """Validate ``req.category_id`` resolves to an active category.
@@ -272,7 +272,7 @@ def _resolve_category_for_write(
 
 
 def _validate_event(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     req: ExpenseRequest,
 ) -> None:
     if req.event_id is None:
@@ -301,7 +301,7 @@ def _validate_event(
 
 
 def _validate_tags(
-    con: duckdb.DuckDBPyConnection,
+    con: sqlite3.Connection,
     req: ExpenseRequest,
 ) -> None:
     if not req.tag_ids:

@@ -426,7 +426,7 @@ writing a one-off DuckDB-dump → SQLite-load script:
 Concrete steps:
 
 - Treat this as a **repo-wide engine-boundary refactor**, not a thin
-  file swap. The current code imports `duckdb_repo` directly across
+  file swap. The current code imports `ledger_repo` directly across
   API handlers, imports, reports, and tests; uses DuckDB connection
   types in annotations; ships a DuckDB-only yoyo backend; and embeds
   DuckDB-specific SQL constructs (`CREATE SEQUENCE`, `nextval(...)`,
@@ -434,7 +434,7 @@ Concrete steps:
   `read_only=True` connection assumptions). Inventory those call
   sites first so the branch scope is explicit.
 - Introduce the narrowest compatibility boundary that keeps the
-  branch reviewable. That may still preserve the `duckdb_repo`
+  branch reviewable. That may still preserve the `ledger_repo`
   module path temporarily as a facade backed by SQLite; the key is
   that application code stops depending on DuckDB-only types and
   behaviors.
@@ -547,24 +547,30 @@ Concrete steps:
 - Precondition: Phase 1.5 has already produced a validated
   `data/dinary.db` on VM 1, production is serving from SQLite, and VM 2
   is already receiving Litestream snapshots.
-- Keep `/etc/litestream.yml` on VM 1 as:
+- Keep `/etc/litestream.yml` on VM 1 as (Litestream v0.5.x schema —
+  `replica` is singular, and `snapshot`/`retention` live at the top
+  level, not per-replica):
 
   ```yaml
+  snapshot:
+    interval: 1h         # one full snapshot per hour
+    retention: 168h      # keep one week of LTX history
   dbs:
     - path: /home/ubuntu/dinary/data/dinary.db
-      replicas:
-        - type: sftp
-          host: dinary-replica:22
-          user: ubuntu
-          key-path: /home/ubuntu/.ssh/id_ed25519
-          path: /home/ubuntu/replicas/dinary
-          retention: 168h   # one week of WAL history
-          snapshot-interval: 6h
+      replica:
+        type: sftp
+        host: dinary-replica:22
+        user: ubuntu
+        key-path: /home/ubuntu/.ssh/id_ed25519
+        path: /home/ubuntu/replicas/dinary
   ```
 
-- Monitor for one week: verify `litestream snapshots` lists healthy
-  snapshots on VM 2, WAL catchup time stays under a few seconds, and no
-  error bursts during PWA-driven write spikes.
+- Monitor for one week: verify `litestream databases` lists the
+  managed DB, LTX catchup time stays under a few seconds, and no
+  error bursts during PWA-driven write spikes. (The v0.4 `litestream
+  snapshots` subcommand was removed in v0.5 when the storage layer
+  was rewritten around LTX files; v0.5 replaces it with
+  `databases`/`list`/`status`.)
 - At this point the server has SQLite + hot off-site backup. Reversible:
   stopping Litestream has no effect on the app path.
 
@@ -572,18 +578,18 @@ Concrete steps:
 
 The Litestream replica on VM 2 has two knobs that interact:
 
-- `snapshot-interval` — how often Litestream writes a full consistent
-  snapshot into the SFTP target. Shorter interval = smaller WAL tail to
+- `snapshot.interval` — how often Litestream writes a full consistent
+  snapshot into the SFTP target. Shorter interval = smaller LTX tail to
   replay on restore, slightly more storage on VM 2.
-- `retention` — how long old snapshots and their WAL segments are kept in
-  the target before garbage collection.
+- `snapshot.retention` — how long old snapshots and their LTX segments
+  are kept in the target before garbage collection.
 
 For the "laptop back from a multi-week holiday" case, the governing
-invariant is **not retention, but snapshot-interval**: `litestream
+invariant is **not retention, but `snapshot.interval`**: `litestream
 restore` always starts from the most recent snapshot still in the target
-and replays WAL forward from there, so any restore request is satisfied
+and replays LTX forward from there, so any restore request is satisfied
 as long as at least one snapshot from any point in time is present. With
-a 6 h snapshot interval, that always holds regardless of how long the
+a 1 h snapshot interval, that always holds regardless of how long the
 laptop was offline.
 
 Retention matters only for point-in-time recovery ("give me state as of
@@ -623,8 +629,8 @@ is the real risk signal.
   layer.** The Litestream target on VM 2 is the source of truth; the
   laptop's local file is a disposable cache. `litestream restore` on an
   empty destination finds the latest snapshot on VM 2 (always within the
-  6 h `snapshot-interval`, regardless of how long the laptop was off the
-  network) and replays WAL from there to HEAD. There is no "resume from
+  1 h `snapshot.interval`, regardless of how long the laptop was off the
+  network) and replays LTX from there to HEAD. There is no "resume from
   position X" bookkeeping on the laptop, and therefore no state that can
   drift so far it becomes irreconcilable. A two-week vacation and a
   two-minute network blip take identical code paths: delete the old file,
@@ -790,6 +796,15 @@ not**:
 - Remove `duckdb` from `pyproject.toml` on the *server* dependency
   section. Keep it in the dev / laptop dependencies — analytics and the
   CLI tools on the laptop side still need it for `ATTACH sqlite`.
+
+  **Deviation (implementation): `duckdb` has been fully removed from
+  `pyproject.toml` for now, including from dev dependencies.** The
+  server code no longer imports `duckdb` anywhere (the `ledger_repo`
+  module is a pure-`sqlite3` compatibility facade), so shipping
+  `duckdb` as a dev dep would be dead weight until Phase 5 actually
+  wires up the `ATTACH sqlite` laptop analytics path. `duckdb` should
+  be re-added as a dev dep in the Phase 5 implementation PR together
+  with the first piece of code that imports it.
 - Update `.plans/architecture.md`'s data-layer section to point to this
   plan as the historical record.
 
@@ -837,7 +852,7 @@ once this migration is green in prod for a few weeks.
 - **Laptop offline for longer than retention.** Not a failure mode in
   this topology. The catch-up procedure (§10 Phase 3) does a fresh
   restore from VM 2 regardless of how stale the local file is, and
-  `snapshot-interval` (not `retention`) is the governing knob for that
+  `snapshot.interval` (not `snapshot.retention`) is the governing knob for that
   to keep working — see Phase 2.5. The laptop never gets into an
   "irreconcilable" state because it does not track any sync position of
   its own.
