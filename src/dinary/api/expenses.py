@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from dinary.config import settings
 from dinary.services import ledger_repo, sheet_mapping
-from dinary.services.nbs import convert
+from dinary.services.exchange_rates import get_rate
 from dinary.services.sheet_logging import is_sheet_logging_enabled, notify_new_work
 
 router = APIRouter()
@@ -88,13 +88,14 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
 
         amount_acc = req.amount
         if currency.upper() != settings.accounting_currency.upper():
-            amount_acc, _rate = convert(
+            rate = get_rate(
                 con,
-                req.amount,
+                req.date,
                 currency,
                 settings.accounting_currency,
-                req.date,
+                offline=True,
             )
+            amount_acc = (req.amount * rate).quantize(Decimal("0.01"))
 
         expense_dt = datetime.combine(req.date, datetime.min.time())
 

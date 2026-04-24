@@ -48,7 +48,7 @@ from dinary.imports.seed import (
     tags_for_source,
 )
 from dinary.services import ledger_repo, sheet_mapping
-from dinary.services.nbs import get_rate
+from dinary.services.exchange_rates import get_rate
 from dinary.services.seed_config import (
     BUSINESS_TRIP_EVENT_LAST_YEAR,
     BUSINESS_TRIP_EVENT_PREFIX,
@@ -317,39 +317,16 @@ def _prefetch_monthly_rates(
         for month in range(1, MONTHS_IN_YEAR + 1):
             currency = resolve_currency(year, month, layout).upper()
             rate_date = date(year, month, 1)
-            rate_src = Decimal(1) if currency == "RSD" else get_rate(con, rate_date, currency)
-            rate_eur = Decimal(1) if currency == "EUR" else get_rate(con, rate_date, "EUR")
-            rate_acc = (
-                Decimal(1)
-                if accounting_currency == "RSD"
-                else get_rate(con, rate_date, accounting_currency)
-            )
+            rate_acc = get_rate(con, rate_date, currency, accounting_currency)
+            rate_eur = get_rate(con, rate_date, currency, "EUR")
             rates[month] = {
-                "rate_src": rate_src,
-                "rate_eur": rate_eur,
                 "rate_acc": rate_acc,
+                "rate_eur": rate_eur,
             }
         return rates
     finally:
         if own_con:
             con.close()
-
-
-def _convert_to(
-    amount_original: Decimal,
-    *,
-    rate_src: Decimal,
-    rate_target: Decimal,
-) -> Decimal:
-    """Convert ``amount_original`` via two RSD-anchored NBS rates.
-
-    Both rates are ``RSD per 1 unit of X``, so the source amount in
-    RSD is ``amount_original * rate_src``, and dividing by
-    ``rate_target`` yields the amount in the target currency. When
-    ``rate_src == rate_target`` (same currency) the result is
-    bit-identical to ``amount_original`` modulo the final quantize.
-    """
-    return (amount_original * rate_src / rate_target).quantize(Decimal("0.01"))
 
 
 def _read_amounts_for_row(
@@ -387,16 +364,8 @@ def _read_amounts_for_row(
 
     rates = monthly_rates[month]
     original_dec = Decimal(str(amount_original))
-    amount_acc = _convert_to(
-        original_dec,
-        rate_src=rates["rate_src"],
-        rate_target=rates["rate_acc"],
-    )
-    amount_eur = _convert_to(
-        original_dec,
-        rate_src=rates["rate_src"],
-        rate_target=rates["rate_eur"],
-    )
+    amount_acc = (original_dec * rates["rate_acc"]).quantize(Decimal("0.01"))
+    amount_eur = (original_dec * rates["rate_eur"]).quantize(Decimal("0.01"))
     return (
         amount_original,
         currency_original,

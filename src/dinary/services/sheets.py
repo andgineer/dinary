@@ -58,12 +58,12 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 # cell size stays bounded to a single UUID regardless of how many
 # expenses a row aggregates over a month.
 COL_DATE = 1
-COL_AMOUNT_RSD = 2
+COL_AMOUNT_APP = 2
 COL_CATEGORY = 4
 COL_GROUP = 5
 COL_COMMENT = 6
 COL_MONTH = 7
-COL_RATE_EUR = 8
+COL_RATE = 8
 COL_EXPENSE_IDS = 10
 
 HEADER_ROWS = 1
@@ -389,7 +389,7 @@ def get_month_rate(
             target_year,
             years_by_row,
         ):
-            rate_val = _cell(row, COL_RATE_EUR)
+            rate_val = _cell(row, COL_RATE)
             if rate_val and _is_numeric(rate_val):
                 return rate_val
     return None
@@ -600,8 +600,8 @@ def ensure_category_row(  # noqa: PLR0913
     return insert_at, refreshed
 
 
-def extend_rsd_formula(existing: str, amount_rsd: float) -> str:
-    """Pure function — return the new B-cell formula after appending *amount_rsd*.
+def extend_amount_formula(existing: str, amount_app: float) -> str:
+    """Pure function — return the new B-cell formula after appending *amount_app*.
 
     Inputs the live string in column B as rendered with
     ``ValueRenderOption.formula`` (so a formula cell looks like
@@ -609,7 +609,7 @@ def extend_rsd_formula(existing: str, amount_rsd: float) -> str:
     ``"460.5"``). Empty / non-numeric / unrecognised values restart the
     formula from scratch.
     """
-    amount_str = fmt_amount(amount_rsd)
+    amount_str = fmt_amount(amount_app)
     if existing.startswith("="):
         return f"{existing}+{amount_str}"
     if existing and _is_numeric(existing):
@@ -630,19 +630,19 @@ def extend_comment(existing: str, new_comment: str) -> str:
     return f"{existing}{separator}{new_comment}"
 
 
-def append_to_rsd_formula(ws: gspread.Worksheet, row: int, amount_rsd: float) -> None:
+def append_to_amount_formula(ws: gspread.Worksheet, row: int, amount_app: float) -> None:
     """Append +amount to the formula in column B (e.g. =460+373 → =460+373+1500).
 
     Non-atomic, single-cell helper. Sheet logging uses
     ``append_expense_atomic`` instead so the formula and the
     idempotency marker are written together.
     """
-    rsd_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_RSD)
-    raw = ws.acell(rsd_addr, value_render_option=ValueRenderOption.formula).value
+    amount_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_APP)
+    raw = ws.acell(amount_addr, value_render_option=ValueRenderOption.formula).value
     existing = str(raw) if raw is not None else ""
-    formula = extend_rsd_formula(existing, amount_rsd)
+    formula = extend_amount_formula(existing, amount_app)
     ws.update(
-        range_name=rsd_addr,
+        range_name=amount_addr,
         values=[[formula]],
         value_input_option=ValueInputOption.user_entered,
     )
@@ -682,7 +682,7 @@ def append_expense_atomic(  # noqa: PLR0913
     row: int,
     *,
     marker_key: str,
-    amount_rsd: float,
+    amount_app: float,
     comment: str,
     rate: str | None = None,
 ) -> bool:
@@ -710,10 +710,10 @@ def append_expense_atomic(  # noqa: PLR0913
     the cell size to a single UUID regardless of how many expenses a
     row aggregates.
     """
-    formula_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_RSD)
+    formula_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_APP)
     comment_addr = gspread.utils.rowcol_to_a1(row, COL_COMMENT)
     marker_addr = gspread.utils.rowcol_to_a1(row, COL_EXPENSE_IDS)
-    rate_addr = gspread.utils.rowcol_to_a1(row, COL_RATE_EUR)
+    rate_addr = gspread.utils.rowcol_to_a1(row, COL_RATE)
 
     fetched = ws.batch_get(
         [formula_addr, comment_addr, marker_addr, rate_addr],
@@ -732,7 +732,7 @@ def append_expense_atomic(  # noqa: PLR0913
         )
         return False
 
-    new_formula = extend_rsd_formula(existing_formula, amount_rsd)
+    new_formula = extend_amount_formula(existing_formula, amount_app)
 
     updates = [
         {"range": formula_addr, "values": [[new_formula]]},

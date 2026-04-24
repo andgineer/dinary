@@ -8,7 +8,9 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+from datetime import date as _date
 from datetime import datetime as _dt
+from datetime import timedelta as _timedelta
 from datetime import timezone as _timezone
 from pathlib import Path
 
@@ -2757,6 +2759,91 @@ def verify_db(c, remote=False):
         print("=== verify-db FAILED ===", file=sys.stderr)
         sys.exit(1)
     print("=== verify-db OK ===")
+
+
+@task(name="healthcheck")
+def healthcheck(c, remote=False):
+    """Check that background services are healthy.
+
+    Verifies:
+      1. Exchange rate for yesterday exists in the cache (rate prefetch task).
+      2. Last expense has been logged to Google Sheets (sheet logging task),
+         when sheet logging is enabled.
+
+    Flags:
+        --remote   check the production DB over SSH (snapshot).
+                   Default runs locally against ``data/dinary.db``.
+
+    Exits non-zero on the first failed check and prints what is broken.
+    """
+    yesterday = (_date.today() - _timedelta(days=1)).isoformat()
+
+    rate_sql = f"SELECT count(*) FROM exchange_rates WHERE date = '{yesterday}'"
+    sheet_sql = (
+        "SELECT COALESCE("
+        "(SELECT e.id || '|' || COALESCE(slj.status, '')"
+        " FROM expenses e"
+        " LEFT JOIN sheet_logging_jobs slj ON slj.expense_id = e.id"
+        " ORDER BY e.id DESC LIMIT 1),"
+        " '')"
+    )
+    sheet_logging_enabled = bool(_env().get("DINARY_SHEET_LOGGING_SPREADSHEET"))
+
+    if remote:
+        raw = _ssh_capture_bytes(
+            _sqlite_backup_to_tmp_snapshot_prologue("dinary-healthcheck")
+            + f'sqlite3 "$SNAP" "{rate_sql}; {sheet_sql}"'
+        )
+        lines = raw.decode("utf-8", errors="replace").strip().splitlines()
+    else:
+        db_path = Path("data/dinary.db")
+        if not db_path.exists():
+            print(f"No local DB at {db_path}", file=sys.stderr)
+            sys.exit(1)
+        con = sqlite3.connect(db_path)
+        try:
+            lines = [
+                str(con.execute(sql).fetchone()[0])
+                for sql in [rate_sql, sheet_sql]
+            ]
+        finally:
+            con.close()
+
+    rate_count = int(lines[0]) if lines else 0
+    if rate_count == 0:
+        print(f"FAIL: no exchange rate cached for {yesterday}", file=sys.stderr)
+        sys.exit(1)
+    print(f"OK: exchange rate for {yesterday} cached")
+
+    if not sheet_logging_enabled:
+        print("OK: sheet logging not configured, skipping")
+        return
+
+    expense_line = lines[1].strip() if len(lines) > 1 else ""
+    if not expense_line:
+        print("OK: no expenses in DB, nothing to check")
+        return
+
+    parts = expense_line.split("|")
+    expense_id = parts[0]
+    job_status = parts[1] if len(parts) > 1 else ""
+
+    if job_status == "poisoned":
+        print(
+            f"FAIL: last expense (id={expense_id}) sheet logging is poisoned",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if job_status in ("pending", "in_progress"):
+        print(f"OK: last expense (id={expense_id}) sheet logging {job_status} (in queue)")
+    elif not job_status:
+        print(f"OK: last expense (id={expense_id}) logged to sheet")
+    else:
+        print(
+            f"FAIL: last expense (id={expense_id}) unexpected status: {job_status}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 @task(name="litestream-setup")

@@ -3,8 +3,9 @@
 We only cover pure helpers here; tasks themselves run shell commands
 against a real server and are exercised via the deploy flow.
 """
-
+import ast
 import base64
+import datetime
 import importlib.util
 import io
 import json
@@ -14,6 +15,8 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from datetime import datetime as _dt
+from datetime import timezone as _tz
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -1147,9 +1150,8 @@ class TestVerifyDbLocal:
 
     def test_passes_on_healthy_db(self, _cwd, capsys):
         db_path = _cwd / "data" / "dinary.db"
-        import sqlite3 as _sqlite
 
-        with _sqlite.connect(db_path) as con:
+        with sqlite3.connect(db_path) as con:
             con.executescript(
                 "PRAGMA foreign_keys=ON;"
                 "CREATE TABLE parent (id INTEGER PRIMARY KEY);"
@@ -1173,9 +1175,8 @@ class TestVerifyDbLocal:
         must refuse to pass on that file.
         """
         db_path = _cwd / "data" / "dinary.db"
-        import sqlite3 as _sqlite
 
-        with _sqlite.connect(db_path) as con:
+        with sqlite3.connect(db_path) as con:
             con.executescript(
                 "CREATE TABLE parent (id INTEGER PRIMARY KEY);"
                 "CREATE TABLE child ("
@@ -1416,7 +1417,6 @@ class TestBackupRetentionScript:
         to validate it at first invocation; catching a syntax error
         here avoids waiting 24 h for the timer to surface it.
         """
-        import ast
 
         ast.parse(_tasks._build_backup_retention_script())
 
@@ -1449,11 +1449,10 @@ class TestBackupRetentionScript:
 
     @staticmethod
     def _synth(days_back_from, *, end):
-        import datetime as _dt
 
         snaps = []
         for i in range(days_back_from):
-            d = end - _dt.timedelta(days=i)
+            d = end - datetime.timedelta(days=i)
             name = f"dinary-{d.isoformat()}T0317Z.db.zst"
             snaps.append((d, name))
         snaps.sort()
@@ -1464,9 +1463,8 @@ class TestBackupRetentionScript:
         keeper. The ``weekly``/``monthly``/``yearly`` selectors must
         overlap cleanly without overcounting (no > daily_keep result).
         """
-        import datetime as _dt
 
-        end = _dt.date(2026, 4, 22)
+        end = datetime.date(2026, 4, 22)
         snaps = self._synth(_tasks.BACKUP_RETENTION_DAILY, end=end)
         keepers = retention_ns["pick_keepers"](snaps)
         assert len(keepers) == _tasks.BACKUP_RETENTION_DAILY
@@ -1476,41 +1474,39 @@ class TestBackupRetentionScript:
         Feed 10 years of daily snapshots and confirm every Dec 31
         (except maybe the current year) is in the keeper set.
         """
-        import datetime as _dt
 
-        end = _dt.date(2029, 12, 31)
+        end = datetime.date(2029, 12, 31)
         snaps = self._synth(365 * 10 + 3, end=end)
         keepers = retention_ns["pick_keepers"](snaps)
         yearly_winners = {
-            _dt.date.fromisoformat(n.split("dinary-")[1].split("T")[0])
+            datetime.date.fromisoformat(n.split("dinary-")[1].split("T")[0])
             for n in keepers
             if "-12-31T" in n
         }
         # All Dec 31 snapshots (2020 through 2029, given our synth
         # range) must persist.
         for year in range(2020, 2030):
-            assert _dt.date(year, 12, 31) in yearly_winners
+            assert datetime.date(year, 12, 31) in yearly_winners
 
     def test_prunes_old_dailies_but_keeps_monthly_winners(self, retention_ns):
         """After MONTHLY_KEEP months of history, ``daily`` is pruned
         to the last DAILY_KEEP; the last day of each of the previous
         MONTHLY_KEEP months must still be retained (monthly bucket).
         """
-        import datetime as _dt
 
-        end = _dt.date(2026, 4, 15)
+        end = datetime.date(2026, 4, 15)
         snaps = self._synth(400, end=end)
         keepers = retention_ns["pick_keepers"](snaps)
         kept_dates = {
-            _dt.date.fromisoformat(n.split("dinary-")[1].split("T")[0])
+            datetime.date.fromisoformat(n.split("dinary-")[1].split("T")[0])
             for n in keepers
         }
         # Last day of March 2026 (immediately preceding the partial
         # current month) is the monthly winner for March.
-        assert _dt.date(2026, 3, 31) in kept_dates
+        assert datetime.date(2026, 3, 31) in kept_dates
         # 30 days ago is a daily — but 90 days ago is not.
-        day_in_scope = end - _dt.timedelta(days=3)
-        day_out_of_daily = end - _dt.timedelta(days=90)
+        day_in_scope = end - datetime.timedelta(days=3)
+        day_out_of_daily = end - datetime.timedelta(days=90)
         assert day_in_scope in kept_dates
         # The 90-day-back daily is not a daily anymore, and unless it
         # happens to be the monthly winner for its month, it is pruned.
@@ -1528,9 +1524,8 @@ class TestBackupRetentionScript:
         timer after a journal replay could oscillate between two
         states and delete-then-recreate snapshots.
         """
-        import datetime as _dt
 
-        end = _dt.date(2026, 4, 22)
+        end = datetime.date(2026, 4, 22)
         snaps = self._synth(400, end=end)
         first = retention_ns["pick_keepers"](snaps)
         second = retention_ns["pick_keepers"](snaps)
@@ -2099,8 +2094,6 @@ class TestBackupStatusHelpers:
         freshness checks lie.
         """
         ts = _tasks._parse_snapshot_timestamp("dinary-2026-04-22T0317Z.db.zst")
-        from datetime import datetime as _dt
-        from datetime import timezone as _tz
         assert ts == _dt(2026, 4, 22, 3, 17, tzinfo=_tz.utc)
 
     def test_parse_timestamp_returns_none_on_unexpected_shape(self):
@@ -2118,8 +2111,6 @@ class TestBackupStatusHelpers:
         regression that reads ``[0]`` would read the oldest and
         false-alert every day.
         """
-        from datetime import datetime as _dt
-        from datetime import timezone as _tz
         snaps = [
             ("dinary-2026-04-21T0317Z.db.zst", 100),
             ("dinary-2026-04-22T0317Z.db.zst", 200),
@@ -2135,8 +2126,6 @@ class TestBackupStatusHelpers:
         """Over-threshold → ``stale``. Uses a 49h gap (two full days
         missed) so the threshold itself (26h default) is unambiguous.
         """
-        from datetime import datetime as _dt
-        from datetime import timezone as _tz
         snaps = [("dinary-2026-04-20T0317Z.db.zst", 100)]
         now = _dt(2026, 4, 22, 4, 17, tzinfo=_tz.utc)
         verdict = _tasks._check_backup_freshness(snaps, now, max_age_hours=26)
@@ -2229,8 +2218,6 @@ class TestBackupStatusTask:
         expectations don't depend on the runner's wall clock. The
         task only reads ``datetime.now(tz=utc)`` once.
         """
-        from datetime import datetime as _dt
-        from datetime import timezone as _tz
         frozen = _dt(2026, 4, 22, 10, 17, tzinfo=_tz.utc)
 
         class _FrozenDateTime(_dt):

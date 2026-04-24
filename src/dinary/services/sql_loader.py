@@ -21,11 +21,8 @@ pairing explicit and survive SQL-formatter round-trips unchanged.
 import dataclasses
 import sqlite3
 from importlib import resources
-from typing import TypeVar
 
 _cache: dict[str, str] = {}
-
-T = TypeVar("T")
 
 
 def load_sql(name: str) -> str:
@@ -36,7 +33,7 @@ def load_sql(name: str) -> str:
     return _cache[name]
 
 
-def _validate_columns(cls: type[T], columns: list[str]) -> None:
+def _validate_columns[T](cls: type[T], columns: list[str]) -> None:
     """Assert that SQL columns match dataclass fields exactly. Called once per query."""
     fields = {f.name for f in dataclasses.fields(cls)}  # pyrefly: ignore[bad-argument-type]
     if set(columns) != fields:
@@ -47,7 +44,7 @@ def _validate_columns(cls: type[T], columns: list[str]) -> None:
         )
 
 
-def fetchone_as(
+def fetchone_as[T](
     cls: type[T],
     con: sqlite3.Connection,
     sql: str,
@@ -63,7 +60,7 @@ def fetchone_as(
     return cls(**dict(zip(columns, row, strict=False)))
 
 
-def fetchall_as(
+def fetchall_as[T](
     cls: type[T],
     con: sqlite3.Connection,
     sql: str,

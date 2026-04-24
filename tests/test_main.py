@@ -49,8 +49,11 @@ def test_periodic_drain_runs(monkeypatch):
 
     async def _go():
         with (
-            patch("dinary.main.sheet_logging.is_sheet_logging_enabled", return_value=True),
-            patch("dinary.main.sheet_logging.drain_pending", mock_drain),
+            patch(
+                "dinary.background.sheet_logging_task.sheet_logging.is_sheet_logging_enabled",
+                return_value=True,
+            ),
+            patch("dinary.background.sheet_logging_task.sheet_logging.drain_pending", mock_drain),
         ):
             async with _lifespan(app):
                 await asyncio.sleep(0.2)
@@ -67,8 +70,11 @@ def test_disabled_by_interval(monkeypatch):
 
     async def _go():
         with (
-            patch("dinary.main.sheet_logging.is_sheet_logging_enabled", return_value=True),
-            patch("dinary.main.sheet_logging.drain_pending", mock_drain),
+            patch(
+                "dinary.background.sheet_logging_task.sheet_logging.is_sheet_logging_enabled",
+                return_value=True,
+            ),
+            patch("dinary.background.sheet_logging_task.sheet_logging.drain_pending", mock_drain),
         ):
             async with _lifespan(app):
                 await asyncio.sleep(0.1)
@@ -85,8 +91,11 @@ def test_disabled_by_sheet_logging(monkeypatch):
 
     async def _go():
         with (
-            patch("dinary.main.sheet_logging.is_sheet_logging_enabled", return_value=False),
-            patch("dinary.main.sheet_logging.drain_pending", mock_drain),
+            patch(
+                "dinary.background.sheet_logging_task.sheet_logging.is_sheet_logging_enabled",
+                return_value=False,
+            ),
+            patch("dinary.background.sheet_logging_task.sheet_logging.drain_pending", mock_drain),
         ):
             async with _lifespan(app):
                 await asyncio.sleep(0.15)
@@ -120,8 +129,14 @@ def test_failing_sweep_does_not_kill_loop(monkeypatch):
 
     async def _go():
         with (
-            patch("dinary.main.sheet_logging.is_sheet_logging_enabled", return_value=True),
-            patch("dinary.main.sheet_logging.drain_pending", side_effect=_side_effect),
+            patch(
+                "dinary.background.sheet_logging_task.sheet_logging.is_sheet_logging_enabled",
+                return_value=True,
+            ),
+            patch(
+                "dinary.background.sheet_logging_task.sheet_logging.drain_pending",
+                side_effect=_side_effect,
+            ),
         ):
             async with _lifespan(app):
                 await asyncio.sleep(0.25)
@@ -152,12 +167,15 @@ def test_cancel_on_shutdown_is_clean(monkeypatch):
     async def _go():
         nonlocal task_ref
         with (
-            patch("dinary.main.sheet_logging.is_sheet_logging_enabled", return_value=True),
-            patch("dinary.main.sheet_logging.drain_pending", mock_drain),
+            patch(
+                "dinary.background.sheet_logging_task.sheet_logging.is_sheet_logging_enabled",
+                return_value=True,
+            ),
+            patch("dinary.background.sheet_logging_task.sheet_logging.drain_pending", mock_drain),
         ):
             async with _lifespan(app):
                 for t in asyncio.all_tasks():
-                    if t.get_name() == "sheet-logging-drain":
+                    if t.get_name() == "sheet-logging-task":
                         task_ref = t
                         break
                 await asyncio.sleep(0.1)
@@ -201,8 +219,14 @@ def test_notify_new_work_wakes_drain_immediately(monkeypatch):
 
     async def _go():
         with (
-            patch("dinary.main.sheet_logging.is_sheet_logging_enabled", return_value=True),
-            patch("dinary.main.sheet_logging.drain_pending", side_effect=_side_effect),
+            patch(
+                "dinary.background.sheet_logging_task.sheet_logging.is_sheet_logging_enabled",
+                return_value=True,
+            ),
+            patch(
+                "dinary.background.sheet_logging_task.sheet_logging.drain_pending",
+                side_effect=_side_effect,
+            ),
         ):
             async with _lifespan(app):
                 # Give the startup sweep a moment to complete.

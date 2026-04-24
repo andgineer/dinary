@@ -4,6 +4,20 @@ from datetime import date
 from unittest.mock import MagicMock
 
 import allure
+from gspread.utils import ValueRenderOption
+
+from dinary.services.sheets import (
+    _is_numeric,
+    _year_from_a_value,
+    append_comment,
+    append_to_amount_formula,
+    ensure_category_row,
+    fetch_row_years,
+    find_category_row,
+    find_month_range,
+    fmt_amount,
+    get_month_rate,
+)
 
 # Matches the actual sheet layout:
 #   A=Date  B=RSD(formula)  C=EUR(formula)  D=Category  E=Group
@@ -34,25 +48,21 @@ def _make_worksheet(all_values):
 @allure.feature("Read Categories")
 class TestFindCategoryRow:
     def test_finds_row(self):
-        from dinary.services.sheets import find_category_row
 
         row = find_category_row(SAMPLE_SHEET, 4, "Food", "Essentials")
         assert row == 2
 
     def test_finds_duplicate_category_in_different_group(self):
-        from dinary.services.sheets import find_category_row
 
         row = find_category_row(SAMPLE_SHEET, 4, "Food", "Travel")
         assert row == 5
 
     def test_returns_none_for_missing(self):
-        from dinary.services.sheets import find_category_row
 
         row = find_category_row(SAMPLE_SHEET, 4, "Unknown", "")
         assert row is None
 
     def test_returns_none_for_wrong_month(self):
-        from dinary.services.sheets import find_category_row
 
         row = find_category_row(SAMPLE_SHEET, 5, "Food", "Essentials")
         assert row is None
@@ -61,20 +71,19 @@ class TestFindCategoryRow:
 @allure.epic("Data Safety")
 @allure.feature("Formula Preservation")
 class TestAppendToRsdFormula:
-    """append_to_rsd_formula must NEVER overwrite existing data.
+    """append_to_amount_formula must NEVER overwrite existing data.
 
     It must always append +amount to whatever is already in the cell.
     """
 
     def _run(self, existing_value, amount, expected_formula):
-        from dinary.services.sheets import append_to_rsd_formula
 
         ws = MagicMock()
         mock_cell = MagicMock()
         mock_cell.value = existing_value
         ws.acell.return_value = mock_cell
 
-        append_to_rsd_formula(ws, 2, amount)
+        append_to_amount_formula(ws, 2, amount)
 
         ws.update.assert_called_once()
         actual = ws.update.call_args.kwargs["values"][0][0]
@@ -125,7 +134,6 @@ class TestAppendToRsdFormula:
 
     def test_formula_result_is_always_formula(self):
         """Result must always start with '=' to be a Google Sheets formula."""
-        from dinary.services.sheets import append_to_rsd_formula
 
         for existing in ["", None, 0, 500, "500", "=100", "=100+200"]:
             ws = MagicMock()
@@ -133,7 +141,7 @@ class TestAppendToRsdFormula:
             mock_cell.value = existing
             ws.acell.return_value = mock_cell
 
-            append_to_rsd_formula(ws, 2, 100)
+            append_to_amount_formula(ws, 2, 100)
 
             result = ws.update.call_args.kwargs["values"][0][0]
             assert result.startswith("="), (
@@ -142,14 +150,13 @@ class TestAppendToRsdFormula:
 
     def test_never_overwrites_to_plain_number(self):
         """The written value must NEVER be a plain number — always a formula."""
-        from dinary.services.sheets import append_to_rsd_formula
 
         ws = MagicMock()
         mock_cell = MagicMock()
         mock_cell.value = "=460+373+755"
         ws.acell.return_value = mock_cell
 
-        append_to_rsd_formula(ws, 2, 100)
+        append_to_amount_formula(ws, 2, 100)
 
         result = ws.update.call_args.kwargs["values"][0][0]
         assert "+" in result, "Formula must contain + (append, not overwrite)"
@@ -157,16 +164,13 @@ class TestAppendToRsdFormula:
 
     def test_acell_uses_formula_render_option(self):
         """Must read with FORMULA render option to get the formula, not the computed value."""
-        from gspread.utils import ValueRenderOption
-
-        from dinary.services.sheets import append_to_rsd_formula
 
         ws = MagicMock()
         mock_cell = MagicMock()
         mock_cell.value = "=100"
         ws.acell.return_value = mock_cell
 
-        append_to_rsd_formula(ws, 2, 50)
+        append_to_amount_formula(ws, 2, 50)
 
         ws.acell.assert_called_once()
         call_kwargs = ws.acell.call_args
@@ -182,7 +186,6 @@ class TestAppendComment:
     """append_comment must never overwrite existing comments."""
 
     def test_append_to_existing(self):
-        from dinary.services.sheets import append_comment
 
         ws = MagicMock()
         row_data = ["", "", "", "Food", "Essentials", "lunch", "4", ""]
@@ -192,7 +195,6 @@ class TestAppendComment:
         ws.update_cell.assert_called_once_with(2, 6, "lunch; dinner")
 
     def test_first_comment(self):
-        from dinary.services.sheets import append_comment
 
         ws = MagicMock()
         row_data = ["", "", "", "Food", "Essentials", "", "4", ""]
@@ -202,7 +204,6 @@ class TestAppendComment:
         ws.update_cell.assert_called_once_with(2, 6, "lunch")
 
     def test_preserves_multiple_existing_comments(self):
-        from dinary.services.sheets import append_comment
 
         ws = MagicMock()
         row_data = ["", "", "", "Food", "Essentials", "a; b; c", "4", ""]
@@ -216,7 +217,6 @@ class TestAppendComment:
 @allure.feature("Row Insertion")
 class TestEnsureCategoryRow:
     def test_existing_row_returned_as_is(self):
-        from dinary.services.sheets import ensure_category_row
 
         ws = _make_worksheet([row[:] for row in SAMPLE_SHEET])
 
@@ -233,7 +233,6 @@ class TestEnsureCategoryRow:
         ws.insert_rows.assert_not_called()
 
     def test_new_row_inserted_in_existing_month(self):
-        from dinary.services.sheets import ensure_category_row
 
         sheet = [row[:] for row in SAMPLE_SHEET]
         ws = _make_worksheet(sheet)
@@ -256,7 +255,6 @@ class TestEnsureCategoryRow:
         assert row == 2
 
     def test_new_row_appended_after_month_block(self):
-        from dinary.services.sheets import ensure_category_row
 
         sheet = [row[:] for row in SAMPLE_SHEET]
         ws = _make_worksheet(sheet)
@@ -277,7 +275,6 @@ class TestEnsureCategoryRow:
         assert row == 6
 
     def test_new_month_inserted_after_header(self):
-        from dinary.services.sheets import ensure_category_row
 
         sheet = [row[:] for row in SAMPLE_SHEET]
         ws = _make_worksheet(sheet)
@@ -298,7 +295,6 @@ class TestEnsureCategoryRow:
 
     def test_insert_sets_all_cells(self):
         """New row must populate A (date), C (EUR formula), D, E, G (month)."""
-        from dinary.services.sheets import ensure_category_row
 
         sheet = [row[:] for row in SAMPLE_SHEET]
         ws = _make_worksheet(sheet)
@@ -347,7 +343,6 @@ class TestEnsureCategoryRowLegacySheet:
     ]
 
     def test_existing_category_found_in_legacy_block(self):
-        from dinary.services.sheets import ensure_category_row
 
         sheet = [row[:] for row in self.LEGACY_SHEET]
         ws = _make_worksheet(sheet)
@@ -366,7 +361,6 @@ class TestEnsureCategoryRowLegacySheet:
 
     def test_new_category_in_legacy_month_block(self):
         """A new category in a legacy block with many existing rows."""
-        from dinary.services.sheets import ensure_category_row
 
         sheet = [row[:] for row in self.LEGACY_SHEET]
         ws = _make_worksheet(sheet)
@@ -388,7 +382,6 @@ class TestEnsureCategoryRowLegacySheet:
 
     def test_new_month_in_legacy_sheet(self):
         """Adding a new month to a legacy sheet that has old-style blocks."""
-        from dinary.services.sheets import ensure_category_row
 
         sheet = [row[:] for row in self.LEGACY_SHEET]
         ws = _make_worksheet(sheet)
@@ -412,19 +405,16 @@ class TestEnsureCategoryRowLegacySheet:
 @allure.feature("Month Creation")
 class TestFindMonthRange:
     def test_finds_contiguous_range(self):
-        from dinary.services.sheets import find_month_range
 
         result = find_month_range(SAMPLE_SHEET, 4)
         assert result == (2, 5)
 
     def test_finds_march(self):
-        from dinary.services.sheets import find_month_range
 
         result = find_month_range(SAMPLE_SHEET, 3)
         assert result == (6, 8)
 
     def test_returns_none_for_missing_month(self):
-        from dinary.services.sheets import find_month_range
 
         assert find_month_range(SAMPLE_SHEET, 12) is None
 
@@ -461,7 +451,6 @@ class TestYearAwareMatching:
     YEARS_BY_ROW = [None, 2027, 2027, 2027, 2026, 2026]
 
     def test_find_category_row_picks_target_year(self):
-        from dinary.services.sheets import find_category_row
 
         row_2027 = find_category_row(
             self.MULTIYEAR_SHEET,
@@ -483,7 +472,6 @@ class TestYearAwareMatching:
         assert row_2026 == 5
 
     def test_find_category_row_misses_when_year_absent(self):
-        from dinary.services.sheets import find_category_row
 
         row = find_category_row(
             self.MULTIYEAR_SHEET,
@@ -497,7 +485,6 @@ class TestYearAwareMatching:
         assert row is None
 
     def test_find_month_range_constrained_by_year(self):
-        from dinary.services.sheets import find_month_range
 
         block_2027 = find_month_range(
             self.MULTIYEAR_SHEET,
@@ -515,7 +502,6 @@ class TestYearAwareMatching:
         assert block_2026 == (5, 6)
 
     def test_get_month_rate_picks_target_year(self):
-        from dinary.services.sheets import get_month_rate
 
         rate_2027 = get_month_rate(
             self.MULTIYEAR_SHEET,
@@ -534,7 +520,6 @@ class TestYearAwareMatching:
 
     def test_ensure_category_row_creates_new_year_block(self):
         """Logging Apr 2028 must NOT collide with Apr 2027/2026 rows."""
-        from dinary.services.sheets import ensure_category_row
 
         sheet = [row[:] for row in self.MULTIYEAR_SHEET]
         ws = _make_worksheet(sheet)
@@ -565,7 +550,6 @@ class TestYearAwareMatching:
         Layout: Apr 2027 (2..3), Mar 2027 (4), Apr 2026 (5..6).
         Logging Feb 2027 → must land at row 5 (after Mar 2027,
         before Apr 2026)."""
-        from dinary.services.sheets import ensure_category_row
 
         sheet = [row[:] for row in self.MULTIYEAR_SHEET]
         ws = _make_worksheet(sheet)
@@ -586,7 +570,6 @@ class TestYearAwareMatching:
         assert row == 5
 
     def test_ensure_category_row_inserts_oldest_year_at_bottom(self):
-        from dinary.services.sheets import ensure_category_row
 
         sheet = [row[:] for row in self.MULTIYEAR_SHEET]
         ws = _make_worksheet(sheet)
@@ -609,7 +592,6 @@ class TestYearAwareMatching:
 
     def test_ensure_category_row_finds_existing_year_match(self):
         """The original bug: must NOT silently insert when the row exists in target year."""
-        from dinary.services.sheets import ensure_category_row
 
         sheet = [row[:] for row in self.MULTIYEAR_SHEET]
         ws = _make_worksheet(sheet)
@@ -630,7 +612,6 @@ class TestYearAwareMatching:
     def test_ensure_category_row_inserts_when_only_other_year_exists(self):
         """Apr 2027 has Food/Essentials; logging Food/Essentials for Apr 2026
         must still hit the 2026 block (different row), not the 2027 row."""
-        from dinary.services.sheets import ensure_category_row
 
         sheet = [row[:] for row in self.MULTIYEAR_SHEET]
         ws = _make_worksheet(sheet)
@@ -650,7 +631,6 @@ class TestYearAwareMatching:
         assert row == 2  # 2027 row, not the 2026 row at index 5
 
     def test_year_from_a_value_handles_serial_and_iso(self):
-        from dinary.services.sheets import _year_from_a_value
 
         # 2026-04-01 as a Google Sheets serial.
         assert _year_from_a_value(46113) == 2026
@@ -662,9 +642,6 @@ class TestYearAwareMatching:
         assert _year_from_a_value(True) is None
 
     def test_fetch_row_years_uses_unformatted_render(self):
-        from gspread.utils import ValueRenderOption
-
-        from dinary.services.sheets import fetch_row_years
 
         ws = MagicMock()
         ws.batch_get.return_value = [[["Date"], [46113], [46113], [], ["2026-04-01"], [None]]]
@@ -677,7 +654,6 @@ class TestYearAwareMatching:
         assert years == [None, 2026, 2026, None, 2026, None]
 
     def test_fetch_row_years_returns_empty_for_zero_rows(self):
-        from dinary.services.sheets import fetch_row_years
 
         ws = MagicMock()
         assert fetch_row_years(ws, 0) == []
@@ -688,19 +664,16 @@ class TestYearAwareMatching:
 @allure.feature("Helpers")
 class TestHelpers:
     def test_fmt_amount_integer(self):
-        from dinary.services.sheets import fmt_amount
 
         assert fmt_amount(1500.0) == "1500"
         assert fmt_amount(1500) == "1500"
 
     def test_fmt_amount_decimal(self):
-        from dinary.services.sheets import fmt_amount
 
         assert fmt_amount(99.5) == "99.50"
         assert fmt_amount(99.99) == "99.99"
 
     def test_is_numeric(self):
-        from dinary.services.sheets import _is_numeric
 
         assert _is_numeric("500")
         assert _is_numeric("500.50")

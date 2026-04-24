@@ -21,6 +21,7 @@ dependencies = [
     "yoyo-migrations>=9.0.0",
     "holidays>=0.94",
     "tenacity>=9.1.4",
+    "cachetools>=7.0.6",
 ]
 [[project.authors]]
 name = "Andrey Sorokin"

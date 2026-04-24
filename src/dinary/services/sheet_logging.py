@@ -19,7 +19,7 @@ import gspread
 
 from dinary.config import settings, spreadsheet_id_from_setting
 from dinary.services import ledger_repo, sheet_mapping
-from dinary.services.nbs import get_rate
+from dinary.services.exchange_rates import get_rate
 from dinary.services.sheets import (
     append_expense_atomic,
     ensure_category_row,
@@ -142,44 +142,39 @@ def _reset_backoff() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _derive_rsd_for_sheet(
+def _derive_app_currency_amount_for_sheet(
     con,
     expense: ledger_repo.ExpenseRow,
-    eur_rsd_rate: Decimal | None,
+    app_currency_rate: Decimal | None,
     expense_date: date,
 ) -> float | None:
-    """Return the RSD amount to write into sheet column B.
+    """Return the app-currency amount to write into sheet column B.
 
-    The sheet's column B is RSD-denominated for every post-April-2022
-    row (the only rows runtime appends ever touch). Strategy:
+    Strategy:
 
-    * If the operator typed the expense in RSD (the PWA default), use
-      ``amount_original`` verbatim — bit-identical to what they saw.
-    * Otherwise, convert ``expense.amount`` (stored in
-      ``settings.accounting_currency``) to RSD via NBS rates for the
-      expense date. For the default EUR accounting currency that's
-      just the EUR/RSD rate already fetched for column H. For any
-      other accounting currency (``RSD`` itself or an exotic
-      override) we resolve the cross-rate on demand.
+    * If the expense was typed in app_currency, use ``amount_original``
+      verbatim — bit-identical to what the user saw.
+    * If accounting_currency == app_currency, use ``expense.amount``.
+    * Otherwise, convert ``expense.amount`` (accounting_currency) to
+      app_currency using the pre-fetched rate or an on-demand lookup.
 
     Returns ``None`` iff a needed rate is unavailable; the caller
     then requeues the job for the next sweep.
     """
+    app_currency = settings.app_currency.upper()
     currency_original = (expense.currency_original or "").upper()
-    if currency_original == "RSD":
+    if currency_original == app_currency:
         return float(expense.amount_original)
 
     accounting_currency = settings.accounting_currency.upper()
-    if accounting_currency == "RSD":
+    if accounting_currency == app_currency:
         return float(expense.amount)
 
-    if accounting_currency == "EUR":
-        if eur_rsd_rate is None:
-            return None
-        return float((expense.amount * eur_rsd_rate).quantize(Decimal("0.01")))
+    if app_currency_rate is not None:
+        return float((expense.amount * app_currency_rate).quantize(Decimal("0.01")))
 
     try:
-        rate = get_rate(con, expense_date, accounting_currency)
+        rate = get_rate(con, expense_date, accounting_currency, app_currency)
     except (ValueError, OSError):
         return None
     return float((expense.amount * rate).quantize(Decimal("0.01")))
@@ -267,37 +262,31 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
                     logger.exception("Failed to release claim for pk=%d", expense_pk)
             raise
 
-        # Fetch EUR/RSD exchange rate for column H. Column B stores
-        # the original-currency (RSD) amount, column C is the EUR
-        # projection via ``=B/H``, so H must be the RSD-per-1-EUR rate
-        # for the expense date regardless of what the expense was
-        # originally priced in. Reuse the already-open cursor ``con``
-        # rather than opening a second connection.
+        # Fetch accounting_currency -> app_currency rate for column H.
+        # Column B stores the app-currency amount, column C is the
+        # accounting-currency projection via ``=B/H``.
         expense_date = expense.datetime.date()
+        app_currency = settings.app_currency.upper()
+        accounting_currency = settings.accounting_currency.upper()
         rate: Decimal | None = None
         rate_str: str | None = None
         try:
-            rate = get_rate(con, expense_date, "EUR")
+            rate = get_rate(con, expense_date, accounting_currency, app_currency)
             rate_str = str(rate)
         except (ValueError, OSError):
             rate = None
             rate_str = None
 
-        # Column B is always the RSD amount (the sheet's native
-        # "original" currency post-Apr-2022). When the operator typed
-        # in RSD — the PWA default — we write ``amount_original``
-        # verbatim for bit-fidelity. For any other input currency we
-        # derive RSD from the stored ``accounting_currency`` amount
-        # (EUR by default) and the NBS rate for the expense date.
-        amount_rsd = _derive_rsd_for_sheet(con, expense, rate, expense_date)
-        if amount_rsd is None:
+        amount_app = _derive_app_currency_amount_for_sheet(con, expense, rate, expense_date)
+        if amount_app is None:
             logger.warning(
-                "Skip sheet append for pk=%d: no NBS rate on %s to convert "
-                "%s %s to RSD; will retry on next sweep",
+                "Skip sheet append for pk=%d: no rate on %s to convert "
+                "%s %s to %s; will retry on next sweep",
                 expense_pk,
                 expense_date,
                 expense.amount,
-                settings.accounting_currency,
+                accounting_currency,
+                app_currency,
             )
             if claim_token is not None:
                 try:
@@ -314,7 +303,7 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
                 month=expense.datetime.month,
                 sheet_category=sheet_category,
                 sheet_group=sheet_group,
-                amount=amount_rsd,
+                amount=amount_app,
                 comment=expense.comment or "",
                 expense_date=expense_date,
                 rate=rate_str,
@@ -384,7 +373,7 @@ def _append_row_to_sheet(  # noqa: PLR0913
         ws,
         row,
         marker_key=marker_key,
-        amount_rsd=amount,
+        amount_app=amount,
         comment=comment,
         rate=rate,
     )

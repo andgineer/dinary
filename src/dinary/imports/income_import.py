@@ -19,7 +19,7 @@ from decimal import Decimal, InvalidOperation
 from dinary.config import IMPORT_SOURCES_DOC_HINT, ImportSourceRow, get_import_source, settings
 from dinary.imports.expense_import import MONTHS_IN_YEAR
 from dinary.services import ledger_repo
-from dinary.services.nbs import get_rate
+from dinary.services.exchange_rates import get_rate
 from dinary.services.sheets import get_sheet
 
 logger = logging.getLogger(__name__)
@@ -116,22 +116,17 @@ def _convert_to_accounting_from_cache(
 ) -> Decimal | None:
     """Convert ``amount`` from ``currency`` to ``accounting_currency``.
 
-    Uses the NBS rates cached by ``_prefetch_monthly_rates`` (all as
-    ``RSD per 1 unit of X``). Returns ``None`` when the prefetch could
-    not resolve a needed rate — caller must skip the row.
-
-    ``rate_src`` entries use ``Decimal(1)`` for RSD by convention; the
-    same holds for the accounting currency when it is RSD.
+    Uses the rates prefetched by ``_prefetch_monthly_rates``.
+    Returns ``None`` when the prefetch could not resolve a needed rate.
     """
     cu = currency.upper()
     ac = accounting_currency.upper()
     if cu == ac:
         return amount.quantize(Decimal("0.01"))
-    rate_src = rates[month].get(cu)
-    rate_acc = rates[month].get(ac)
-    if rate_src is None or rate_acc is None:
+    rate = rates[month].get(cu)
+    if rate is None:
         return None
-    return (amount * rate_src / rate_acc).quantize(Decimal("0.01"))
+    return (amount * rate).quantize(Decimal("0.01"))
 
 
 def _prefetch_monthly_rates(
@@ -153,22 +148,20 @@ def _prefetch_monthly_rates(
     returns None for a None-rate cell and the caller drops the row.
     """
     accounting_currency = settings.accounting_currency.upper()
-    currencies_to_fetch: set[str] = {layout.currency.upper(), accounting_currency}
+    currencies_to_fetch: set[str] = {layout.currency.upper()}
     if layout.transition_currency is not None:
         currencies_to_fetch.add(layout.transition_currency.upper())
-    # RSD is the NBS anchor currency: its "rate" is implicit 1.0 and
-    # ``get_rate`` would raise for it.
-    currencies_to_fetch.discard("RSD")
+    currencies_to_fetch.discard(accounting_currency)
 
     rates: dict[int, dict[str, Decimal | None]] = {}
     con = ledger_repo.get_connection()
     try:
         for month in range(1, MONTHS_IN_YEAR + 1):
             rate_date = date(year, month, 1)
-            month_rates: dict[str, Decimal | None] = {"RSD": Decimal(1)}
+            month_rates: dict[str, Decimal | None] = {accounting_currency: Decimal(1)}
             for cur in currencies_to_fetch:
                 try:
-                    month_rates[cur] = get_rate(con, rate_date, cur)
+                    month_rates[cur] = get_rate(con, rate_date, cur, accounting_currency)
                 except ValueError:
                     month_rates[cur] = None
             rates[month] = month_rates

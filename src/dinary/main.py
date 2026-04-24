@@ -14,8 +14,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from dinary import __version__
 from dinary.api import admin_catalog, catalog, expenses, qr
+from dinary.background.rate_prefetch_task import rate_prefetch_task
+from dinary.background.sheet_logging_task import sheet_logging_task, warm_sheet_mapping
 from dinary.config import settings
-from dinary.services import ledger_repo, sheet_logging, sheet_mapping
+from dinary.services import ledger_repo
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _BUILT_STATIC = _PROJECT_ROOT / "_static"
@@ -48,111 +50,21 @@ def _setup_logging() -> None:
     )
 
 
-_drain_logger = logging.getLogger("dinary.sheet_logging.drain_loop")
-
-
-async def _drain_loop() -> None:
-    interval = settings.sheet_logging_drain_interval_sec
-    enabled = sheet_logging.is_sheet_logging_enabled()
-    if not enabled or interval <= 0:
-        _drain_logger.info(
-            "sheet-logging drain loop disabled"
-            " (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)",
-        )
-        return
-    # Register a wake-up event so producers (e.g. POST /api/expenses)
-    # can kick a sweep immediately instead of waiting for the next
-    # periodic tick. The timer is still the fallback for crash-recovery
-    # sweeps over jobs left behind by a previous worker.
-    wake = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    sheet_logging.register_wake_channel(wake, loop)
-    _drain_logger.info("sheet-logging drain loop started: interval=%gs", interval)
-    try:
-        first = True
-        while True:
-            if not first:
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(wake.wait(), timeout=interval)
-                wake.clear()
-            first = False
-            try:
-                summary = await asyncio.to_thread(sheet_logging.drain_pending)
-                attempted = summary.get("attempted", 0)
-                cap_reached = summary.get("cap_reached", False)
-                poisoned = summary.get("poisoned", 0)
-                failed = summary.get("failed", 0)
-                if attempted > 0 or cap_reached or poisoned > 0 or failed > 0:
-                    _drain_logger.info("drain sweep: %s", summary)
-                else:
-                    _drain_logger.debug("drain sweep: %s", summary)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                _drain_logger.exception("drain sweep failed")
-    finally:
-        sheet_logging.clear_wake_channel()
-
-
-async def _warm_sheet_mapping() -> None:
-    """Preload ``sheet_mapping`` from the ``map`` tab at startup.
-
-    Moves the ~1s Drive+Sheets round-trip off the first-expense hot
-    path. Skipped when the drain loop itself is disabled (interval
-    <= 0 — the test fixture uses this to avoid network I/O in
-    lifespan) or when sheet-logging is unconfigured, or when the
-    operator explicitly disabled the warm-up via
-    ``warm_sheet_mapping_timeout_sec <= 0``.
-
-    Bounded by ``settings.warm_sheet_mapping_timeout_sec`` so a slow
-    or unreachable Google backend cannot wedge the lifespan startup
-    and delay ``/api/health`` from answering (a long startup starves
-    Railway's health probe). On timeout or any other failure we log
-    and continue — the drain loop's ``ensure_fresh`` will retry on
-    its own schedule, and the cached mapping (from the last
-    successful reload before the restart) keeps the runtime
-    functional in the meantime.
-
-    Note on cancellation: ``asyncio.wait_for`` cancels the awaitable
-    but cannot cancel the underlying ``to_thread`` worker (sync
-    Google I/O). The worker continues running until its socket
-    timeout fires; the event loop is free to move on immediately.
-    """
-    if settings.sheet_logging_drain_interval_sec <= 0:
-        return
-    if not sheet_logging.is_sheet_logging_enabled():
-        return
-    timeout = settings.warm_sheet_mapping_timeout_sec
-    if timeout <= 0:
-        return
-    log = logging.getLogger(__name__)
-    try:
-        summary = await asyncio.wait_for(
-            asyncio.to_thread(sheet_mapping.reload_now),
-            timeout=timeout,
-        )
-        log.info("sheet_mapping preloaded at startup: %s", summary)
-    except TimeoutError:
-        log.warning(
-            "sheet_mapping preload timed out after %.1fs; "
-            "drain loop will retry on its own schedule",
-            timeout,
-        )
-    except Exception:
-        log.exception("sheet_mapping preload failed; drain loop will retry")
-
-
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     ledger_repo.init_db()
-    await _warm_sheet_mapping()
-    drain_task = asyncio.create_task(_drain_loop(), name="sheet-logging-drain")
+    await warm_sheet_mapping()
+    sheet_logging_bg = asyncio.create_task(sheet_logging_task(), name="sheet-logging-task")
+    rate_prefetch_bg = asyncio.create_task(rate_prefetch_task(), name="rate-prefetch-task")
     try:
         yield
     finally:
-        drain_task.cancel()
+        sheet_logging_bg.cancel()
+        rate_prefetch_bg.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await drain_task
+            await sheet_logging_bg
+        with contextlib.suppress(asyncio.CancelledError):
+            await rate_prefetch_bg
 
 
 def create_app() -> FastAPI:

@@ -19,6 +19,7 @@ payload download, silently undoing the Phase 2 cache design.
 import allure
 import pytest
 
+from dinary.api.catalog import _if_none_match_matches
 from dinary.services import ledger_repo
 
 
@@ -187,36 +188,30 @@ class TestIfNoneMatchUnit:
     than through repeated ``client.get`` calls."""
 
     def test_empty_header_is_not_a_match(self):
-        from dinary.api.catalog import _if_none_match_matches
 
         assert _if_none_match_matches("", 'W/"catalog-v1"') is False
         assert _if_none_match_matches("   ", 'W/"catalog-v1"') is False
 
     def test_wildcard_matches(self):
-        from dinary.api.catalog import _if_none_match_matches
 
         assert _if_none_match_matches("*", 'W/"catalog-v1"') is True
 
     def test_exact_single_tag_matches(self):
-        from dinary.api.catalog import _if_none_match_matches
 
         assert _if_none_match_matches('W/"catalog-v1"', 'W/"catalog-v1"') is True
         assert _if_none_match_matches('W/"catalog-v2"', 'W/"catalog-v1"') is False
 
     def test_comma_separated_list_member_matches(self):
-        from dinary.api.catalog import _if_none_match_matches
 
         header = 'W/"catalog-v0", W/"catalog-v1", W/"catalog-v2"'
         assert _if_none_match_matches(header, 'W/"catalog-v1"') is True
 
     def test_comma_separated_list_without_match(self):
-        from dinary.api.catalog import _if_none_match_matches
 
         header = 'W/"catalog-v0", W/"catalog-v2"'
         assert _if_none_match_matches(header, 'W/"catalog-v1"') is False
 
     def test_whitespace_around_tags_is_tolerated(self):
-        from dinary.api.catalog import _if_none_match_matches
 
         header = '   W/"catalog-v1"   ,   W/"catalog-v2"   '
         assert _if_none_match_matches(header, 'W/"catalog-v2"') is True

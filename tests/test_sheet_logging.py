@@ -88,7 +88,7 @@ def _expense_row(
 ) -> ledger_repo.ExpenseRow:
     """Minimal ``ExpenseRow`` factory for pure-helper tests.
 
-    ``_derive_rsd_for_sheet`` only reads ``amount``, ``amount_original``
+    ``_derive_app_currency_amount_for_sheet`` only reads ``amount``, ``amount_original``
     and ``currency_original``; the rest exists solely to satisfy the
     dataclass slots.
     """
@@ -108,7 +108,7 @@ def _expense_row(
 
 
 @allure.epic("SheetLogging")
-@allure.feature("_derive_rsd_for_sheet")
+@allure.feature("_derive_app_currency_amount_for_sheet")
 class TestDeriveRsdForSheet:
     """Column B on the Sheets mirror is RSD-denominated (the sheet's
     native "original" currency post-Apr-2022). DB rows are stored in
@@ -128,18 +128,18 @@ class TestDeriveRsdForSheet:
             currency_original="RSD",
         )
         with patch("dinary.services.sheet_logging.get_rate") as mock_rate:
-            out = sheet_logging._derive_rsd_for_sheet(
+            out = sheet_logging._derive_app_currency_amount_for_sheet(
                 con=None,
                 expense=row,
-                eur_rsd_rate=Decimal("117.0"),
+                app_currency_rate=Decimal("117.0"),
                 expense_date=self._DATE,
             )
         assert out == 1500.0
         # RSD shortcut must not consult NBS rates at all, even if
-        # ``eur_rsd_rate`` happens to be present.
+        # ``app_currency_rate`` happens to be present.
         mock_rate.assert_not_called()
 
-    def test_eur_accounting_converts_via_supplied_eur_rsd_rate(
+    def test_eur_accounting_converts_via_supplied_app_currency_rate(
         self,
         monkeypatch,
     ):
@@ -154,17 +154,17 @@ class TestDeriveRsdForSheet:
             currency_original="USD",
         )
         with patch("dinary.services.sheet_logging.get_rate") as mock_rate:
-            out = sheet_logging._derive_rsd_for_sheet(
+            out = sheet_logging._derive_app_currency_amount_for_sheet(
                 con=None,
                 expense=row,
-                eur_rsd_rate=Decimal("117.0"),
+                app_currency_rate=Decimal("117.0"),
                 expense_date=self._DATE,
             )
         assert out == 1170.00
         mock_rate.assert_not_called()
 
     def test_eur_accounting_without_rate_returns_none(self, monkeypatch):
-        """``eur_rsd_rate=None`` means NBS had no rate for the expense
+        """``app_currency_rate=None`` means no rate available for the expense
         date. Helper must signal failure (``None``) so the caller
         requeues the job — never silently write 0 or a stale value."""
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
@@ -173,12 +173,16 @@ class TestDeriveRsdForSheet:
             amount_original=Decimal("12.00"),
             currency_original="USD",
         )
-        out = sheet_logging._derive_rsd_for_sheet(
-            con=None,
-            expense=row,
-            eur_rsd_rate=None,
-            expense_date=self._DATE,
-        )
+        with patch(
+            "dinary.services.sheet_logging.get_rate",
+            side_effect=ValueError("no rate"),
+        ):
+            out = sheet_logging._derive_app_currency_amount_for_sheet(
+                con=None,
+                expense=row,
+                app_currency_rate=None,
+                expense_date=self._DATE,
+            )
         assert out is None
 
     def test_rsd_accounting_returns_amount_directly(self, monkeypatch):
@@ -193,10 +197,10 @@ class TestDeriveRsdForSheet:
             currency_original="EUR",
         )
         with patch("dinary.services.sheet_logging.get_rate") as mock_rate:
-            out = sheet_logging._derive_rsd_for_sheet(
+            out = sheet_logging._derive_app_currency_amount_for_sheet(
                 con=None,
                 expense=row,
-                eur_rsd_rate=None,
+                app_currency_rate=None,
                 expense_date=self._DATE,
             )
         assert out == 1500.0
@@ -220,10 +224,10 @@ class TestDeriveRsdForSheet:
             "dinary.services.sheet_logging.get_rate",
             return_value=Decimal("108.50"),
         ) as mock_rate:
-            out = sheet_logging._derive_rsd_for_sheet(
+            out = sheet_logging._derive_app_currency_amount_for_sheet(
                 con=None,
                 expense=row,
-                eur_rsd_rate=Decimal("117.0"),
+                app_currency_rate=None,
                 expense_date=self._DATE,
             )
         assert out == 1085.00
@@ -231,6 +235,7 @@ class TestDeriveRsdForSheet:
         call_args = mock_rate.call_args
         assert call_args.args[1] == self._DATE
         assert call_args.args[2] == "USD"
+        assert call_args.args[3] == "RSD"
 
     def test_exotic_accounting_currency_without_rate_returns_none(
         self,
@@ -250,10 +255,10 @@ class TestDeriveRsdForSheet:
             "dinary.services.sheet_logging.get_rate",
             side_effect=ValueError("no rate"),
         ):
-            out = sheet_logging._derive_rsd_for_sheet(
+            out = sheet_logging._derive_app_currency_amount_for_sheet(
                 con=None,
                 expense=row,
-                eur_rsd_rate=Decimal("117.0"),
+                app_currency_rate=None,
                 expense_date=self._DATE,
             )
         assert out is None

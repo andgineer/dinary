@@ -21,6 +21,7 @@ Tests pin:
   per column" independently across sheet_category and sheet_group.
 """
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import allure
@@ -461,8 +462,6 @@ class TestDefaultTemplateRows:
             assert not is_identity, f"identity row leaked into template: {r}"
 
     def test_inactive_envelope_override_is_dropped(self, caplog):
-        import logging
-
         caplog.set_level(logging.WARNING, logger="dinary.services.sheet_mapping")
         # ``гигиена`` is an envelope override but absent from the
         # active catalog — the row must be skipped with a WARN rather

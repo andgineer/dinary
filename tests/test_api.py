@@ -96,9 +96,9 @@ def _tmp_db(tmp_path, monkeypatch):
         con.close()
 
 
-def _mock_convert(con, amount, from_ccy, to_ccy, rate_date):
-    """Identity FX stub: keep stored ``amount`` equal to ``amount_original``."""
-    return Decimal(str(amount)), Decimal(1)
+def _mock_get_rate(con, rate_date, source, target, *, offline=False):
+    """Identity FX stub: rate=1 keeps stored ``amount`` equal to ``amount_original``."""
+    return Decimal(1)
 
 
 @allure.epic("API")
@@ -112,7 +112,7 @@ def test_health(client):
 @allure.epic("API")
 @allure.feature("Expenses (3D)")
 class TestPostExpense:
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_create_expense(self, _mock_convert_fn, client):
         resp = client.post(
             "/api/expenses",
@@ -138,7 +138,7 @@ class TestPostExpense:
         assert "id" not in data
         assert "expense_id" not in data
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_disabled_sheet_logging_does_not_enqueue_jobs(
         self,
         _mock_convert_fn,
@@ -166,7 +166,7 @@ class TestPostExpense:
         finally:
             con.close()
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_enabled_sheet_logging_enqueues_job(
         self,
         _mock_convert_fn,
@@ -205,7 +205,7 @@ class TestPostExpense:
         assert expected_pk_row is not None
         assert pks == [int(expected_pk_row[0])]
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_replay_returns_duplicate(self, _mock_convert_fn, client):
         body = {
             "client_expense_id": "e2",
@@ -233,7 +233,7 @@ class TestPostExpense:
             con.close()
         assert count == 1
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_conflict_on_modified_amount(self, _mock_convert_fn, client):
         base = {
             "client_expense_id": "e3",
@@ -249,7 +249,7 @@ class TestPostExpense:
         resp = client.post("/api/expenses", json=modified)
         assert resp.status_code == 409
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_conflict_on_modified_date(self, _mock_convert_fn, client):
         """Same ``client_expense_id``, different date is a conflict.
         With the single-DB refactor this replaces the old "cross-year
@@ -282,7 +282,7 @@ class TestPostExpense:
         )
         assert resp.status_code == 422
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_event_and_tags_are_stored(self, _mock_convert_fn, client):
         resp = client.post(
             "/api/expenses",
@@ -310,7 +310,7 @@ class TestPostExpense:
             con.close()
         assert tags == [1, 2]
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_event_auto_tags_unioned_into_expense(self, _mock_convert_fn, client):
         """POST ``/api/expenses`` must union ``events.auto_tags`` into
         the stored tag set so runtime writes carry the same invariant
@@ -414,7 +414,7 @@ class TestPostExpense:
         )
         assert resp.status_code == 422
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_reseed_deactivation_allows_idempotent_replay_but_rejects_new_posts(
         self,
         _mock_convert_fn,
@@ -486,7 +486,7 @@ class TestPostExpense:
         )
         assert mismatch.status_code == 409
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_inactive_tag_replay_carveout(
         self,
         _mock_convert_fn,
@@ -532,7 +532,7 @@ class TestPostExpense:
         assert replay.status_code == 200, replay.text
         assert replay.json()["status"] == "duplicate"
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_inactive_tag_replay_with_mismatched_body_returns_409(
         self,
         _mock_convert_fn,
@@ -599,7 +599,7 @@ class TestPostExpense:
         assert resp.json()["status"] == "ok"
         assert ledger_repo.lookup_existing_expense("e_leak") is not None
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_response_echoes_original_amount_and_currency(
         self,
         _mock_convert_fn,
@@ -627,7 +627,7 @@ class TestPostExpense:
         assert "amount_rsd" not in data
         assert "amount" not in data
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_defaults_currency_to_app_currency(
         self,
         _mock_convert_fn,
@@ -656,15 +656,13 @@ class TestPostExpense:
         (``app_currency`` = RSD) becomes the source here so the stored
         ``amount`` ends up in EUR (the accounting currency)."""
 
-        def _rsd_to_eur(_con, amount, from_ccy, to_ccy, _rate_date):
-            # 117 RSD = 1 EUR; only called for non-accounting currencies.
+        def _rsd_to_eur(_con, _rate_date, from_ccy, to_ccy, *, offline=False):
+            # 117 RSD = 1 EUR; return rate so amount * rate gives EUR
             assert from_ccy.upper() == "RSD"
             assert to_ccy.upper() == settings.accounting_currency.upper()
-            return (Decimal(str(amount)) / Decimal("117")).quantize(
-                Decimal("0.01"),
-            ), Decimal("117")
+            return Decimal("1") / Decimal("117")
 
-        with patch("dinary.api.expenses.convert", side_effect=_rsd_to_eur):
+        with patch("dinary.api.expenses.get_rate", side_effect=_rsd_to_eur):
             resp = client.post(
                 "/api/expenses",
                 json={
@@ -697,7 +695,7 @@ class TestPostExpense:
         assert Decimal(str(row[1])) == Decimal("1170.00")
         assert row[2] == "RSD"
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_conflict_on_modified_category(self, _mock_convert_fn, client):
         """Replaying the same ``client_expense_id`` with a different
         category is a 409 conflict.
@@ -720,7 +718,7 @@ class TestPostExpense:
         resp = client.post("/api/expenses", json=modified)
         assert resp.status_code == 409
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_concurrent_post_with_same_client_expense_id_is_atomic(
         self,
         _mock_convert_fn,
@@ -761,7 +759,7 @@ class TestPostExpense:
 
         with (
             patch.object(ledger_repo, "insert_expense", side_effect=boom),
-            patch("dinary.api.expenses.convert", side_effect=_mock_convert),
+            patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate),
         ):
             resp = client.post(
                 "/api/expenses",
@@ -833,7 +831,7 @@ class TestPostExpense:
                 )
 
         with (
-            patch("dinary.api.expenses.convert", side_effect=_mock_convert),
+            patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate),
             _count_race_recoveries() as race_counter,
         ):
             responses = asyncio.run(_run())
@@ -927,7 +925,7 @@ class TestPostExpense:
                 )
 
         with (
-            patch("dinary.api.expenses.convert", side_effect=_mock_convert),
+            patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate),
             _count_race_recoveries() as race_counter,
         ):
             responses = asyncio.run(_run())
@@ -987,7 +985,7 @@ class TestPostExpense:
             f"IntegrityError/OperationalError."
         )
 
-    @patch("dinary.api.expenses.convert", side_effect=_mock_convert)
+    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_unexpected_constraint_exception_propagates(
         self,
         _mock_convert_fn,
