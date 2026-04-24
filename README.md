@@ -11,7 +11,7 @@
 | src/dinary/api/qr.py                          |       17 |        6 |     65% |     26-32 |
 | src/dinary/background/rate\_prefetch\_task.py |       45 |        2 |     96% |    67, 97 |
 | src/dinary/background/sheet\_logging\_task.py |       53 |        7 |     87% |     44-57 |
-| src/dinary/config.py                          |      148 |       19 |     87% |37, 47, 110-112, 143, 149, 205-209, 211-215, 218-223, 226-230, 293-295 |
+| src/dinary/config.py                          |      148 |       20 |     86% |37, 47, 110-112, 143, 149, 205-209, 211-215, 218-223, 226-230, 289, 293-295 |
 | src/dinary/imports/expense\_import.py         |      396 |      131 |     67% |260, 265-266, 280, 282, 284, 311-329, 359, 363, 396-402, 405, 412, 414, 416-423, 445, 450-451, 475, 518-522, 540-543, 545-557, 666-667, 715-717, 720-722, 809-820, 889-932, 945, 955, 978-1014, 1072, 1086, 1089, 1094, 1104, 1165-1169, 1171-1175, 1230-1237, 1241-1254, 1282-1291 |
 | src/dinary/imports/income\_import.py          |      139 |      139 |      0% |    12-318 |
 | src/dinary/imports/report\_2d\_3d.py          |      199 |       42 |     79% |170, 229-238, 274, 496-497, 535-566, 570-609, 613 |
@@ -25,12 +25,11 @@
 | src/dinary/reports/verify\_income.py          |       88 |        1 |     99% |        38 |
 | src/dinary/services/catalog\_writer.py        |      422 |       79 |     81% |177-178, 340-344, 498-500, 520-562, 571, 686, 698, 706, 835-837, 870, 879-884, 893, 895, 900, 905, 915, 931, 971-973, 1009, 1018, 1032-1034, 1059, 1091, 1096, 1113, 1209, 1241, 1245-1247, 1254-1256, 1277, 1281-1283, 1290-1292, 1314, 1327-1329 |
 | src/dinary/services/db\_migrations.py         |       54 |        2 |     96% |    86, 89 |
-| src/dinary/services/exchange\_rate.py         |       16 |       16 |      0% |      3-28 |
 | src/dinary/services/exchange\_rates.py        |       44 |        9 |     80% |49-52, 112-117 |
 | src/dinary/services/ledger\_repo.py           |      275 |       30 |     89% |62-63, 287-296, 304-310, 637, 672, 778, 784, 818, 845-854, 876-883, 1019-1020, 1036-1042, 1107 |
 | src/dinary/services/nbs.py                    |       47 |        0 |    100% |           |
 | src/dinary/services/qr\_parser.py             |       16 |        1 |     94% |        31 |
-| src/dinary/services/rate\_helpers.py          |       29 |        6 |     79% |26, 35-37, 64-70 |
+| src/dinary/services/rate\_helpers.py          |       30 |        6 |     80% |26, 35-37, 68-74 |
 | src/dinary/services/seed\_config.py           |      137 |        7 |     95% |220-221, 515-517, 556-560 |
 | src/dinary/services/sheet\_logging.py         |      217 |       49 |     77% |96-100, 114-121, 129, 195, 199-201, 257-263, 276-278, 282-296, 325-326, 370, 435-436, 457-475, 484, 488 |
 | src/dinary/services/sheet\_mapping.py         |      252 |       54 |     79% |274, 346-348, 375-376, 383-389, 439, 442-454, 468-469, 479-497, 574-581, 609-661, 689, 700-705 |
@@ -38,7 +37,7 @@
 | src/dinary/services/sql\_loader.py            |       31 |        0 |    100% |           |
 | src/dinary/services/sqlite\_types.py          |       36 |        0 |    100% |           |
 | src/dinary/tools/sql.py                       |       71 |        3 |     96% |86, 176, 183 |
-| **TOTAL**                                     | **4113** |  **934** | **77%** |           |
+| **TOTAL**                                     | **4098** |  **919** | **78%** |           |
 
 
 ## Setup coverage badge
