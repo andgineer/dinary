@@ -125,13 +125,13 @@ REPLICA_LITESTREAM_DIR = "/var/lib/litestream"
 # Directory Litestream materializes inside REPLICA_LITESTREAM_DIR for
 # our single ``dinary.db``. Matches the trailing segment of the
 # ``path:`` field in .deploy/litestream.yml — a silent drift here
-# would make ``inv setup-replica-backup`` restore from the wrong replica tree.
+# would make ``inv backup-cloud-setup`` restore from the wrong replica tree.
 REPLICA_DB_NAME = "dinary"
 
 # Off-site backup to Yandex.Disk (see docs/src/en/operations.md,
 # section "Off-site backup: Yandex.Disk"). Everything on the replica
-# is managed by ``inv setup-replica-backup``; the restore side is
-# ``inv restore-from-yadisk`` (local-only, runs in cwd).
+# is managed by ``inv backup-cloud-setup``; the restore side is
+# ``inv backup-cloud-restore`` (local-only, runs in cwd).
 BACKUP_SCRIPT_PATH = "/usr/local/bin/dinary-backup"
 BACKUP_RETENTION_SCRIPT_PATH = "/usr/local/bin/dinary-backup-retention"
 BACKUP_SERVICE_PATH = "/etc/systemd/system/dinary-backup.service"
@@ -155,7 +155,7 @@ BACKUP_RETENTION_DAILY = 7
 BACKUP_RETENTION_WEEKLY = 4
 BACKUP_RETENTION_MONTHLY = 12
 
-# Freshness threshold for `inv backup-status`. The daily systemd timer
+# Freshness threshold for `inv backup-cloud-status`. The daily systemd timer
 # fires at 03:17 UTC with 30 min jitter, so a healthy snapshot is
 # always <= 24h30m old. 26h gives a ~1h30m buffer for a single missed
 # jitter window without false-alerting. A stale snapshot for >26h
@@ -541,7 +541,7 @@ def _install_yandex_rclone_remote(login: str, app_password: str) -> None:
     Smoke-tests end-to-end with ``rclone lsd yandex:``. If the smoke
     test fails (wrong app-password, wrong scope, typo, Yandex
     unreachable) we **roll back** by deleting the just-written
-    ``yandex`` remote, so the next ``inv setup-replica-backup``
+    ``yandex`` remote, so the next ``inv backup-cloud-setup``
     re-prompts for fresh credentials instead of silently reusing the
     broken config.
     """
@@ -610,7 +610,7 @@ def _install_yandex_rclone_remote(login: str, app_password: str) -> None:
             "\n"
             "The partially-created 'yandex:' remote has been rolled\n"
             "back on VM2.\n"
-            "Re-run `inv setup-replica-backup` to try again; it will\n"
+            "Re-run `inv backup-cloud-setup` to try again; it will\n"
             "prompt for credentials fresh.\n",
         )
         sys.exit(proc.returncode)
@@ -1300,7 +1300,7 @@ def _build_backup_script() -> str:
     replica_path = f"{REPLICA_LITESTREAM_DIR}/{REPLICA_DB_NAME}"
     remote_prefix = f"{BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}"
     return f"""#!/usr/bin/env bash
-# Managed by inv setup-replica-backup. Overwritten on every re-apply.
+# Managed by inv backup-cloud-setup. Overwritten on every re-apply.
 # Daily backup: Litestream replica -> plain .db -> zstd -> Yandex.Disk.
 set -euo pipefail
 
@@ -1379,7 +1379,7 @@ def _build_backup_retention_script() -> str:
     """
     header = (
         "#!/usr/bin/env python3\n"
-        "# Managed by inv setup-replica-backup. Overwritten on every re-apply.\n"
+        "# Managed by inv backup-cloud-setup. Overwritten on every re-apply.\n"
         "# GFS retention on the off-site backup remote.\n"
         f"DAILY_KEEP = {BACKUP_RETENTION_DAILY}\n"
         f"WEEKLY_KEEP = {BACKUP_RETENTION_WEEKLY}\n"
@@ -1462,7 +1462,7 @@ def _build_backup_service_unit() -> str:
     replication feed that it depends on.
     """
     return (
-        "# Managed by inv setup-replica-backup. Overwritten on every re-apply.\n"
+        "# Managed by inv backup-cloud-setup. Overwritten on every re-apply.\n"
         "[Unit]\n"
         "Description=Back up dinary replica to Yandex.Disk\n"
         "After=network-online.target\n"
@@ -1491,7 +1491,7 @@ def _build_backup_timer_unit() -> str:
     a reboot-on-the-hour would silently create a 24 h retention gap.
     """
     return (
-        "# Managed by inv setup-replica-backup. Overwritten on every re-apply.\n"
+        "# Managed by inv backup-cloud-setup. Overwritten on every re-apply.\n"
         "[Unit]\n"
         "Description=Daily dinary off-site backup\n"
         "\n"
@@ -1552,7 +1552,7 @@ def setup_replica(c, swap_size_gb=1):
     print("=== Replica bootstrap done ===")
 
 
-@task(name="setup-replica-backup")
+@task(name="backup-cloud-setup")
 def setup_replica_backup(c):
     """Add the daily Yandex.Disk backup role on top of an already-
     provisioned Litestream replica host (VM2).
@@ -1644,7 +1644,7 @@ def setup_replica_backup(c):
         "sudo systemctl start dinary-backup.service && "
         "sudo journalctl -u dinary-backup.service -n 40 --no-pager",
     )
-    print("=== setup-replica-backup done ===")
+    print("=== backup-cloud-setup done ===")
 
 
 def _parse_snapshot_lsjson(raw):
@@ -1728,7 +1728,7 @@ def _parse_snapshot_timestamp(name):
 
 
 def _check_backup_freshness(snapshots, now, max_age_hours):
-    """Compute the freshness verdict for ``inv backup-status``.
+    """Compute the freshness verdict for ``inv backup-cloud-status``.
 
     Pure helper so tests can pin the ok/stale/empty branches without
     any SSH/rclone plumbing. Returns a dict ready for both human-
@@ -1772,7 +1772,7 @@ def _check_backup_freshness(snapshots, now, max_age_hours):
 
 
 def _format_backup_status_line(verdict):
-    """Render one human-readable summary line for ``inv backup-status``.
+    """Render one human-readable summary line for ``inv backup-cloud-status``.
 
     Kept separate from the task so the laptop cron wrapper can log
     the exact same line the operator would see, and so tests can pin
@@ -1801,7 +1801,7 @@ def _format_backup_status_line(verdict):
     )
 
 
-@task(name="backup-status")
+@task(name="backup-cloud-status")
 def backup_status(_c, max_age_hours=None, json_output=False):
     """Check freshness of the newest Yandex.Disk backup.
 
@@ -1899,7 +1899,8 @@ def _prompt_restore_confirmation(target_db, picked):
         f"{size_kb:,.1f} KB, mtime {mtime})\n"
         f"with snapshot {picked[0]} ({picked[1] / 1024:,.1f} KB compressed).\n"
         f"The previous file will be saved as "
-        f"{target_db.name}.before-restore-<UTC-ISO>.",
+        f"{target_db.name}.before-restore-<UTC-ISO>.\n"
+        f"WARNING: stop the server before proceeding to avoid WAL corruption.",
     )
     answer = input("Type 'yes' to proceed: ").strip()
     if answer != "yes":
@@ -1918,22 +1919,22 @@ def _sqlite_row_count(db_path):
     """
     try:
         with sqlite3.connect(db_path) as conn:
-            cur = conn.execute("SELECT COUNT(*) FROM expense")
+            cur = conn.execute("SELECT COUNT(*) FROM expenses")
             return cur.fetchone()[0]
     except sqlite3.Error:
         return 0
 
 
-@task(name="restore-from-yadisk")
+@task(name="backup-cloud-restore")
 def restore_from_yadisk(c, snapshot="latest", list_only=False, yes=False):
     """Restore ``data/dinary.db`` from an off-site Yandex.Disk backup.
 
     **Local-only task.** Writes to ``./data/dinary.db`` relative to
     the cwd. There is intentionally no ``--remote`` mode: the
     ergonomic way to recover prod is ``ssh ubuntu@dinary; cd
-    ~/dinary; inv restore-from-yadisk``. The SSH + cd + interactive
-    confirmation are the footgun guards — a one-word ``inv restore-
-    from-yadisk`` on the wrong terminal must not silently overwrite
+    ~/dinary; inv backup-cloud-restore``. The SSH + cd + interactive
+    confirmation are the footgun guards — a one-word ``inv backup-
+    cloud-restore`` on the wrong terminal must not silently overwrite
     prod.
 
     Flags:
@@ -1978,7 +1979,7 @@ def restore_from_yadisk(c, snapshot="latest", list_only=False, yes=False):
         ssh ubuntu@dinary
         sudo systemctl stop dinary litestream
         cd ~/dinary
-        inv restore-from-yadisk --snapshot 2026-03-15
+        inv backup-cloud-restore --snapshot 2026-03-15
         sudo systemctl start litestream dinary
     """
     _assert_local_binaries(["rclone", "sqlite3", "zstd"])
@@ -2049,6 +2050,13 @@ def restore_from_yadisk(c, snapshot="latest", list_only=False, yes=False):
             target_db.rename(preserved)
             print(f"Previous data/dinary.db saved as data/{preserved.name}")
 
+        for wal_file in (
+            target_db.with_suffix(".db-wal"),
+            target_db.with_suffix(".db-shm"),
+        ):
+            if wal_file.exists():
+                wal_file.unlink()
+                print(f"Removed stale WAL file {wal_file.name}")
         shutil.move(str(restored), str(target_db))
 
     print(f"Restored data/dinary.db from {picked[0]}")

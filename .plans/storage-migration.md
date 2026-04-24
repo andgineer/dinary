@@ -789,7 +789,7 @@ throws the temp file away.
 
 #### 3.5.a Primary: VM 2 daily snapshot to Yandex.Disk — IMPLEMENTED
 
-Shipped as `inv setup-replica-backup` + `inv restore-from-yadisk`. See
+Shipped as `inv backup-cloud-setup` + `inv backup-cloud-restore`. See
 [`docs/src/en/operations.md`](../docs/src/en/operations.md#off-site-backup-yandexdisk-daily-gfs-retention)
 ("Off-site backup: Yandex.Disk" and "Point-in-time restore from
 Yandex.Disk") for the operator-facing runbook. Key deviations from
@@ -815,7 +815,7 @@ the original draft above:
   one-time interactive OAuth browser click is acceptable friction
   and explicitly asked for rclone itself to be pre-installed so
   disaster-recovery does not hit `apt install` in a stressed
-  terminal; `inv setup` and `inv setup-replica-backup` now both install
+  terminal; `inv setup` and `inv backup-cloud-setup` now both install
   rclone themselves.
 
 The pure-string builders (`_build_backup_script`,

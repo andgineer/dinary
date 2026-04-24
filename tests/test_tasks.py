@@ -1289,9 +1289,9 @@ class TestVerifyDbRemote:
 
 
 @allure.epic("Deploy")
-@allure.feature("setup-replica-backup: script builders")
+@allure.feature("backup-cloud-setup: script builders")
 class TestSetupBackupScripts:
-    """``inv setup-replica-backup`` composes four pure-string builders: the
+    """``inv backup-cloud-setup`` composes four pure-string builders: the
     apt step, the backup bash pipeline, the GFS retention Python
     script, and the systemd unit pair. A regression in any of them
     either silently corrupts the backup (wrong remote path, wrong
@@ -1302,7 +1302,7 @@ class TestSetupBackupScripts:
     def test_packages_script_is_noninteractive(self):
         """``DEBIAN_FRONTEND=noninteractive`` is mandatory — without
         it apt can block on a postfix/grub debconf prompt on a fresh
-        cloud image, silently hanging ``inv setup-replica-backup``.
+        cloud image, silently hanging ``inv backup-cloud-setup``.
         """
         script = _tasks._build_setup_replica_backup_packages_script()
         assert "export DEBIAN_FRONTEND=noninteractive" in script
@@ -1339,7 +1339,7 @@ class TestSetupBackupScripts:
     def test_backup_script_sources_replica_from_canonical_path(self):
         """The Litestream replica tree is materialized at
         ``<REPLICA_LITESTREAM_DIR>/<REPLICA_DB_NAME>``. Silent drift
-        here would make ``inv setup-replica-backup`` restore from an empty
+        here would make ``inv backup-cloud-setup`` restore from an empty
         directory and upload an empty .db every day.
         """
         script = _tasks._build_backup_script()
@@ -1387,7 +1387,7 @@ class TestSetupBackupScripts:
 
 
 @allure.epic("Deploy")
-@allure.feature("setup-replica-backup: retention (GFS policy)")
+@allure.feature("backup-cloud-setup: retention (GFS policy)")
 class TestBackupRetentionScript:
     """The Python retention script is the policy: 7 daily / 4 weekly /
     12 monthly / all yearly indefinitely. These tests exec the emitted
@@ -1533,10 +1533,10 @@ class TestBackupRetentionScript:
 
 
 @allure.epic("Deploy")
-@allure.feature("setup-replica-backup: systemd units")
+@allure.feature("backup-cloud-setup: systemd units")
 class TestBackupSystemdUnits:
     """The service + timer must together produce a daily backup with
-    no manual intervention after ``inv setup-replica-backup``. Getting either
+    no manual intervention after ``inv backup-cloud-setup``. Getting either
     unit subtly wrong (wrong User, wrong OnCalendar, no Persistent)
     surfaces as "my backups just stopped" weeks later, so pin the
     invariants here.
@@ -1563,7 +1563,7 @@ class TestBackupSystemdUnits:
     def test_service_execstart_points_at_installed_script(self):
         """``ExecStart`` must reference the canonical script path.
         Drift between the constant and the unit would make
-        ``inv setup-replica-backup`` succeed but trigger "no such file" at
+        ``inv backup-cloud-setup`` succeed but trigger "no such file" at
         timer fire.
         """
         unit = _tasks._build_backup_service_unit()
@@ -1609,9 +1609,9 @@ class TestBackupSystemdUnits:
 
 
 @allure.epic("Deploy")
-@allure.feature("setup-replica-backup: orchestration")
+@allure.feature("backup-cloud-setup: orchestration")
 class TestSetupBackupTask:
-    """``setup-replica-backup`` orchestrates four things in the single
+    """``backup-cloud-setup`` orchestrates four things in the single
     ``_ssh_replica`` stream:
 
     1. apt packages
@@ -1790,7 +1790,7 @@ class TestSetupBackupTask:
 
 
 @allure.epic("Deploy")
-@allure.feature("setup-replica-backup: yandex rclone bootstrap")
+@allure.feature("backup-cloud-setup: yandex rclone bootstrap")
 class TestEnsureYandexRcloneConfigured:
     """The interactive Yandex bootstrap replaces the previous "run
     ``rclone config`` manually on VM2" step. The contract is:
@@ -1812,7 +1812,7 @@ class TestEnsureYandexRcloneConfigured:
         )
 
     def test_skips_when_remote_already_exists_and_works(self, monkeypatch):
-        """Re-running ``setup-replica-backup`` on a working replica
+        """Re-running ``backup-cloud-setup`` on a working replica
         must not re-prompt for credentials — the second-run UX is
         ``inv pre`` + redeploy, not "now re-enter your Yandex
         password".
@@ -1987,9 +1987,9 @@ class TestEnsureYandexRcloneConfigured:
 
 
 @allure.epic("Deploy")
-@allure.feature("restore-from-yadisk: inventory + snapshot picker")
+@allure.feature("backup-cloud-restore: inventory + snapshot picker")
 class TestRestoreFromYadiskHelpers:
-    """``restore-from-yadisk`` is split into three helpers so the
+    """``backup-cloud-restore`` is split into three helpers so the
     destructive file-replacement path can be read separately from the
     discovery path. These tests cover the non-destructive helpers
     (list parsing, snapshot picking) — the full task's file-writing
@@ -2077,9 +2077,9 @@ class TestRestoreFromYadiskHelpers:
 
 
 @allure.epic("Deploy")
-@allure.feature("backup-status: freshness check")
+@allure.feature("backup-cloud-status: freshness check")
 class TestBackupStatusHelpers:
-    """Pure helpers behind ``inv backup-status``. The task itself is a
+    """Pure helpers behind ``inv backup-cloud-status``. The task itself is a
     thin wrapper over :func:`_replica_list_snapshots` (I/O) and
     :func:`_check_backup_freshness` (pure) — these tests pin the
     pure branches so the ok/stale/empty/unparseable transitions are
@@ -2205,9 +2205,9 @@ class TestBackupStatusHelpers:
 
 
 @allure.epic("Deploy")
-@allure.feature("backup-status: task")
+@allure.feature("backup-cloud-status: task")
 class TestBackupStatusTask:
-    """End-to-end tests for the ``inv backup-status`` task: mocks the
+    """End-to-end tests for the ``inv backup-cloud-status`` task: mocks the
     two I/O seams (``_replica_list_snapshots`` and ``_dt.now``) and
     pins the print/exit behavior.
     """
@@ -2305,11 +2305,11 @@ class TestBackupStatusTask:
 
 
 @allure.epic("Deploy")
-@allure.feature("restore-from-yadisk: task")
+@allure.feature("backup-cloud-restore: task")
 @pytest.mark.skipif(
     sys.platform == "win32",
     reason=(
-        "restore-from-yadisk shells out to the zstd and sqlite3 CLI "
+        "backup-cloud-restore shells out to the zstd and sqlite3 CLI "
         "binaries, which are not on the Windows CI runner path. The "
         "task itself only targets Linux (VM 1) / macOS (operator "
         "laptop), so skipping Windows here matches the deploy matrix."

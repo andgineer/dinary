@@ -137,7 +137,7 @@ cleanly.
 tunnel, or any Python runtime — VM 2 is intentionally a minimal SFTP
 sink. Everything the daily off-site backup needs (rclone, sqlite3,
 zstd, the Litestream binary used only for local restore) is added
-later by `inv setup-replica-backup` — see "Off-site backup: Yandex.Disk"
+later by `inv backup-cloud-setup` — see "Off-site backup: Yandex.Disk"
 below.
 
 #### One-time Litestream bootstrap on VM 1
@@ -218,7 +218,7 @@ The Litestream replica on VM 2 is hot (seconds-level RPO) but
 co-located with VM 1 in the same cloud provider's region. For
 "both VMs went away" scenarios there is a daily off-site backup
 pushed from VM 2 to Yandex.Disk, orchestrated by
-`inv setup-replica-backup`.
+`inv backup-cloud-setup`.
 
 ### What it does
 
@@ -262,7 +262,7 @@ Precondition: `inv setup-replica` has been run against VM 2.
 Then, from the operator machine:
 
 ```bash
-inv setup-replica-backup
+inv backup-cloud-setup
 ```
 
 The task:
@@ -316,16 +316,16 @@ ssh ubuntu@dinary-replica sudo journalctl -u dinary-backup.service -n 50 --no-pa
 ssh ubuntu@dinary-replica sudo systemctl list-timers dinary-backup.timer
 ```
 
-### Freshness monitoring: `inv backup-status`
+### Freshness monitoring: `inv backup-cloud-status`
 
 The daily timer failing silently is the worst-case mode — the
 off-site snapshot stops refreshing while everything else looks fine.
-`inv backup-status` is the off-VM2 probe:
+`inv backup-cloud-status` is the off-VM2 probe:
 
 ```bash
-inv backup-status                     # human one-liner; exit 0/1
-inv backup-status --json-output       # machine-readable verdict
-inv backup-status --max-age-hours 3   # tighten threshold during an incident
+inv backup-cloud-status                     # human one-liner; exit 0/1
+inv backup-cloud-status --json-output       # machine-readable verdict
+inv backup-cloud-status --max-age-hours 3   # tighten threshold during an incident
 ```
 
 It SSHes into VM 2, runs `rclone lsjson` against the `yandex:`
@@ -347,7 +347,7 @@ code, so one probe covers both failure modes.
 Wire it into laptop cron via
 `linux-conf/osx/dinary_backup_check.sh` (copied into `~/scripts/`
 by `linux-conf/osx/copy_scripts.sh`). That wrapper `cd`s into
-`~/projects/dinary`, runs `uv run inv backup-status`, and on
+`~/projects/dinary`, runs `uv run inv backup-cloud-status`, and on
 non-zero exit pipes the captured output through `send_fail_email`
 (macOS-side msmtp → Yandex SMTP). Suggested crontab:
 
@@ -361,10 +361,10 @@ within hours rather than the next morning.
 ## Point-in-time restore from Yandex.Disk
 
 ```bash
-inv restore-from-yadisk --list-only                     # show inventory
-inv restore-from-yadisk                                 # restore latest
-inv restore-from-yadisk --snapshot 2026-03-15           # specific date
-inv restore-from-yadisk --yes                           # skip confirm
+inv backup-cloud-restore --list-only                     # show inventory
+inv backup-cloud-restore                                 # restore latest
+inv backup-cloud-restore --snapshot 2026-03-15           # specific date
+inv backup-cloud-restore --yes                           # skip confirm
 ```
 
 ### Two intended use cases
@@ -378,10 +378,10 @@ inv restore-from-yadisk --yes                           # skip confirm
   (via SSH) when both the local DB and the Litestream replica on
   VM 2 are unusable. The SSH + `cd ~/dinary` + interactive
   confirmation hops are intentional friction so a one-word
-  `inv restore-from-yadisk` on the wrong terminal cannot silently
+  `inv backup-cloud-restore` on the wrong terminal cannot silently
   overwrite prod.
 
-`restore-from-yadisk` is **local-only** — it writes to
+`backup-cloud-restore` is **local-only** — it writes to
 `./data/dinary.db` relative to the cwd and has no `--remote` mode.
 There is no way to invoke it against a remote host from the
 operator machine.
@@ -400,8 +400,8 @@ operator machine.
   rclone` on macOS). Already pre-installed on VM 1 by `inv setup` so
   no manual install is needed during disaster recovery.
 - A `yandex:` rclone remote configured locally, pointing at the
-  same Yandex.Disk account used by `inv setup-replica-backup`. If
-  the operator machine never had `inv setup-replica-backup` run
+  same Yandex.Disk account used by `inv backup-cloud-setup`. If
+  the operator machine never had `inv backup-cloud-setup` run
   from it, configure it once with
   `rclone config create yandex webdav url=https://webdav.yandex.ru vendor=other user=<login>`
   (it will prompt for the app-password via `rclone obscure`).
@@ -428,7 +428,7 @@ unusable:
 ssh ubuntu@dinary                       # or the public IP / Tailscale IP
 sudo systemctl stop dinary litestream   # avoid a half-written DB
 cd ~/dinary
-inv restore-from-yadisk --snapshot 2026-03-15
+inv backup-cloud-restore --snapshot 2026-03-15
 # confirmation prompt: shows row count / size / mtime of the
 # current DB plus compressed size of the incoming snapshot, then
 # asks for literal 'yes'.
@@ -443,7 +443,7 @@ directory (so `./data/dinary.db` is the snapshot, not prod):
 ```bash
 cd /tmp/restore-preview
 mkdir -p data
-inv restore-from-yadisk --snapshot 2026-03-15 --yes
+inv backup-cloud-restore --snapshot 2026-03-15 --yes
 sqlite3 data/dinary.db 'SELECT COUNT(*) FROM expense'
 ```
 
@@ -461,7 +461,7 @@ sqlite3 data/dinary.db 'SELECT COUNT(*) FROM expense'
 - Three layers of redundancy, paired to their failure modes:
   `inv backup` covers "oops I nuked the DB during a manual repair";
   Litestream to VM 2 covers "oops I lost VM 1"; Yandex.Disk
-  (`inv setup-replica-backup`) covers "oops I lost both VMs / lost the
+  (`inv backup-cloud-setup`) covers "oops I lost both VMs / lost the
   whole cloud provider".
 - Treat `data/dinary.db` as the source of truth. Do not edit it
   while the service is running, and never hand-edit the

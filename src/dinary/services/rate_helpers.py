@@ -52,10 +52,14 @@ def _get_db_rate(con, rate_date: date, source: str, target: str) -> Decimal | No
 
 
 def _save_db_rate(con, rate_date: date, source: str, target: str, rate: Decimal) -> None:
-    con.execute(
+    inverse = (Decimal(1) / rate).quantize(Decimal("0.000001"))
+    con.executemany(
         "INSERT INTO exchange_rates (date, source_currency, target_currency, rate)"
         " VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
-        [rate_date, source, target, rate],
+        [
+            [rate_date, source, target, rate],
+            [rate_date, target, source, inverse],
+        ],
     )
 
 
