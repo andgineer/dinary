@@ -157,7 +157,8 @@ ssh ubuntu@<PUBLIC_IP> 'sudo iptables -I INPUT -p tcp --dport 8000 -j ACCEPT && 
 
 | Command | What it does |
 |---------|-------------|
-| `inv deploy` | Pull latest code, sync deps, restart service |
+| `inv deploy` | Pull latest code, sync deps, apply migrations, restart service |
+| `inv bootstrap-catalog` | Re-seed the runtime taxonomy (use when taxonomy changes; overwrites manual edits) |
 | `inv status` | Show dinary and tunnel service status |
 | `inv logs` | Tail dinary server logs |
 | `inv setup` | Full re-setup (safe to re-run) |

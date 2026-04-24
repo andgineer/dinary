@@ -2094,6 +2094,9 @@ def deploy(c, ref="", no_restart=False):
     `inv migrate` + `inv import-catalog --yes` which rebuilds the single DB
     anyway.
 
+    Run ``inv bootstrap-catalog`` separately when taxonomy changes. Omit it
+    on routine deploys — the seeder overwrites manually edited names and sort order.
+
     Pipeline (ordering matters — see ``.plans/architecture.md`` and the
     original inline-fk-drop-and-reset-db plan for the constraints):
 
@@ -2226,9 +2229,6 @@ def deploy(c, ref="", no_restart=False):
             "uv run python -c 'from dinary.services import ledger_repo; ledger_repo.init_db(); "
             'print("Migrated data/dinary.db")\'',
         )
-        print("=== Bootstrapping runtime catalog (idempotent) ===")
-        bootstrap_catalog(c)
-
     print("=== Building _static/ with version ===")
     _ssh(c, "cd ~/dinary && source ~/.local/bin/env && uv run inv build-static")
 
@@ -3376,7 +3376,10 @@ def sql_query(c, query="", file="", csv=False, json=False, write=False, remote=F
     # default rich path we render locally against the JSON so ANSI
     # colours aren't stripped by the SSH transport.
     remote_flags = [*sql_flags, "--json"]
-    raw = _ssh_capture_bytes(_remote_snapshot_cmd("dinary.tools.sql", remote_flags))
+    try:
+        raw = _ssh_capture_bytes(_remote_snapshot_cmd("dinary.tools.sql", remote_flags))
+    except subprocess.CalledProcessError:
+        sys.exit(1)
 
     if json:
         sys.stdout.buffer.write(raw)
