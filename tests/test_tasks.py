@@ -3,10 +3,8 @@
 We only cover pure helpers here; tasks themselves run shell commands
 against a real server and are exercised via the deploy flow.
 """
-import ast
 import base64
 import datetime
-import importlib.util
 import io
 import json
 import re as _stdlib_re
@@ -24,13 +22,17 @@ from unittest.mock import MagicMock
 import allure
 import pytest
 
-_TASKS_PATH = Path(__file__).resolve().parent.parent / "tasks.py"
-_spec = importlib.util.spec_from_file_location("_dinary_tasks", _TASKS_PATH)
-_tasks = importlib.util.module_from_spec(_spec)
-sys.modules["_dinary_tasks"] = _tasks
-_spec.loader.exec_module(_tasks)
-_systemd_quote = _tasks._systemd_quote
-_remote_snapshot_cmd = _tasks._remote_snapshot_cmd
+import tasks as _tasks
+import tasks._backup as _tasks_backup
+import tasks._common as _tasks_common
+import tasks._import as _tasks_import
+import tasks._local as _tasks_local
+import tasks._reports as _tasks_reports
+from dinary.tools.backup_retention import _make_pattern as _backup_make_pattern
+from dinary.tools.backup_retention import pick_keepers as _pick_keepers
+
+_systemd_quote = _tasks_common._systemd_quote
+_remote_snapshot_cmd = _tasks_common._remote_snapshot_cmd
 
 
 @allure.epic("Deploy")
@@ -191,14 +193,14 @@ class TestSshCaptureBytes:
         (``TestDeploy`` / manual smoke) and isn't what this class
         is exercising.
         """
-        monkeypatch.setattr(_tasks, "_host", lambda: "ubuntu@test.invalid")
+        monkeypatch.setattr(_tasks_common, "_host", lambda: "ubuntu@test.invalid")
 
     def test_returns_raw_bytes_not_decoded_str(self, monkeypatch):
         captured = subprocess.CompletedProcess(
             args=[], returncode=0, stdout=b'{"k": "v"}\n', stderr=b"",
         )
-        monkeypatch.setattr(_tasks.subprocess, "run", lambda *a, **kw: captured)
-        out = _tasks._ssh_capture_bytes("whoami")
+        monkeypatch.setattr(_tasks_common.subprocess, "run", lambda *a, **kw: captured)
+        out = _tasks_common._ssh_capture_bytes("whoami")
         assert isinstance(out, bytes)
         assert out == b'{"k": "v"}\n'
 
@@ -218,9 +220,9 @@ class TestSshCaptureBytes:
                 args=args, returncode=0, stdout=b"", stderr=b"",
             )
 
-        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
-        monkeypatch.setattr(_tasks, "_host", lambda: "ubuntu@203.0.113.1")
-        _tasks._ssh_capture_bytes("echo hello")
+        monkeypatch.setattr(_tasks_common.subprocess, "run", fake_run)
+        monkeypatch.setattr(_tasks_common, "_host", lambda: "ubuntu@203.0.113.1")
+        _tasks_common._ssh_capture_bytes("echo hello")
 
         args = seen["args"]
         assert args[0] == "ssh"
@@ -240,8 +242,8 @@ class TestSshCaptureBytes:
         captured = subprocess.CompletedProcess(
             args=[], returncode=0, stdout=payload, stderr=b"",
         )
-        monkeypatch.setattr(_tasks.subprocess, "run", lambda *a, **kw: captured)
-        out = _tasks._ssh_capture_bytes("whatever")
+        monkeypatch.setattr(_tasks_common.subprocess, "run", lambda *a, **kw: captured)
+        out = _tasks_common._ssh_capture_bytes("whatever")
         decoded = out.decode("utf-8")
         assert "\ufffd" not in decoded
         assert "путешествия" in decoded
@@ -278,7 +280,7 @@ class TestRunReportModuleRemote:
             spy.last_cmd = cmd
             return spy.payload
 
-        monkeypatch.setattr(_tasks, "_ssh_capture_bytes", fake)
+        monkeypatch.setattr(_tasks_reports, "_ssh_capture_bytes", fake)
         return spy
 
     def test_income_remote_uses_json_transport_regardless_of_user_format(
@@ -290,7 +292,7 @@ class TestRunReportModuleRemote:
         """
         _fake_ssh_bytes.payload = b"[]\n"
         c = MagicMock()
-        _tasks._run_report_module(c, "income", [], remote=True)
+        _tasks_reports._run_report_module(c, "income", [], remote=True)
         # The remote cmd must ask for ``--json`` so we get structured
         # data back, not a rendered rich table.
         assert "--json" in _fake_ssh_bytes.last_cmd
@@ -302,7 +304,7 @@ class TestRunReportModuleRemote:
             [{"year": 2026, "months": 3, "total": "1779756.00", "avg_month": "593252.00"}],
         ).encode()
         c = MagicMock()
-        _tasks._run_report_module(c, "income", ["--csv"], remote=True)
+        _tasks_reports._run_report_module(c, "income", ["--csv"], remote=True)
         out = capsys.readouterr().out
         assert out.splitlines()[0] == "year,months,total,avg_month"
         assert "1779756.00" in out
@@ -321,7 +323,7 @@ class TestRunReportModuleRemote:
         payload = b'[{"year": 2025, "tags": "\xd0\xbf\xd1\x83"}]\n'
         _fake_ssh_bytes.payload = payload
         c = MagicMock()
-        _tasks._run_report_module(c, "income", ["--json"], remote=True)
+        _tasks_reports._run_report_module(c, "income", ["--json"], remote=True)
         out = capsysbinary.readouterr().out
         assert out == payload
 
@@ -344,7 +346,7 @@ class TestRunReportModuleRemote:
             ],
         ).encode()
         c = MagicMock()
-        _tasks._run_report_module(c, "income", [], remote=True)
+        _tasks_reports._run_report_module(c, "income", [], remote=True)
         out = capsys.readouterr().out
         # No replacement characters anywhere in the rendered output.
         assert "\ufffd" not in out
@@ -367,7 +369,7 @@ class TestRunReportModuleRemote:
             ensure_ascii=False,
         ).encode()
         c = MagicMock()
-        _tasks._run_report_module(c, "expenses", [], remote=True)
+        _tasks_reports._run_report_module(c, "expenses", [], remote=True)
         out = capsys.readouterr().out
         assert "\ufffd" not in out
         assert "путешествия" in out
@@ -377,7 +379,7 @@ class TestRunReportModuleRemote:
     ):
         _fake_ssh_bytes.payload = b"[]\n"
         c = MagicMock()
-        _tasks._run_report_module(
+        _tasks_reports._run_report_module(
             c, "expenses", ["--year", "2026", "--csv"], remote=True,
         )
         cmd = _fake_ssh_bytes.last_cmd or ""
@@ -415,7 +417,7 @@ class TestImportReport2d3dTransport:
             spy.ssh_bytes_cmd = cmd
             return spy.ssh_bytes_payload
 
-        monkeypatch.setattr(_tasks, "_ssh_capture_bytes", fake_bytes)
+        monkeypatch.setattr(_tasks_import, "_ssh_capture_bytes", fake_bytes)
         return spy
 
     @staticmethod
@@ -547,9 +549,9 @@ class TestLitestreamInstallScript:
     """
 
     def test_default_version_matches_pinned_constant(self):
-        script = _tasks._litestream_install_script()
-        assert f"litestream-{_tasks.LITESTREAM_VERSION}-linux-x86_64.deb" in script
-        assert f"litestream-{_tasks.LITESTREAM_VERSION}-linux-arm64.deb" in script
+        script = _tasks_common._litestream_install_script()
+        assert f"litestream-{_tasks_common.LITESTREAM_VERSION}-linux-x86_64.deb" in script
+        assert f"litestream-{_tasks_common.LITESTREAM_VERSION}-linux-arm64.deb" in script
 
     def test_x86_64_and_amd64_both_map_to_x86_64_asset(self):
         """``uname -m`` historically varies: Linux kernels on Intel
@@ -557,9 +559,9 @@ class TestLitestreamInstallScript:
         dpkg spelling use ``amd64``. Both must route to the same
         Litestream asset.
         """
-        script = _tasks._litestream_install_script()
+        script = _tasks_common._litestream_install_script()
         assert (
-            f"x86_64|amd64) ASSET=litestream-{_tasks.LITESTREAM_VERSION}-linux-x86_64.deb"
+            f"x86_64|amd64) ASSET=litestream-{_tasks_common.LITESTREAM_VERSION}-linux-x86_64.deb"
             in script
         )
 
@@ -568,9 +570,9 @@ class TestLitestreamInstallScript:
         Linux kernels report ``aarch64``, Debian userland prefers
         ``arm64``. Both must pick the arm64 asset.
         """
-        script = _tasks._litestream_install_script()
+        script = _tasks_common._litestream_install_script()
         assert (
-            f"aarch64|arm64) ASSET=litestream-{_tasks.LITESTREAM_VERSION}-linux-arm64.deb"
+            f"aarch64|arm64) ASSET=litestream-{_tasks_common.LITESTREAM_VERSION}-linux-arm64.deb"
             in script
         )
 
@@ -579,8 +581,8 @@ class TestLitestreamInstallScript:
         out loudly with the offending arch and the pinned version,
         not silently ``curl 404`` a non-existent asset.
         """
-        script = _tasks._litestream_install_script()
-        assert f'Unsupported arch $ARCH for litestream {_tasks.LITESTREAM_VERSION}' in script
+        script = _tasks_common._litestream_install_script()
+        assert f'Unsupported arch $ARCH for litestream {_tasks_common.LITESTREAM_VERSION}' in script
         assert "*) echo" in script
         assert "exit 1" in script
 
@@ -589,10 +591,10 @@ class TestLitestreamInstallScript:
         (upstream's canonical layout) — a typo in the ``v`` prefix or
         the path layout here is invisible until bootstrap day.
         """
-        script = _tasks._litestream_install_script()
+        script = _tasks_common._litestream_install_script()
         assert (
             "https://github.com/benbjohnson/litestream/releases/download/"
-            f"v{_tasks.LITESTREAM_VERSION}/$ASSET"
+            f"v{_tasks_common.LITESTREAM_VERSION}/$ASSET"
             in script
         )
 
@@ -602,7 +604,7 @@ class TestLitestreamInstallScript:
         ``if command -v litestream`` gate is the only thing
         preserving that property — pin it.
         """
-        script = _tasks._litestream_install_script()
+        script = _tasks_common._litestream_install_script()
         assert "if ! command -v litestream >/dev/null" in script
 
     def test_version_parameter_allows_future_upgrade(self):
@@ -611,13 +613,13 @@ class TestLitestreamInstallScript:
         future upgrade is a one-line constant bump rather than a
         string-surgery PR.
         """
-        script = _tasks._litestream_install_script(version="0.6.0")
+        script = _tasks_common._litestream_install_script(version="0.6.0")
         assert "litestream-0.6.0-linux-x86_64.deb" in script
         assert "litestream-0.6.0-linux-arm64.deb" in script
         assert "/releases/download/v0.6.0/$ASSET" in script
         # Sanity: the pinned-default version is NOT leaking into a
         # caller-overridden script.
-        assert f"litestream-{_tasks.LITESTREAM_VERSION}" not in script
+        assert f"litestream-{_tasks_common.LITESTREAM_VERSION}" not in script
 
 
 @allure.epic("Deploy")
@@ -654,11 +656,11 @@ class TestLitestreamSetupPermissions:
         config = tmp_path / "litestream.yml"
         config.write_text("snapshot: {interval: 1h, retention: 168h}\n")
 
-        monkeypatch.setattr(_tasks, "_ssh", fake_ssh)
-        monkeypatch.setattr(_tasks, "_ssh_sudo", fake_ssh_sudo)
-        monkeypatch.setattr(_tasks, "_write_remote_file", fake_write_remote_file)
-        monkeypatch.setattr(_tasks, "_create_service", fake_create_service)
-        monkeypatch.setattr(_tasks, "LOCAL_LITESTREAM_CONFIG_PATH", str(config))
+        monkeypatch.setattr(_tasks_backup, "_ssh", fake_ssh)
+        monkeypatch.setattr(_tasks_backup, "_ssh_sudo", fake_ssh_sudo)
+        monkeypatch.setattr(_tasks_backup, "_write_remote_file", fake_write_remote_file)
+        monkeypatch.setattr(_tasks_backup, "_create_service", fake_create_service)
+        monkeypatch.setattr(_tasks_backup, "LOCAL_LITESTREAM_CONFIG_PATH", str(config))
         return calls
 
     def test_chown_and_chmod_run_inside_a_single_sudo_bash_c(self, _spy):
@@ -698,7 +700,7 @@ class TestLitestreamSetupPermissions:
             None,
         )
         assert perm_call is not None
-        assert _tasks.REMOTE_LITESTREAM_CONFIG_PATH in perm_call
+        assert _tasks_common.REMOTE_LITESTREAM_CONFIG_PATH in perm_call
 
 
 @allure.epic("Deploy")
@@ -718,7 +720,7 @@ class TestSetupSwapScript:
         profile (enough headroom for ``uv sync`` / bulk import
         spikes without eating meaningful disk on a 45 GB root fs).
         """
-        script = _tasks._build_setup_swap_script(size_gb=1)
+        script = _tasks_common._build_setup_swap_script(size_gb=1)
         assert "fallocate -l 1G /swapfile" in script
 
     def test_size_parameter_interpolates_into_fallocate(self):
@@ -726,7 +728,7 @@ class TestSetupSwapScript:
         land verbatim in the ``fallocate`` line, not just a format
         placeholder.
         """
-        script = _tasks._build_setup_swap_script(size_gb=4)
+        script = _tasks_common._build_setup_swap_script(size_gb=4)
         assert "fallocate -l 4G /swapfile" in script
         assert "fallocate -l 1G" not in script
 
@@ -737,9 +739,9 @@ class TestSetupSwapScript:
         before we even build the script.
         """
         with pytest.raises(ValueError, match="size_gb must be a positive integer"):
-            _tasks._build_setup_swap_script(size_gb=0)
+            _tasks_common._build_setup_swap_script(size_gb=0)
         with pytest.raises(ValueError, match="size_gb must be a positive integer"):
-            _tasks._build_setup_swap_script(size_gb=-1)
+            _tasks_common._build_setup_swap_script(size_gb=-1)
 
     def test_idempotent_on_reapply(self):
         """The swapon-check short-circuits allocation when
@@ -748,7 +750,7 @@ class TestSetupSwapScript:
         of the live one and ``mkswap`` would corrupt the signature
         of the currently-swapped backing store.
         """
-        script = _tasks._build_setup_swap_script(size_gb=1)
+        script = _tasks_common._build_setup_swap_script(size_gb=1)
         assert "swapon --show=NAME --noheadings" in script
         assert "grep -qx /swapfile" in script
         assert "/swapfile already active, skipping allocation" in script
@@ -759,7 +761,7 @@ class TestSetupSwapScript:
         every ``inv setup`` would grow ``/etc/fstab`` by a line and
         the system would eventually refuse to mount.
         """
-        script = _tasks._build_setup_swap_script(size_gb=1)
+        script = _tasks_common._build_setup_swap_script(size_gb=1)
         assert "/swapfile none swap sw 0 0" in script
         assert 'grep -qxF "$FSTAB_LINE" /etc/fstab || echo "$FSTAB_LINE" >> /etc/fstab' in script
 
@@ -770,7 +772,7 @@ class TestSetupSwapScript:
         chain prefixed with ``sudo`` would only elevate the first
         command and the rest would fail with a permission error.
         """
-        script = _tasks._build_setup_swap_script(size_gb=1)
+        script = _tasks_common._build_setup_swap_script(size_gb=1)
         assert script.startswith("sudo bash <<'DINARY_SWAP_EOF'\n")
         assert script.rstrip().endswith("DINARY_SWAP_EOF")
 
@@ -781,7 +783,7 @@ class TestSetupSwapScript:
         get ``grep -qxF "" /etc/fstab`` — a silent match that
         never appends the real entry.
         """
-        script = _tasks._build_setup_swap_script(size_gb=1)
+        script = _tasks_common._build_setup_swap_script(size_gb=1)
         assert "<<'DINARY_SWAP_EOF'" in script
         assert "$FSTAB_LINE" in script
 
@@ -803,7 +805,7 @@ class TestSshTailscaleOnlyScript:
         kill inbound SSH entirely. Gate the flip on ``command -v
         tailscale`` before touching any config file.
         """
-        script = _tasks._build_ssh_tailscale_only_script()
+        script = _tasks_common._build_ssh_tailscale_only_script()
         assert "command -v tailscale" in script
         assert "tailscale is not installed" in script
 
@@ -812,7 +814,7 @@ class TestSshTailscaleOnlyScript:
         daemon may still be logged out or starting. Require a
         non-empty ``tailscale ip -4`` output before the flip.
         """
-        script = _tasks._build_ssh_tailscale_only_script()
+        script = _tasks_common._build_ssh_tailscale_only_script()
         assert 'TS_IP="$(tailscale ip -4 2>/dev/null | head -1)"' in script
         assert 'if [ -z "$TS_IP" ]; then' in script
         assert "tailscaled is not up" in script
@@ -823,7 +825,7 @@ class TestSshTailscaleOnlyScript:
         locally to trigger ``systemctl reload`` after rolling back a
         bad config.
         """
-        script = _tasks._build_ssh_tailscale_only_script()
+        script = _tasks_common._build_ssh_tailscale_only_script()
         assert "ListenAddress 127.0.0.1:22" in script
 
     def test_binds_to_live_tailscale_ip_not_a_hardcoded_value(self):
@@ -833,7 +835,7 @@ class TestSshTailscaleOnlyScript:
         ``${TS_IP}`` with an IPv4 literal and the task stops
         self-healing after a Tailscale IP rotation.
         """
-        script = _tasks._build_ssh_tailscale_only_script()
+        script = _tasks_common._build_ssh_tailscale_only_script()
         assert "ListenAddress ${TS_IP}:22" in script
 
     def test_inner_heredoc_is_unquoted_so_tsip_expands(self):
@@ -843,7 +845,7 @@ class TestSshTailscaleOnlyScript:
         ``sshd_config.d/`` and ``sshd -t`` rejects it. Complementary
         to the outer heredoc being quoted (checked below).
         """
-        script = _tasks._build_ssh_tailscale_only_script()
+        script = _tasks_common._build_ssh_tailscale_only_script()
         assert 'cat >"$DROPIN" <<EOC\n' in script
         assert "<<'EOC'" not in script
 
@@ -853,7 +855,7 @@ class TestSshTailscaleOnlyScript:
         refusing new connections, and — combined with the public IP
         being closed — trap the operator outside the box.
         """
-        script = _tasks._build_ssh_tailscale_only_script()
+        script = _tasks_common._build_ssh_tailscale_only_script()
         t_idx = script.index("sshd -t")
         reload_idx = script.index("systemctl reload ssh")
         assert t_idx < reload_idx
@@ -864,7 +866,7 @@ class TestSshTailscaleOnlyScript:
         on next service start. Without rollback the only recovery
         path is the Oracle Cloud Serial Console.
         """
-        script = _tasks._build_ssh_tailscale_only_script()
+        script = _tasks_common._build_ssh_tailscale_only_script()
         assert 'rm -f "$DROPIN"' in script
         assert "sshd -t rejected the new config" in script
 
@@ -874,7 +876,7 @@ class TestSshTailscaleOnlyScript:
         appended — so a Tailscale IP rotation is absorbed by a simple
         replay.
         """
-        script = _tasks._build_ssh_tailscale_only_script()
+        script = _tasks_common._build_ssh_tailscale_only_script()
         assert "DROPIN=/etc/ssh/sshd_config.d/10-tailscale-only.conf" in script
         assert 'cat >"$DROPIN" <<EOC' in script
         assert 'cat >>"$DROPIN"' not in script
@@ -886,7 +888,7 @@ class TestSshTailscaleOnlyScript:
         boundary that keeps these atomic (no partial apply if the
         operator's sudo timestamp expires mid-script).
         """
-        script = _tasks._build_ssh_tailscale_only_script()
+        script = _tasks_common._build_ssh_tailscale_only_script()
         assert script.startswith("sudo bash <<'DINARY_SSH_TS_EOF'\n")
         assert script.rstrip().endswith("DINARY_SSH_TS_EOF")
 
@@ -900,7 +902,7 @@ class TestSshTailscaleOnlyScript:
         error — but we would still have lost the pre-flight checks
         along the way).
         """
-        script = _tasks._build_ssh_tailscale_only_script()
+        script = _tasks_common._build_ssh_tailscale_only_script()
         assert "<<'DINARY_SSH_TS_EOF'" in script
         assert "$TS_IP" in script
         assert "$DROPIN" in script
@@ -925,7 +927,7 @@ class TestSetupReplicaScripts:
         refactor that dropped it would reintroduce a class of
         "inv setup-replica hangs forever" incidents.
         """
-        script = _tasks._build_setup_replica_packages_script()
+        script = _tasks_backup._build_setup_replica_packages_script()
         assert "export DEBIAN_FRONTEND=noninteractive" in script
 
     def test_apt_installs_unattended_upgrades(self):
@@ -934,7 +936,7 @@ class TestSetupReplicaScripts:
         on the replica. Pin the package name so a rename in the apt
         step doesn't quietly remove the patch cadence.
         """
-        script = _tasks._build_setup_replica_packages_script()
+        script = _tasks_backup._build_setup_replica_packages_script()
         assert "apt-get install -y -qq unattended-upgrades" in script
 
     def test_apt_refreshes_package_index_before_install(self):
@@ -943,7 +945,7 @@ class TestSetupReplicaScripts:
         ``install`` with ``Unable to locate package`` on any
         newly-mirrored dependency.
         """
-        script = _tasks._build_setup_replica_packages_script()
+        script = _tasks_backup._build_setup_replica_packages_script()
         update_idx = script.index("apt-get update -qq")
         install_idx = script.index("apt-get install -y -qq unattended-upgrades")
         assert update_idx < install_idx
@@ -955,7 +957,7 @@ class TestSetupReplicaScripts:
         only elevate the first command and the install would fail
         with EACCES.
         """
-        script = _tasks._build_setup_replica_packages_script()
+        script = _tasks_backup._build_setup_replica_packages_script()
         assert script.startswith("sudo bash <<'DINARY_REPLICA_PKG_EOF'\n")
         assert script.rstrip().endswith("DINARY_REPLICA_PKG_EOF")
 
@@ -967,9 +969,9 @@ class TestSetupReplicaScripts:
         bootstrap succeed and the first WAL push fail with "No such
         file or directory" on the remote end.
         """
-        script = _tasks._build_setup_replica_litestream_dir_script()
-        assert _tasks.REPLICA_LITESTREAM_DIR == "/var/lib/litestream"
-        assert f"mkdir -p {_tasks.REPLICA_LITESTREAM_DIR}" in script
+        script = _tasks_backup._build_setup_replica_litestream_dir_script()
+        assert _tasks_common.REPLICA_LITESTREAM_DIR == "/var/lib/litestream"
+        assert f"mkdir -p {_tasks_common.REPLICA_LITESTREAM_DIR}" in script
 
     def test_litestream_dir_mode_is_0750_not_world_readable(self):
         """The replica stream contains full pre-compaction row data
@@ -977,8 +979,8 @@ class TestSetupReplicaScripts:
         on a shared VM. ``0750`` lets the ``ubuntu`` group members
         read for diagnostics while keeping "other" out.
         """
-        script = _tasks._build_setup_replica_litestream_dir_script()
-        assert f"chmod 750 {_tasks.REPLICA_LITESTREAM_DIR}" in script
+        script = _tasks_backup._build_setup_replica_litestream_dir_script()
+        assert f"chmod 750 {_tasks_common.REPLICA_LITESTREAM_DIR}" in script
         assert "chmod 755" not in script
         assert "chmod 777" not in script
 
@@ -988,8 +990,8 @@ class TestSetupReplicaScripts:
         first WAL segment write fails with EPERM. Pin ``ubuntu:ubuntu``
         so a refactor to ``root:root`` is caught at review time.
         """
-        script = _tasks._build_setup_replica_litestream_dir_script()
-        assert f"chown ubuntu:ubuntu {_tasks.REPLICA_LITESTREAM_DIR}" in script
+        script = _tasks_backup._build_setup_replica_litestream_dir_script()
+        assert f"chown ubuntu:ubuntu {_tasks_common.REPLICA_LITESTREAM_DIR}" in script
 
     def test_litestream_dir_script_elevates_whole_block(self):
         """``mkdir -p /var/lib/litestream`` and ``chown ubuntu:ubuntu``
@@ -997,7 +999,7 @@ class TestSetupReplicaScripts:
         single elevation boundary; a bare ``mkdir`` would fail with
         EACCES on ``/var/lib/``.
         """
-        script = _tasks._build_setup_replica_litestream_dir_script()
+        script = _tasks_backup._build_setup_replica_litestream_dir_script()
         assert script.startswith("sudo bash <<'DINARY_REPLICA_DIR_EOF'\n")
         assert script.rstrip().endswith("DINARY_REPLICA_DIR_EOF")
 
@@ -1008,8 +1010,8 @@ class TestSetupReplicaScripts:
         drift immediately instead of discovering it later when the
         first SFTP write fails.
         """
-        script = _tasks._build_setup_replica_litestream_dir_script()
-        assert f"ls -ld {_tasks.REPLICA_LITESTREAM_DIR}" in script
+        script = _tasks_backup._build_setup_replica_litestream_dir_script()
+        assert f"ls -ld {_tasks_common.REPLICA_LITESTREAM_DIR}" in script
 
 
 @allure.epic("Deploy")
@@ -1044,9 +1046,9 @@ class TestSetupReplicaTask:
         def fake_ssh_replica(_c, cmd: str) -> None:
             spy.calls.append(cmd)
 
-        monkeypatch.setattr(_tasks, "_ssh_replica", fake_ssh_replica)
+        monkeypatch.setattr(_tasks_backup, "_ssh_replica", fake_ssh_replica)
         monkeypatch.setattr(
-            _tasks,
+            _tasks_backup,
             "_replica_host",
             lambda: "ubuntu@dinary-replica",
         )
@@ -1074,10 +1076,10 @@ class TestSetupReplicaTask:
            step lands, only tailnet/serial-console works.
         """
         _tasks.setup_replica.body(MagicMock())
-        pkg_script = _tasks._build_setup_replica_packages_script()
-        dir_script = _tasks._build_setup_replica_litestream_dir_script()
-        swap_script = _tasks._build_setup_swap_script(size_gb=1)
-        ssh_script = _tasks._build_ssh_tailscale_only_script()
+        pkg_script = _tasks_backup._build_setup_replica_packages_script()
+        dir_script = _tasks_backup._build_setup_replica_litestream_dir_script()
+        swap_script = _tasks_common._build_setup_swap_script(size_gb=1)
+        ssh_script = _tasks_common._build_ssh_tailscale_only_script()
         assert _spy.calls == [pkg_script, dir_script, swap_script, ssh_script]
 
     def test_swap_size_is_forwarded(self, _spy):
@@ -1118,7 +1120,7 @@ class TestSetupReplicaTask:
         parallel implementation.
         """
         _tasks.setup_replica.body(MagicMock())
-        assert _spy.calls[-1] == _tasks._build_ssh_tailscale_only_script()
+        assert _spy.calls[-1] == _tasks_common._build_ssh_tailscale_only_script()
 
 
 @allure.epic("Deploy")
@@ -1240,7 +1242,7 @@ class TestVerifyDbRemote:
             spy.cmd = cmd
             return spy.payload
 
-        monkeypatch.setattr(_tasks, "_ssh_capture_bytes", fake_bytes)
+        monkeypatch.setattr(_tasks_local, "_ssh_capture_bytes", fake_bytes)
         return spy
 
     def test_remote_snapshots_live_db_before_pragma_checks(self, _spy):
@@ -1304,7 +1306,7 @@ class TestSetupBackupScripts:
         it apt can block on a postfix/grub debconf prompt on a fresh
         cloud image, silently hanging ``inv backup-cloud-setup``.
         """
-        script = _tasks._build_setup_replica_backup_packages_script()
+        script = _tasks_backup._build_setup_replica_backup_packages_script()
         assert "export DEBIAN_FRONTEND=noninteractive" in script
 
     def test_packages_script_installs_rclone_sqlite3_zstd(self):
@@ -1312,7 +1314,7 @@ class TestSetupBackupScripts:
         validates, zstd compresses. Dropping one silently breaks
         the daily timer a day later with a shell "command not found".
         """
-        script = _tasks._build_setup_replica_backup_packages_script()
+        script = _tasks_backup._build_setup_replica_backup_packages_script()
         assert (
             "apt-get install -y -qq rclone sqlite3 zstd" in script
         )
@@ -1322,7 +1324,7 @@ class TestSetupBackupScripts:
         apt-get install`` would only elevate the update and fail the
         install with EACCES.
         """
-        script = _tasks._build_setup_replica_backup_packages_script()
+        script = _tasks_backup._build_setup_replica_backup_packages_script()
         assert script.startswith("sudo bash <<'DINARY_BACKUP_PKG_EOF'\n")
         assert script.rstrip().endswith("DINARY_BACKUP_PKG_EOF")
 
@@ -1332,7 +1334,7 @@ class TestSetupBackupScripts:
         corrupt .db into /tmp". Drop any of these and a failure mid-
         run silently leaves trash on VM2.
         """
-        script = _tasks._build_backup_script()
+        script = _tasks_backup._build_backup_script()
         assert "set -euo pipefail" in script
         assert "trap 'rm -rf \"$WORKDIR\"' EXIT" in script
 
@@ -1342,8 +1344,8 @@ class TestSetupBackupScripts:
         here would make ``inv backup-cloud-setup`` restore from an empty
         directory and upload an empty .db every day.
         """
-        script = _tasks._build_backup_script()
-        expected = f"{_tasks.REPLICA_LITESTREAM_DIR}/{_tasks.REPLICA_DB_NAME}"
+        script = _tasks_backup._build_backup_script()
+        expected = f"{_tasks_common.REPLICA_LITESTREAM_DIR}/{_tasks_common.REPLICA_DB_NAME}"
         assert f"path: {expected}" in script
         assert "/var/lib/litestream/dinary" == expected
 
@@ -1352,7 +1354,7 @@ class TestSetupBackupScripts:
         it, a torn-page restore from a broken replica would overwrite
         the last known-good Yandex snapshot with garbage.
         """
-        script = _tasks._build_backup_script()
+        script = _tasks_backup._build_backup_script()
         integrity_idx = script.index(
             "sqlite3 \"$SNAP\" 'PRAGMA integrity_check'"
         )
@@ -1367,12 +1369,12 @@ class TestSetupBackupScripts:
         rely on it. A rename here silently orphans every historical
         snapshot.
         """
-        script = _tasks._build_backup_script()
+        script = _tasks_backup._build_backup_script()
         assert "TS=$(date -u +%Y-%m-%dT%H%MZ)" in script
         assert (
-            f'REMOTE="{_tasks.BACKUP_RCLONE_REMOTE}:'
-            f'{_tasks.BACKUP_RCLONE_PATH}/{_tasks.BACKUP_FILENAME_PREFIX}'
-            f'$TS{_tasks.BACKUP_FILENAME_SUFFIX}"'
+            f'REMOTE="{_tasks_common.BACKUP_RCLONE_REMOTE}:'
+            f'{_tasks_common.BACKUP_RCLONE_PATH}/{_tasks_common.BACKUP_FILENAME_PREFIX}'
+            f'$TS{_tasks_common.BACKUP_FILENAME_SUFFIX}"'
         ) in script
 
     def test_backup_script_calls_retention_after_upload(self):
@@ -1380,67 +1382,35 @@ class TestSetupBackupScripts:
         before upload would race a failed upload and delete the
         snapshot we were about to miss anyway.
         """
-        script = _tasks._build_backup_script()
+        script = _tasks_backup._build_backup_script()
         upload_idx = script.index("rclone copyto")
-        retention_idx = script.index(_tasks.BACKUP_RETENTION_SCRIPT_PATH)
+        retention_idx = script.index(_tasks_common.BACKUP_RETENTION_SCRIPT_PATH)
         assert upload_idx < retention_idx
 
 
 @allure.epic("Deploy")
 @allure.feature("backup-cloud-setup: retention (GFS policy)")
 class TestBackupRetentionScript:
-    """The Python retention script is the policy: 7 daily / 4 weekly /
-    12 monthly / all yearly indefinitely. These tests exec the emitted
-    script in an isolated namespace and feed synthetic snapshots to
-    ``pick_keepers`` so the policy is pinned at the behavior level
-    (not at the "contains these substrings" level, which would miss
-    a subtle off-by-one).
+    """GFS retention policy: 7 daily / 4 weekly / 12 monthly / all yearly.
+
+    Tests import ``pick_keepers`` directly from
+    ``dinary.tools.backup_retention``.
     """
 
-    @pytest.fixture
-    def retention_ns(self):
-        """Exec the emitted retention script in an isolated namespace
-        and return it. Strips the ``if __name__ == '__main__'`` tail
-        so ``main()`` does not fire on import; tests drive
-        ``list_snapshots`` / ``pick_keepers`` directly.
-        """
-        script = _tasks._build_backup_retention_script()
-        tail = 'if __name__ == "__main__":\n    sys.exit(main())'
-        body = script.replace(tail, "")
-        ns: dict = {}
-        exec(body, ns)  # noqa: S102 -- exec'ing our own generated code by design
-        return ns
+    _D = _tasks_common.BACKUP_RETENTION_DAILY
+    _W = _tasks_common.BACKUP_RETENTION_WEEKLY
+    _M = _tasks_common.BACKUP_RETENTION_MONTHLY
 
-    def test_script_is_syntactically_valid_python(self):
-        """A smoke test that the emitted script parses at all — we
-        write it to VM2 via ``tee`` and rely on the shebang handler
-        to validate it at first invocation; catching a syntax error
-        here avoids waiting 24 h for the timer to surface it.
-        """
+    def _pk(self, snaps):
+        return _pick_keepers(snaps, daily=self._D, weekly=self._W, monthly=self._M)
 
-        ast.parse(_tasks._build_backup_retention_script())
-
-    def test_constants_match_tasks_py(self, retention_ns):
-        """The policy numbers and remote path are authored once in
-        ``tasks.py`` and inlined into the script. A silent drift
-        (someone edits the string only) would leave prod with the
-        old policy.
+    def test_pattern_matches_canonical_filename_shape(self):
+        """Pin filename format so any change (suffix, time precision)
+        that breaks restore also breaks this test.
         """
-        assert retention_ns["DAILY_KEEP"] == _tasks.BACKUP_RETENTION_DAILY
-        assert retention_ns["WEEKLY_KEEP"] == _tasks.BACKUP_RETENTION_WEEKLY
-        assert retention_ns["MONTHLY_KEEP"] == _tasks.BACKUP_RETENTION_MONTHLY
-        assert retention_ns["REMOTE"] == (
-            f"{_tasks.BACKUP_RCLONE_REMOTE}:{_tasks.BACKUP_RCLONE_PATH}/"
+        pattern = _backup_make_pattern(
+            _tasks_common.BACKUP_FILENAME_PREFIX, _tasks_common.BACKUP_FILENAME_SUFFIX
         )
-
-    def test_regex_matches_canonical_filename_shape(self, retention_ns):
-        """The regex is shared with the restore task via
-        ``_backup_filename_regex``. Pin the match so any refactor
-        (adding a ``.tmp`` suffix, dropping the Z, widening the time
-        precision) that breaks one side also visibly breaks this
-        test.
-        """
-        pattern = _stdlib_re.compile(retention_ns["FILENAME_PATTERN"])
         m = pattern.match("dinary-2026-04-22T0317Z.db.zst")
         assert m is not None
         assert m.group(1) == "2026-04-22"
@@ -1449,7 +1419,6 @@ class TestBackupRetentionScript:
 
     @staticmethod
     def _synth(days_back_from, *, end):
-
         snaps = []
         for i in range(days_back_from):
             d = end - datetime.timedelta(days=i)
@@ -1458,78 +1427,50 @@ class TestBackupRetentionScript:
         snaps.sort()
         return snaps
 
-    def test_keeps_exactly_daily_count_on_short_history(self, retention_ns):
-        """Under DAILY_KEEP days of history, everything is a ``daily``
-        keeper. The ``weekly``/``monthly``/``yearly`` selectors must
-        overlap cleanly without overcounting (no > daily_keep result).
-        """
-
+    def test_keeps_exactly_daily_count_on_short_history(self):
+        """Under DAILY_KEEP days of history, everything is a daily keeper."""
         end = datetime.date(2026, 4, 22)
-        snaps = self._synth(_tasks.BACKUP_RETENTION_DAILY, end=end)
-        keepers = retention_ns["pick_keepers"](snaps)
-        assert len(keepers) == _tasks.BACKUP_RETENTION_DAILY
+        snaps = self._synth(self._D, end=end)
+        assert len(self._pk(snaps)) == self._D
 
-    def test_keeps_yearly_winners_indefinitely(self, retention_ns):
-        """Closed-year snapshots survive beyond the monthly window.
-        Feed 10 years of daily snapshots and confirm every Dec 31
-        (except maybe the current year) is in the keeper set.
-        """
-
+    def test_keeps_yearly_winners_indefinitely(self):
+        """Closed-year snapshots survive beyond the monthly window."""
         end = datetime.date(2029, 12, 31)
         snaps = self._synth(365 * 10 + 3, end=end)
-        keepers = retention_ns["pick_keepers"](snaps)
+        keepers = self._pk(snaps)
         yearly_winners = {
             datetime.date.fromisoformat(n.split("dinary-")[1].split("T")[0])
             for n in keepers
             if "-12-31T" in n
         }
-        # All Dec 31 snapshots (2020 through 2029, given our synth
-        # range) must persist.
         for year in range(2020, 2030):
             assert datetime.date(year, 12, 31) in yearly_winners
 
-    def test_prunes_old_dailies_but_keeps_monthly_winners(self, retention_ns):
-        """After MONTHLY_KEEP months of history, ``daily`` is pruned
-        to the last DAILY_KEEP; the last day of each of the previous
-        MONTHLY_KEEP months must still be retained (monthly bucket).
+    def test_prunes_old_dailies_but_keeps_monthly_winners(self):
+        """After MONTHLY_KEEP months, dailies are pruned but monthly
+        winners survive.
         """
-
         end = datetime.date(2026, 4, 15)
         snaps = self._synth(400, end=end)
-        keepers = retention_ns["pick_keepers"](snaps)
+        keepers = self._pk(snaps)
         kept_dates = {
             datetime.date.fromisoformat(n.split("dinary-")[1].split("T")[0])
             for n in keepers
         }
-        # Last day of March 2026 (immediately preceding the partial
-        # current month) is the monthly winner for March.
         assert datetime.date(2026, 3, 31) in kept_dates
-        # 30 days ago is a daily — but 90 days ago is not.
         day_in_scope = end - datetime.timedelta(days=3)
         day_out_of_daily = end - datetime.timedelta(days=90)
         assert day_in_scope in kept_dates
-        # The 90-day-back daily is not a daily anymore, and unless it
-        # happens to be the monthly winner for its month, it is pruned.
         month_of_ood = (day_out_of_daily.year, day_out_of_daily.month)
-        monthly_winner = max(
-            d for d in kept_dates
-            if (d.year, d.month) == month_of_ood
-        )
+        monthly_winner = max(d for d in kept_dates if (d.year, d.month) == month_of_ood)
         if monthly_winner != day_out_of_daily:
             assert day_out_of_daily not in kept_dates
 
-    def test_pick_keepers_is_idempotent_on_buckets(self, retention_ns):
-        """Running retention twice on the same file set (same day)
-        must produce the same keeper set — otherwise a re-triggered
-        timer after a journal replay could oscillate between two
-        states and delete-then-recreate snapshots.
-        """
-
+    def test_pick_keepers_is_idempotent_on_buckets(self):
+        """Running retention twice on the same set produces the same result."""
         end = datetime.date(2026, 4, 22)
         snaps = self._synth(400, end=end)
-        first = retention_ns["pick_keepers"](snaps)
-        second = retention_ns["pick_keepers"](snaps)
-        assert first == second
+        assert self._pk(snaps) == self._pk(snaps)
 
 
 @allure.epic("Deploy")
@@ -1548,7 +1489,7 @@ class TestBackupSystemdUnits:
         ``ubuntu``; a ``User=root`` unit would silently fail with
         "rclone remote yandex not found".
         """
-        unit = _tasks._build_backup_service_unit()
+        unit = _tasks_backup._build_backup_service_unit()
         assert "User=ubuntu" in unit
 
     def test_service_is_oneshot(self):
@@ -1557,7 +1498,7 @@ class TestBackupSystemdUnits:
         "active (running)" forever after the script exits, masking
         the real success/failure state from ``systemctl status``.
         """
-        unit = _tasks._build_backup_service_unit()
+        unit = _tasks_backup._build_backup_service_unit()
         assert "Type=oneshot" in unit
 
     def test_service_execstart_points_at_installed_script(self):
@@ -1566,8 +1507,8 @@ class TestBackupSystemdUnits:
         ``inv backup-cloud-setup`` succeed but trigger "no such file" at
         timer fire.
         """
-        unit = _tasks._build_backup_service_unit()
-        assert f"ExecStart={_tasks.BACKUP_SCRIPT_PATH}" in unit
+        unit = _tasks_backup._build_backup_service_unit()
+        assert f"ExecStart={_tasks_common.BACKUP_SCRIPT_PATH}" in unit
 
     def test_service_is_deprioritized_to_not_starve_litestream(self):
         """Backup runs on VM2 which concurrently hosts the Litestream
@@ -1575,7 +1516,7 @@ class TestBackupSystemdUnits:
         never blocks WAL ingestion — a stalled sink means WAL backlog
         on VM1.
         """
-        unit = _tasks._build_backup_service_unit()
+        unit = _tasks_backup._build_backup_service_unit()
         assert "Nice=10" in unit
         assert "IOSchedulingClass=best-effort" in unit
 
@@ -1585,7 +1526,7 @@ class TestBackupSystemdUnits:
         the minute offset would create contention with every
         snapshot-producing ``inv litestream-status`` probe.
         """
-        unit = _tasks._build_backup_timer_unit()
+        unit = _tasks_backup._build_backup_timer_unit()
         assert "OnCalendar=*-*-* 03:17:00" in unit
 
     def test_timer_is_persistent_so_missed_runs_catch_up(self):
@@ -1594,7 +1535,7 @@ class TestBackupSystemdUnits:
         Otherwise the timer would silently create a 24 h retention
         gap on any unlucky reboot.
         """
-        unit = _tasks._build_backup_timer_unit()
+        unit = _tasks_backup._build_backup_timer_unit()
         assert "Persistent=true" in unit
 
     def test_timer_has_jitter(self):
@@ -1603,7 +1544,7 @@ class TestBackupSystemdUnits:
         thundering-herd footgun even at small scale; pin the
         non-zero value.
         """
-        unit = _tasks._build_backup_timer_unit()
+        unit = _tasks_backup._build_backup_timer_unit()
         assert "RandomizedDelaySec=" in unit
         assert "RandomizedDelaySec=0" not in unit
 
@@ -1653,13 +1594,13 @@ class TestSetupBackupTask:
             spy.ensure_calls += 1
             spy.events.append("ensure_yandex")
 
-        monkeypatch.setattr(_tasks, "_ssh_replica", fake_ssh_replica)
-        monkeypatch.setattr(_tasks, "_write_remote_replica_file", fake_write)
+        monkeypatch.setattr(_tasks_backup, "_ssh_replica", fake_ssh_replica)
+        monkeypatch.setattr(_tasks_backup, "_write_remote_replica_file", fake_write)
         monkeypatch.setattr(
-            _tasks, "_ensure_yandex_rclone_configured", fake_ensure
+            _tasks_backup, "_ensure_yandex_rclone_configured", fake_ensure
         )
         monkeypatch.setattr(
-            _tasks,
+            _tasks_backup,
             "_replica_host",
             lambda: "ubuntu@dinary-replica",
         )
@@ -1695,7 +1636,7 @@ class TestSetupBackupTask:
         inline install here would let the two sides drift.
         """
         _tasks.setup_replica_backup.body(MagicMock())
-        install_cmd = _tasks._litestream_install_script()
+        install_cmd = _tasks_common._litestream_install_script()
         assert install_cmd in _spy.ssh_calls
 
     def test_calls_yandex_rclone_bootstrap_helper(self, _spy):
@@ -1733,10 +1674,10 @@ class TestSetupBackupTask:
         _tasks.setup_replica_backup.body(MagicMock())
         paths = {p for p, _content in _spy.write_calls}
         assert paths == {
-            _tasks.BACKUP_SCRIPT_PATH,
-            _tasks.BACKUP_RETENTION_SCRIPT_PATH,
-            _tasks.BACKUP_SERVICE_PATH,
-            _tasks.BACKUP_TIMER_PATH,
+            _tasks_common.BACKUP_SCRIPT_PATH,
+            _tasks_common.BACKUP_RETENTION_SCRIPT_PATH,
+            _tasks_common.BACKUP_SERVICE_PATH,
+            _tasks_common.BACKUP_TIMER_PATH,
         }
 
     def test_writes_match_the_pure_builders(self, _spy):
@@ -1747,19 +1688,20 @@ class TestSetupBackupTask:
         _tasks.setup_replica_backup.body(MagicMock())
         by_path = dict(_spy.write_calls)
         assert (
-            by_path[_tasks.BACKUP_SCRIPT_PATH] == _tasks._build_backup_script()
+            by_path[_tasks_common.BACKUP_SCRIPT_PATH] == _tasks_backup._build_backup_script()
+        )
+        _retention_expected = (
+            Path(__file__).resolve().parent.parent
+            / "src/dinary/tools/backup_retention.py"
+        ).read_text()
+        assert by_path[_tasks_common.BACKUP_RETENTION_SCRIPT_PATH] == _retention_expected
+        assert (
+            by_path[_tasks_common.BACKUP_SERVICE_PATH]
+            == _tasks_backup._build_backup_service_unit()
         )
         assert (
-            by_path[_tasks.BACKUP_RETENTION_SCRIPT_PATH]
-            == _tasks._build_backup_retention_script()
-        )
-        assert (
-            by_path[_tasks.BACKUP_SERVICE_PATH]
-            == _tasks._build_backup_service_unit()
-        )
-        assert (
-            by_path[_tasks.BACKUP_TIMER_PATH]
-            == _tasks._build_backup_timer_unit()
+            by_path[_tasks_common.BACKUP_TIMER_PATH]
+            == _tasks_backup._build_backup_timer_unit()
         )
 
     def test_scripts_are_made_executable(self, _spy):
@@ -1773,8 +1715,8 @@ class TestSetupBackupTask:
             cmd for cmd in _spy.ssh_calls if cmd.startswith("sudo chmod 0755")
         ]
         chmodded = {cmd.rsplit(" ", 1)[-1] for cmd in chmod_cmds}
-        assert _tasks.BACKUP_SCRIPT_PATH in chmodded
-        assert _tasks.BACKUP_RETENTION_SCRIPT_PATH in chmodded
+        assert _tasks_common.BACKUP_SCRIPT_PATH in chmodded
+        assert _tasks_common.BACKUP_RETENTION_SCRIPT_PATH in chmodded
 
     def test_timer_is_enabled_and_started_in_one_step(self, _spy):
         """``enable --now`` both activates the symlink in
@@ -1808,7 +1750,7 @@ class TestEnsureYandexRcloneConfigured:
     @pytest.fixture(autouse=True)
     def _pin_replica_host(self, monkeypatch):
         monkeypatch.setattr(
-            _tasks, "_replica_host", lambda: "ubuntu@dinary-replica"
+            _tasks_backup, "_replica_host", lambda: "ubuntu@dinary-replica"
         )
 
     def test_skips_when_remote_already_exists_and_works(self, monkeypatch):
@@ -1818,15 +1760,15 @@ class TestEnsureYandexRcloneConfigured:
         password".
         """
         monkeypatch.setattr(
-            _tasks, "_replica_has_working_yandex_remote", lambda: True
+            _tasks_backup, "_replica_has_working_yandex_remote", lambda: True
         )
 
         def boom(*_a, **_kw):
             raise AssertionError("must not prompt when remote exists")
 
-        monkeypatch.setattr(_tasks, "_prompt_yandex_credentials", boom)
-        monkeypatch.setattr(_tasks, "_install_yandex_rclone_remote", boom)
-        _tasks._ensure_yandex_rclone_configured(MagicMock())
+        monkeypatch.setattr(_tasks_backup, "_prompt_yandex_credentials", boom)
+        monkeypatch.setattr(_tasks_backup, "_install_yandex_rclone_remote", boom)
+        _tasks_backup._ensure_yandex_rclone_configured(MagicMock())
 
     def test_prompts_and_installs_when_remote_missing_or_broken(self, monkeypatch):
         """The happy path on a fresh VM2 AND the recovery path from a
@@ -1835,7 +1777,7 @@ class TestEnsureYandexRcloneConfigured:
         failures until the first timer fires a day later.
         """
         monkeypatch.setattr(
-            _tasks, "_replica_has_working_yandex_remote", lambda: False
+            _tasks_backup, "_replica_has_working_yandex_remote", lambda: False
         )
         events: list[str] = []
 
@@ -1850,9 +1792,9 @@ class TestEnsureYandexRcloneConfigured:
             captured["login"] = login
             captured["pw"] = pw
 
-        monkeypatch.setattr(_tasks, "_prompt_yandex_credentials", fake_prompt)
-        monkeypatch.setattr(_tasks, "_install_yandex_rclone_remote", fake_install)
-        _tasks._ensure_yandex_rclone_configured(MagicMock())
+        monkeypatch.setattr(_tasks_backup, "_prompt_yandex_credentials", fake_prompt)
+        monkeypatch.setattr(_tasks_backup, "_install_yandex_rclone_remote", fake_install)
+        _tasks_backup._ensure_yandex_rclone_configured(MagicMock())
         assert events == ["prompt", "install"]
         assert captured == {"login": "mylogin", "pw": "hunter2-app-pw"}
 
@@ -1868,8 +1810,8 @@ class TestEnsureYandexRcloneConfigured:
             calls.append(cmd)
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
 
-        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
-        assert _tasks._replica_has_working_yandex_remote() is False
+        monkeypatch.setattr(_tasks_backup.subprocess, "run", fake_run)
+        assert _tasks_backup._replica_has_working_yandex_remote() is False
         assert calls
         probe = calls[0][-1]
         assert "grep -qx 'yandex:'" in probe
@@ -1886,8 +1828,8 @@ class TestEnsureYandexRcloneConfigured:
             calls.append(cmd[-1])
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
 
-        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
-        _tasks._replica_has_working_yandex_remote()
+        monkeypatch.setattr(_tasks_backup.subprocess, "run", fake_run)
+        _tasks_backup._replica_has_working_yandex_remote()
         assert any("rclone lsd yandex:" in c for c in calls)
 
     def test_probe_rolls_back_broken_remote_inline(self, monkeypatch):
@@ -1902,8 +1844,8 @@ class TestEnsureYandexRcloneConfigured:
             calls.append(cmd[-1])
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
 
-        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
-        _tasks._replica_has_working_yandex_remote()
+        monkeypatch.setattr(_tasks_backup.subprocess, "run", fake_run)
+        _tasks_backup._replica_has_working_yandex_remote()
         assert any("rclone config delete yandex" in c for c in calls)
 
     def test_probe_returns_true_when_remote_works(self, monkeypatch):
@@ -1914,8 +1856,8 @@ class TestEnsureYandexRcloneConfigured:
         def fake_run(cmd, *, capture_output, text, check):
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
-        assert _tasks._replica_has_working_yandex_remote() is True
+        monkeypatch.setattr(_tasks_backup.subprocess, "run", fake_run)
+        assert _tasks_backup._replica_has_working_yandex_remote() is True
 
     def test_install_does_not_leak_password_in_argv(self, monkeypatch):
         """The plaintext app-password must travel only through
@@ -1930,8 +1872,8 @@ class TestEnsureYandexRcloneConfigured:
             seen["input"] = input
             return subprocess.CompletedProcess(cmd, 0)
 
-        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
-        _tasks._install_yandex_rclone_remote("joe", "super-secret-pw")
+        monkeypatch.setattr(_tasks_backup.subprocess, "run", fake_run)
+        _tasks_backup._install_yandex_rclone_remote("joe", "super-secret-pw")
         # Plaintext is in stdin payload, never in argv.
         assert "super-secret-pw" in seen["input"]
         assert all("super-secret-pw" not in a for a in seen["cmd"])
@@ -1951,8 +1893,8 @@ class TestEnsureYandexRcloneConfigured:
             seen["cmd"] = cmd
             return subprocess.CompletedProcess(cmd, 0)
 
-        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
-        _tasks._install_yandex_rclone_remote("joe", "pw")
+        monkeypatch.setattr(_tasks_backup.subprocess, "run", fake_run)
+        _tasks_backup._install_yandex_rclone_remote("joe", "pw")
         outer = " ".join(seen["cmd"])
         match = _stdlib_re.search(r"echo ([A-Za-z0-9+/=]+) \| base64 -d", outer)
         assert match is not None
@@ -1980,9 +1922,9 @@ class TestEnsureYandexRcloneConfigured:
         def fake_run(cmd, *, input, text, check):
             return subprocess.CompletedProcess(cmd, 5)
 
-        monkeypatch.setattr(_tasks.subprocess, "run", fake_run)
+        monkeypatch.setattr(_tasks_backup.subprocess, "run", fake_run)
         with pytest.raises(SystemExit) as excinfo:
-            _tasks._install_yandex_rclone_remote("joe", "pw")
+            _tasks_backup._install_yandex_rclone_remote("joe", "pw")
         assert excinfo.value.code == 5
 
 
@@ -1997,14 +1939,16 @@ class TestRestoreFromYadiskHelpers:
     """
 
     def test_regex_round_trips_between_retention_and_restore(self):
-        """Both sides go through ``_backup_filename_regex`` — a drift
-        (one side tightens the time precision, the other doesn't)
+        """retention and restore use the same pattern via _backup_make_pattern —
+        a drift (one side tightens the time precision, the other doesn't)
         would leave keepers the restorer cannot see, or vice versa.
         """
-        pattern = _tasks._backup_filename_regex()
-        assert _stdlib_re.match(pattern, "dinary-2026-04-22T0317Z.db.zst")
-        assert not _stdlib_re.match(pattern, "dinary-2026-04-22.db.zst")
-        assert not _stdlib_re.match(pattern, "random.txt")
+        pattern = _backup_make_pattern(
+            _tasks_common.BACKUP_FILENAME_PREFIX, _tasks_common.BACKUP_FILENAME_SUFFIX
+        )
+        assert pattern.match("dinary-2026-04-22T0317Z.db.zst")
+        assert not pattern.match("dinary-2026-04-22.db.zst")
+        assert not pattern.match("random.txt")
 
     def test_list_snapshots_parses_rclone_lsjson(self, monkeypatch):
         """The inventory parser must survive rclone's JSON shape and
@@ -2025,8 +1969,8 @@ class TestRestoreFromYadiskHelpers:
             assert "lsjson" in cmd[1]
             return fake_json
 
-        monkeypatch.setattr(_tasks.subprocess, "check_output", fake_check_output)
-        result = _tasks._yadisk_list_snapshots()
+        monkeypatch.setattr(_tasks_backup.subprocess, "check_output", fake_check_output)
+        result = _tasks_backup._yadisk_list_snapshots()
         assert result == [
             ("dinary-2026-04-21T0317Z.db.zst", 322000),
             ("dinary-2026-04-22T0317Z.db.zst", 324000),
@@ -2044,7 +1988,7 @@ class TestRestoreFromYadiskHelpers:
             ("dinary-2026-04-21T0317Z.db.zst", 200),
             ("dinary-2026-04-22T0317Z.db.zst", 300),
         ]
-        picked = _tasks._pick_snapshot(snaps, "latest")
+        picked = _tasks_backup._pick_snapshot(snaps, "latest")
         assert picked == ("dinary-2026-04-22T0317Z.db.zst", 300)
 
     def test_pick_snapshot_by_date_prefix_matches_any_time_suffix(self):
@@ -2057,7 +2001,7 @@ class TestRestoreFromYadiskHelpers:
             ("dinary-2026-04-21T0317Z.db.zst", 200),
             ("dinary-2026-04-22T0317Z.db.zst", 300),
         ]
-        picked = _tasks._pick_snapshot(snaps, "2026-04-21")
+        picked = _tasks_backup._pick_snapshot(snaps, "2026-04-21")
         assert picked == ("dinary-2026-04-21T0317Z.db.zst", 200)
 
     def test_pick_snapshot_returns_none_on_miss(self):
@@ -2066,14 +2010,14 @@ class TestRestoreFromYadiskHelpers:
         silently restoring the wrong date.
         """
         snaps = [("dinary-2026-04-20T0317Z.db.zst", 100)]
-        assert _tasks._pick_snapshot(snaps, "1999-01-01") is None
+        assert _tasks_backup._pick_snapshot(snaps, "1999-01-01") is None
 
     def test_pick_snapshot_on_empty_returns_none(self):
         """Fresh bucket case: calls with an empty list return None
         rather than raising, so the caller can emit a "no snapshots
         found" message instead of an opaque IndexError.
         """
-        assert _tasks._pick_snapshot([], "latest") is None
+        assert _tasks_backup._pick_snapshot([], "latest") is None
 
 
 @allure.epic("Deploy")
@@ -2093,7 +2037,7 @@ class TestBackupStatusHelpers:
         not Yandex-side ModTime, so a silent drift here would make
         freshness checks lie.
         """
-        ts = _tasks._parse_snapshot_timestamp("dinary-2026-04-22T0317Z.db.zst")
+        ts = _tasks_backup._parse_snapshot_timestamp("dinary-2026-04-22T0317Z.db.zst")
         assert ts == _dt(2026, 4, 22, 3, 17, tzinfo=_tz.utc)
 
     def test_parse_timestamp_returns_none_on_unexpected_shape(self):
@@ -2102,8 +2046,8 @@ class TestBackupStatusHelpers:
         it the same as "no timestamp" rather than surfacing a
         ValueError to cron.
         """
-        assert _tasks._parse_snapshot_timestamp("random.txt") is None
-        assert _tasks._parse_snapshot_timestamp("dinary-bad.db.zst") is None
+        assert _tasks_backup._parse_snapshot_timestamp("random.txt") is None
+        assert _tasks_backup._parse_snapshot_timestamp("dinary-bad.db.zst") is None
 
     def test_check_freshness_ok_when_newest_inside_threshold(self):
         """Under-threshold → ``ok`` + exact age in hours. The newest
@@ -2116,7 +2060,7 @@ class TestBackupStatusHelpers:
             ("dinary-2026-04-22T0317Z.db.zst", 200),
         ]
         now = _dt(2026, 4, 22, 10, 17, tzinfo=_tz.utc)
-        verdict = _tasks._check_backup_freshness(snaps, now, max_age_hours=26)
+        verdict = _tasks_backup._check_backup_freshness(snaps, now, max_age_hours=26)
         assert verdict["status"] == "ok"
         assert verdict["newest"] == "dinary-2026-04-22T0317Z.db.zst"
         assert verdict["age_hours"] == pytest.approx(7.0)
@@ -2128,7 +2072,7 @@ class TestBackupStatusHelpers:
         """
         snaps = [("dinary-2026-04-20T0317Z.db.zst", 100)]
         now = _dt(2026, 4, 22, 4, 17, tzinfo=_tz.utc)
-        verdict = _tasks._check_backup_freshness(snaps, now, max_age_hours=26)
+        verdict = _tasks_backup._check_backup_freshness(snaps, now, max_age_hours=26)
         assert verdict["status"] == "stale"
         assert verdict["age_hours"] == pytest.approx(49.0)
 
@@ -2137,7 +2081,7 @@ class TestBackupStatusHelpers:
         so the alert message can point at the right failure mode:
         "nothing ever uploaded" vs "uploads stopped").
         """
-        verdict = _tasks._check_backup_freshness([], now=None, max_age_hours=26)
+        verdict = _tasks_backup._check_backup_freshness([], now=None, max_age_hours=26)
         assert verdict["status"] == "empty"
         assert verdict["newest"] is None
         assert verdict["age_hours"] is None
@@ -2151,7 +2095,7 @@ class TestBackupStatusHelpers:
         wrong.
         """
         snaps = [("dinary-final.db.zst", 42)]
-        verdict = _tasks._check_backup_freshness(snaps, now=None, max_age_hours=26)
+        verdict = _tasks_backup._check_backup_freshness(snaps, now=None, max_age_hours=26)
         assert verdict["status"] == "stale"
         assert verdict["age_hours"] is None
 
@@ -2160,7 +2104,7 @@ class TestBackupStatusHelpers:
         threshold so the one-line log in ``sync_log`` is enough to
         diagnose without re-running the task.
         """
-        line = _tasks._format_backup_status_line({
+        line = _tasks_backup._format_backup_status_line({
             "status": "ok",
             "newest": "dinary-2026-04-22T0317Z.db.zst",
             "age_hours": 7.0,
@@ -2177,7 +2121,7 @@ class TestBackupStatusHelpers:
         only the exit code, but the operator seeing the log line
         needs to recognize the failure mode at a glance.
         """
-        line = _tasks._format_backup_status_line({
+        line = _tasks_backup._format_backup_status_line({
             "status": "stale",
             "newest": "dinary-2026-04-20T0317Z.db.zst",
             "age_hours": 49.0,
@@ -2192,7 +2136,7 @@ class TestBackupStatusHelpers:
         jump straight to rclone/Yandex to investigate — the message
         is not just "STALE" without context.
         """
-        line = _tasks._format_backup_status_line({
+        line = _tasks_backup._format_backup_status_line({
             "status": "empty",
             "newest": None,
             "age_hours": None,
@@ -2200,8 +2144,8 @@ class TestBackupStatusHelpers:
             "threshold_hours": 26.0,
         })
         assert line.startswith("STALE: no snapshots")
-        assert _tasks.BACKUP_RCLONE_REMOTE in line
-        assert _tasks.BACKUP_RCLONE_PATH in line
+        assert _tasks_common.BACKUP_RCLONE_REMOTE in line
+        assert _tasks_common.BACKUP_RCLONE_PATH in line
 
 
 @allure.epic("Deploy")
@@ -2225,7 +2169,7 @@ class TestBackupStatusTask:
             def now(cls, tz=None):
                 return frozen
 
-        monkeypatch.setattr(_tasks, "_dt", _FrozenDateTime)
+        monkeypatch.setattr(_tasks_backup, "_dt", _FrozenDateTime)
 
     def test_ok_prints_summary_and_does_not_exit(
         self, monkeypatch, capsys, _mock_now
@@ -2236,7 +2180,7 @@ class TestBackupStatusTask:
         would false-alert the operator every hour.
         """
         monkeypatch.setattr(
-            _tasks, "_replica_list_snapshots",
+            _tasks_backup, "_replica_list_snapshots",
             lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
         )
         _tasks.backup_status.body(MagicMock())
@@ -2250,7 +2194,7 @@ class TestBackupStatusTask:
         ``send_fail_email``.
         """
         monkeypatch.setattr(
-            _tasks, "_replica_list_snapshots",
+            _tasks_backup, "_replica_list_snapshots",
             lambda: [("dinary-2026-04-20T0317Z.db.zst", 200)],
         )
         with pytest.raises(SystemExit) as exc:
@@ -2262,7 +2206,7 @@ class TestBackupStatusTask:
         always-empty backup bucket is the worst-case silent failure
         we're protecting against.
         """
-        monkeypatch.setattr(_tasks, "_replica_list_snapshots", lambda: [])
+        monkeypatch.setattr(_tasks_backup, "_replica_list_snapshots", lambda: [])
         with pytest.raises(SystemExit) as exc:
             _tasks.backup_status.body(MagicMock())
         assert exc.value.code == 1
@@ -2275,7 +2219,7 @@ class TestBackupStatusTask:
         without scraping the human line.
         """
         monkeypatch.setattr(
-            _tasks, "_replica_list_snapshots",
+            _tasks_backup, "_replica_list_snapshots",
             lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
         )
         _tasks.backup_status.body(MagicMock(), json_output=True)
@@ -2294,7 +2238,7 @@ class TestBackupStatusTask:
         7h-old backup with a 3h threshold must flip to ``stale``.
         """
         monkeypatch.setattr(
-            _tasks, "_replica_list_snapshots",
+            _tasks_backup, "_replica_list_snapshots",
             lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
         )
         with pytest.raises(SystemExit) as exc:
@@ -2343,7 +2287,7 @@ class TestRestoreFromYadiskTask:
         """rclone / sqlite3 / zstd pre-flight passes. Keep the spy
         ordering deterministic by pretending every ``which`` hits.
         """
-        monkeypatch.setattr(_tasks.shutil, "which", lambda name: f"/fake/{name}")
+        monkeypatch.setattr(_tasks_backup.shutil, "which", lambda name: f"/fake/{name}")
 
     @pytest.fixture
     def _fake_snapshot(self, tmp_path, monkeypatch, _mock_binaries_present):
@@ -2363,7 +2307,7 @@ class TestRestoreFromYadiskTask:
         )
 
         monkeypatch.setattr(
-            _tasks,
+            _tasks_backup,
             "_yadisk_list_snapshots",
             lambda: [(snapshot_name, archive.stat().st_size)],
         )
@@ -2372,7 +2316,7 @@ class TestRestoreFromYadiskTask:
             def run(self_inner, cmd):
                 tokens = shlex.split(cmd)
                 if tokens[0] == "rclone":
-                    src = f"{_tasks.BACKUP_RCLONE_REMOTE}:{_tasks.BACKUP_RCLONE_PATH}/{snapshot_name}"
+                    src = f"{_tasks_common.BACKUP_RCLONE_REMOTE}:{_tasks_common.BACKUP_RCLONE_PATH}/{snapshot_name}"
                     assert tokens[:2] == ["rclone", "copyto"]
                     assert tokens[2] == src
                     shutil.copyfile(archive, tokens[3])
@@ -2442,7 +2386,7 @@ class TestRestoreFromYadiskTask:
         )
 
         monkeypatch.setattr(
-            _tasks,
+            _tasks_backup,
             "_yadisk_list_snapshots",
             lambda: [(snapshot_name, archive.stat().st_size)],
         )
@@ -2504,7 +2448,7 @@ class TestRestoreFromYadiskTask:
         with a message pointing at the Yandex path, not crash with
         an IndexError deep in ``_pick_snapshot``.
         """
-        monkeypatch.setattr(_tasks, "_yadisk_list_snapshots", lambda: [])
+        monkeypatch.setattr(_tasks_backup, "_yadisk_list_snapshots", lambda: [])
         with pytest.raises(SystemExit) as excinfo:
             _tasks.restore_from_yadisk.body(MagicMock())
         assert excinfo.value.code == 1
@@ -2531,7 +2475,7 @@ class TestRestoreFromYadiskTask:
         single consolidated error message, not fail mid-pipeline
         after the download has already started.
         """
-        monkeypatch.setattr(_tasks.shutil, "which", lambda name: None)
+        monkeypatch.setattr(_tasks_backup.shutil, "which", lambda name: None)
         with pytest.raises(SystemExit) as excinfo:
             _tasks.restore_from_yadisk.body(MagicMock())
         assert excinfo.value.code == 1

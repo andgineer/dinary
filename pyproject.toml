@@ -44,6 +44,9 @@ packages = "find:"
 [tool.setuptools.manifest]
 include = [ "README.md", "LICENSE.txt",]
 
+[tool.pyrefly]
+search_path = ["src", "."]
+
 [tool.ruff]
 line-length = 99
 
