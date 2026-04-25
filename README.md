@@ -36,8 +36,9 @@
 | src/dinary/services/sheets.py                 |      231 |       63 |     73% |87-96, 100, 137-146, 164-176, 237-238, 244, 298, 337, 395, 478, 628, 672-677, 713-753 |
 | src/dinary/services/sql\_loader.py            |       31 |        0 |    100% |           |
 | src/dinary/services/sqlite\_types.py          |       36 |        0 |    100% |           |
+| src/dinary/tools/backup\_retention.py         |       55 |       26 |     53% |26-34, 71-91, 95 |
 | src/dinary/tools/sql.py                       |       71 |        3 |     96% |86, 176, 183 |
-| **TOTAL**                                     | **4098** |  **918** | **78%** |           |
+| **TOTAL**                                     | **4153** |  **944** | **77%** |           |
 
 
 ## Setup coverage badge
