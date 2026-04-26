@@ -30,23 +30,20 @@ ALLOWED_VERSION_TYPES = ["release", "bug", "feature"]
 
 REPO_URL = "https://github.com/andgineer/dinary.git"
 
-DINARY_SERVICE = """\
-[Unit]
-Description=dinary
-After=network.target
+_UV = "/home/ubuntu/.local/bin/uv"
+_DINARY_EXEC = (
+    "ExecStart=/bin/sh -c 'exec " + _UV + " run uvicorn dinary.main:app --host {host} --port 8000'"
+)
 
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/dinary
-EnvironmentFile=/home/ubuntu/dinary/.deploy/.env
-ExecStart=/home/ubuntu/.local/bin/uv run uvicorn dinary.main:app --host {host} --port 8000
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-"""
+DINARY_SERVICE = (
+    "[Unit]\nDescription=dinary\nAfter=network.target\n\n"
+    "[Service]\nType=simple\nUser=ubuntu\n"
+    "WorkingDirectory=/home/ubuntu/dinary\n"
+    "EnvironmentFile=/home/ubuntu/dinary/.deploy/.env\n"
+    + _DINARY_EXEC
+    + "\nRestart=always\nRestartSec=5\n\n"
+    "[Install]\nWantedBy=multi-user.target\n"
+)
 
 CLOUDFLARED_SERVICE = """\
 [Unit]

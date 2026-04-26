@@ -24,6 +24,14 @@ from .ssh_utils import (
 def deploy(c, ref="", no_start=False):
     """Deploy latest code to the server: pull, sync deps, migrate, restart.
 
+    Options:
+      --ref REF      Git tag, commit hash, or branch to deploy.
+                     Without ``--ref`` the server does ``git pull`` on the
+                     currently checked-out branch.
+      --no-start     Deploy code but skip the final ``systemctl start``.
+                     Use for DB restore flows where you need to swap the DB
+                     before the service reads it.
+
     **Pinning a version**
 
     Pass ``--ref`` to deploy a specific git tag, commit hash, or branch::
@@ -62,7 +70,6 @@ def deploy(c, ref="", no_start=False):
     6. ``systemctl restart dinary`` + health check (skipped with ``--no-start``).
 
     Schema migrations (yoyo) run automatically when the server starts.
-    No separate migrate step is needed on deploy.
     """
     print("=== Pre-deploy backup ===")
     ts = _dt.now().strftime("%Y%m%d-%H%M%S")

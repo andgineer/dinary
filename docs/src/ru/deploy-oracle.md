@@ -122,8 +122,9 @@ inv setup-server
 - Синхронизирует ваш локальный `.deploy/.env` на VM
 - Загружает `~/.config/gspread/service_account.json` на VM
 - Создаёт и запускает systemd-сервис `dinary`
-- Сеет базовую таксономию в `dinary.db` через `inv bootstrap-catalog --yes`
 - Настраивает туннель (Tailscale по умолчанию, или Cloudflare — в зависимости от `DINARY_TUNNEL`)
+
+Для создания предопределнных категорий вызовите `inv bootstrap-catalog --yes`.
 
 ### Tailscale (по умолчанию)
 

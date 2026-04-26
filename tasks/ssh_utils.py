@@ -174,7 +174,14 @@ def sync_remote_import_sources(c):
 
 def setup_tailscale(c):
     """Configure Tailscale serve for the dinary app on the main host."""
-    ssh_run(c, "tailscale serve --bg http://localhost:8000")
+    ssh_run(
+        c,
+        "curl -fsSL https://tailscale.com/install.sh | sudo sh"
+        " && sudo tailscale up --hostname=dinary --ssh=false",
+    )
+    # Allow the current user to manage serve without sudo, then enable the proxy.
+    ssh_sudo(c, "tailscale set --operator=$USER")
+    ssh_run(c, "tailscale serve --bg 8000")
 
 
 def setup_cloudflare(c):

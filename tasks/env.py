@@ -66,7 +66,11 @@ def bind_host(tunnel: str) -> str:
     loopback. Shared by ``setup`` and ``deploy`` so both paths render
     the same ``DINARY_SERVICE`` unit file.
     """
-    return "0.0.0.0" if tunnel == "none" else "127.0.0.1"  # noqa: S104
+    if tunnel == "none":
+        return "0.0.0.0"  # noqa: S104
+    if tunnel == "tailscale":
+        return "$(tailscale ip -4 2>/dev/null || echo 127.0.0.1)"
+    return "127.0.0.1"
 
 
 def host():

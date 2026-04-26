@@ -6,11 +6,9 @@ from invoke import task
 
 from .constants import (
     DINARY_SERVICE,
-    LOCAL_IMPORT_SOURCES_PATH,
     LOCAL_LITESTREAM_CONFIG_PATH,
     REPO_URL,
 )
-from .deploy import bootstrap_catalog, import_config
 from .env import bind_host, host, tunnel
 from .ssh_utils import (
     build_setup_swap_script,
@@ -28,6 +26,8 @@ from .ssh_utils import (
 @task(name="setup-server")
 def setup_server(c, no_swap=False, tailscale=False):  # noqa: PLR0915
     """One-time VM1 setup: install deps, clone repo, create services, upload creds.
+
+    To seed categories to the DB call `inv bootstrap-catalog --yes`.
 
     Flags:
         --no-swap          Skip swap provisioning (already allocated on re-run).
@@ -93,18 +93,6 @@ def setup_server(c, no_swap=False, tailscale=False):  # noqa: PLR0915
     print(f"=== Creating dinary service (bind {bh}) ===")
     service = DINARY_SERVICE.format(host=bh)
     create_service(c, "dinary", service)
-
-    print("=== Bootstrapping runtime catalog ===")
-    bootstrap_catalog(c, yes=True)
-
-    if Path(LOCAL_IMPORT_SOURCES_PATH).exists():
-        print("=== Importing catalog from Google Sheets (import_sources.json present) ===")
-        import_config(c)
-    else:
-        print(
-            "=== Skipping import-config (no .deploy/import_sources.json locally). ===\n"
-            "=== Runtime catalog is populated; /api/expenses will work. ===",
-        )
 
     if setup_tunnel == "tailscale":
         setup_tailscale(c)

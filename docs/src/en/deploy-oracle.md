@@ -122,8 +122,9 @@ This single command performs everything on the VM via SSH:
 - Syncs your local `.deploy/.env` to the VM
 - Uploads `~/.config/gspread/service_account.json` to the VM
 - Creates and starts a `dinary` systemd service
-- Seeds the runtime taxonomy into `dinary.db` via `inv bootstrap-catalog --yes`
 - Sets up the tunnel (Tailscale by default, or Cloudflare — depending on `DINARY_TUNNEL`)
+
+To seed categories to the DB call `inv bootstrap-catalog --yes`.
 
 ### Tailscale (default)
 

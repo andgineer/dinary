@@ -18,7 +18,8 @@ indicator.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from dinary.config import settings
@@ -46,6 +47,20 @@ def _seconds_until_prefetch_hour() -> float:
     return max((target - now).total_seconds(), _RETRY_INTERVAL_SEC)
 
 
+def _get_rate_blocking(rate_date: date, source: str, target: str) -> Decimal:
+    """Fetch and persist a rate; runs in a ThreadPoolExecutor worker thread.
+
+    Opens its own connection so the SQLite handle is never shared
+    across thread boundaries (avoids CPython 3.14 access violations
+    caused by passing a connection object between threads).
+    """
+    con = ledger_repo.get_connection()
+    try:
+        return get_rate(con, rate_date, source, target)
+    finally:
+        con.close()
+
+
 async def rate_prefetch_task() -> None:
     source = settings.app_currency
     target = settings.accounting_currency
@@ -61,42 +76,45 @@ async def rate_prefetch_task() -> None:
 
             con = ledger_repo.get_connection()
             try:
-                if _get_db_rate(con, today, source, target) is not None:
-                    logger.debug("rate for %s already stored", today)
-                    await asyncio.sleep(_seconds_until_prefetch_hour())
-                    continue
-
-                rate = await asyncio.to_thread(
-                    get_rate,
-                    con,
-                    today,
-                    source,
-                    target,
-                )
-                if _get_db_rate(con, today, source, target) is None:
-                    # get_rate have not got and saved today's rate, just returned a fallback.
-                    # Retry later so the daily write still happens once the upstream recovers.
-                    logger.warning(
-                        "rate for %s/%s on %s not written to DB"
-                        " (stale fallback %s), retrying in %d min",
-                        source,
-                        target,
-                        today,
-                        rate,
-                        _RETRY_INTERVAL_SEC // 60,
-                    )
-                else:
-                    logger.info(
-                        "prefetched %s/%s rate for %s: %s",
-                        source,
-                        target,
-                        today,
-                        rate,
-                    )
-                    await asyncio.sleep(_seconds_until_prefetch_hour())
-                    continue
+                already_stored = _get_db_rate(con, today, source, target) is not None
             finally:
                 con.close()
+
+            if already_stored:
+                logger.debug("rate for %s already stored", today)
+                await asyncio.sleep(_seconds_until_prefetch_hour())
+                continue
+
+            rate = await asyncio.to_thread(_get_rate_blocking, today, source, target)
+
+            con = ledger_repo.get_connection()
+            try:
+                stored_now = _get_db_rate(con, today, source, target) is not None
+            finally:
+                con.close()
+
+            if not stored_now:
+                # get_rate returned a stale fallback without writing today's rate.
+                # Retry later so the daily write still happens once upstream recovers.
+                logger.warning(
+                    "rate for %s/%s on %s not written to DB"
+                    " (stale fallback %s), retrying in %d min",
+                    source,
+                    target,
+                    today,
+                    rate,
+                    _RETRY_INTERVAL_SEC // 60,
+                )
+            else:
+                logger.info(
+                    "prefetched %s/%s rate for %s: %s",
+                    source,
+                    target,
+                    today,
+                    rate,
+                )
+                await asyncio.sleep(_seconds_until_prefetch_hour())
+                continue
         except asyncio.CancelledError:
             raise
         except Exception:

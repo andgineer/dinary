@@ -678,6 +678,7 @@ class TestLitestreamSetupPermissions:
         monkeypatch.setattr(_tasks_backup, "write_remote_file", fake_write_remote_file)
         monkeypatch.setattr(_tasks_backup, "create_service", fake_create_service)
         monkeypatch.setattr(_tasks_backup, "LOCAL_LITESTREAM_CONFIG_PATH", str(config))
+        monkeypatch.setattr(_tasks_backup, "replica_host", lambda: "ubuntu@dinary-replica")
         return calls
 
     def test_chown_and_chmod_run_inside_a_single_sudo_bash_c(self, _spy):
