@@ -197,7 +197,7 @@ def sql_query(c, query="", file="", csv=False, json=False, write=False, remote=F
 
     sql_text = Path(file).read_text(encoding="utf-8") if file else query
 
-    sql_flags = ["--query", shlex.quote(sql_text)]
+    sql_flags = ["--query", sql_text]
 
     if not remote:
         local_flags = [*sql_flags]
@@ -207,7 +207,7 @@ def sql_query(c, query="", file="", csv=False, json=False, write=False, remote=F
             local_flags.append("--json")
         if write:
             local_flags.append("--write")
-        c.run(f"uv run python -m dinary.tools.sql {' '.join(local_flags)}")
+        c.run(f"uv run python -m dinary.tools.sql {shlex.join(local_flags)}")
         return
 
     remote_flags = [*sql_flags, "--json"]

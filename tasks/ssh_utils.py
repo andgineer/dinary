@@ -3,11 +3,13 @@
 import base64
 import json
 import re
+import shlex
 import subprocess
 from pathlib import Path
 
 from .constants import (
     _REMOTE_DB_PATH,
+    _UV,
     LITESTREAM_VERSION,
     LOCAL_ENV_PATH,
     LOCAL_IMPORT_SOURCES_PATH,
@@ -307,7 +309,7 @@ def remote_snapshot_cmd(module_path, flags):
     """
     snap_name = "dinary-report-snapshot"
     prologue = sqlite_backup_prologue(snap_name)
-    flag_str = (" " + " ".join(flags)) if flags else ""
+    flag_str = (" " + shlex.join(flags)) if flags else ""
     data_env = 'DINARY_DATA_PATH="$SNAP"'
-    run_cmd = f"uv run python -m {module_path}{flag_str}"
-    return f"set -e; {prologue}{data_env} {run_cmd}"
+    run_cmd = f"cd ~/dinary && {data_env} {_UV} run python -m {module_path}{flag_str}"
+    return f"set -e; {prologue}{run_cmd}"

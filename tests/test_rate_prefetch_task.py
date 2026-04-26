@@ -145,7 +145,8 @@ class TestWorkingDayFetch:
                 settings.app_currency,
                 settings.accounting_currency,
             )
-            con.close.assert_called_once()
+            # 3 connections: already_stored check, _get_rate_blocking, stored_now check
+            assert con.close.call_count == 3
 
 
 @allure.epic("Background Tasks")
@@ -282,7 +283,8 @@ class TestFetchError:
                 asyncio.run(rate_prefetch_task())
 
             mock_sleep.assert_awaited_with(_RETRY_INTERVAL_SEC)
-            con.close.assert_called_once()
+            # 2 connections: already_stored check + _get_rate_blocking (error before stored_now check)
+            assert con.close.call_count == 2
 
 
 @allure.epic("Background Tasks")
@@ -328,4 +330,5 @@ class TestStaleFallback:
                 asyncio.run(rate_prefetch_task())
 
             mock_sleep.assert_awaited_with(_RETRY_INTERVAL_SEC)
-            con.close.assert_called_once()
+            # 3 connections: already_stored check, _get_rate_blocking, stored_now check
+            assert con.close.call_count == 3
