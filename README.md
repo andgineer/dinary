@@ -9,7 +9,7 @@
 | src/dinary/api/catalog.py                     |       77 |        3 |     96% |   318-320 |
 | src/dinary/api/expenses.py                    |       97 |        4 |     96% |154, 296-298 |
 | src/dinary/api/qr.py                          |       17 |        6 |     65% |     26-32 |
-| src/dinary/background/rate\_prefetch\_task.py |       45 |        2 |     96% |    67, 97 |
+| src/dinary/background/rate\_prefetch\_task.py |       56 |        2 |     96% |   86, 117 |
 | src/dinary/background/sheet\_logging\_task.py |       53 |        7 |     87% |     44-57 |
 | src/dinary/config.py                          |      148 |       19 |     87% |37, 47, 110-112, 143, 149, 205-209, 211-215, 218-223, 226-230, 293-295 |
 | src/dinary/imports/expense\_import.py         |      396 |      131 |     67% |260, 265-266, 280, 282, 284, 311-329, 359, 363, 396-402, 405, 412, 414, 416-423, 445, 450-451, 475, 518-522, 540-543, 545-557, 666-667, 715-717, 720-722, 809-820, 889-932, 945, 955, 978-1014, 1072, 1086, 1089, 1094, 1104, 1165-1169, 1171-1175, 1230-1237, 1241-1254, 1282-1291 |
@@ -40,7 +40,7 @@
 | src/dinary/tools/backup\_snapshots.py         |       79 |        7 |     91% |157, 213-218 |
 | src/dinary/tools/report\_helpers.py           |       30 |       10 |     67% |     44-53 |
 | src/dinary/tools/sql.py                       |       71 |        3 |     96% |86, 176, 183 |
-| **TOTAL**                                     | **4262** |  **961** | **77%** |           |
+| **TOTAL**                                     | **4273** |  **961** | **78%** |           |
 
 
 ## Setup coverage badge
