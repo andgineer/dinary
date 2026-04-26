@@ -4,28 +4,31 @@ import sys
 
 from invoke import Collection
 
-from ._backup import (
+from .backups import (
     backup_status,
-    litestream_setup,
-    litestream_status,
+    replica_resync,
     restore_from_yadisk,
     setup_replica,
-    setup_replica_backup,
 )
-from ._common import ALLOWED_DOC_LANGUAGES, ALLOWED_VERSION_TYPES
-from ._deploy import (
+from .constants import ALLOWED_DOC_LANGUAGES, ALLOWED_VERSION_TYPES
+from .db import backup, migrate, verify_db
+from .deploy import (
     bootstrap_catalog,
     deploy,
     import_config,
-    logs,
-    migrate,
-    ssh,
-    ssh_replica,
-    start,
-    status,
-    stop,
 )
-from ._import import (
+from .dev import (
+    build_static,
+    dev,
+    docs_task_factory,
+    pre,
+    reqs,
+    test,
+    uv,
+    ver_task_factory,
+    version,
+)
+from .imports import (
     import_budget,
     import_budget_all,
     import_catalog,
@@ -37,22 +40,9 @@ from ._import import (
     verify_income_equivalence,
     verify_income_equivalence_all,
 )
-from ._local import (
-    backup,
-    build_static,
-    dev,
-    docs_task_factory,
-    healthcheck,
-    pre,
-    reqs,
-    test,
-    uv,
-    ver_task_factory,
-    verify_db,
-    version,
-)
-from ._reports import report_expenses, report_income, sql_query
-from ._setup import setup, setup_swap, ssh_tailscale_only
+from .reports import report_expenses, report_income, sql_query
+from .server import healthcheck, logs, restart_server, ssh, ssh_replica, status
+from .setup import setup_server
 
 __all__ = [
     "backup",
@@ -70,26 +60,21 @@ __all__ = [
     "import_income",
     "import_income_all",
     "import_report_2d_3d",
-    "litestream_setup",
-    "litestream_status",
     "logs",
     "migrate",
     "pre",
     "reqs",
     "report_expenses",
     "report_income",
+    "restart_server",
+    "replica_resync",
     "restore_from_yadisk",
-    "setup",
     "setup_replica",
-    "setup_replica_backup",
-    "setup_swap",
+    "setup_server",
     "sql_query",
     "ssh",
     "ssh_replica",
-    "ssh_tailscale_only",
-    "start",
     "status",
-    "stop",
     "test",
     "uv",
     "ver_task_factory",

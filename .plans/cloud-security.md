@@ -276,7 +276,7 @@ zero-public-22 posture with that much blast radius is the wrong
 trade-off when the public-22 threat is bot noise, not actual
 compromise (key-only auth already defeats brute-force). Option 3
 below is the durable posture; Option 1 stays documented here as the
-conservative default shipped by `inv setup`/`inv setup-replica` so a
+conservative default shipped by `inv setup-server`/`inv setup-replica` so a
 re-bootstrap starts locked down and the operator can opt out
 explicitly by removing the drop-in.
 
@@ -393,8 +393,8 @@ without impacting steady state.
 
 Where the remediation is a one-liner on a running host (service
 account chmod, SSH Tailscale-only bind, journald retention, root key
-cleanup) it should become an idempotent `inv` task — same pattern as
-`inv setup-swap`:
+cleanup) it should become an idempotent `inv` task — same pattern as the
+swap setup now handled by `inv setup-server --no-swap`/`inv setup-replica`:
 
 - `inv secure-google-creds` — `chmod 600` the service account JSON.
 - `inv ssh-lockdown` — wipe root/opc keys, lock opc, set
@@ -403,6 +403,6 @@ cleanup) it should become an idempotent `inv` task — same pattern as
 - Updates to the existing unit template in `.deploy/dinary.service`
   (or wherever `inv deploy` renders it) — ship the sandboxing block.
 
-Wiring them into `inv setup` means VM2, when it is provisioned for
+Wiring them into `inv setup-server` means VM2, when it is provisioned for
 Litestream, inherits the same posture automatically and we don't
 repeat this audit.

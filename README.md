@@ -75,10 +75,10 @@ For a list of available scripts run:
 Configure `.deploy/.env` (see `.deploy.example/.env`), then:
 
 ```bash
-inv setup    # one-time: install deps, clone, create systemd services, upload creds
-inv deploy   # pull latest code and restart
-inv status   # check service status
-inv logs     # tail server logs
+inv setup-server    # one-time: install deps, clone, create systemd services, upload creds
+inv deploy          # pull latest code and restart
+inv status --remote # check service status
+inv logs --remote   # tail server logs
 ```
 
 See [Oracle Cloud deployment guide](https://andgineer.github.io/dinary/deploy-oracle/) for details.

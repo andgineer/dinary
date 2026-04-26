@@ -52,7 +52,7 @@ coordinated reset flow, with the FastAPI service stopped.
 ### Verify one year
 
 ```bash
-inv verify-income-equivalence --year=2024
+inv import-verify-income --year=2024
 ```
 
 Re-reads the source worksheet and compares month-by-month totals against

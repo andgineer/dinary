@@ -11,13 +11,9 @@ from invoke import task
 from dinary.reports import expenses as expenses_report
 from dinary.reports import income as income_report
 from dinary.tools import sql as sql_module
+from dinary.tools.report_helpers import extract_format_flags, extract_year_month
 
-from ._common import (
-    _extract_format_flags,
-    _extract_year_month,
-    _remote_snapshot_cmd,
-    _ssh_capture_bytes,
-)
+from .ssh_utils import remote_snapshot_cmd, ssh_capture_bytes
 
 
 def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> None:
@@ -46,10 +42,10 @@ def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> Non
         c.run(cmd)
         return
 
-    as_csv, as_json, filter_flags = _extract_format_flags(flags)
+    as_csv, as_json, filter_flags = extract_format_flags(flags)
 
     remote_flags = [*filter_flags, "--json"]
-    raw = _ssh_capture_bytes(_remote_snapshot_cmd(f"dinary.reports.{module}", remote_flags))
+    raw = ssh_capture_bytes(remote_snapshot_cmd(f"dinary.reports.{module}", remote_flags))
 
     if as_json:
         sys.stdout.buffer.write(raw)
@@ -62,7 +58,7 @@ def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> Non
         income_report.render(income_rows, as_csv=as_csv, stream=sys.stdout)
     elif module == "expenses":
         expense_rows = expenses_report.rows_from_json(payload)
-        year, month = _extract_year_month(filter_flags)
+        year, month = extract_year_month(filter_flags)
         expenses_report.render(
             expense_rows,
             year=year,
@@ -216,7 +212,7 @@ def sql_query(c, query="", file="", csv=False, json=False, write=False, remote=F
 
     remote_flags = [*sql_flags, "--json"]
     try:
-        raw = _ssh_capture_bytes(_remote_snapshot_cmd("dinary.tools.sql", remote_flags))
+        raw = ssh_capture_bytes(remote_snapshot_cmd("dinary.tools.sql", remote_flags))
     except subprocess.CalledProcessError:
         sys.exit(1)
 

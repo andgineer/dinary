@@ -21,8 +21,8 @@
 - **Backend**: FastAPI API writes to the existing Google Sheets workbook without changing the spreadsheet mental model.
 - **Frontend**: installed PWA with two cascading dropdowns (`group -> category`), manual amount entry, live QR scan, and a queue modal for unsent expenses.
 - **Offline safety**: expense is first saved to IndexedDB and only removed after confirmed server success. Network/server failures must never drop user input.
-- **Deployment**: `inv setup` for one-time provisioning, `inv deploy` for code
-  updates, `inv status`, `inv logs`, `inv ssh`, and `inv test`.
+- **Deployment**: `inv setup-server` for one-time provisioning, `inv deploy` for code
+  updates, `inv status --remote`, `inv logs --remote`, `inv ssh`, and `inv test`.
 - **Access model**: Tailscale is the default deployment mode, using tailnet-only `tailscale serve`; `cloudflare` and `none` remain supported options.
 
 ---
@@ -143,7 +143,7 @@ Structured logging to stdout via Python `logging` (JSON format for production). 
 
 **PWA serving:** FastAPI `StaticFiles` mount at `/`, source in `static/`. Single tunnel covers both API and PWA.
 
-**Operational commands:** `inv setup`, `inv deploy`, `inv status`, `inv logs`, `inv ssh`, `inv test`.
+**Operational commands:** `inv setup-server`, `inv deploy`, `inv status --remote`, `inv logs --remote`, `inv ssh`, `inv test`.
 
 ---
 

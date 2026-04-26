@@ -90,7 +90,7 @@ def render_single(
         console.print(
             Panel(
                 f"Unexpected payload shape: {result!r}",
-                title="verify-income-equivalence",
+                title="import-verify-income",
                 border_style="red",
             ),
         )

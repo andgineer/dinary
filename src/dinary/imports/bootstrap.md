@@ -128,18 +128,18 @@ layout reference (`balance_rub`, `balance_rub_rsd`, `balance_rsd`,
 ## 6. Verify
 
 ```bash
-inv verify-bootstrap-import --year=2022
-inv verify-bootstrap-import-all
-inv verify-income-equivalence --year=2022
-inv verify-income-equivalence-all
+inv import-verify-bootstrap --year=2022
+inv import-verify-bootstrap-all
+inv import-verify-income --year=2022
+inv import-verify-income-all
 inv report-2d-3d
 ```
 
-- `verify-bootstrap-import` re-reads the sheet, re-runs the 3D
+- `import-verify-bootstrap` re-reads the sheet, re-runs the 3D
   mapping, and asserts that ledger rows match the resolved
   `(category_id, event_id, tag set)` for every non-skipped legacy
   row.
-- `verify-income-equivalence` re-aggregates the income worksheet in
+- `import-verify-income` re-aggregates the income worksheet in
   the accounting currency and compares month-by-month to the
   `income` table with a ±0.02 tolerance.
 - `report-2d-3d` renders a cross-year grid of every legacy
@@ -164,8 +164,8 @@ inv reset-db --yes                      # drop + re-run migrations
 inv import-catalog --yes                # seed catalog + mappings
 inv import-budget-all --yes
 inv import-income-all --yes
-inv verify-bootstrap-import-all
-inv verify-income-equivalence-all
+inv import-verify-bootstrap-all
+inv import-verify-income-all
 inv start                               # bring the service back
 ```
 

@@ -9,12 +9,8 @@ from invoke import task
 from dinary.imports import report_2d_3d as _report_2d_3d_module
 from dinary.reports import verify_budget, verify_income
 
-from ._common import (
-    _ssh,
-    _ssh_capture_bytes,
-    _ssh_json,
-)
-from ._reports import _remote_snapshot_cmd
+from .reports import remote_snapshot_cmd
+from .ssh_utils import ssh_capture_bytes, ssh_json, ssh_run
 
 
 def _require_yes(yes: bool, message: str) -> bool:
@@ -90,7 +86,7 @@ def import_catalog(c, yes=False):
         "will be forced to refresh on next /api/catalog call.",
     ):
         return
-    _ssh(
+    ssh_run(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.seed import rebuild_config_from_sheets; "
@@ -115,7 +111,7 @@ def import_budget(c, year="", yes=False):
         "nothing in the targeted year is preserved.",
     ):
         return
-    _ssh(
+    ssh_run(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.expense_import import import_year; "
@@ -141,7 +137,7 @@ def import_budget_all(c, yes=False):
         "is preserved; within each affected year nothing is preserved.",
     ):
         return
-    _ssh(
+    ssh_run(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.config import read_import_sources; "
@@ -152,7 +148,7 @@ def import_budget_all(c, yes=False):
     )
 
 
-@task(name="verify-bootstrap-import")
+@task(name="import-verify-bootstrap")
 def verify_bootstrap_import(c, year="", json=False):  # noqa: A002
     """Verify that bootstrap-imported budget DB reproduces sheet aggregates (on server).
 
@@ -163,7 +159,7 @@ def verify_bootstrap_import(c, year="", json=False):  # noqa: A002
     view (back-compat for scripted consumers).
     """
     year_int = _require_year(year)
-    result = _ssh_json(
+    result = ssh_json(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.verify_equivalence import verify_bootstrap_import; "
@@ -177,9 +173,9 @@ def verify_bootstrap_import(c, year="", json=False):  # noqa: A002
     sys.exit(verify_budget.exit_code_for_single(result))
 
 
-@task(name="verify-bootstrap-import-all")
+@task(name="import-verify-bootstrap-all")
 def verify_bootstrap_import_all(c, json=False):  # noqa: A002
-    """Run verify-bootstrap-import for every positive-year entry in ``.deploy/import_sources.json``.
+    """Run import-verify-bootstrap for every positive-year entry in ``.deploy/import_sources.json``.
 
     Used by the coordinated reset flow so verification covers every rebuilt
     year, not just the current calendar year. Renders a rich summary
@@ -187,7 +183,7 @@ def verify_bootstrap_import_all(c, json=False):  # noqa: A002
     non-zero if any single year fails. Pass ``--json`` to emit the
     raw JSON array (back-compat for scripted consumers).
     """
-    results = _ssh_json(
+    results = ssh_json(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.config import read_import_sources; "
@@ -214,7 +210,7 @@ def import_income(c, year="", yes=False):
         "from Google Sheets.",
     ):
         return
-    _ssh(
+    ssh_run(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.income_import import import_year_income; "
@@ -231,7 +227,7 @@ def import_income_all(c, yes=False):
         "registered income source. Existing income rows are dropped first.",
     ):
         return
-    _ssh(
+    ssh_run(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.config import read_import_sources; "
@@ -245,7 +241,7 @@ def import_income_all(c, yes=False):
     )
 
 
-@task(name="verify-income-equivalence")
+@task(name="import-verify-income")
 def verify_income_equivalence(c, year="", json=False):  # noqa: A002
     """Verify that imported income matches the source Google Sheet (on server).
 
@@ -255,7 +251,7 @@ def verify_income_equivalence(c, year="", json=False):  # noqa: A002
     entry). Pass ``--json`` for the raw JSON escape hatch.
     """
     year_int = _require_year(year)
-    result = _ssh_json(
+    result = ssh_json(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.imports.verify_income import verify_income_equivalence; "
@@ -269,9 +265,9 @@ def verify_income_equivalence(c, year="", json=False):  # noqa: A002
     sys.exit(verify_income.exit_code_for_single(result))
 
 
-@task(name="verify-income-equivalence-all")
+@task(name="import-verify-income-all")
 def verify_income_equivalence_all(c, json=False):  # noqa: A002
-    """Run verify-income-equivalence for every year that has an income worksheet.
+    """Run import-verify-income for every year that has an income worksheet.
 
     Used by the coordinated reset flow so verification covers every rebuilt
     income year. Renders a rich summary table with per-failing-year
@@ -279,7 +275,7 @@ def verify_income_equivalence_all(c, json=False):  # noqa: A002
     ``--json`` for the raw JSON array (back-compat for scripted
     consumers).
     """
-    results = _ssh_json(
+    results = ssh_json(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
         "from dinary.config import read_import_sources; "
@@ -365,8 +361,8 @@ def import_report_2d_3d(  # noqa: PLR0913
         c.run(cmd)
         return
 
-    raw = _ssh_capture_bytes(
-        _remote_snapshot_cmd("dinary.imports.report_2d_3d", _build_flags(force_json=True)),
+    raw = ssh_capture_bytes(
+        remote_snapshot_cmd("dinary.imports.report_2d_3d", _build_flags(force_json=True)),
     )
 
     if json:

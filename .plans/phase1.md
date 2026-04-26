@@ -97,7 +97,7 @@ Historical data migration is **bootstrap-only and operator-driven**. The `import
 - `sheet_import_sources` (in `config.duckdb`) maps each year to its spreadsheet ID, worksheet name, and layout key.
 - `SheetLayout` (in [src/dinary/imports/expense_import.py](../src/dinary/imports/expense_import.py); the module was named `src/dinary/services/import_sheet.py` when this doc was written) describes column positions for each historical sheet generation (`default`, `rub`, `rub_fallback`, `rub_6col`, `rub_2016`, `rub_2014`, `rub_2012`).
 - Bootstrap import resolves each legacy `(year, sheet_category, sheet_group)` row through `sheet_mapping` (exact-year row first, then year=0 fallback), pulls `category_id`, `event_id`, and the tag set from `sheet_mapping_tags`, generates a fresh UUID4 per row, and writes both `expenses` and `expense_tags`. Imported rows populate `sheet_category` / `sheet_group` together as audit provenance (with `sheet_group=''` when the legacy row had no envelope); runtime rows leave both NULL.
-- `inv verify-bootstrap-import --year=YYYY` validates that DB rows match the resolved 3D mapping for the bootstrap-imported set. The coordinated reset flow loops verification across every rebuilt year.
+- `inv import-verify-bootstrap --year=YYYY` validates that DB rows match the resolved 3D mapping for the bootstrap-imported set. The coordinated reset flow loops verification across every rebuilt year.
 
 ### Sheet write model: persistent queue + async worker
 
@@ -128,7 +128,7 @@ This is best-effort placement into existing latest-year rows, not a round-trip g
 > Historical workflow only: the commands quoted in this section are preserved
 > verbatim for context. In the current codebase use `inv import-catalog`,
 > `inv import-budget-all`, `inv import-income-all`,
-> `inv verify-bootstrap-import-all`, `inv verify-income-equivalence-all`, and
+> `inv import-verify-bootstrap-all`, `inv import-verify-income-all`, and
 > `inv drain-logging`.
 
 1. `inv backup` — rsyncs `data/` from the server to the operator's laptop.
@@ -137,7 +137,7 @@ This is best-effort placement into existing latest-year rows, not a round-trip g
    2. `inv import-catalog --yes` (preserves and bumps `catalog_version` to `previous + 1`);
    3. `inv import-budget-all --yes` (also wipes any `sheet_sync_jobs` rows in those files);
    4. `inv import-income-all --yes`;
-   5. `inv verify-bootstrap-import-all` and `inv verify-income-equivalence-all`;
+   5. `inv import-verify-bootstrap-all` and `inv import-verify-income-all`;
    6. start server.
 3. `inv sync` — re-runs the single-row append for every `sheet_sync_jobs` row across all `budget_*.duckdb` files. Used after process crashes, transient Google API failures, or manual recovery.
 
@@ -718,7 +718,7 @@ Update Phase 0 deployment/tasks to support Phase 1 runtime:
 - add safe startup initialization for schema creation
 - bump `CACHE_NAME` in `sw.js` so the PWA picks up new API behavior on next reload
 - **PWA version indicator**: the source files contain a placeholder `__VERSION__` in both `app.js` and `sw.js` (`CACHE_NAME = 'dinary-__VERSION__'`). `inv deploy` must render this placeholder into a release directory or temporary build copy, not mutate the live git checkout in place. The rendered version is the git short hash (`git rev-parse --short HEAD`) of the deployed ref. This keeps the tracked working tree clean while still baking the version into static assets. Display the version only in secondary UI (queued-expenses modal or "about" dialog), not on the main screen. Additionally, expose `GET /api/version` on the server returning `{"version": "..."}` (read from the same deployed git short hash) so the PWA can compare its baked-in version against the server and show an "update available" hint when they diverge.
-- extend `inv setup` / `inv deploy` / `inv status`. `inv deploy` must support a `--ref` parameter (git tag, branch, or commit) to deploy a specific version -- this is required for rollback (`inv deploy --ref phase0`)
+- extend `inv setup-server` / `inv deploy` / `inv status --remote`. `inv deploy` must support a `--ref` parameter (git tag, branch, or commit) to deploy a specific version -- this is required for rollback (`inv deploy --ref phase0`)
 - add a task for running or replaying sheet sync
 - define backup handling for DuckDB files before deploys/migrations
 - set up periodic backup of `data/` to the operator's laptop (e.g. `rsync` or `scp` via an `inv backup` task). After cutover, `data/` is the sole source of truth for all new expenses -- disk failure without backup means data loss. See the Backup Strategy section in [architecture.md](architecture.md)

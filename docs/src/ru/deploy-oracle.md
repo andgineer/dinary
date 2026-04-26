@@ -96,9 +96,9 @@ DINARY_DEPLOY_HOST=ubuntu@<PUBLIC_IP>
 # DINARY_SHEET_LOGGING_SPREADSHEET=https://docs.google.com/spreadsheets/d/YOUR_ID/edit
 ```
 
-`inv setup` синхронизирует локальные `.deploy/.env` на VM в
+`inv setup-server` синхронизирует локальные `.deploy/.env` на VM в
 `/home/ubuntu/dinary/.deploy/` и сидит базовую таксономию командой
-`inv bootstrap-catalog`.
+`inv bootstrap-catalog --yes`.
 
 Проверьте SSH-доступ:
 
@@ -111,7 +111,7 @@ ssh ubuntu@<PUBLIC_IP>
 На вашем ноутбуке, в репозитории dinary:
 
 ```bash
-inv setup
+inv setup-server
 ```
 
 Эта единственная команда выполняет всё на VM через SSH:
@@ -122,7 +122,7 @@ inv setup
 - Синхронизирует ваш локальный `.deploy/.env` на VM
 - Загружает `~/.config/gspread/service_account.json` на VM
 - Создаёт и запускает systemd-сервис `dinary`
-- Сеет базовую таксономию в `dinary.db` через `inv bootstrap-catalog`
+- Сеет базовую таксономию в `dinary.db` через `inv bootstrap-catalog --yes`
 - Настраивает туннель (Tailscale по умолчанию, или Cloudflare — в зависимости от `DINARY_TUNNEL`)
 
 ### Tailscale (по умолчанию)
@@ -139,7 +139,7 @@ inv setup
 
 ### Cloudflare
 
-Установите `DINARY_TUNNEL=cloudflare` в `.deploy/.env` перед запуском `inv setup`. Во время настройки `cloudflared tunnel login` попросит авторизоваться в браузере. Требуется домен, управляемый через Cloudflare DNS — см. [Cloudflare Tunnel и Access](cloudflare-setup.md).
+Установите `DINARY_TUNNEL=cloudflare` в `.deploy/.env` перед запуском `inv setup-server`. Во время настройки `cloudflared tunnel login` попросит авторизоваться в браузере. Требуется домен, управляемый через Cloudflare DNS — см. [Cloudflare Tunnel и Access](cloudflare-setup.md).
 
 ### Без туннеля
 
@@ -158,7 +158,7 @@ ssh ubuntu@<PUBLIC_IP> 'sudo iptables -I INPUT -p tcp --dport 8000 -j ACCEPT && 
 | Команда | Что делает |
 |---------|-----------|
 | `inv deploy` | Обновить код, синхронизировать зависимости, применить миграции, перезапустить сервис |
-| `inv bootstrap-catalog` | Пересев таксономии (использовать при изменении таксономии; перезаписывает ручные правки) |
-| `inv status` | Показать статус сервисов dinary и туннеля |
-| `inv logs` | Показать логи dinary в реальном времени |
-| `inv setup` | Полная настройка (безопасно запускать повторно) |
+| `inv bootstrap-catalog --yes` | Пересев таксономии (использовать при изменении таксономии; перезаписывает ручные правки) |
+| `inv status --remote` | Показать статус сервисов dinary и туннеля |
+| `inv logs --remote` | Показать логи dinary в реальном времени |
+| `inv setup-server` | Полная настройка (безопасно запускать повторно) |

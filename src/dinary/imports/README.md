@@ -33,7 +33,7 @@ Everyone else should stop reading and go to the main README +
 | Placeholder template                    | `.deploy.example/import_sources.json`                   | Committed. Contains `REPLACE_WITH_YOUR_SPREADSHEET_ID` placeholders. |
 | Loader + schema                         | `src/dinary/config.py` → `read_import_sources`          | mtime-keyed, thread-safe cache.                   |
 | Import logic                            | `src/dinary/imports/`                                   | `expense_import.py`, `income_import.py`, `seed.py`, `verify_*.py`, `report_2d_3d.py`. |
-| Operator tasks                          | `tasks.py`                                              | `inv import-config`, `inv import-catalog`, `inv import-budget[-all]`, `inv import-income[-all]`, `inv verify-bootstrap-import[-all]`, `inv verify-income-equivalence-all`, `inv report-2d-3d`. |
+| Operator tasks                          | `tasks.py`                                              | `inv import-config`, `inv import-catalog`, `inv import-budget[-all]`, `inv import-income[-all]`, `inv import-verify-bootstrap[-all]`, `inv import-verify-income-all`, `inv report-2d-3d`. |
 
 ## Files in this directory
 

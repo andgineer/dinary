@@ -41,7 +41,7 @@ For a fresh installation no manual migration step is required.
 If you want to apply migrations explicitly on the server:
 
 ```bash
-inv migrate
+inv migrate --remote
 ```
 
 This is safe to re-run: `yoyo` tracks applied migrations in the DB
@@ -137,7 +137,7 @@ cleanly.
 tunnel, or any Python runtime — VM 2 is intentionally a minimal SFTP
 sink. Everything the daily off-site backup needs (rclone, sqlite3,
 zstd, the Litestream binary used only for local restore) is added
-later by `inv backup-cloud-setup` — see "Off-site backup: Yandex.Disk"
+by `inv setup-replica` — see "Off-site backup: Yandex.Disk"
 below.
 
 #### One-time Litestream bootstrap on VM 1
@@ -149,22 +149,22 @@ below.
    # edit .deploy/litestream.yml — set host, user, path, key-path
    ```
 
-2. Install the Litestream sidecar on VM 1:
+2. Install the Litestream sidecar on VM 1 (now part of `inv setup-replica`):
 
    ```bash
-   inv litestream-setup
+   inv setup-replica
    ```
 
    This installs the Litestream binary, uploads the config to
    `/etc/litestream.yml`, creates a `litestream.service` systemd
-   unit, and starts it. The sidecar is idempotent — re-running
-   `inv litestream-setup` upgrades the binary and reloads the
+   unit, and starts it. The task is idempotent — re-running
+   `inv setup-replica` upgrades the binary and reloads the
    config.
 
 3. Confirm replication is healthy:
 
    ```bash
-   inv litestream-status
+   inv status --remote
    ```
 
    A healthy sidecar shows an active systemd unit and the managed
@@ -173,11 +173,11 @@ below.
    producing its first snapshot (first one lands within seconds of
    the first DB write after the sidecar starts).
 
-`inv setup` does not start Litestream automatically even when
+`inv setup-server` does not start Litestream automatically even when
 `.deploy/litestream.yml` is present, because the sidecar needs an
 already-reachable SFTP host with VM 1's public key in its
 `authorized_keys` — a cross-host trust relationship we cannot set
-up from the deploy workstation. Run `inv litestream-setup`
+up from the deploy workstation. Run `inv setup-replica`
 manually once that prerequisite is in place.
 
 #### What the sidecar does
@@ -218,7 +218,7 @@ The Litestream replica on VM 2 is hot (seconds-level RPO) but
 co-located with VM 1 in the same cloud provider's region. For
 "both VMs went away" scenarios there is a daily off-site backup
 pushed from VM 2 to Yandex.Disk, orchestrated by
-`inv backup-cloud-setup`.
+`inv setup-replica`.
 
 ### What it does
 
@@ -257,12 +257,10 @@ keeper bucket. On a 10-year horizon this is roughly 29 files total
 
 ### One-time bootstrap
 
-Precondition: `inv setup-replica` has been run against VM 2.
-
-Then, from the operator machine:
+Run once from the operator machine against VM 2 (this also covers the off-site backup bootstrap):
 
 ```bash
-inv backup-cloud-setup
+inv setup-replica
 ```
 
 The task:
@@ -397,16 +395,16 @@ operator machine.
 ### Preconditions (operator machine, one-time)
 
 - `rclone` installed (`apt install rclone` on Ubuntu, `brew install
-  rclone` on macOS). Already pre-installed on VM 1 by `inv setup` so
+  rclone` on macOS). Already pre-installed on VM 1 by `inv setup-server` so
   no manual install is needed during disaster recovery.
 - A `yandex:` rclone remote configured locally, pointing at the
-  same Yandex.Disk account used by `inv backup-cloud-setup`. If
-  the operator machine never had `inv backup-cloud-setup` run
+  same Yandex.Disk account used by `inv setup-replica`. If
+  the operator machine never had `inv setup-replica` run
   from it, configure it once with
   `rclone config create yandex webdav url=https://webdav.yandex.ru vendor=other user=<login>`
   (it will prompt for the app-password via `rclone obscure`).
 - `sqlite3` + `zstd` installed (both are already on VM 1 via
-  `inv setup` and on macOS via `brew install sqlite zstd`).
+  `inv setup-server` and on macOS via `brew install sqlite zstd`).
 
 ### Safety guarantees
 
@@ -449,11 +447,11 @@ sqlite3 data/dinary.db 'SELECT COUNT(*) FROM expense'
 
 ## Restore from cold backup
 
-1. Stop the running service: `inv stop`.
+1. Stop the running service: `ssh $HOST 'sudo systemctl stop dinary'`.
 2. Replace `data/dinary.db` with the backed-up file.
 3. Remove any stale WAL sidecars: `rm -f data/dinary.db-wal data/dinary.db-shm`.
-4. Start the service: `inv start`.
-5. Optionally `inv verify-db` to check integrity, then `inv migrate`
+4. Start the service: `inv restart-server`.
+5. Optionally `inv verify-db` to check integrity, then `inv migrate --remote`
    to confirm the restored DB is at the expected schema version.
 
 ## Practical guidance
@@ -461,7 +459,7 @@ sqlite3 data/dinary.db 'SELECT COUNT(*) FROM expense'
 - Three layers of redundancy, paired to their failure modes:
   `inv backup` covers "oops I nuked the DB during a manual repair";
   Litestream to VM 2 covers "oops I lost VM 1"; Yandex.Disk
-  (`inv backup-cloud-setup`) covers "oops I lost both VMs / lost the
+  (`inv setup-replica`) covers "oops I lost both VMs / lost the
   whole cloud provider".
 - Treat `data/dinary.db` as the source of truth. Do not edit it
   while the service is running, and never hand-edit the

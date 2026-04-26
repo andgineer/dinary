@@ -96,9 +96,9 @@ DINARY_DEPLOY_HOST=ubuntu@<PUBLIC_IP>
 # DINARY_SHEET_LOGGING_SPREADSHEET=https://docs.google.com/spreadsheets/d/YOUR_ID/edit
 ```
 
-`inv setup` syncs the local `.deploy/.env` to the VM under
+`inv setup-server` syncs the local `.deploy/.env` to the VM under
 `/home/ubuntu/dinary/.deploy/` and seeds the runtime taxonomy via
-`inv bootstrap-catalog`.
+`inv bootstrap-catalog --yes`.
 
 Verify SSH access:
 
@@ -111,7 +111,7 @@ ssh ubuntu@<PUBLIC_IP>
 From your laptop, in the dinary repo:
 
 ```bash
-inv setup
+inv setup-server
 ```
 
 This single command performs everything on the VM via SSH:
@@ -122,7 +122,7 @@ This single command performs everything on the VM via SSH:
 - Syncs your local `.deploy/.env` to the VM
 - Uploads `~/.config/gspread/service_account.json` to the VM
 - Creates and starts a `dinary` systemd service
-- Seeds the runtime taxonomy into `dinary.db` via `inv bootstrap-catalog`
+- Seeds the runtime taxonomy into `dinary.db` via `inv bootstrap-catalog --yes`
 - Sets up the tunnel (Tailscale by default, or Cloudflare — depending on `DINARY_TUNNEL`)
 
 ### Tailscale (default)
@@ -139,7 +139,7 @@ After login, enable Funnel in the [admin console](https://login.tailscale.com/ad
 
 ### Cloudflare
 
-Set `DINARY_TUNNEL=cloudflare` in `.deploy/.env` before running `inv setup`. During setup, `cloudflared tunnel login` will prompt you to authenticate in the browser. Requires a domain managed by Cloudflare DNS — see [Cloudflare Tunnel & Access](cloudflare-setup.md).
+Set `DINARY_TUNNEL=cloudflare` in `.deploy/.env` before running `inv setup-server`. During setup, `cloudflared tunnel login` will prompt you to authenticate in the browser. Requires a domain managed by Cloudflare DNS — see [Cloudflare Tunnel & Access](cloudflare-setup.md).
 
 ### No tunnel
 
@@ -158,7 +158,7 @@ ssh ubuntu@<PUBLIC_IP> 'sudo iptables -I INPUT -p tcp --dport 8000 -j ACCEPT && 
 | Command | What it does |
 |---------|-------------|
 | `inv deploy` | Pull latest code, sync deps, apply migrations, restart service |
-| `inv bootstrap-catalog` | Re-seed the runtime taxonomy (use when taxonomy changes; overwrites manual edits) |
-| `inv status` | Show dinary and tunnel service status |
-| `inv logs` | Tail dinary server logs |
-| `inv setup` | Full re-setup (safe to re-run) |
+| `inv bootstrap-catalog --yes` | Re-seed the runtime taxonomy (use when taxonomy changes; overwrites manual edits) |
+| `inv status --remote` | Show dinary and tunnel service status |
+| `inv logs --remote` | Tail dinary server logs |
+| `inv setup-server` | Full re-setup (safe to re-run) |

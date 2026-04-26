@@ -1,4 +1,4 @@
-"""Rich renderer for ``verify_bootstrap_import`` / ``verify-bootstrap-import-all``.
+"""Rich renderer for ``verify_bootstrap_import`` / ``import-verify-bootstrap-all``.
 
 Takes the pre-parsed dict (or list of dicts) that
 :func:`dinary.imports.verify_equivalence.verify_bootstrap_import`
@@ -154,7 +154,7 @@ def render_single(
         console.print(
             Panel(
                 f"Unexpected payload shape: {result!r}",
-                title="verify-bootstrap-import",
+                title="import-verify-bootstrap",
                 border_style="red",
             ),
         )

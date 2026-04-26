@@ -360,8 +360,8 @@ SQLite write is accepted.
   This snapshot is the safety net only; it is *not* the data source for
   Phase 1 (see below).
 - Record the current green gate as the baseline the migration must preserve:
-  `uv run inv pre`, `uv run pytest`, `inv verify-income-equivalence-all`,
-  and `inv verify-bootstrap-import-all`.
+  `uv run inv pre`, `uv run pytest`, `inv import-verify-income-all`,
+  and `inv import-verify-bootstrap-all`.
 - Document the exact DuckDB column types used in `src/dinary/migrations/*.sql`
   and cross-check they have SQLite equivalents (principally:
   `DECIMAL(p,s)` → `NUMERIC`, `TIMESTAMP` → `TEXT` with ISO-8601 or
@@ -383,8 +383,8 @@ SQLite write is accepted.
      final stop; migration tables are recreated by the runner.
 
   Concretely:
-  1. Run `inv verify-bootstrap-import-all` and
-     `inv verify-income-equivalence-all` on the live DuckDB — they
+  1. Run `inv import-verify-bootstrap-all` and
+     `inv import-verify-income-all` on the live DuckDB — they
      must pass.
   2. Enumerate the actual `app_metadata` keys in production
      (`accounting_currency`, `catalog_version`, and any future keys)
@@ -418,8 +418,8 @@ writing a one-off DuckDB-dump → SQLite-load script:
   SQLite from day one — so when Phase 1 completes green, we also
   know the importers survived the engine swap, not just that one
   migration ran once.
-- The verification gates (`inv verify-bootstrap-import-all`,
-  `inv verify-income-equivalence-all`) already compare the DB
+- The verification gates (`inv import-verify-bootstrap-all`,
+  `inv import-verify-income-all`) already compare the DB
   against sheet-derived expectations, so their passing is exactly
   the equivalence proof we want.
 
@@ -452,7 +452,7 @@ Concrete steps:
     SQLite equivalents.
 - Build a branch-local SQLite database from sheets, not from a
   copied DuckDB file:
-  1. `inv migrate` — creates fresh SQLite schema.
+  1. `inv migrate --remote` — creates fresh SQLite schema.
   2. Seed `app_metadata` via an idempotent bootstrap step.
   3. `inv import-catalog --yes`
   4. `inv import-budget-all --yes`
@@ -466,8 +466,8 @@ Concrete steps:
   of `.db` is no longer an acceptable implementation.
 - Run the full project gate against the SQLite branch copy:
   `uv run inv pre`, `uv run pytest`,
-  `inv verify-income-equivalence-all`, and
-  `inv verify-bootstrap-import-all`. Fix every regression before
+  `inv import-verify-income-all`, and
+  `inv import-verify-bootstrap-all`. Fix every regression before
   moving on. This is the **code-health / behavior-regression gate** for
   the migration branch; it proves the repo is ready to deploy, not that a
   specific production SQLite file has already been validated.
@@ -498,14 +498,14 @@ Concrete steps:
   2. Drain `sheet_logging_jobs` to zero while DuckDB is still the
      primary. Any poisoned jobs must be resolved or explicitly
      accepted before proceeding.
-  3. Run the final `inv verify-bootstrap-import-all` and
-     `inv verify-income-equivalence-all` against live DuckDB with the
+  3. Run the final `inv import-verify-bootstrap-all` and
+     `inv import-verify-income-all` against live DuckDB with the
      service quiesced, so the sheets and DB are known to agree at the
      cut line.
 - **Rebuild the new prod SQLite primary on VM 1 from the quiesced
   source-of-truth inputs**, in the same order as the verified branch
   flow:
-  1. Create fresh `data/dinary.db` via `inv migrate`.
+  1. Create fresh `data/dinary.db` via `inv migrate --remote`.
   2. Seed `app_metadata`.
   3. Run the import sequence from sheets.
   4. Do **not** carry over `sheet_logging_jobs`; it should already be
@@ -524,8 +524,8 @@ Concrete steps:
   2. **Rebuilt-prod-data validation**: against the just-built SQLite
      file on VM 1, run direct checks that prove *this database* is
      usable: `PRAGMA integrity_check`, the sheet-equivalence verifies
-     (`inv verify-income-equivalence-all`,
-     `inv verify-bootstrap-import-all`), explicit validation of
+     (`inv import-verify-income-all`,
+     `inv import-verify-bootstrap-all`), explicit validation of
      server-managed `app_metadata` keys (`accounting_currency`,
      `catalog_version`, and any other keys inventoried in Phase 0), and
      a minimal app-level smoke pass against the quiesced service or
@@ -558,7 +558,7 @@ Target shape in the Oracle Cloud Always Free tier:
 - Network: **same VCN as VM 1**, placed in the **same public subnet
   `10.0.0.0/24`** with a public IPv4 assigned. We deliberately do
   **not** use a separate private subnet — the public IP is closed
-  off at the sshd layer by `inv ssh-tailscale-only` immediately after
+  off at the sshd layer by `inv setup-server --tailscale`/`inv setup-replica` immediately after
   bootstrap, so defense-in-depth vs. a private subnet is marginal
   against the cost of the extra NAT Gateway + route table + bastion
   plumbing. This matches VM 1's topology exactly, so both machines
@@ -598,7 +598,8 @@ operator laptop. The task wraps the four idempotent shell blocks:
 3. 1 GiB `/swapfile` (same `_build_setup_swap_script` used by VM 1 —
    an `apt-get upgrade` on 956 MiB of RAM is an OOM candidate without
    it).
-4. `inv ssh-tailscale-only` applied on VM 2 — binds sshd to the
+4. Tailscale-only SSH applied on VM 2 (the `--tailscale` behaviour
+   now built into `inv setup-replica`) — binds sshd to the
    Tailscale IPv4 + loopback, closes public TCP/22.
 
 `inv setup-replica` is idempotent: each step short-circuits on
@@ -607,7 +608,7 @@ the task. The only non-idempotent manual step is the initial
 `tailscale up` above.
 
 **Current production state (April 2026): step 4 is intentionally
-reverted.** After applying `inv ssh-tailscale-only` on both VM 1 and
+reverted.** After applying the Tailscale-only SSH posture on both VM 1 and
 VM 2, the resulting topology made every ingress path — SSH, the API
 served through Tailscale Serve, the Litestream SFTP stream —
 depend on the same tailnet tunnel. A single `tailscaled` crash or a
@@ -618,7 +619,7 @@ break-glass because the `ubuntu` user has no password set in
 authenticate. The trade-off was judged worse than the risk
 `ssh-tailscale-only` was supposed to remove (public SSH brute-force
 noise, not actual compromise — key-only auth already defeats
-brute-force). The drop-in
+brute-force). The Tailscale-only drop-in
 `/etc/ssh/sshd_config.d/10-tailscale-only.conf` was removed on both
 hosts, sshd listens on `0.0.0.0:22` again, and `fail2ban`
 (`backend=systemd`, 1 d initial ban, doubling up to 30 d) absorbs
@@ -789,7 +790,7 @@ throws the temp file away.
 
 #### 3.5.a Primary: VM 2 daily snapshot to Yandex.Disk — IMPLEMENTED
 
-Shipped as `inv backup-cloud-setup` + `inv backup-cloud-restore`. See
+Shipped as `inv setup-replica` (bootstrap) + `inv backup-cloud-restore` (restore). See
 [`docs/src/en/operations.md`](../docs/src/en/operations.md#off-site-backup-yandexdisk-daily-gfs-retention)
 ("Off-site backup: Yandex.Disk" and "Point-in-time restore from
 Yandex.Disk") for the operator-facing runbook. Key deviations from
@@ -815,7 +816,7 @@ the original draft above:
   one-time interactive OAuth browser click is acceptable friction
   and explicitly asked for rclone itself to be pre-installed so
   disaster-recovery does not hit `apt install` in a stressed
-  terminal; `inv setup` and `inv backup-cloud-setup` now both install
+  terminal; `inv setup-server` and `inv setup-replica` now both install
   rclone themselves.
 
 The pure-string builders (`_build_backup_script`,

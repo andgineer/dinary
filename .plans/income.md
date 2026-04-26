@@ -129,13 +129,13 @@ All destructive income-import tasks require explicit `--yes` confirmation:
 
 - `inv import-income --year=YYYY --yes` — destructive re-import of one year.
 - `inv import-income-all --yes` — destructive re-import of every registered year (run as part of the coordinated reset flow).
-- `inv verify-income-equivalence --year=YYYY` — verify one year against the source sheet (no `--yes` needed; read-only).
+- `inv import-verify-income --year=YYYY` — verify one year against the source sheet (no `--yes` needed; read-only).
 
 ## Historical results (2026-04, EUR snapshot)
 
 The table below is the import log at the time income was last fully
 re-imported against the EUR accounting currency (the current default).
-It should be re-checked with `inv verify-income-equivalence-all` after
+It should be re-checked with `inv import-verify-income-all` after
 any re-import, and after any deliberate accounting-currency migration
 (`app_metadata.accounting_currency` is normally immutable — see the
 "Accounting-currency anchor" subsection in `.plans/architecture.md` —
