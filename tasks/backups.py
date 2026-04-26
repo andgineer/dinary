@@ -175,7 +175,7 @@ def install_yandex_rclone_remote(login: str, app_password: str) -> None:
     Smoke-tests end-to-end with ``rclone lsd yandex:``. If the smoke
     test fails (wrong app-password, wrong scope, typo, Yandex
     unreachable) we **roll back** by deleting the just-written
-    ``yandex`` remote, so the next ``inv backup-cloud-setup``
+    ``yandex`` remote, so the next ``inv setup-replica``
     re-prompts for fresh credentials instead of silently reusing the
     broken config.
     """
@@ -233,7 +233,7 @@ def install_yandex_rclone_remote(login: str, app_password: str) -> None:
             "\n"
             "The partially-created 'yandex:' remote has been rolled\n"
             "back on VM2.\n"
-            "Re-run `inv backup-cloud-setup` to try again; it will\n"
+            "Re-run `inv setup-replica` to try again; it will\n"
             "prompt for credentials fresh.\n",
         )
         sys.exit(proc.returncode)

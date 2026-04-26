@@ -133,7 +133,7 @@ This is best-effort placement into existing latest-year rows, not a round-trip g
 
 1. `inv backup` — rsyncs `data/` from the server to the operator's laptop.
 2. **Coordinated full reset (destructive, requires `--yes`)** — keep the server stopped for the entire flow:
-   1. deploy code/assets via the no-restart deploy path;
+   1. deploy code/assets via the no-start deploy path;
    2. `inv import-catalog --yes` (preserves and bumps `catalog_version` to `previous + 1`);
    3. `inv import-budget-all --yes` (also wipes any `sheet_sync_jobs` rows in those files);
    4. `inv import-income-all --yes`;

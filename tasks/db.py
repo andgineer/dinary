@@ -10,26 +10,18 @@ from pathlib import Path
 from invoke import task
 
 from .env import host
-from .ssh_utils import sqlite_backup_prologue, ssh_capture_bytes, ssh_run
+from .ssh_utils import sqlite_backup_prologue, ssh_capture_bytes
 
 
 @task(name="migrate")
-def migrate(c, remote=False):
-    """Apply pending schema migrations to ``data/dinary.db``.
+def migrate(c):
+    """Apply pending yoyo migrations to the local ``data/dinary.db``.
 
-    Flags:
-        --remote   Run against the production DB on the server over SSH.
-                   Default runs locally against ``data/dinary.db``.
+    For local development only — the server applies migrations automatically
+    on every start via the FastAPI lifespan.  Use ``inv dev`` or ``inv deploy``
+    on the server; no separate migrate step is needed there.
     """
-    if not remote:
-        c.run(
-            "uv run python -c 'from dinary.services import ledger_repo; "
-            'ledger_repo.init_db(); print("Migrated data/dinary.db")\'',
-        )
-        return
-    ssh_run(
-        c,
-        "cd ~/dinary && source ~/.local/bin/env && "
+    c.run(
         "uv run python -c 'from dinary.services import ledger_repo; "
         'ledger_repo.init_db(); print("Migrated data/dinary.db")\'',
     )

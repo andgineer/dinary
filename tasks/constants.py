@@ -67,7 +67,7 @@ WantedBy=multi-user.target
 # systemd unit that runs the Litestream replicator sidecar on VM 1.
 # ``User=ubuntu`` matches the app service so the sidecar shares the
 # ``data/`` file ACL and can read WAL segments without sudo. The config
-# lives at ``/etc/litestream.yml`` (uploaded by ``inv litestream-setup``)
+# lives at ``/etc/litestream.yml`` (uploaded by ``inv setup-replica``)
 # because that is Litestream's default search path and operators editing
 # by hand find it where the upstream docs say it should be.
 LITESTREAM_SERVICE = """\
@@ -112,12 +112,12 @@ REPLICA_LITESTREAM_DIR = "/var/lib/litestream"
 # Directory Litestream materializes inside REPLICA_LITESTREAM_DIR for
 # our single ``dinary.db``. Matches the trailing segment of the
 # ``path:`` field in .deploy/litestream.yml — a silent drift here
-# would make ``inv backup-cloud-setup`` restore from the wrong replica tree.
+# would make ``inv setup-replica`` restore from the wrong replica tree.
 REPLICA_DB_NAME = "dinary"
 
 # Off-site backup to Yandex.Disk (see docs/src/en/operations.md,
 # section "Off-site backup: Yandex.Disk"). Everything on the replica
-# is managed by ``inv backup-cloud-setup``; the restore side is
+# is managed by ``inv setup-replica``; the restore side is
 # ``inv backup-cloud-restore`` (local-only, runs in cwd).
 BACKUP_SCRIPT_PATH = "/usr/local/bin/dinary-backup"
 BACKUP_RETENTION_SCRIPT_PATH = "/usr/local/bin/dinary-backup-retention"

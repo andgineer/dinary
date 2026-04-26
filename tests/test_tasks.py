@@ -547,7 +547,7 @@ class TestImportReport2d3dTransport:
 @allure.epic("Deploy")
 @allure.feature("Litestream install script: arch-to-asset mapping")
 class TestLitestreamInstallScript:
-    """``inv litestream-setup`` downloads a Litestream ``.deb`` whose
+    """``inv setup-replica`` downloads a Litestream ``.deb`` whose
     filename suffix depends on the remote VM's CPU. Oracle Free Tier
     ships both x86_64 Micro and Ampere (arm64) shapes, so a typo or
     silent drift between the pinned version and the published asset
@@ -612,7 +612,7 @@ class TestLitestreamInstallScript:
         )
 
     def test_script_is_idempotent_when_litestream_already_installed(self):
-        """Re-running ``inv litestream-setup`` must be cheap: no new
+        """Re-running ``inv setup-replica`` must be cheap: no new
         download when the binary is already on PATH. The outer
         ``if command -v litestream`` gate is the only thing
         preserving that property — pin it.
@@ -638,7 +638,7 @@ class TestLitestreamInstallScript:
 @allure.epic("Deploy")
 @allure.feature("litestream-setup: /etc/litestream.yml permissions")
 class TestLitestreamSetupPermissions:
-    """Regression for a sudo-scope bug in ``inv litestream-setup``:
+    """Regression for a sudo-scope bug in ``inv setup-replica``:
     a naive ``sudo chown root:root ... && chmod 644 ...`` escalates
     only the ``chown``, leaving ``chmod`` to run as ``ubuntu`` and
     fail with ``Operation not permitted`` on ``/etc/litestream.yml``.
@@ -723,7 +723,7 @@ class TestLitestreamSetupPermissions:
 @allure.epic("Deploy")
 @allure.feature("setup-swap: persistent swapfile provisioner")
 class TestSetupSwapScript:
-    """``inv setup-swap`` is the only mechanism that provisions swap
+    """``inv setup-server --swap-size-gb N`` is the only mechanism that provisions swap
     on the Oracle Free Tier VMs, which ship with zero swap and
     ~956 MiB of RAM. A silent regression here (wrong size, forgotten
     fstab entry, broken idempotency) would surface weeks later as an
@@ -763,7 +763,7 @@ class TestSetupSwapScript:
     def test_idempotent_on_reapply(self):
         """The swapon-check short-circuits allocation when
         ``/swapfile`` is already active. Without this, a second
-        ``inv setup`` run would ``fallocate`` a fresh file on top
+        ``inv setup-server`` run would ``fallocate`` a fresh file on top
         of the live one and ``mkswap`` would corrupt the signature
         of the currently-swapped backing store.
         """
@@ -775,7 +775,7 @@ class TestSetupSwapScript:
     def test_fstab_line_is_deduplicated(self):
         """The fstab append uses ``grep -qxF || echo >>`` so
         re-running never accumulates duplicate entries — otherwise
-        every ``inv setup`` would grow ``/etc/fstab`` by a line and
+        every ``inv setup-server`` would grow ``/etc/fstab`` by a line and
         the system would eventually refuse to mount.
         """
         script = _tasks_ssh_utils.build_setup_swap_script(size_gb=1)
@@ -808,7 +808,7 @@ class TestSetupSwapScript:
 @allure.epic("Deploy")
 @allure.feature("ssh-tailscale-only: rebind sshd to tailnet ingress")
 class TestSshTailscaleOnlyScript:
-    """``inv ssh-tailscale-only`` closes the public TCP/22 attack
+    """``inv setup-server --tailscale`` closes the public TCP/22 attack
     surface by rebinding sshd to the Tailscale IPv4 + loopback. A
     regression here is a lockout risk (operator cannot reach the VM
     except via Oracle Cloud's Serial Console), so these tests pin the
@@ -980,7 +980,7 @@ class TestSetupReplicaScripts:
 
     def test_litestream_dir_path_is_the_canonical_constant(self):
         """The path baked into the bootstrap script MUST match
-        :data:`REPLICA_LITESTREAM_DIR` — the ``inv litestream-setup``
+        :data:`REPLICA_LITESTREAM_DIR` — the ``inv setup-replica``
         replica URL on VM1 (``sftp://.../var/lib/litestream``) points
         at the same string. A silent drift here would let the
         bootstrap succeed and the first WAL push fail with "No such

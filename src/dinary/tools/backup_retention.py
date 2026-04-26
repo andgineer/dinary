@@ -2,7 +2,7 @@
 """GFS retention for dinary Yandex.Disk backups.
 
 Uploaded to VM2 as /usr/local/bin/dinary-backup-retention by
-``inv backup-cloud-setup``. Called from the daily ``dinary-backup``
+``inv setup-replica``. Called from the daily ``dinary-backup``
 bash script with deployment-specific CLI args.
 
 Pure stdlib — VM2 has no dinary venv.

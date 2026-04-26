@@ -38,14 +38,9 @@ For a fresh installation no manual migration step is required.
 
 ### Manual migration
 
-If you want to apply migrations explicitly on the server:
-
-```bash
-inv migrate --remote
-```
-
-This is safe to re-run: `yoyo` tracks applied migrations in the DB
-and only applies new ones.
+Migrations run automatically on every server start (yoyo tracks applied
+migrations and only applies new ones).  No manual step is needed — just
+deploy and restart.
 
 ## Integrity check
 
@@ -451,8 +446,7 @@ sqlite3 data/dinary.db 'SELECT COUNT(*) FROM expense'
 2. Replace `data/dinary.db` with the backed-up file.
 3. Remove any stale WAL sidecars: `rm -f data/dinary.db-wal data/dinary.db-shm`.
 4. Start the service: `inv restart-server`.
-5. Optionally `inv verify-db` to check integrity, then `inv migrate --remote`
-   to confirm the restored DB is at the expected schema version.
+5. Optionally run `inv verify-db` to check integrity.
 
 ## Practical guidance
 

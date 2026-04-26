@@ -21,25 +21,48 @@ from .ssh_utils import (
 
 
 @task
-def deploy(c, ref="", no_restart=False):
-    """Deploy latest code: git pull, sync deps, render version, restart service.
+def deploy(c, ref="", no_start=False):
+    """Deploy latest code to the server: pull, sync deps, migrate, restart.
 
-    Use --ref to deploy a specific version. Use --no-restart to skip the
-    post-deploy restart and schema migration (coordinated reset flow: deploy
-    code first, then manually stop dinary, drop and re-create the DB, migrate,
-    import, and restart via ``inv restart-server``).
+    **Pinning a version**
 
-    Run ``inv bootstrap-catalog --yes`` separately when taxonomy changes.
-    Omit it on routine deploys — the seeder overwrites manually edited names
-    and sort order.
+    Pass ``--ref`` to deploy a specific git tag, commit hash, or branch::
 
-    Pipeline (ordering matters):
+        inv deploy --ref=v0.4.0
+        inv deploy --ref=ee1dbf5d
 
-    * Pre-deploy safety-net backup uses ``sqlite3 .backup`` on the
-      server to take a transactionally consistent snapshot of ``dinary.db``.
-    * We re-render ``/etc/systemd/system/dinary.service`` every deploy so
-      ``EnvironmentFile=`` always matches the canonical ``.deploy/.env`` path.
-    * Legacy ``~/dinary/.env`` is removed after the unit has been rewritten.
+    Without ``--ref`` the server does ``git pull`` on the currently checked-out
+    branch.  After ``--ref`` the server is in detached HEAD; a subsequent
+    ``inv deploy`` without ``--ref`` will pull on that detached commit (no-op).
+
+    **DB restore flow (--no-start)**
+
+    By default deploy stops the service, deploys code, and starts it back up
+    (migrations run automatically on start).  Pass ``--no-start`` to skip the final start
+    so you can replace the DB before the service sees it (e.g. after
+    ``inv backup-cloud-restore``)::
+
+        inv deploy --ref=v0.4.0 --no-start
+        inv backup-cloud-restore
+        inv restart-server
+
+    **Catalog changes**
+
+    Run ``inv bootstrap-catalog --yes`` separately when the hardcoded taxonomy
+    changes.  Omit it on routine deploys — the seeder overwrites any manually
+    edited names and sort order.
+
+    **What the pipeline does**
+
+    1. Pre-deploy safety backup via ``sqlite3 .backup`` (consistent snapshot).
+    2. ``git pull`` (or ``git checkout <ref>``) + ``uv sync --no-dev``.
+    3. Sync ``.deploy/.env`` and ``import_sources.json`` to the server.
+    4. Re-render ``/etc/systemd/system/dinary.service`` (keeps ``EnvironmentFile=`` current).
+    5. Build ``_static/`` with the version string.
+    6. ``systemctl restart dinary`` + health check (skipped with ``--no-start``).
+
+    Schema migrations (yoyo) run automatically when the server starts.
+    No separate migrate step is needed on deploy.
     """
     print("=== Pre-deploy backup ===")
     ts = _dt.now().strftime("%Y%m%d-%H%M%S")
@@ -108,24 +131,18 @@ def deploy(c, ref="", no_restart=False):
     print("=== Cleaning up legacy ~/dinary/.env (if present) ===")
     ssh_run(c, f"rm -f {REMOTE_LEGACY_ENV_PATH}")
 
-    if not no_restart:
-        print("=== Applying schema migrations ===")
-        ssh_run(
-            c,
-            "cd ~/dinary && source ~/.local/bin/env && "
-            "uv run python -c 'from dinary.services import ledger_repo; ledger_repo.init_db(); "
-            'print("Migrated data/dinary.db")\'',
-        )
     print("=== Building _static/ with version ===")
     ssh_run(c, "cd ~/dinary && source ~/.local/bin/env && uv run inv build-static")
 
-    if no_restart:
+    if no_start:
         print(
-            "=== --no-restart set: SKIPPING systemctl restart and schema migration. ===\n"
-            "=== Coordinated reset flow:                               ===\n"
-            "===   ssh $HOST 'sudo systemctl stop dinary'              ===\n"
+            "=== --no-start set: code deployed, service NOT started. ===\n"
+            "=== DB restore flow:                                      ===\n"
+            "===   inv backup-cloud-restore                            ===\n"
+            "===   inv restart-server                                  ===\n"
+            "=== Full reset flow:                                      ===\n"
             "===   ssh $HOST 'rm -f ~/dinary/data/dinary.db*'          ===\n"
-            "===   inv migrate --remote                                 ===\n"
+            "===   inv restart-server          # creates schema on start ===\n"
             "===   inv import-catalog --yes                             ===\n"
             "===   inv import-budget-all --yes                          ===\n"
             "===   inv import-income-all --yes                          ===\n"

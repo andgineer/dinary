@@ -24,10 +24,10 @@ source of deploy configuration across every server they run.
   config for hot off-site backup of `data/dinary.db` to an SFTP
   target (typically a second Oracle Cloud Free Tier VM). Copy to
   `.deploy/litestream.yml`, fill in the SFTP `host`/`user`/`path`
-  fields, then run `inv litestream-setup` once. See
+  fields, then run `inv setup-replica` once. See
   [`docs/src/en/operations.md`](../docs/src/en/operations.md)
-  for the end-to-end replica bootstrap workflow. `inv setup` does
-  NOT auto-run `inv litestream-setup` even when the config is
+  for the end-to-end replica bootstrap workflow. `inv setup-server` does
+  NOT auto-run `inv setup-replica` even when the config is
   present locally — the sidecar requires an SFTP host whose
   `authorized_keys` already trusts VM 1's ed25519 key, a
   cross-host relationship the bootstrap script cannot arrange on

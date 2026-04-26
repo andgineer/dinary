@@ -19,7 +19,7 @@ verification, and the layout-parser reference.
   `client_email` (read access is sufficient for bootstrap import).
 - `uv` + Python 3.13+ environment from the repo root; all commands
   below are `uv run inv ...` on the laptop, or `inv ...` on the
-  server after `inv setup` has finished.
+  server after `inv setup-server` has finished.
 
 ## 1. Register per-year sources
 
@@ -64,11 +64,11 @@ the server.
 
 ## 2. Sync to the deploy host (if deploying)
 
-When running from the laptop against a remote VM, `inv setup` and
+When running from the laptop against a remote VM, `inv setup-server` and
 `inv deploy` rsync `.deploy/.env` and `.deploy/import_sources.json`
 to `/home/ubuntu/dinary/.deploy/` on the host. Bootstrap
 import tasks then read the file from the server. No separate sync
-step is needed — just run `inv setup` once or `inv deploy` on every
+step is needed — just run `inv setup-server` once or `inv deploy` on every
 config change.
 
 ## 3. Seed the taxonomy
@@ -158,15 +158,16 @@ For a clean rebuild across every registered year, the operator
 runbook is:
 
 ```bash
-inv backup                              # rsync data/ to laptop
-inv stop                                # stop the FastAPI service
-inv reset-db --yes                      # drop + re-run migrations
+inv backup                              # snapshot prod DB to laptop
+# ssh $HOST: sudo systemctl stop dinary && rm -f ~/dinary/data/dinary.db*
+inv restart-server                      # starts service; yoyo creates schema
+# ssh $HOST: sudo systemctl stop dinary  (stop again before imports)
 inv import-catalog --yes                # seed catalog + mappings
 inv import-budget-all --yes
 inv import-income-all --yes
 inv import-verify-bootstrap-all
 inv import-verify-income-all
-inv start                               # bring the service back
+inv restart-server                      # final start
 ```
 
 Keep the service stopped for the entire reset — SQLite allows only

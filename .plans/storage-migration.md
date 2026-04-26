@@ -452,7 +452,7 @@ Concrete steps:
     SQLite equivalents.
 - Build a branch-local SQLite database from sheets, not from a
   copied DuckDB file:
-  1. `inv migrate --remote` — creates fresh SQLite schema.
+  1. `inv restart-server` — starts server, yoyo creates fresh schema, then stop it.
   2. Seed `app_metadata` via an idempotent bootstrap step.
   3. `inv import-catalog --yes`
   4. `inv import-budget-all --yes`
@@ -505,7 +505,7 @@ Concrete steps:
 - **Rebuild the new prod SQLite primary on VM 1 from the quiesced
   source-of-truth inputs**, in the same order as the verified branch
   flow:
-  1. Create fresh `data/dinary.db` via `inv migrate --remote`.
+  1. Create fresh `data/dinary.db`: `inv restart-server` (yoyo applies schema), then stop the service.
   2. Seed `app_metadata`.
   3. Run the import sequence from sheets.
   4. Do **not** carry over `sheet_logging_jobs`; it should already be
