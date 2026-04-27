@@ -17,13 +17,14 @@ import allure
 import pytest
 
 import tasks
-import tasks.backups
+import tasks.backups_restore
 from dinary.tools.backup_retention import _make_pattern
 from dinary.tools.backup_snapshots import (
     BACKUP_FILENAME_PREFIX,
     BACKUP_FILENAME_SUFFIX,
     BACKUP_RCLONE_PATH,
     BACKUP_RCLONE_REMOTE,
+    pick_snapshot,
 )
 
 
@@ -66,8 +67,8 @@ class TestRestoreFromYadiskHelpers:
             assert "lsjson" in cmd[1]
             return fake_json
 
-        monkeypatch.setattr(tasks.backups.subprocess, "check_output", fake_check_output)
-        result = tasks.backups.yadisk_list_snapshots()
+        monkeypatch.setattr(tasks.backups_restore.subprocess, "check_output", fake_check_output)
+        result = tasks.backups_restore.yadisk_list_snapshots()
         assert result == [
             ("dinary-2026-04-21T0317Z.db.zst", 322000),
             ("dinary-2026-04-22T0317Z.db.zst", 324000),
@@ -85,7 +86,7 @@ class TestRestoreFromYadiskHelpers:
             ("dinary-2026-04-21T0317Z.db.zst", 200),
             ("dinary-2026-04-22T0317Z.db.zst", 300),
         ]
-        picked = tasks.backups.pick_snapshot(snaps, "latest")
+        picked = pick_snapshot(snaps, "latest")
         assert picked == ("dinary-2026-04-22T0317Z.db.zst", 300)
 
     def test_pick_snapshot_by_date_prefix_matches_any_time_suffix(self):
@@ -98,7 +99,7 @@ class TestRestoreFromYadiskHelpers:
             ("dinary-2026-04-21T0317Z.db.zst", 200),
             ("dinary-2026-04-22T0317Z.db.zst", 300),
         ]
-        picked = tasks.backups.pick_snapshot(snaps, "2026-04-21")
+        picked = pick_snapshot(snaps, "2026-04-21")
         assert picked == ("dinary-2026-04-21T0317Z.db.zst", 200)
 
     def test_pick_snapshot_returns_none_on_miss(self):
@@ -107,14 +108,14 @@ class TestRestoreFromYadiskHelpers:
         silently restoring the wrong date.
         """
         snaps = [("dinary-2026-04-20T0317Z.db.zst", 100)]
-        assert tasks.backups.pick_snapshot(snaps, "1999-01-01") is None
+        assert pick_snapshot(snaps, "1999-01-01") is None
 
     def test_pick_snapshot_on_empty_returns_none(self):
         """Fresh bucket case: calls with an empty list return None
         rather than raising, so the caller can emit a "no snapshots
         found" message instead of an opaque IndexError.
         """
-        assert tasks.backups.pick_snapshot([], "latest") is None
+        assert pick_snapshot([], "latest") is None
 
 
 @allure.epic("Deploy")
@@ -158,8 +159,8 @@ class TestRestoreFromYadiskTask:
         Also stubs ``_env`` so the post-restore replica check does not
         require a real ``.deploy/.env``.
         """
-        monkeypatch.setattr(tasks.backups.shutil, "which", lambda name: f"/fake/{name}")
-        monkeypatch.setattr(tasks.backups, "_env", lambda: {})
+        monkeypatch.setattr(tasks.backups_restore.shutil, "which", lambda name: f"/fake/{name}")
+        monkeypatch.setattr(tasks.backups_restore, "_env", lambda: {})
 
     @pytest.fixture
     def _fake_snapshot(self, tmp_path, monkeypatch, _mock_binaries_present):
@@ -179,7 +180,7 @@ class TestRestoreFromYadiskTask:
         )
 
         monkeypatch.setattr(
-            tasks.backups,
+            tasks.backups_restore,
             "yadisk_list_snapshots",
             lambda: [(snapshot_name, archive.stat().st_size)],
         )
@@ -268,7 +269,7 @@ class TestRestoreFromYadiskTask:
         )
 
         monkeypatch.setattr(
-            tasks.backups,
+            tasks.backups_restore,
             "yadisk_list_snapshots",
             lambda: [(snapshot_name, archive.stat().st_size)],
         )
@@ -334,7 +335,7 @@ class TestRestoreFromYadiskTask:
         with a message pointing at the Yandex path, not crash with
         an IndexError deep in ``_pick_snapshot``.
         """
-        monkeypatch.setattr(tasks.backups, "yadisk_list_snapshots", lambda: [])
+        monkeypatch.setattr(tasks.backups_restore, "yadisk_list_snapshots", lambda: [])
         with pytest.raises(SystemExit) as excinfo:
             tasks.restore_from_yadisk.body(MagicMock())
         assert excinfo.value.code == 1
@@ -366,7 +367,7 @@ class TestRestoreFromYadiskTask:
         single consolidated error message, not fail mid-pipeline
         after the download has already started.
         """
-        monkeypatch.setattr(tasks.backups.shutil, "which", lambda name: None)
+        monkeypatch.setattr(tasks.backups_restore.shutil, "which", lambda name: None)
         with pytest.raises(SystemExit) as excinfo:
             tasks.restore_from_yadisk.body(MagicMock())
         assert excinfo.value.code == 1

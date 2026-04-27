@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import allure
 import pytest
 
-import tasks.backups
+import tasks.backups_yandex
 
 
 @allure.epic("Deploy")
@@ -34,7 +34,7 @@ class TestEnsureYandexRcloneConfigured:
 
     @pytest.fixture(autouse=True)
     def _pin_replica_host(self, monkeypatch):
-        monkeypatch.setattr(tasks.backups, "replica_host", lambda: "ubuntu@dinary-replica")
+        monkeypatch.setattr(tasks.backups_yandex, "replica_host", lambda: "ubuntu@dinary-replica")
 
     def test_skips_when_remote_already_exists_and_works(self, monkeypatch):
         """Re-running ``backup-cloud-setup`` on a working replica
@@ -42,14 +42,14 @@ class TestEnsureYandexRcloneConfigured:
         ``inv pre`` + redeploy, not "now re-enter your Yandex
         password".
         """
-        monkeypatch.setattr(tasks.backups, "replica_has_working_yandex_remote", lambda: True)
+        monkeypatch.setattr(tasks.backups_yandex, "replica_has_working_yandex_remote", lambda: True)
 
         def boom(*_a, **_kw):
             raise AssertionError("must not prompt when remote exists")
 
-        monkeypatch.setattr(tasks.backups, "prompt_yandex_credentials", boom)
-        monkeypatch.setattr(tasks.backups, "install_yandex_rclone_remote", boom)
-        tasks.backups.ensure_yandex_rclone_configured(MagicMock())
+        monkeypatch.setattr(tasks.backups_yandex, "prompt_yandex_credentials", boom)
+        monkeypatch.setattr(tasks.backups_yandex, "install_yandex_rclone_remote", boom)
+        tasks.backups_yandex.ensure_yandex_rclone_configured(MagicMock())
 
     def test_prompts_and_installs_when_remote_missing_or_broken(self, monkeypatch):
         """The happy path on a fresh VM2 AND the recovery path from a
@@ -57,7 +57,9 @@ class TestEnsureYandexRcloneConfigured:
         → prompt → install. A silent skip here would hide setup
         failures until the first timer fires a day later.
         """
-        monkeypatch.setattr(tasks.backups, "replica_has_working_yandex_remote", lambda: False)
+        monkeypatch.setattr(
+            tasks.backups_yandex, "replica_has_working_yandex_remote", lambda: False
+        )
         events: list[str] = []
 
         def fake_prompt():
@@ -71,9 +73,9 @@ class TestEnsureYandexRcloneConfigured:
             captured["login"] = login
             captured["pw"] = pw
 
-        monkeypatch.setattr(tasks.backups, "prompt_yandex_credentials", fake_prompt)
-        monkeypatch.setattr(tasks.backups, "install_yandex_rclone_remote", fake_install)
-        tasks.backups.ensure_yandex_rclone_configured(MagicMock())
+        monkeypatch.setattr(tasks.backups_yandex, "prompt_yandex_credentials", fake_prompt)
+        monkeypatch.setattr(tasks.backups_yandex, "install_yandex_rclone_remote", fake_install)
+        tasks.backups_yandex.ensure_yandex_rclone_configured(MagicMock())
         assert events == ["prompt", "install"]
         assert captured == {"login": "mylogin", "pw": "hunter2-app-pw"}
 
@@ -89,8 +91,8 @@ class TestEnsureYandexRcloneConfigured:
             calls.append(cmd)
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
 
-        monkeypatch.setattr(tasks.backups.subprocess, "run", fake_run)
-        assert tasks.backups.replica_has_working_yandex_remote() is False
+        monkeypatch.setattr(tasks.backups_yandex.subprocess, "run", fake_run)
+        assert tasks.backups_yandex.replica_has_working_yandex_remote() is False
         assert calls
         probe = calls[0][-1]
         assert "grep -qx 'yandex:'" in probe
@@ -107,8 +109,8 @@ class TestEnsureYandexRcloneConfigured:
             calls.append(cmd[-1])
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
 
-        monkeypatch.setattr(tasks.backups.subprocess, "run", fake_run)
-        tasks.backups.replica_has_working_yandex_remote()
+        monkeypatch.setattr(tasks.backups_yandex.subprocess, "run", fake_run)
+        tasks.backups_yandex.replica_has_working_yandex_remote()
         assert any("rclone lsd yandex:" in c for c in calls)
 
     def test_probe_rolls_back_broken_remote_inline(self, monkeypatch):
@@ -123,8 +125,8 @@ class TestEnsureYandexRcloneConfigured:
             calls.append(cmd[-1])
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
 
-        monkeypatch.setattr(tasks.backups.subprocess, "run", fake_run)
-        tasks.backups.replica_has_working_yandex_remote()
+        monkeypatch.setattr(tasks.backups_yandex.subprocess, "run", fake_run)
+        tasks.backups_yandex.replica_has_working_yandex_remote()
         assert any("rclone config delete yandex" in c for c in calls)
 
     def test_probe_returns_true_when_remote_works(self, monkeypatch):
@@ -135,8 +137,8 @@ class TestEnsureYandexRcloneConfigured:
         def fake_run(cmd, *, capture_output, text, check):
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        monkeypatch.setattr(tasks.backups.subprocess, "run", fake_run)
-        assert tasks.backups.replica_has_working_yandex_remote() is True
+        monkeypatch.setattr(tasks.backups_yandex.subprocess, "run", fake_run)
+        assert tasks.backups_yandex.replica_has_working_yandex_remote() is True
 
     def test_install_does_not_leak_password_in_argv(self, monkeypatch):
         """The plaintext app-password must travel only through
@@ -151,8 +153,8 @@ class TestEnsureYandexRcloneConfigured:
             seen["input"] = input
             return subprocess.CompletedProcess(cmd, 0)
 
-        monkeypatch.setattr(tasks.backups.subprocess, "run", fake_run)
-        tasks.backups.install_yandex_rclone_remote("joe", "super-secret-pw")
+        monkeypatch.setattr(tasks.backups_yandex.subprocess, "run", fake_run)
+        tasks.backups_yandex.install_yandex_rclone_remote("joe", "super-secret-pw")
         # Plaintext is in stdin payload, never in argv.
         assert "super-secret-pw" in seen["input"]
         assert all("super-secret-pw" not in a for a in seen["cmd"])
@@ -172,8 +174,8 @@ class TestEnsureYandexRcloneConfigured:
             seen["cmd"] = cmd
             return subprocess.CompletedProcess(cmd, 0)
 
-        monkeypatch.setattr(tasks.backups.subprocess, "run", fake_run)
-        tasks.backups.install_yandex_rclone_remote("joe", "pw")
+        monkeypatch.setattr(tasks.backups_yandex.subprocess, "run", fake_run)
+        tasks.backups_yandex.install_yandex_rclone_remote("joe", "pw")
         outer = " ".join(seen["cmd"])
         match = _stdlib_re.search(r"echo ([A-Za-z0-9+/=]+) \| base64 -d", outer)
         assert match is not None
@@ -201,7 +203,7 @@ class TestEnsureYandexRcloneConfigured:
         def fake_run(cmd, *, input, text, check):
             return subprocess.CompletedProcess(cmd, 5)
 
-        monkeypatch.setattr(tasks.backups.subprocess, "run", fake_run)
+        monkeypatch.setattr(tasks.backups_yandex.subprocess, "run", fake_run)
         with pytest.raises(SystemExit) as excinfo:
-            tasks.backups.install_yandex_rclone_remote("joe", "pw")
+            tasks.backups_yandex.install_yandex_rclone_remote("joe", "pw")
         assert excinfo.value.code == 5

@@ -1,6 +1,6 @@
 """Tests for ``inv setup-replica`` orchestration and its scripts.
 
-Three layers, all routed through :mod:`tasks.backups`:
+Three layers, all routed through :mod:`tasks.backups_replica`:
 
 * :class:`TestLitestreamSetupPermissions` pins the ``sudo`` scope of
   the ``/etc/litestream.yml`` chown/chmod step (regression for a
@@ -17,7 +17,7 @@ import allure
 import pytest
 
 import tasks
-import tasks.backups
+import tasks.backups_replica
 import tasks.constants
 import tasks.ssh_utils
 
@@ -59,13 +59,13 @@ class TestLitestreamSetupPermissions:
         config = tmp_path / "litestream.yml"
         config.write_text("snapshot: {interval: 1h, retention: 168h}\n")
 
-        monkeypatch.setattr(tasks.backups, "ssh_run", fake_ssh)
-        monkeypatch.setattr(tasks.backups, "ssh_sudo", fake_ssh_sudo)
-        monkeypatch.setattr(tasks.backups, "ssh_replica", fake_ssh_replica)
-        monkeypatch.setattr(tasks.backups, "write_remote_file", fake_write_remote_file)
-        monkeypatch.setattr(tasks.backups, "create_service", fake_create_service)
-        monkeypatch.setattr(tasks.backups, "LOCAL_LITESTREAM_CONFIG_PATH", str(config))
-        monkeypatch.setattr(tasks.backups, "replica_host", lambda: "ubuntu@dinary-replica")
+        monkeypatch.setattr(tasks.backups_replica, "ssh_run", fake_ssh)
+        monkeypatch.setattr(tasks.backups_replica, "ssh_sudo", fake_ssh_sudo)
+        monkeypatch.setattr(tasks.backups_replica, "ssh_replica", fake_ssh_replica)
+        monkeypatch.setattr(tasks.backups_replica, "write_remote_file", fake_write_remote_file)
+        monkeypatch.setattr(tasks.backups_replica, "create_service", fake_create_service)
+        monkeypatch.setattr(tasks.backups_replica, "LOCAL_LITESTREAM_CONFIG_PATH", str(config))
+        monkeypatch.setattr(tasks.backups_replica, "replica_host", lambda: "ubuntu@dinary-replica")
         return calls
 
     def test_chown_and_chmod_run_inside_a_single_sudo_bash_c(self, _spy):
@@ -125,7 +125,7 @@ class TestSetupReplicaScripts:
         refactor that dropped it would reintroduce a class of
         "inv setup-replica hangs forever" incidents.
         """
-        script = tasks.backups._build_setup_replica_packages_script()
+        script = tasks.backups_replica._build_setup_replica_packages_script()
         assert "export DEBIAN_FRONTEND=noninteractive" in script
 
     def test_apt_installs_unattended_upgrades(self):
@@ -134,7 +134,7 @@ class TestSetupReplicaScripts:
         on the replica. Pin the package name so a rename in the apt
         step doesn't quietly remove the patch cadence.
         """
-        script = tasks.backups._build_setup_replica_packages_script()
+        script = tasks.backups_replica._build_setup_replica_packages_script()
         assert "apt-get install -y -qq unattended-upgrades" in script
 
     def test_apt_refreshes_package_index_before_install(self):
@@ -143,7 +143,7 @@ class TestSetupReplicaScripts:
         ``install`` with ``Unable to locate package`` on any
         newly-mirrored dependency.
         """
-        script = tasks.backups._build_setup_replica_packages_script()
+        script = tasks.backups_replica._build_setup_replica_packages_script()
         update_idx = script.index("apt-get update -qq")
         install_idx = script.index("apt-get install -y -qq unattended-upgrades")
         assert update_idx < install_idx
@@ -155,7 +155,7 @@ class TestSetupReplicaScripts:
         only elevate the first command and the install would fail
         with EACCES.
         """
-        script = tasks.backups._build_setup_replica_packages_script()
+        script = tasks.backups_replica._build_setup_replica_packages_script()
         assert script.startswith("sudo bash <<'DINARY_REPLICA_PKG_EOF'\n")
         assert script.rstrip().endswith("DINARY_REPLICA_PKG_EOF")
 
@@ -167,7 +167,7 @@ class TestSetupReplicaScripts:
         bootstrap succeed and the first WAL push fail with "No such
         file or directory" on the remote end.
         """
-        script = tasks.backups._build_setup_replica_litestream_dir_script()
+        script = tasks.backups_replica._build_setup_replica_litestream_dir_script()
         assert tasks.constants.REPLICA_LITESTREAM_DIR == "/var/lib/litestream"
         assert f"mkdir -p {tasks.constants.REPLICA_LITESTREAM_DIR}" in script
 
@@ -177,7 +177,7 @@ class TestSetupReplicaScripts:
         on a shared VM. ``0750`` lets the ``ubuntu`` group members
         read for diagnostics while keeping "other" out.
         """
-        script = tasks.backups._build_setup_replica_litestream_dir_script()
+        script = tasks.backups_replica._build_setup_replica_litestream_dir_script()
         assert f"chmod 750 {tasks.constants.REPLICA_LITESTREAM_DIR}" in script
         assert "chmod 755" not in script
         assert "chmod 777" not in script
@@ -188,7 +188,7 @@ class TestSetupReplicaScripts:
         first WAL segment write fails with EPERM. Pin ``ubuntu:ubuntu``
         so a refactor to ``root:root`` is caught at review time.
         """
-        script = tasks.backups._build_setup_replica_litestream_dir_script()
+        script = tasks.backups_replica._build_setup_replica_litestream_dir_script()
         assert f"chown ubuntu:ubuntu {tasks.constants.REPLICA_LITESTREAM_DIR}" in script
 
     def test_litestream_dir_script_elevates_whole_block(self):
@@ -197,7 +197,7 @@ class TestSetupReplicaScripts:
         single elevation boundary; a bare ``mkdir`` would fail with
         EACCES on ``/var/lib/``.
         """
-        script = tasks.backups._build_setup_replica_litestream_dir_script()
+        script = tasks.backups_replica._build_setup_replica_litestream_dir_script()
         assert script.startswith("sudo bash <<'DINARY_REPLICA_DIR_EOF'\n")
         assert script.rstrip().endswith("DINARY_REPLICA_DIR_EOF")
 
@@ -208,7 +208,7 @@ class TestSetupReplicaScripts:
         drift immediately instead of discovering it later when the
         first SFTP write fails.
         """
-        script = tasks.backups._build_setup_replica_litestream_dir_script()
+        script = tasks.backups_replica._build_setup_replica_litestream_dir_script()
         assert f"ls -ld {tasks.constants.REPLICA_LITESTREAM_DIR}" in script
 
 
@@ -264,9 +264,9 @@ class TestSetupReplicaTask:
         )
         monkeypatch.chdir(tmp_path)
 
-        monkeypatch.setattr(tasks.backups, "ssh_replica", fake_ssh_replica)
+        monkeypatch.setattr(tasks.backups_replica, "ssh_replica", fake_ssh_replica)
         monkeypatch.setattr(
-            tasks.backups,
+            tasks.backups_replica,
             "replica_host",
             lambda: "ubuntu@dinary-replica",
         )
@@ -294,8 +294,8 @@ class TestSetupReplicaTask:
            step lands, only tailnet/serial-console works.
         """
         tasks.setup_replica.body(MagicMock())
-        pkg_script = tasks.backups._build_setup_replica_packages_script()
-        dir_script = tasks.backups._build_setup_replica_litestream_dir_script()
+        pkg_script = tasks.backups_replica._build_setup_replica_packages_script()
+        dir_script = tasks.backups_replica._build_setup_replica_litestream_dir_script()
         swap_script = tasks.ssh_utils.build_setup_swap_script(size_gb=1)
         ssh_script = tasks.ssh_utils.build_ssh_tailscale_only_script()
         assert _spy.calls == [pkg_script, dir_script, swap_script, ssh_script]

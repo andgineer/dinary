@@ -4,12 +4,9 @@ import sys
 
 from invoke import Collection
 
-from .backups import (
-    backup_status,
-    replica_resync,
-    restore_from_yadisk,
-    setup_replica,
-)
+from .backups_replica import replica_resync, setup_replica
+from .backups_restore import restore_from_yadisk
+from .backups_status import backup_status
 from .constants import ALLOWED_DOC_LANGUAGES, ALLOWED_VERSION_TYPES
 from .db import backup, migrate, verify_db
 from .deploy import (

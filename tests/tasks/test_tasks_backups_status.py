@@ -14,10 +14,13 @@ import allure
 import pytest
 
 import tasks
-import tasks.backups
+import tasks.backups_status
 from dinary.tools.backup_snapshots import (
     BACKUP_RCLONE_PATH,
     BACKUP_RCLONE_REMOTE,
+    check_backup_freshness,
+    format_backup_status_line,
+    parse_snapshot_timestamp,
 )
 
 
@@ -38,7 +41,7 @@ class TestBackupStatusHelpers:
         not Yandex-side ModTime, so a silent drift here would make
         freshness checks lie.
         """
-        ts = tasks.backups.parse_snapshot_timestamp("dinary-2026-04-22T0317Z.db.zst")
+        ts = parse_snapshot_timestamp("dinary-2026-04-22T0317Z.db.zst")
         assert ts == _dt(2026, 4, 22, 3, 17, tzinfo=_tz.utc)
 
     def test_parse_timestamp_returns_none_on_unexpected_shape(self):
@@ -47,8 +50,8 @@ class TestBackupStatusHelpers:
         it the same as "no timestamp" rather than surfacing a
         ValueError to cron.
         """
-        assert tasks.backups.parse_snapshot_timestamp("random.txt") is None
-        assert tasks.backups.parse_snapshot_timestamp("dinary-bad.db.zst") is None
+        assert parse_snapshot_timestamp("random.txt") is None
+        assert parse_snapshot_timestamp("dinary-bad.db.zst") is None
 
     def test_check_freshness_ok_when_newest_inside_threshold(self):
         """Under-threshold → ``ok`` + exact age in hours. The newest
@@ -61,7 +64,7 @@ class TestBackupStatusHelpers:
             ("dinary-2026-04-22T0317Z.db.zst", 200),
         ]
         now = _dt(2026, 4, 22, 10, 17, tzinfo=_tz.utc)
-        verdict = tasks.backups.check_backup_freshness(snaps, now, max_age_hours=26)
+        verdict = check_backup_freshness(snaps, now, max_age_hours=26)
         assert verdict["status"] == "ok"
         assert verdict["newest"] == "dinary-2026-04-22T0317Z.db.zst"
         assert verdict["age_hours"] == pytest.approx(7.0)
@@ -73,7 +76,7 @@ class TestBackupStatusHelpers:
         """
         snaps = [("dinary-2026-04-20T0317Z.db.zst", 100)]
         now = _dt(2026, 4, 22, 4, 17, tzinfo=_tz.utc)
-        verdict = tasks.backups.check_backup_freshness(snaps, now, max_age_hours=26)
+        verdict = check_backup_freshness(snaps, now, max_age_hours=26)
         assert verdict["status"] == "stale"
         assert verdict["age_hours"] == pytest.approx(49.0)
 
@@ -82,7 +85,7 @@ class TestBackupStatusHelpers:
         so the alert message can point at the right failure mode:
         "nothing ever uploaded" vs "uploads stopped").
         """
-        verdict = tasks.backups.check_backup_freshness([], now=None, max_age_hours=26)
+        verdict = check_backup_freshness([], now=None, max_age_hours=26)
         assert verdict["status"] == "empty"
         assert verdict["newest"] is None
         assert verdict["age_hours"] is None
@@ -96,7 +99,7 @@ class TestBackupStatusHelpers:
         wrong.
         """
         snaps = [("dinary-final.db.zst", 42)]
-        verdict = tasks.backups.check_backup_freshness(snaps, now=None, max_age_hours=26)
+        verdict = check_backup_freshness(snaps, now=None, max_age_hours=26)
         assert verdict["status"] == "stale"
         assert verdict["age_hours"] is None
 
@@ -105,7 +108,7 @@ class TestBackupStatusHelpers:
         threshold so the one-line log in ``sync_log`` is enough to
         diagnose without re-running the task.
         """
-        line = tasks.backups.format_backup_status_line(
+        line = format_backup_status_line(
             {
                 "status": "ok",
                 "newest": "dinary-2026-04-22T0317Z.db.zst",
@@ -124,7 +127,7 @@ class TestBackupStatusHelpers:
         only the exit code, but the operator seeing the log line
         needs to recognize the failure mode at a glance.
         """
-        line = tasks.backups.format_backup_status_line(
+        line = format_backup_status_line(
             {
                 "status": "stale",
                 "newest": "dinary-2026-04-20T0317Z.db.zst",
@@ -141,7 +144,7 @@ class TestBackupStatusHelpers:
         jump straight to rclone/Yandex to investigate — the message
         is not just "STALE" without context.
         """
-        line = tasks.backups.format_backup_status_line(
+        line = format_backup_status_line(
             {
                 "status": "empty",
                 "newest": None,
@@ -176,7 +179,7 @@ class TestBackupStatusTask:
             def now(cls, tz=None):
                 return frozen
 
-        monkeypatch.setattr(tasks.backups, "datetime", _FrozenDateTime)
+        monkeypatch.setattr(tasks.backups_status, "datetime", _FrozenDateTime)
 
     def test_ok_prints_summary_and_does_not_exit(self, monkeypatch, capsys, _mock_now):
         """Happy path: fresh snapshot → one-line summary on stdout,
@@ -185,7 +188,7 @@ class TestBackupStatusTask:
         would false-alert the operator every hour.
         """
         monkeypatch.setattr(
-            tasks.backups,
+            tasks.backups_status,
             "replica_list_snapshots",
             lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
         )
@@ -200,7 +203,7 @@ class TestBackupStatusTask:
         ``send_fail_email``.
         """
         monkeypatch.setattr(
-            tasks.backups,
+            tasks.backups_status,
             "replica_list_snapshots",
             lambda: [("dinary-2026-04-20T0317Z.db.zst", 200)],
         )
@@ -213,7 +216,7 @@ class TestBackupStatusTask:
         always-empty backup bucket is the worst-case silent failure
         we're protecting against.
         """
-        monkeypatch.setattr(tasks.backups, "replica_list_snapshots", lambda: [])
+        monkeypatch.setattr(tasks.backups_status, "replica_list_snapshots", lambda: [])
         with pytest.raises(SystemExit) as exc:
             tasks.backup_status.body(MagicMock())
         assert exc.value.code == 1
@@ -224,7 +227,7 @@ class TestBackupStatusTask:
         without scraping the human line.
         """
         monkeypatch.setattr(
-            tasks.backups,
+            tasks.backups_status,
             "replica_list_snapshots",
             lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
         )
@@ -242,7 +245,7 @@ class TestBackupStatusTask:
         7h-old backup with a 3h threshold must flip to ``stale``.
         """
         monkeypatch.setattr(
-            tasks.backups,
+            tasks.backups_status,
             "replica_list_snapshots",
             lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
         )
