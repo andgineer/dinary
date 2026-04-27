@@ -11,6 +11,7 @@ from invoke import task
 from .constants import _REMOTE_DB_PATH, DINARY_SERVICE, REMOTE_LEGACY_ENV_PATH
 from .env import bind_host, host, tunnel
 from .ssh_utils import (
+    build_data_dir_permissions_script,
     render_service,
     sqlite_backup_prologue,
     ssh_run,
@@ -122,8 +123,8 @@ def deploy(c, ref="", no_start=False):
     else:
         ssh_run(c, "cd ~/dinary && git pull && source ~/.local/bin/env && uv sync --no-dev")
 
-    print("=== Ensuring data/ directory ===")
-    ssh_run(c, "mkdir -p ~/dinary/data")
+    print("=== Ensuring data/ directory (0700) ===")
+    ssh_run(c, "mkdir -p ~/dinary/data && " + build_data_dir_permissions_script())
 
     print("=== Syncing .deploy/.env to server ===")
     sync_remote_env(c)

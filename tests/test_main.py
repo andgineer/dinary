@@ -13,17 +13,24 @@ from dinary import __version__
 
 
 @pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    """Point lifespan tests at an ephemeral SQLite file.
+def _lifespan_stubs(monkeypatch):
+    """Stub out the two lifespan side-effects that are irrelevant to drain-loop tests.
 
-    These tests exercise ``dinary.main._lifespan()``, which always calls
-    ``ledger_repo.init_db()`` on entry. Without overriding ``DB_PATH`` /
-    ``DATA_DIR``, the tests would migrate/open the developer's real
-    ``data/dinary.db`` and contend for writes with any running local
-    server. Keep them hermetic by always using ``tmp_path``.
+    ``init_db`` runs yoyo migrations on each test — ~300 ms of SQLite
+    overhead that has nothing to do with the drain-loop contract.
+    ``rate_prefetch_task`` opens a DB connection and may make network
+    calls; it runs concurrently and adds noise to timing assertions.
+    Both are no-ops here so the tests stay fast and hermetic.
     """
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+    monkeypatch.setattr(ledger_repo, "init_db", lambda: None)
+
+    async def _noop_rate_prefetch():
+        await asyncio.sleep(9999)
+
+    monkeypatch.setattr(
+        "dinary.main.rate_prefetch_task",
+        _noop_rate_prefetch,
+    )
 
 
 def _run(coro):

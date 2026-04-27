@@ -1,16 +1,16 @@
 """VM setup tasks: setup-server."""
 
-from pathlib import Path
-
 from invoke import task
 
 from .constants import (
     DINARY_SERVICE,
-    LOCAL_LITESTREAM_CONFIG_PATH,
     REPO_URL,
 )
 from .env import bind_host, host, tunnel
 from .ssh_utils import (
+    build_data_dir_permissions_script,
+    build_harden_sshd_script,
+    build_install_fail2ban_script,
     build_setup_swap_script,
     build_ssh_tailscale_only_script,
     create_service,
@@ -56,11 +56,17 @@ def setup_server(c, no_swap=False, tailscale=False):  # noqa: PLR0915
         "true",
     )
 
+    print("=== Hardening: sshd (X11 off, PermitRootLogin no, wipe root/opc keys) ===")
+    ssh_run(c, build_harden_sshd_script())
+
     print("=== Installing system packages ===")
     ssh_sudo(
         c,
         "apt update && sudo apt install -y python3 python3-pip git curl sqlite3 rclone",
     )
+
+    print("=== Installing fail2ban ===")
+    ssh_run(c, build_install_fail2ban_script())
 
     if not no_swap:
         print("=== Provisioning swap file ===")
@@ -73,8 +79,8 @@ def setup_server(c, no_swap=False, tailscale=False):  # noqa: PLR0915
     ssh_run(c, f"test -d ~/dinary || git clone {REPO_URL} ~/dinary")
     ssh_run(c, "cd ~/dinary && git pull && source ~/.local/bin/env && uv sync --no-dev")
 
-    print("=== Ensuring data/ directory ===")
-    ssh_run(c, "mkdir -p ~/dinary/data")
+    print("=== Ensuring data/ directory (0700) ===")
+    ssh_run(c, "mkdir -p ~/dinary/data && " + build_data_dir_permissions_script())
 
     print("=== Syncing .deploy/.env to server ===")
     sync_remote_env(c)
@@ -83,11 +89,12 @@ def setup_server(c, no_swap=False, tailscale=False):  # noqa: PLR0915
     sync_remote_import_sources(c)
 
     print("=== Uploading credentials ===")
-    ssh_run(c, "mkdir -p ~/.config/gspread")
+    ssh_run(c, "mkdir -p ~/.config/gspread && chmod 700 ~/.config/gspread")
     c.run(
         f"scp ~/.config/gspread/service_account.json "
         f"{setup_host}:~/.config/gspread/service_account.json",
     )
+    ssh_run(c, "chmod 600 ~/.config/gspread/service_account.json")
 
     bh = bind_host(setup_tunnel)
     print(f"=== Creating dinary service (bind {bh}) ===")
@@ -113,18 +120,6 @@ def setup_server(c, no_swap=False, tailscale=False):  # noqa: PLR0915
         if tailscale:
             msg = "--tailscale requires DINARY_TUNNEL=tailscale; current value is ``none``."
             raise RuntimeError(msg)
-
-    if Path(LOCAL_LITESTREAM_CONFIG_PATH).exists():
-        print(
-            "=== .deploy/litestream.yml present. ===\n"
-            "=== Run `inv setup-replica` once the SFTP replica host trusts VM1's ssh key. ===",
-        )
-    else:
-        print(
-            "=== Skipping Litestream (no .deploy/litestream.yml locally). ===\n"
-            "=== Copy .deploy.example/litestream.yml, fill in the SFTP target, ===\n"
-            "=== then run `inv setup-replica`. ===",
-        )
 
     print("=== Done! Checking health... ===")
     ssh_run(c, "sleep 15 && curl -s http://localhost:8000/api/health")

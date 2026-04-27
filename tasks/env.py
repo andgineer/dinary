@@ -65,11 +65,14 @@ def bind_host(tunnel: str) -> str:
     interface; ``tailscale`` / ``cloudflare`` front it so we stay on
     loopback. Shared by ``setup`` and ``deploy`` so both paths render
     the same ``DINARY_SERVICE`` unit file.
+
+    For ``tailscale``, uvicorn binds to ``127.0.0.1`` so that
+    ``tailscale serve`` (which proxies ``https://hostname.ts.net`` →
+    ``http://127.0.0.1:8000``) can reach it. Binding to the Tailscale
+    IP instead breaks the HTTPS proxy and forces clients onto plain HTTP.
     """
     if tunnel == "none":
         return "0.0.0.0"  # noqa: S104
-    if tunnel == "tailscale":
-        return "$(tailscale ip -4 2>/dev/null || echo 127.0.0.1)"
     return "127.0.0.1"
 
 
@@ -97,6 +100,17 @@ def replica_host():
         )
         sys.exit(1)
     return h
+
+
+def litestream_retention() -> str:
+    """Read the Litestream WAL retention window from ``.deploy/.env``.
+
+    Defaults to ``168h`` (7 days) when the key is absent so existing
+    deployments are unaffected. Change ``DINARY_LITESTREAM_RETENTION``
+    in ``.deploy/.env`` to tune per-deployment (e.g. ``336h`` for two
+    weeks on a production box with more disk space).
+    """
+    return _env().get("DINARY_LITESTREAM_RETENTION") or "168h"
 
 
 def tunnel():

@@ -130,10 +130,12 @@ To seed categories to the DB call `inv bootstrap-catalog --yes`.
 
 During setup, `tailscale up` prints a URL — open it in your browser to log in (create a free account if needed).
 
-After login, enable Funnel in the [admin console](https://login.tailscale.com/admin/dns):
+Enable HTTPS in the [admin console](https://login.tailscale.com/admin/dns):
 
 1. Enable **MagicDNS** (if not already enabled).
 2. Enable **HTTPS** for your tailnet.
+
+The app will be reachable at `https://<machine-name>.<tailnet>.ts.net` — tailnet only, Tailscale must be running on the client device.
 
 !!! warning "First launch: wait up to 10 minutes"
     On first launch, Tailscale provisions a TLS certificate and propagates DNS. The URL may return `ERR_SSL_PROTOCOL_ERROR` for several minutes. Wait and retry.

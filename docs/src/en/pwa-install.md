@@ -7,20 +7,17 @@ installed directly from the website. No App Store or Google Play needed.
 
 Your URL depends on how you deployed dinary:
 
-- **Tailscale Funnel**: `https://<your-machine>.<tailnet>.ts.net` (shown when you ran `tailscale funnel 8000`)
+- **Tailscale**: `https://<your-machine>.<tailnet>.ts.net`
 - **Cloudflare Tunnel**: `https://dinary.yourdomain.com` (the domain you configured)
 
-### If using Tailscale Funnel
+### If using Tailscale
 
-Tailscale Funnel URLs are public — anyone with the link can access them. However, to find the URL you need the machine's MagicDNS name. The easiest way to get it on your phone:
+The app is accessible only within your tailnet — **Tailscale must be running on your phone** to open the URL.
 
 1. Install **Tailscale** on your phone ([App Store](https://apps.apple.com/app/tailscale/id1470499037) / [Google Play](https://play.google.com/store/apps/details?id=com.tailscale.ipn)).
 2. Log in with the same account you used on the server.
 3. In the Tailscale app, find your server machine — its name is the MagicDNS hostname.
 4. Open `https://<that-name>/api/health` in the browser to verify it works.
-
-!!! tip
-    You only need the Tailscale app to look up the URL. After that, the Funnel URL works in any browser — Tailscale doesn't need to be running on your phone.
 
 ## 2. Install the PWA
 

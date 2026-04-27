@@ -153,10 +153,15 @@ def sync_remote_env(c):
 
     Creates ``REMOTE_DEPLOY_DIR`` if absent (first-time deploy) so
     ``sudo tee`` does not fail with "No such file or directory".
+    ``write_remote_file`` uses ``sudo tee`` which leaves the file
+    ``root:root 0644``; we re-own to ``ubuntu`` and tighten to ``0600``
+    because the env contains deploy secrets that no other account on
+    the VM needs to read.
     """
     content = Path(LOCAL_ENV_PATH).read_text(encoding="utf-8")
     ssh_run(c, f"mkdir -p {REMOTE_DEPLOY_DIR}")
     write_remote_file(c, REMOTE_ENV_PATH, content)
+    ssh_sudo(c, f"chown ubuntu:ubuntu {REMOTE_ENV_PATH} && chmod 600 {REMOTE_ENV_PATH}")
 
 
 def sync_remote_import_sources(c):
@@ -167,6 +172,11 @@ def sync_remote_import_sources(c):
     content = local_path.read_text(encoding="utf-8")
     ssh_run(c, f"mkdir -p {REMOTE_DEPLOY_DIR}")
     write_remote_file(c, REMOTE_IMPORT_SOURCES_PATH, content)
+    ssh_sudo(
+        c,
+        f"chown ubuntu:ubuntu {REMOTE_IMPORT_SOURCES_PATH} "
+        f"&& chmod 600 {REMOTE_IMPORT_SOURCES_PATH}",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +251,178 @@ def build_setup_swap_script(*, size_gb):
         'FSTAB_LINE="/swapfile none swap sw 0 0"\n'
         'grep -qxF "$FSTAB_LINE" /etc/fstab || echo "$FSTAB_LINE" >> /etc/fstab\n'
         "DINARY_SWAP_EOF"
+    )
+
+
+def build_harden_sshd_script():
+    """Emit the shell script that applies the cross-VM SSH hardening block.
+
+    Covers the low-risk wins we want on every new VM before anyone
+    touches keys:
+
+    * Disable ``X11Forwarding`` via drop-in (unused here, unnecessary
+      attack surface).
+    * Force ``PermitRootLogin no`` (Oracle cloud-init leaves it at the
+      OpenSSH default ``prohibit-password`` which still accepts a key).
+    * Wipe ``/root/.ssh/authorized_keys`` and ``/home/opc/.ssh/authorized_keys``
+      if the Oracle cloud-init default seeded the laptop key there.
+    * Lock the dormant ``opc`` user with ``nologin``.
+    * Validate with ``sshd -t`` before reloading and roll the X11
+      drop-in back on failure.
+    """
+    return (
+        "sudo bash <<'DINARY_SSH_HARDEN_EOF'\n"
+        "set -euo pipefail\n"
+        "DROPIN=/etc/ssh/sshd_config.d/no-x11.conf\n"
+        'echo "X11Forwarding no" >"$DROPIN"\n'
+        "sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config\n"
+        "if ! sshd -t 2>&1; then\n"
+        '  rm -f "$DROPIN"\n'
+        "  echo 'sshd -t rejected the hardening config; X11 drop-in removed' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        "systemctl reload ssh\n"
+        ": >/root/.ssh/authorized_keys 2>/dev/null || true\n"
+        "if id opc >/dev/null 2>&1; then\n"
+        "  : >/home/opc/.ssh/authorized_keys 2>/dev/null || true\n"
+        "  usermod -L -s /usr/sbin/nologin opc 2>/dev/null || true\n"
+        "fi\n"
+        "DINARY_SSH_HARDEN_EOF"
+    )
+
+
+def build_install_fail2ban_script():
+    """Emit the shell script that installs fail2ban with our jail.local.
+
+    Ban policy mirrors what was field-tested on the old VM1 (3 failures
+    per 10 min, 1-day initial ban, geometric increase, capped at 30d).
+    ``ignoreip`` includes the Tailscale CGNAT range so admins locked
+    out from a Tailscale IP after a botched reload never get banned.
+    """
+    return (
+        "sudo bash <<'DINARY_F2B_EOF'\n"
+        "set -euo pipefail\n"
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban\n"
+        "cat >/etc/fail2ban/jail.local <<'EOC'\n"
+        "[DEFAULT]\n"
+        "ignoreip = 127.0.0.1/8 ::1 100.64.0.0/10\n"
+        "bantime = 1d\n"
+        "bantime.increment = true\n"
+        "bantime.factor = 2\n"
+        "bantime.maxtime = 30d\n"
+        "findtime = 10m\n"
+        "maxretry = 3\n"
+        "\n"
+        "[sshd]\n"
+        "enabled = true\n"
+        "backend = systemd\n"
+        "EOC\n"
+        "systemctl enable --now fail2ban\n"
+        "DINARY_F2B_EOF"
+    )
+
+
+def build_data_dir_permissions_script():
+    """Emit the shell snippet that locks down ``~/dinary/data/``.
+
+    The SQLite ledger is all financial data; default umask on Oracle
+    images leaves the directory ``drwxrwxr-x`` and ``dinary.db*`` at
+    ``-rw-rw-r--``. Tighten to 700 / 600 so no other account on the
+    box can read or write the database files.
+
+    Idempotent — safe to rerun on each ``inv deploy`` /
+    ``inv restart-server``. Missing ``.db-wal`` / ``.db-shm`` is
+    expected between checkpoints; swallow the error there.
+    """
+    return (
+        "chmod 700 ~/dinary/data && "
+        "find ~/dinary/data -maxdepth 1 -name 'dinary.db*' -exec chmod 600 {} +"
+    )
+
+
+def build_ensure_vm1_replica_key_script():
+    """Ensure ``/home/ubuntu/.ssh/id_ed25519`` exists on VM1 and print the pubkey.
+
+    Used by ``inv setup-replica`` to obtain VM1's public key so it
+    can be appended to VM2's ``authorized_keys`` — the trust the
+    Litestream SFTP replicator needs. Idempotent: the keypair is
+    generated only if missing, and the last line of stdout is always
+    the full ``id_ed25519.pub`` contents so the caller can feed it
+    straight into :func:`build_install_authorized_key_script`.
+    """
+    return (
+        "set -euo pipefail\n"
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh\n"
+        "if [ ! -f ~/.ssh/id_ed25519 ]; then\n"
+        "  ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N '' -q -C dinary-vm1-litestream\n"
+        "fi\n"
+        "cat ~/.ssh/id_ed25519.pub\n"
+    )
+
+
+def build_install_authorized_key_script(pubkey):
+    """Append ``pubkey`` to ``~ubuntu/.ssh/authorized_keys`` on VM2, idempotent.
+
+    Matches on a full-line, fixed-string comparison via ``grep -qxF``
+    so repeated ``inv setup-replica`` runs do not pile up duplicates
+    — and a byte-level drift (trailing whitespace, truncation) is
+    treated as a different key, forcing the operator to investigate
+    rather than silently shadowing the real entry.
+
+    ``ssh-keygen -l -f -`` validates the payload so a malformed
+    string (accidental shell mangling) fails here instead of
+    silently authorizing nothing.
+    """
+    quoted = shlex.quote(pubkey)
+    return (
+        "set -euo pipefail\n"
+        f"PUBKEY={quoted}\n"
+        'if ! printf "%s\\n" "$PUBKEY" | ssh-keygen -l -f - >/dev/null 2>&1; then\n'
+        '  echo "refusing to install malformed public key" >&2; exit 1\n'
+        "fi\n"
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh\n"
+        "touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys\n"
+        'if ! grep -qxF "$PUBKEY" ~/.ssh/authorized_keys; then\n'
+        '  printf "%s\\n" "$PUBKEY" >> ~/.ssh/authorized_keys\n'
+        "fi\n"
+    )
+
+
+def build_add_known_host_script(hostname):
+    """Append VM2's host key to ``~/.ssh/known_hosts`` on VM1, no-op if present.
+
+    If ``ssh-keygen -F`` already finds an entry for ``hostname`` the
+    script does nothing — a VM2 re-provision with a *different* host
+    key therefore fails the first SFTP handshake instead of being
+    silently accepted, which is the explicit trust-refresh boundary
+    ``inv replica-reset-trust`` handles.
+    """
+    quoted = shlex.quote(hostname)
+    return (
+        "set -euo pipefail\n"
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh\n"
+        "touch ~/.ssh/known_hosts && chmod 644 ~/.ssh/known_hosts\n"
+        f"if ! ssh-keygen -F {quoted} -f ~/.ssh/known_hosts >/dev/null 2>&1; then\n"
+        f"  ssh-keyscan -T 10 -t ed25519 {quoted} 2>/dev/null >> ~/.ssh/known_hosts\n"
+        "fi\n"
+    )
+
+
+def build_reset_known_host_script(hostname):
+    """Forcibly refresh VM2's entry in VM1 ``~/.ssh/known_hosts``.
+
+    Removes any existing entry for ``hostname`` and re-scans. Used
+    by ``inv replica-reset-trust`` after an intentional VM2
+    re-provision — the operator's explicit statement that the new
+    host key is the legitimate one.
+    """
+    quoted = shlex.quote(hostname)
+    return (
+        "set -euo pipefail\n"
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh\n"
+        "touch ~/.ssh/known_hosts && chmod 644 ~/.ssh/known_hosts\n"
+        f"ssh-keygen -R {quoted} -f ~/.ssh/known_hosts >/dev/null 2>&1 || true\n"
+        f"ssh-keyscan -T 10 -t ed25519 {quoted} 2>/dev/null >> ~/.ssh/known_hosts\n"
     )
 
 

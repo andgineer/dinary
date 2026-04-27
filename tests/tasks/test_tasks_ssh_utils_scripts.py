@@ -14,6 +14,7 @@ import allure
 import pytest
 
 import tasks.constants
+import tasks.env
 import tasks.ssh_utils
 
 
@@ -312,3 +313,332 @@ class TestSshTailscaleOnlyScript:
         assert "<<'DINARY_SSH_TS_EOF'" in script
         assert "$TS_IP" in script
         assert "$DROPIN" in script
+
+
+@allure.epic("Deploy")
+@allure.feature("SSH hardening script (X11 off, PermitRootLogin no, root/opc key wipe)")
+class TestHardenSshdScript:
+    """Pins the cross-VM sshd hardening block. Regressions here would
+    silently re-expose the dormant root/opc cloud-init seed key or
+    leave X11Forwarding on — both caught on the old VM1 audit and
+    must not re-appear on freshly provisioned VMs.
+    """
+
+    def test_disables_x11_forwarding_via_dropin(self):
+        script = tasks.ssh_utils.build_harden_sshd_script()
+        assert "X11Forwarding no" in script
+        assert "/etc/ssh/sshd_config.d/no-x11.conf" in script
+
+    def test_forces_permit_root_login_no(self):
+        """``sed`` replaces whatever value cloud-init left (commented,
+        ``prohibit-password``, ``without-password``) with an explicit
+        ``no``. The pattern must handle both the commented and
+        uncommented forms.
+        """
+        script = tasks.ssh_utils.build_harden_sshd_script()
+        assert "PermitRootLogin no" in script
+        assert "s/^#\\?PermitRootLogin" in script
+
+    def test_wipes_root_and_opc_authorized_keys(self):
+        """Oracle cloud-init defaults seed the same key under
+        ``/root`` and ``/home/opc`` as the ``ubuntu`` user. A
+        compromised laptop key would bypass the sudo audit trail
+        unless we wipe both files on every setup run.
+        """
+        script = tasks.ssh_utils.build_harden_sshd_script()
+        assert ": >/root/.ssh/authorized_keys" in script
+        assert ": >/home/opc/.ssh/authorized_keys" in script
+
+    def test_locks_opc_user_when_present(self):
+        script = tasks.ssh_utils.build_harden_sshd_script()
+        assert "usermod -L -s /usr/sbin/nologin opc" in script
+        # Guarded so the script is safe on hosts that never had opc.
+        assert "id opc" in script
+
+    def test_validates_sshd_before_reload_and_rolls_back_on_failure(self):
+        """If ``sshd -t`` rejects the new config we must remove the
+        X11 drop-in before exiting, otherwise the next ``systemctl
+        reload ssh`` would pick up a broken config.
+        """
+        script = tasks.ssh_utils.build_harden_sshd_script()
+        assert "sshd -t" in script
+        assert 'rm -f "$DROPIN"' in script
+        assert "systemctl reload ssh" in script
+
+    def test_uses_quoted_heredoc_so_vars_dont_expand_locally(self):
+        script = tasks.ssh_utils.build_harden_sshd_script()
+        assert "<<'DINARY_SSH_HARDEN_EOF'" in script
+
+
+@allure.epic("Deploy")
+@allure.feature("fail2ban install script (jail.local + sshd jail)")
+class TestInstallFail2banScript:
+    """Pins the shape of the fail2ban install + jail.local payload.
+    Losing any of these knobs would either disable the sshd jail
+    (``enabled = true``), unban too fast (``bantime``/``findtime``),
+    or — most critically — drop the Tailscale ``ignoreip`` exclusion
+    and start banning operators coming in over the tailnet.
+    """
+
+    def test_installs_fail2ban_via_apt_noninteractive(self):
+        script = tasks.ssh_utils.build_install_fail2ban_script()
+        assert "DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban" in script
+
+    def test_writes_jail_local_with_sshd_enabled(self):
+        script = tasks.ssh_utils.build_install_fail2ban_script()
+        assert "/etc/fail2ban/jail.local" in script
+        assert "[sshd]" in script
+        assert "enabled = true" in script
+        assert "backend = systemd" in script
+
+    def test_ignoreip_whitelists_tailscale_cgnat(self):
+        """Tailscale uses CGNAT (100.64.0.0/10). Without this line an
+        operator who mistypes a password over the tailnet would get
+        banned on the only tunnel into the box — defeating the whole
+        break-glass posture.
+        """
+        script = tasks.ssh_utils.build_install_fail2ban_script()
+        assert "100.64.0.0/10" in script
+        assert "ignoreip" in script
+
+    def test_ban_escalation_policy_matches_old_vm(self):
+        """Geometric escalation with a 30-day cap is what the
+        previous VM1 ran and what ``docs/operations.md`` references.
+        If any of these drift, the op note goes stale.
+        """
+        script = tasks.ssh_utils.build_install_fail2ban_script()
+        assert "bantime = 1d" in script
+        assert "bantime.increment = true" in script
+        assert "bantime.factor = 2" in script
+        assert "bantime.maxtime = 30d" in script
+        assert "findtime = 10m" in script
+        assert "maxretry = 3" in script
+
+    def test_enables_and_starts_service(self):
+        script = tasks.ssh_utils.build_install_fail2ban_script()
+        assert "systemctl enable --now fail2ban" in script
+
+    def test_uses_quoted_heredoc_so_vars_dont_expand_locally(self):
+        script = tasks.ssh_utils.build_install_fail2ban_script()
+        assert "<<'DINARY_F2B_EOF'" in script
+
+
+@allure.epic("Deploy")
+@allure.feature("data/ permissions tightening (chmod 700 + db* 600)")
+class TestDataDirPermissionsScript:
+    """Re-applied on every ``inv deploy`` and ``inv setup-server``.
+    SQLite recreates ``-wal`` / ``-shm`` with the umask default on
+    restart, so a one-shot chmod is insufficient — the helper must
+    be idempotent and cover the glob.
+    """
+
+    def test_tightens_data_directory_to_700(self):
+        script = tasks.ssh_utils.build_data_dir_permissions_script()
+        assert "chmod 700 ~/dinary/data" in script
+
+    def test_tightens_all_dinary_db_files_to_600(self):
+        script = tasks.ssh_utils.build_data_dir_permissions_script()
+        assert "dinary.db*" in script
+        assert "chmod 600" in script
+        assert "find ~/dinary/data" in script
+
+    def test_find_scoped_to_top_level_not_recursive(self):
+        """``-maxdepth 1`` keeps us from stat-ing backups/ subtrees
+        on every restart. The live DB is always at the top level.
+        """
+        script = tasks.ssh_utils.build_data_dir_permissions_script()
+        assert "-maxdepth 1" in script
+
+
+@allure.epic("Deploy")
+@allure.feature("VM1→VM2 SSH trust (keygen, authorized_keys, known_hosts)")
+class TestReplicaTrustScripts:
+    """Litestream on VM1 replicates to VM2 by SFTP as ``ubuntu``. The
+    three builders below wire that trust chain: generate the VM1
+    keypair, publish its pubkey into VM2's ``authorized_keys``, and
+    pin VM2's host key in VM1's ``known_hosts``. The contract pinned
+    here is that each step is safe to re-run — ``inv setup-replica``
+    is idempotent in the common case — but the known_hosts script
+    specifically is NOT auto-refreshing: a host key change is a
+    security signal that must travel through ``inv replica-reset-trust``.
+    """
+
+    def test_ensure_key_script_generates_ed25519_when_missing(self):
+        """The keypair must be ``ed25519``, not RSA — Oracle's Free
+        Tier VMs ship old OpenSSH builds where RSA host keys default
+        to SHA-1 signatures that newer clients refuse. Pin the
+        algorithm so a future "make it configurable" refactor cannot
+        land RSA here.
+        """
+        script = tasks.ssh_utils.build_ensure_vm1_replica_key_script()
+        assert "ssh-keygen -t ed25519" in script
+        assert "-N ''" in script, "keygen must be non-interactive (no passphrase)"
+
+    def test_ensure_key_script_is_idempotent(self):
+        """Re-running ``inv setup-replica`` must not overwrite an
+        existing keypair — doing so would invalidate every previously
+        installed ``authorized_keys`` entry on VM2 in one stroke.
+        """
+        script = tasks.ssh_utils.build_ensure_vm1_replica_key_script()
+        assert "[ ! -f ~/.ssh/id_ed25519 ]" in script
+
+    def test_ensure_key_script_prints_pubkey_on_stdout(self):
+        """The caller feeds stdout straight into
+        ``build_install_authorized_key_script`` — if the script ever
+        printed the private key or extra diagnostics, the shell
+        substitution would install garbage into
+        ``authorized_keys``. Pin the exact last command.
+        """
+        script = tasks.ssh_utils.build_ensure_vm1_replica_key_script()
+        assert script.rstrip().endswith("cat ~/.ssh/id_ed25519.pub")
+
+    def test_install_authorized_key_is_idempotent(self):
+        """Repeated ``inv setup-replica`` runs must not duplicate the
+        key — ``grep -qxF`` does a full-line, fixed-string match so
+        trailing-newline / whitespace drift is treated as a different
+        key (forcing an operator check rather than a silent shadow).
+        """
+        pubkey = "ssh-ed25519 AAAAFAKE dinary-vm1-litestream"
+        script = tasks.ssh_utils.build_install_authorized_key_script(pubkey)
+        assert "grep -qxF" in script
+
+    def test_install_authorized_key_validates_payload(self):
+        """``ssh-keygen -l -f -`` catches a malformed pubkey before it
+        lands in ``authorized_keys``. Without the validation, a
+        truncation in transport would install a dead line that shadows
+        nothing but fills the file with junk.
+        """
+        pubkey = "ssh-ed25519 AAAAFAKE dinary-vm1-litestream"
+        script = tasks.ssh_utils.build_install_authorized_key_script(pubkey)
+        assert "ssh-keygen -l -f -" in script
+
+    def test_install_authorized_key_sets_strict_permissions(self):
+        """A mode wider than 0600 on ``authorized_keys`` makes
+        strict-mode sshd reject the file entirely — failing all
+        subsequent logins on VM2. Pin 0600 and 0700 on ``.ssh/``.
+        """
+        pubkey = "ssh-ed25519 AAAAFAKE dinary-vm1-litestream"
+        script = tasks.ssh_utils.build_install_authorized_key_script(pubkey)
+        assert "chmod 700 ~/.ssh" in script
+        assert "chmod 600 ~/.ssh/authorized_keys" in script
+
+    def test_install_authorized_key_escapes_shell_metachars(self):
+        """If a pubkey (or its comment) ever contains shell
+        metacharacters, ``shlex.quote`` keeps the install script
+        safe — without it, a crafted comment could execute arbitrary
+        code on VM2 as ``ubuntu``.
+        """
+        hostile = "ssh-ed25519 AAAAFAKE $(touch /tmp/owned)"
+        script = tasks.ssh_utils.build_install_authorized_key_script(hostile)
+        assert "$(touch /tmp/owned)" not in script.replace(
+            "'ssh-ed25519 AAAAFAKE $(touch /tmp/owned)'", ""
+        ), "shlex.quote must fully escape shell-substitution payloads"
+
+    def test_add_known_host_is_idempotent(self):
+        """``ssh-keygen -F`` short-circuits the scan when an entry
+        already exists — a re-run of ``inv setup-replica`` must not
+        append a duplicate line, and (critically) must NOT overwrite
+        an entry whose host key disagrees with a fresh scan. That's
+        the ``replica-reset-trust`` boundary.
+        """
+        script = tasks.ssh_utils.build_add_known_host_script("replica.example")
+        assert "ssh-keygen -F replica.example" in script
+        assert "ssh-keyscan" in script
+
+    def test_add_known_host_uses_ed25519_only(self):
+        """Only ``ed25519`` host keys are accepted — matches the
+        ``ssh-keygen -t ed25519`` we generated on VM1. Pin the scan
+        type so a drift to ``-t rsa,ecdsa,ed25519`` doesn't silently
+        accept weaker algorithms.
+        """
+        script = tasks.ssh_utils.build_add_known_host_script("replica.example")
+        assert "ssh-keyscan -T 10 -t ed25519" in script
+
+    def test_reset_known_host_wipes_before_scan(self):
+        """Reset-trust must first ``ssh-keygen -R`` to remove the old
+        entry. Without that, the old host key remains the first
+        match and OpenSSH refuses the new one with "REMOTE HOST
+        IDENTIFICATION HAS CHANGED" no matter how many fresh scans
+        we append.
+        """
+        script = tasks.ssh_utils.build_reset_known_host_script("replica.example")
+        keygen_idx = script.index("ssh-keygen -R replica.example")
+        keyscan_idx = script.index("ssh-keyscan")
+        assert keygen_idx < keyscan_idx
+
+    def test_reset_known_host_tolerates_missing_old_entry(self):
+        """``ssh-keygen -R`` exits non-zero if there's nothing to
+        remove — without ``|| true`` the whole script fails the
+        first time after a known_hosts wipe.
+        """
+        script = tasks.ssh_utils.build_reset_known_host_script("replica.example")
+        assert "ssh-keygen -R replica.example -f ~/.ssh/known_hosts >/dev/null 2>&1 || true" in (
+            script
+        )
+
+    def test_builders_escape_hostname_metachars(self):
+        """The hostname flows into multiple shell invocations; a
+        metachar-laden host derived from ``DINARY_REPLICA_HOST`` must
+        not execute code on VM1 when ``inv setup-replica`` runs.
+        """
+        hostile = "replica.example;rm -rf /"
+        add = tasks.ssh_utils.build_add_known_host_script(hostile)
+        reset = tasks.ssh_utils.build_reset_known_host_script(hostile)
+        assert "rm -rf /" not in add.replace("'replica.example;rm -rf /'", "")
+        assert "rm -rf /" not in reset.replace("'replica.example;rm -rf /'", "")
+
+
+@allure.epic("Deploy")
+@allure.feature("dinary.service bind host per tunnel type")
+class TestDinaryServiceBindHost:
+    """``bind_host()`` determines the ``--host`` uvicorn receives.
+
+    For ``tailscale`` and ``cloudflare`` the app must listen on
+    ``127.0.0.1`` so the tunnel's local proxy can reach it.  For
+    ``none`` it binds to ``0.0.0.0`` (direct public exposure, no
+    tunnel in front).
+
+    Binding to a Tailscale IP instead of loopback breaks ``tailscale
+    serve`` (which proxies ``https://hostname.ts.net`` →
+    ``http://127.0.0.1:8000``) and forces clients onto plain HTTP,
+    where ``crypto.randomUUID()`` is not available (requires a secure
+    context).  This class pins the contract so a future refactor that
+    accidentally reintroduces ``$(tailscale ip -4)`` fails immediately.
+    """
+
+    def test_tailscale_binds_to_loopback(self):
+        assert tasks.env.bind_host("tailscale") == "127.0.0.1"
+
+    def test_cloudflare_binds_to_loopback(self):
+        assert tasks.env.bind_host("cloudflare") == "127.0.0.1"
+
+    def test_none_binds_to_all_interfaces(self):
+        assert tasks.env.bind_host("none") == "0.0.0.0"
+
+    def test_tailscale_service_unit_uses_loopback_not_tailscale_ip(self):
+        """The rendered unit must NOT contain ``tailscale ip`` in ExecStart.
+
+        If it does, ``tailscale serve`` cannot proxy to the app and
+        HTTPS breaks silently — the service starts fine but the tunnel
+        proxy gets connection-refused.
+        """
+        unit = tasks.constants.DINARY_SERVICE.format(host=tasks.env.bind_host("tailscale"))
+        exec_start = next(l for l in unit.splitlines() if l.startswith("ExecStart="))
+        assert "--host 127.0.0.1" in exec_start
+        assert "tailscale ip" not in exec_start
+
+    def test_tailscale_service_unit_waits_for_tailscaled_before_start(self):
+        """Even though uvicorn binds to loopback, ``tailscale serve``
+        still needs tailscaled running to accept incoming HTTPS.
+        The ExecStartPre guard ensures tailscaled is up before the app
+        starts — without it the HTTPS proxy accepts connections but the
+        backend isn't ready.
+        """
+        unit = tasks.constants.DINARY_SERVICE.format(host=tasks.env.bind_host("tailscale"))
+        assert "ExecStartPre=" in unit
+        assert "tailscale ip -4" in unit
+
+    def test_none_service_unit_binds_to_all_interfaces(self):
+        unit = tasks.constants.DINARY_SERVICE.format(host=tasks.env.bind_host("none"))
+        exec_start = next(l for l in unit.splitlines() if l.startswith("ExecStart="))
+        assert "--host 0.0.0.0" in exec_start
