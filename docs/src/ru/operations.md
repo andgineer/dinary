@@ -365,10 +365,10 @@ UTC уже через несколько часов, а не следующим 
 ## Восстановление на конкретную дату из Яндекс.Диска
 
 ```bash
-inv backup-cloud-restore --list-only                     # список снапшотов
-inv backup-cloud-restore                                 # восстановить самый свежий
-inv backup-cloud-restore --snapshot 2026-03-15           # конкретную дату
-inv backup-cloud-restore --yes                           # без подтверждения
+inv restore-cloud-backup --list-only                     # список снапшотов
+inv restore-cloud-backup                                 # восстановить самый свежий
+inv restore-cloud-backup --snapshot 2026-03-15           # конкретную дату
+inv restore-cloud-backup --yes                           # без подтверждения
 ```
 
 ### Два предполагаемых сценария
@@ -382,10 +382,10 @@ inv backup-cloud-restore --yes                           # без подтвер
   (через SSH), когда и локальная БД, и Litestream-реплика на VM 2
   непригодны. Тройная защита «SSH + `cd ~/dinary` + интерактивное
   подтверждение» — это намеренное трение, чтобы одним словом
-  `inv backup-cloud-restore` в случайном терминале нельзя было
+  `inv restore-cloud-backup` в случайном терминале нельзя было
   молча затереть прод.
 
-`backup-cloud-restore` — **local-only**: пишет в `./data/dinary.db`
+`restore-cloud-backup` — **local-only**: пишет в `./data/dinary.db`
 относительно cwd, режима `--remote` нет. Запустить задачу на
 удалённом хосте с операторской машины невозможно.
 
@@ -432,7 +432,7 @@ inv backup-cloud-restore --yes                           # без подтвер
 ssh ubuntu@dinary                       # или публичный IP / Tailscale IP
 sudo systemctl stop dinary litestream   # чтобы не получить наполовину переписанную БД
 cd ~/dinary
-inv backup-cloud-restore --snapshot 2026-03-15
+inv restore-cloud-backup --snapshot 2026-03-15
 # промпт подтверждения: печатает row count / size / mtime текущей
 # БД плюс сжатый размер входящего снапшота и требует напечатать
 # буквально 'yes'.
@@ -447,7 +447,7 @@ inv verify-db                           # integrity + FK check
 ```bash
 cd /tmp/restore-preview
 mkdir -p data
-inv backup-cloud-restore --snapshot 2026-03-15 --yes
+inv restore-cloud-backup --snapshot 2026-03-15 --yes
 sqlite3 data/dinary.db 'SELECT COUNT(*) FROM expense'
 ```
 

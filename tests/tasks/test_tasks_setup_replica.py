@@ -49,6 +49,17 @@ class TestLitestreamSetupPermissions:
     def _spy(self, monkeypatch, tmp_path):
         calls: list[tuple[str, str]] = []
 
+        deploy_dir = tmp_path / ".deploy"
+        deploy_dir.mkdir()
+        (deploy_dir / ".env").write_text(
+            "# TestLitestreamSetupPermissions fixture\n"
+            "DINARY_DEPLOY_HOST=ubuntu@test-primary\n"
+            "DINARY_REPLICA_HOST=ubuntu@test-replica\n"
+            "DINARY_TUNNEL=tailscale\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+
         def fake_ssh(_c, cmd: str) -> None:
             calls.append(("ssh", cmd))
 

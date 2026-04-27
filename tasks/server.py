@@ -8,7 +8,7 @@ from pathlib import Path
 
 from invoke import task
 
-from .constants import REMOTE_LITESTREAM_CONFIG_PATH
+from .constants import REMOTE_LITESTREAM_CONFIG_PATH, REPLICA_DB_NAME, REPLICA_LITESTREAM_DIR
 from .env import _env, host, replica_host, tunnel
 from .ssh_utils import (
     sqlite_backup_prologue,
@@ -124,11 +124,32 @@ def _healthcheck_sheet_log(lines: list[str]) -> None:
         sys.exit(1)
 
 
+def _build_replica_page_count_script() -> str:
+    """Restore latest LTX snapshot on VM2 and output its page_count integer."""
+    replica_path = f"{REPLICA_LITESTREAM_DIR}/{REPLICA_DB_NAME}"
+    return (
+        "set -euo pipefail\n"
+        "WORKDIR=$(mktemp -d)\n"
+        "trap 'rm -rf \"$WORKDIR\"' EXIT\n"
+        'SNAP="$WORKDIR/hc.db"\n'
+        'CFG="$WORKDIR/ls.yml"\n'
+        'cat > "$CFG" <<LSYAML\n'
+        "dbs:\n"
+        "  - path: $SNAP\n"
+        "    replicas:\n"
+        "      - type: file\n"
+        f"        path: {replica_path}\n"
+        "LSYAML\n"
+        'litestream restore -config "$CFG" "$SNAP" >&2\n'
+        'sqlite3 "$SNAP" "PRAGMA page_count;"\n'
+    )
+
+
 def _healthcheck_replica_page_count() -> None:
     """Compare VM1 and VM2 SQLite page_count; exit non-zero if they diverge.
 
     A diverged page count is the clearest symptom of a missed
-    ``inv replica-resync`` after ``inv backup-yadisk-restore``.
+    ``inv replica-resync`` after a restore.
     If ``DINARY_REPLICA_HOST`` is not configured the check is skipped.
     """
     if not _env().get("DINARY_REPLICA_HOST"):
@@ -136,9 +157,7 @@ def _healthcheck_replica_page_count() -> None:
     primary_raw = ssh_capture_bytes(
         sqlite_backup_prologue("dinary-hc-primary") + 'sqlite3 "$SNAP" "PRAGMA page_count;"',
     )
-    replica_raw = ssh_replica_capture_bytes(
-        "sqlite3 /var/lib/litestream/dinary.db 'PRAGMA page_count;' 2>/dev/null || echo 0",
-    )
+    replica_raw = ssh_replica_capture_bytes(_build_replica_page_count_script())
     primary_pages = primary_raw.decode("utf-8", errors="replace").strip()
     replica_pages = replica_raw.decode("utf-8", errors="replace").strip()
     if primary_pages != replica_pages:

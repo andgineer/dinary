@@ -354,10 +354,10 @@ within hours rather than the next morning.
 ## Point-in-time restore from Yandex.Disk
 
 ```bash
-inv backup-cloud-restore --list-only                     # show inventory
-inv backup-cloud-restore                                 # restore latest
-inv backup-cloud-restore --snapshot 2026-03-15           # specific date
-inv backup-cloud-restore --yes                           # skip confirm
+inv restore-cloud-backup --list-only                     # show inventory
+inv restore-cloud-backup                                 # restore latest
+inv restore-cloud-backup --snapshot 2026-03-15           # specific date
+inv restore-cloud-backup --yes                           # skip confirm
 ```
 
 ### Two intended use cases
@@ -371,10 +371,10 @@ inv backup-cloud-restore --yes                           # skip confirm
   (via SSH) when both the local DB and the Litestream replica on
   VM 2 are unusable. The SSH + `cd ~/dinary` + interactive
   confirmation hops are intentional friction so a one-word
-  `inv backup-cloud-restore` on the wrong terminal cannot silently
+  `inv restore-cloud-backup` on the wrong terminal cannot silently
   overwrite prod.
 
-`backup-cloud-restore` is **local-only** — it writes to
+`restore-cloud-backup` is **local-only** — it writes to
 `./data/dinary.db` relative to the cwd and has no `--remote` mode.
 There is no way to invoke it against a remote host from the
 operator machine.
@@ -421,7 +421,7 @@ unusable:
 ssh ubuntu@dinary                       # or the public IP / Tailscale IP
 sudo systemctl stop dinary litestream   # avoid a half-written DB
 cd ~/dinary
-inv backup-cloud-restore --snapshot 2026-03-15
+inv restore-cloud-backup --snapshot 2026-03-15
 # confirmation prompt: shows row count / size / mtime of the
 # current DB plus compressed size of the incoming snapshot, then
 # asks for literal 'yes'.
@@ -436,7 +436,7 @@ directory (so `./data/dinary.db` is the snapshot, not prod):
 ```bash
 cd /tmp/restore-preview
 mkdir -p data
-inv backup-cloud-restore --snapshot 2026-03-15 --yes
+inv restore-cloud-backup --snapshot 2026-03-15 --yes
 sqlite3 data/dinary.db 'SELECT COUNT(*) FROM expense'
 ```
 

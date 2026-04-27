@@ -49,10 +49,10 @@ def deploy(c, ref="", no_start=False):
     By default deploy stops the service, deploys code, and starts it back up
     (migrations run automatically on start).  Pass ``--no-start`` to skip the final start
     so you can replace the DB before the service sees it (e.g. after
-    ``inv backup-cloud-restore``)::
+    ``inv restore-cloud-backup``)::
 
         inv deploy --ref=v0.4.0 --no-start
-        inv backup-cloud-restore
+        inv restore-cloud-backup
         inv restart-server
 
     **Catalog changes**
@@ -146,7 +146,7 @@ def deploy(c, ref="", no_start=False):
         print(
             "=== --no-start set: code deployed, service NOT started. ===\n"
             "=== DB restore flow:                                      ===\n"
-            "===   inv backup-cloud-restore                            ===\n"
+            "===   inv restore-cloud-backup                            ===\n"
             "===   inv restart-server                                  ===\n"
             "=== Full reset flow:                                      ===\n"
             "===   ssh $HOST 'rm -f ~/dinary/data/dinary.db*'          ===\n"

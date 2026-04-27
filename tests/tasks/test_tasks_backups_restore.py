@@ -1,4 +1,4 @@
-"""Tests for ``backup-cloud-restore``: inventory + destructive replace.
+"""Tests for ``restore-cloud-backup``: inventory + destructive replace.
 
 Covers the discovery helpers (``yadisk_list_snapshots``,
 ``pick_snapshot``) and the end-to-end ``restore_from_yadisk`` task,
@@ -29,9 +29,9 @@ from dinary.tools.backup_snapshots import (
 
 
 @allure.epic("Deploy")
-@allure.feature("backup-cloud-restore: inventory + snapshot picker")
+@allure.feature("restore-cloud-backup: inventory + snapshot picker")
 class TestRestoreFromYadiskHelpers:
-    """``backup-cloud-restore`` is split into three helpers so the
+    """``restore-cloud-backup`` is split into three helpers so the
     destructive file-replacement path can be read separately from the
     discovery path. These tests cover the non-destructive helpers
     (list parsing, snapshot picking) — the full task's file-writing
@@ -119,11 +119,11 @@ class TestRestoreFromYadiskHelpers:
 
 
 @allure.epic("Deploy")
-@allure.feature("backup-cloud-restore: task")
+@allure.feature("restore-cloud-backup: task")
 @pytest.mark.skipif(
     sys.platform == "win32",
     reason=(
-        "backup-cloud-restore shells out to the zstd and sqlite3 CLI "
+        "restore-cloud-backup shells out to the zstd and sqlite3 CLI "
         "binaries, which are not on the Windows CI runner path. The "
         "task itself only targets Linux (VM 1) / macOS (operator "
         "laptop), so skipping Windows here matches the deploy matrix."

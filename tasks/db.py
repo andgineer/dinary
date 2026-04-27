@@ -1,15 +1,15 @@
-"""Database tasks: migrate, verify-db, backup."""
+"""Database tasks: migrate, verify-db, restore-primary."""
 
 import base64
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime as _dt
 from pathlib import Path
 
 from invoke import task
 
 from .env import host
+from .restore_utils import apply_restore, confirm_overwrite
 from .ssh_utils import sqlite_backup_prologue, ssh_capture_bytes
 
 
@@ -59,7 +59,7 @@ def verify_db(c, remote=False):  # noqa: ARG001
         db_path = Path("data/dinary.db")
         if not db_path.exists():
             print(
-                f"No local DB at {db_path}; run `inv dev` or `inv backup` first.",
+                f"No local DB at {db_path}; run `inv dev` or `inv restore-primary` first.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -78,39 +78,26 @@ def verify_db(c, remote=False):  # noqa: ARG001
     print("=== verify-db OK ===")
 
 
-@task
-def backup(c):  # noqa: ARG001
-    """Take a consistent SQLite snapshot on the server and download it.
+@task(name="restore-primary")
+def restore_primary(c, output=None, yes=False):  # noqa: ARG001
+    """Download a live consistent snapshot from VM1 and write to data/dinary.db.
 
-    Under SQLite WAL a raw ``scp data/dinary.db`` from a live server
-    would copy a stale main file and miss whatever committed pages
-    only live in the WAL yet — the resulting download would look
-    valid on open (SQLite replays the WAL, if present) but silently
-    lose the tail of the write history.
+    Uses SQLite's online-backup API so the production service keeps writing
+    while the snapshot is taken — no server shutdown needed.
 
-    Instead we invoke ``sqlite3 "$DB" ".backup $SNAP"`` on the server,
-    which uses SQLite's online-backup API and captures a
-    transactionally consistent snapshot while the service keeps
-    writing. The snapshot is written into ``/tmp`` on the server,
-    ``scp``'d home, and torn down via ``trap`` on exit so a failure
-    never leaks a multi-hundred-MB file into ``/tmp``.
-
-    Output lands in ``~/Library/dinary/<ts>/dinary.db`` — matching
-    the default layout so operators can copy the file straight into
-    ``data/`` and point ``inv dev`` at it.
+    Flags:
+        -o / --output PATH   Write to PATH (default: data/dinary.db).
+        --yes                Skip the "type yes to proceed" gate.
     """
-    dest = Path.home() / "Library" / "dinary"
-    ts = _dt.now().strftime("%Y%m%d-%H%M%S")
-    backup_dir = dest / ts
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    deploy_host = host()
-    remote_cmd = sqlite_backup_prologue("dinary-backup") + 'cat "$SNAP"'
+    target = Path(output) if output else Path("data/dinary.db")
+    if target.exists() and target.stat().st_size > 0:
+        confirm_overwrite(target, "live snapshot from VM1", yes)
+    remote_cmd = sqlite_backup_prologue("dinary-restore-primary") + 'cat "$SNAP"'
     b64 = base64.b64encode(remote_cmd.encode()).decode()
-    local_db = backup_dir / "dinary.db"
-    with local_db.open("wb") as fh:
-        subprocess.run(
-            ["ssh", deploy_host, f"echo {b64} | base64 -d | bash"],
-            stdout=fh,
-            check=True,
-        )
-    print(f"Backed up to {local_db}")
+    db_bytes = subprocess.run(
+        ["ssh", host(), f"echo {b64} | base64 -d | bash"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    apply_restore(db_bytes, target)
+    print(f"Restored {len(db_bytes) / 1024:.1f} KB → {target}")

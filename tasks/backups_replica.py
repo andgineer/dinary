@@ -10,6 +10,8 @@ Three layers, all routed through this module:
 * :func:`replica_resync` — post-restore housekeeping that resets the
   replica's WAL position by deleting its stale DB copy and restarting
   litestream so it pulls a fresh restore.
+* :func:`replica_restore_db` — restore a snapshot from VM2's LTX
+  archive and download it to the laptop for inspection or recovery.
 """
 
 from pathlib import Path
@@ -38,6 +40,7 @@ from .constants import (
     VM1_LITESTREAM_KEY_PATH,
 )
 from .env import litestream_retention, replica_host
+from .restore_utils import apply_restore, confirm_overwrite
 from .ssh_utils import (
     build_add_known_host_script,
     build_ensure_vm1_replica_key_script,
@@ -50,6 +53,7 @@ from .ssh_utils import (
     litestream_install_script,
     ssh_capture,
     ssh_replica,
+    ssh_replica_capture_bytes,
     ssh_run,
     ssh_sudo,
     write_remote_file,
@@ -373,7 +377,29 @@ def replica_reset_trust(c):
     print("=== Trust refreshed ===")
 
 
-@task(name="setup-resync")
+def _build_replica_restore_script(timestamp: str | None) -> str:
+    """Emit a bash script that restores from VM2's LTX archive and writes the DB to stdout."""
+    replica_path = f"{REPLICA_LITESTREAM_DIR}/{REPLICA_DB_NAME}"
+    ts_args = f' -timestamp "{timestamp}"' if timestamp else ""
+    return (
+        "set -euo pipefail\n"
+        "WORKDIR=$(mktemp -d)\n"
+        "trap 'rm -rf \"$WORKDIR\"' EXIT\n"
+        'SNAP="$WORKDIR/dinary.db"\n'
+        'CFG="$WORKDIR/ls.yml"\n'
+        'cat > "$CFG" <<LSYAML\n'
+        "dbs:\n"
+        "  - path: $SNAP\n"
+        "    replicas:\n"
+        "      - type: file\n"
+        f"        path: {replica_path}\n"
+        "LSYAML\n"
+        f'litestream restore -config "$CFG"{ts_args} "$SNAP" >&2\n'
+        'cat "$SNAP"\n'
+    )
+
+
+@task(name="replica-resync")
 def replica_resync(c):
     """Resync the replica after a DB restore or WAL txid mismatch.
 
@@ -383,12 +409,12 @@ def replica_resync(c):
     fresh full snapshot to VM2 on the next WAL commit.
 
     Run after:
-      * ``inv backup-cloud-restore`` restores a snapshot from Yadisk
+      * ``inv restore-cloud-backup`` restores a snapshot from Yadisk
         (primary DB now ahead/behind the replica txid counter).
       * The litestream journal shows "detected database behind replica"
         or repeated compaction failures that don't self-heal.
 
-    Run automatically by ``inv backup-cloud-restore`` unless
+    Run automatically by ``inv restore-cloud-backup`` unless
     ``--no-resync`` is passed.
     """
     print("=== Stopping litestream on VM1 ===")
@@ -403,3 +429,33 @@ def replica_resync(c):
         "sudo journalctl -u litestream -n 20 --no-pager",
     )
     print("=== Replica resync done ===")
+
+
+@task(name="restore-replica")
+def restore_replica(c, output=None, yes=False, timestamp=None):  # noqa: ARG001
+    """Restore a snapshot from VM2's Litestream LTX archive and write to data/dinary.db.
+
+    VM2 holds a continuous WAL stream pushed by VM1. This gives a more
+    current snapshot than ``inv restore-cloud`` (which uses daily
+    Yandex.Disk snapshots).
+
+    Flags:
+        -o / --output PATH      Write to PATH (default: data/dinary.db).
+        --yes                   Skip the "type yes to proceed" gate.
+        --timestamp ISO8601     Restore to a specific point in time
+                                (e.g. ``2026-04-27T12:00:00Z``). Default: latest.
+    """
+    target = Path(output) if output else Path("data/dinary.db")
+    incoming_desc = (
+        f"snapshot from VM2 LTX archive at {timestamp}"
+        if timestamp
+        else "latest snapshot from VM2 LTX archive"
+    )
+    if target.exists() and target.stat().st_size > 0:
+        confirm_overwrite(target, incoming_desc, yes)
+    print(f"=== Restoring from {replica_host()} LTX archive ===")
+    if timestamp:
+        print(f"=== Point-in-time: {timestamp} ===")
+    db_bytes = ssh_replica_capture_bytes(_build_replica_restore_script(timestamp))
+    apply_restore(db_bytes, target)
+    print(f"=== Restored {len(db_bytes) / 1024:.1f} KB → {target} ===")

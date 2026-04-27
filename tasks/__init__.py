@@ -4,11 +4,11 @@ import sys
 
 from invoke import Collection
 
-from .backups_replica import replica_reset_trust, replica_resync, setup_replica
+from .backups_replica import replica_reset_trust, replica_resync, restore_replica, setup_replica
 from .backups_restore import restore_from_yadisk
 from .backups_status import backup_status
 from .constants import ALLOWED_DOC_LANGUAGES, ALLOWED_VERSION_TYPES
-from .db import backup, migrate, verify_db
+from .db import migrate, restore_primary, verify_db
 from .deploy import (
     bootstrap_catalog,
     deploy,
@@ -42,7 +42,6 @@ from .server import healthcheck, logs, restart_server, ssh, ssh_replica, status
 from .setup import setup_server
 
 __all__ = [
-    "backup",
     "backup_status",
     "bootstrap_catalog",
     "build_static",
@@ -67,6 +66,8 @@ __all__ = [
     "replica_reset_trust",
     "replica_resync",
     "restore_from_yadisk",
+    "restore_primary",
+    "restore_replica",
     "setup_replica",
     "setup_server",
     "sql_query",

@@ -100,7 +100,7 @@ def _download_and_verify(c, picked, workpath: Path) -> Path:
     return restored
 
 
-@task(name="backup-cloud-restore")
+@task(name="restore-cloud-backup")
 def restore_from_yadisk(c, snapshot="latest", list_only=False, yes=False, no_resync=False):
     """Restore DB from Yandex.Disk snapshots written by the Litestream replica (VM2).
 
