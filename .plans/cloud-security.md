@@ -1,172 +1,165 @@
 # VM1 security audit and hardening plan
 
-Snapshot as of 2026-04-22 of VM1 (Oracle Cloud, public IP
-`130.110.19.227`, hostname `dinary`), plus concrete remediations. All
-commands below are idempotent and safe to replay.
+Items marked **[REGRESSION]** were fixed on the old VM but are
+outstanding again on the new one.
 
 ## Scope
 
 - Target: VM1, the single production server running the `dinary`
-  FastAPI app on SQLite, reachable externally only through Tailscale
-  Serve.
-- Out of scope (for now): VM2, which will host the Litestream SFTP
-  replica per `.plans/storage-migration.md`. The same hardening should
-  apply there when it is provisioned.
+  FastAPI app on SQLite, reachable externally only through Tailscale.
+- Out of scope (for now): VM2 (Litestream replica). The same hardening
+  should apply there when it is provisioned.
 
-## Current posture — what is already correct
+## Current posture — what is correct as of 2026-04-26
 
 - **SSH auth policy**
-  - `PasswordAuthentication no`, `ChallengeResponseAuthentication no`,
-    `KbdInteractiveAuthentication no`, `PubkeyAuthentication yes`.
-  - No password hashes set in `/etc/shadow` for any account — all
-    entries are locked (`!` / `*`).
-  - Modern ciphers and KEX only: chacha20-poly1305, aes-gcm, aes-ctr;
-    curve25519, ecdh-nistp*, sntrup761x25519.
+  - `PasswordAuthentication no`, `KbdInteractiveAuthentication no`,
+    `PubkeyAuthentication yes` (via `/etc/ssh/sshd_config.d/`).
+  - No password hashes for any account.
 
 - **Network perimeter**
-  - Public exposure limited to TCP/22 (SSH). TCP/80 and TCP/8000 are
-    unreachable from outside (verified with an external `curl` → hard
-    timeout).
-  - `iptables INPUT` chain ends in a `REJECT --reject-with
-    icmp-host-prohibited`; before it, only the Tailscale chain
-    (`ts-input`), `RELATED,ESTABLISHED`, `lo`, `icmp`, and `NEW dport
-    22` are accepted.
-  - Oracle Cloud NSG appears to be consistent with this (nothing
-    reaches the VM NIC beyond 22 from the public side).
+  - Public exposure limited to TCP/22 (SSH) and UDP/41641 (Tailscale
+    WireGuard).
+  - `iptables INPUT` ends in `REJECT --reject-with icmp-host-prohibited`;
+    before it: `ts-input` chain, `RELATED,ESTABLISHED`, `lo`, `icmp`,
+    `NEW dport 22`.
+  - Oracle Cloud NSG consistent with this.
 
 - **Application exposure**
-  - `uvicorn` binds **only** to `127.0.0.1:8000`. No public HTTP
-    surface.
-  - External access is exclusively via `tailscale serve` at
-    `https://dinary.tail1e48d.ts.net`, which is tailnet-only (not
-    Tailscale Funnel). Confirmed in `tailscale serve status`.
+  - `uvicorn` binds to Tailscale IP only, not
+    `0.0.0.0`. Port 8000 unreachable from public internet.
+  - `tailscale serve` proxies to `http://127.0.0.1:8000` (tailnet-only, not Funnel).
+  - ExecStart uses shell wrapper with `$(tailscale ip -4)` so the bind
+    address updates automatically on service restart if the Tailscale
+    IP changes.
 
 - **Patching**
-  - `unattended-upgrades` is `enabled` + `active`. Last runs: today,
-    multiple invocations by the systemd timer.
-  - Kernel: `6.8.0-1044-oracle`.
-
-- **AppArmor** — loaded, 29 profiles in use.
+  - `unattended-upgrades` active.
+  - Kernel: `6.8.0-1047-oracle` (uptime 1 day — freshly provisioned).
 
 - **Sudo**
-  - Group `sudo` contains only `ubuntu`.
-  - `/etc/sudoers.d/` has only system-managed files (`cloud-init`,
-    `oracle-cloud-agent`); no ad-hoc rules.
-
-- **Application secrets on disk**
-  - `/home/ubuntu/dinary/.deploy/.env` is mode `600`, owner
-    `ubuntu:ubuntu`.
-  - `/home/ubuntu/dinary/.deploy/import_sources.json` is mode `600`.
-
-- **SSH probe traffic is harmless** — scanners from the internet probe
-  accounts like `admin`, `postgres`, `test`, `ftpuser`, `pedro`. None
-  exist, and password auth is off, so credentialed entry is
-  impossible. The noise pollutes logs but does not create a foothold.
+  - `ubuntu ALL=(ALL) NOPASSWD:ALL` (cloud-init default, only account
+    in `sudo` group).
 
 ## Findings — by priority
 
-### Critical — Google service-account key is world-readable
+### Critical — `.deploy/.env` is world-readable **[REGRESSION]**
+
+```
+-rw-r--r-- 1 root root  /home/ubuntu/dinary/.deploy/.env
+```
+
+File contains deploy secrets (host, API keys, sheet logging tokens).
+Mode `644` + owned by root means it cannot even be fixed by `ubuntu`
+without sudo, and is readable by every process on the box.
+
+Was `600 ubuntu:ubuntu` on the previous VM. Regressed on
+re-provisioning because `inv deploy` runs `rsync` as root (via
+`subprocess.run(["ssh", ...])`) and does not set the target
+permissions.
+
+**Remediation:**
+
+```bash
+'sudo chown ubuntu:ubuntu ~/dinary/.deploy/.env && chmod 600 ~/dinary/.deploy/.env'
+```
+
+**Productisation:** `inv deploy` (or `sync_remote_env`) should `chmod
+600` the file after upload. One-liner fix in `tasks/ssh_utils.py` →
+`sync_remote_env`.
+
+### Critical — `dinary.db` and `data/` are world-readable
+
+```
+-rw-r--r-- 1 ubuntu ubuntu  ~/dinary/data/dinary.db
+-rw-r--r-- 1 ubuntu ubuntu  ~/dinary/data/dinary.db-shm
+drwxrwxr-x 2 ubuntu ubuntu  ~/dinary/data/
+```
+
+The SQLite database (all financial data) is readable by any local
+process. The `data/` directory is also group-writable.
+
+**Remediation:**
+
+```bash
+ssh ubuntu@92.4.162.164 '
+  chmod 700 ~/dinary/data/
+  chmod 600 ~/dinary/data/dinary.db ~/dinary/data/dinary.db-shm ~/dinary/data/dinary.db-wal 2>/dev/null
+'
+```
+
+**Productisation:** `inv deploy` / `inv restart-server` should ensure
+`data/` is `700` and `dinary.db*` are `600` after each start.
+
+### Critical — Google service-account key (status unverified on new VM)
+
+On the old VM:
 
 ```
 -rw-r--r--  /home/ubuntu/.config/gspread/service_account.json
 ```
 
-That file is a **Google API private key** used by `gspread` to
-authenticate against Sheets/Drive. Mode `644` means any local process
-under any UID can read it. The only other human UID on the box is
-`opc` (Oracle default, otherwise unused), but file permissions should
-enforce the invariant regardless.
+Not checked on the new VM during the 2026-04-26 audit. Must be
+verified and fixed before any Google Sheets import is run.
 
-**Remediation** (apply once, idempotent):
+**Remediation:**
 
 ```bash
-ssh ubuntu@130.110.19.227 '
+'
   chmod 600 ~/.config/gspread/service_account.json
   chmod 700 ~/.config/gspread
   ls -la ~/.config/gspread/
 '
 ```
 
-### High — root and opc carry the same SSH key, and `PermitRootLogin without-password`
+### High — root and opc carry the same SSH key **[REGRESSION]**
 
-```
--- ubuntu --  SHA256:Ia/q2L9xgevez9jj81VAg1smct1dC3gMijgtEuHKtjQ andgineer@ya.ru
--- root   --  SHA256:Ia/q2L9xgevez9jj81VAg1smct1dC3gMijgtEuHKtjQ andgineer@ya.ru
--- opc    --  SHA256:Ia/q2L9xgevez9jj81VAg1smct1dC3gMijgtEuHKtjQ andgineer@ya.ru
-```
+Oracle cloud-init default. Problems:
+1. Laptop key compromise → direct root shell, bypassing sudo audit trail.
+2. `opc` is dormant but live entry point.
 
-All three accounts accept the same laptop key. This is the cloud-init
-default on Oracle Ubuntu images. The practical problems:
-
-1. **Sudo audit bypass**: a compromise of the laptop key grants `root`
-   directly, skipping `ubuntu`+`sudo` and the log trail that comes
-   with it.
-2. **Forensics gap**: a `root` SSH session is not bound to a human
-   `last`/`wtmp` record in the same way a `ubuntu → sudo -i` session
-   is.
-3. `opc` is a dormant, unused account that is nevertheless a live
-   entry point.
-
-**Remediation**:
+**Remediation:**
 
 ```bash
-ssh ubuntu@130.110.19.227 '
+'
   sudo truncate -s0 /root/.ssh/authorized_keys
   sudo truncate -s0 /home/opc/.ssh/authorized_keys
   sudo usermod -L -s /usr/sbin/nologin opc
-  sudo sed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin no/" /etc/ssh/sshd_config
+  sudo sed -i "s/^#\?PermitRootLogin.*/PermitRootLogin no/" /etc/ssh/sshd_config
   sudo sshd -t && sudo systemctl reload ssh
   sudo sshd -T | grep -E "^(permitrootlogin|passwordauthentication)"
 '
 ```
 
-After this, only `ubuntu` can SSH in; root is reached strictly through
-`sudo`.
+### Medium — fail2ban not installed **[REGRESSION]**
 
-### Medium — kernel reboot pending
+Was installed and active on the old VM (field-tested: first scanner IP
+banned within ~60 s). Not present on the new VM.
 
-```
-/var/run/reboot-required
-14 upgradable packages
-uptime: 7 days
-```
+**Remediation:** see §"Option 3: fail2ban" below.
 
-`unattended-upgrades` has staged kernel and library updates on disk,
-but they are not active until reboot. The running kernel is carrying
-un-patched code paths.
+### Medium — `X11Forwarding yes` in sshd_config
 
-**Remediation** — schedule a reboot at a quiet hour. `dinary.service`
-is declared `enabled` and will come back up through systemd:
+Not needed for this server. Unnecessary attack surface.
+
+**Remediation:**
 
 ```bash
-ssh ubuntu@130.110.19.227 'sudo shutdown -r +1 "dinary maintenance reboot"'
+'
+  echo "X11Forwarding no" | sudo tee /etc/ssh/sshd_config.d/no-x11.conf
+  sudo systemctl reload ssh
+'
 ```
 
 ### Medium — `dinary.service` has no systemd sandboxing
 
-```
-NoNewPrivileges=no
-ProtectSystem=no
-ProtectHome=no
-PrivateTmp=no
-ProtectKernelTunables=no
-ProtectKernelModules=no
-ProtectKernelLogs=no
-RestrictSUIDSGID=no
-CapabilityBoundingSet=<full root-capable set, 40 capabilities>
-```
-
-The unit runs as `ubuntu` but keeps the full default capability
-bounding set and none of the `Protect*` / `Restrict*` knobs. For a
-Python web app whose only write target is `/home/ubuntu/dinary/data/`
-and whose only network target is outbound HTTPS, this is far more
+The unit runs as `ubuntu` with full default capability bounding set
+and none of the `Protect*` / `Restrict*` knobs. For a Python web app
+whose only write target is `~/dinary/data/`, this is far more
 authority than it needs.
 
-**Remediation** — add the hardening block below to
-`/etc/systemd/system/dinary.service` under `[Service]` (or to whatever
-unit file ships via `inv deploy`), then `systemctl daemon-reload &&
-systemctl restart dinary` and verify with `systemctl show dinary |
-grep Protect`:
+**Remediation** — add to `[Service]` in the unit template
+(`tasks/constants.py` `DINARY_SERVICE`), then ship via `inv deploy`:
 
 ```ini
 NoNewPrivileges=true
@@ -191,60 +184,35 @@ AmbientCapabilities=
 Run the full integration suite after enabling. `MemoryDenyWriteExecute`
 occasionally breaks JITs — shouldn't matter for CPython, but verify.
 
-### Low — public SSH attracts continuous brute-force scanning
-
-- No credentialed entry is possible (password auth off, scanners pick
-  wrong usernames), so this is purely a **log volume** and **CPU on
-  handshake** issue.
-- Log rate today: a few dozen `Invalid user ...` lines per hour.
-- `fail2ban` is not installed.
-
-See §"Log swelling — how to prevent it" below for the recommended
-shape of the fix.
-
-### Low — repo litter with surface read-anybody bits
+### Low — 3 pending apt upgrades
 
 ```
--rw-rw-r-- /home/ubuntu/dinary/.deploy.example/.env
--rw-rw-r-- /home/ubuntu/dinary/.deploy.example/import_sources.json
--rw-r--r-- /home/ubuntu/dinary/._package.json
--rw-r--r-- /home/ubuntu/dinary/._manifest.json
--rw-r--r-- /home/ubuntu/dinary/._.env
+libnetplan0   0.107.1-3ubuntu0.22.04.3
+netplan.io    0.107.1-3ubuntu0.22.04.3
+snapd         2.74.1+ubuntu22.04.4
 ```
 
-- `.deploy.example/` is a **template**, not a secret, but the bits
-  should still be tightened to `640` for hygiene.
-- `._*` files are macOS AppleDouble metadata files that leaked in via
-  `scp` / `rsync` from a Mac. They are not secrets, but they do
-  confuse diff / lint tooling.
+`unattended-upgrades` is active but hasn't run yet on the fresh VM.
+Not critical — no CVE-tagged packages in the list.
 
-**Remediation**:
+### Low — public SSH attracts brute-force scanning
 
-```bash
-ssh ubuntu@130.110.19.227 '
-  chmod 640 /home/ubuntu/dinary/.deploy.example/*
-  find /home/ubuntu/dinary -xdev -name "._*" -delete
-'
-```
-
-Add `._*` to `.gitignore` locally to stop the churn at the source.
+Same as before: password auth is off so no credentialed entry is
+possible, but log noise and CPU overhead remain.
+See §"Log swelling — how to prevent it" below.
 
 ## Log swelling — how to prevent it
 
-The SSH brute-force noise today is the main log source; the choice is
-between eliminating the source and just capping the damage. Listed in
-descending order of impact.
-
 ### Option 1 (tried, reverted): bind SSH to Tailscale only
 
-All administrative access already goes through Tailscale; the laptop
-is in the tailnet. Keeping TCP/22 open on the public interface adds
-zero capability and 100% of the scanner noise.
+All administrative access already goes through Tailscale. Keeping
+TCP/22 on the public interface adds zero capability and 100% of
+scanner noise.
 
 ```bash
-ssh ubuntu@130.110.19.227 '
+'
   sudo tee /etc/ssh/sshd_config.d/10-tailscale-only.conf >/dev/null <<EOF
-ListenAddress 100.110.4.119:22
+ListenAddress 100.86.30.123:22
 ListenAddress 127.0.0.1:22
 EOF
   sudo sshd -t && sudo systemctl reload ssh
@@ -252,41 +220,24 @@ EOF
 '
 ```
 
-After reload, `0.0.0.0:22` disappears from `ss`. Verify you can still
-reach the box via the tailnet name (`ssh ubuntu@dinary`) **from a
-different terminal** before closing the current session.
-
-Break-glass path if Tailscale is ever unreachable: Oracle Cloud
-console exposes a Serial Console that bypasses the network stack.
-
 **Why this was reverted in April 2026.** The posture was applied to
-both VM 1 and VM 2 (the latter via `inv setup-replica` step 4) and
-worked — `ss -tlnp` on each host bound sshd to the Tailscale IPv4 +
-loopback only, public TCP/22 returned `Connection refused`. The
-problem surfaced once the full topology was in place: VM 1's FastAPI
-ingress, its SSH ingress, VM 2's SSH ingress, and the Litestream
-SFTP stream between them all depend on the same `tailscaled`
-processes and the Tailscale coordination server. A single control-
-plane outage, a `tailscaled` crash, or an accidental key-expiry on
-one node would simultaneously take out operator access *and* the
-PWA's data path — with no independent recovery because the
-`ubuntu` user is locked (`passwd -l`) on both hosts, so Oracle Cloud
-Serial Console cannot authenticate the fallback shell. Paying for a
-zero-public-22 posture with that much blast radius is the wrong
-trade-off when the public-22 threat is bot noise, not actual
-compromise (key-only auth already defeats brute-force). Option 3
-below is the durable posture; Option 1 stays documented here as the
-conservative default shipped by `inv setup-server`/`inv setup-replica` so a
-re-bootstrap starts locked down and the operator can opt out
-explicitly by removing the drop-in.
+both VM1 and VM2 and worked at the network level. The problem: VM1's
+FastAPI ingress, SSH ingress, VM2's SSH ingress, and the Litestream
+SFTP stream between them all depend on the same `tailscaled` process
+and Tailscale coordination server. A single control-plane outage, a
+`tailscaled` crash, or accidental key-expiry would simultaneously take
+out operator access and the PWA data path — with no independent
+recovery because the `ubuntu` user is locked (`passwd -l`) on both
+hosts, so Oracle Cloud Serial Console cannot authenticate a fallback
+shell. Option 3 below is the durable posture.
+
+Break-glass path if Tailscale is unreachable: Oracle Cloud Serial
+Console bypasses the network stack.
 
 ### Option 2: keep public 22, rate-limit in iptables
 
-Single pair of rules, no daemon, no memory overhead. Drops a source IP
-that opens 4+ new connections within 60 seconds:
-
 ```bash
-ssh ubuntu@130.110.19.227 '
+'
   sudo iptables -I INPUT -p tcp --dport 22 -m state --state NEW -m recent --set --name SSH
   sudo iptables -I INPUT -p tcp --dport 22 -m state --state NEW -m recent --update --seconds 60 --hitcount 4 --name SSH -j DROP
   sudo netfilter-persistent save 2>/dev/null \
@@ -294,34 +245,14 @@ ssh ubuntu@130.110.19.227 '
 '
 ```
 
-Packets are `DROP`ped before `sshd` sees them, so those attempts never
-generate log lines. Typical scanners try once or twice and move on →
-~90% noise reduction.
-
-### Option 3 (applied): fail2ban
-
-Reads sshd auth events from journald (Ubuntu 22.04's default sink
-for sshd log output; `backend = systemd` is the binding that matches
-what the OS actually writes — picking `auto` or the older `polling`
-on a box that does not maintain `/var/log/auth.log` is the common
-fail2ban-is-silent misconfiguration). After `maxretry` failures
-within `findtime`, the offending IP is banned through a dynamic
-nftables chain. First 2–3 failed-auth lines per scanner are still
-written before the ban lands, but the same IP cannot retry for
-`bantime`:
+### Option 3 (was applied on old VM, needs re-applying): fail2ban
 
 ```bash
-ssh ubuntu@130.110.19.227 '
+'
   sudo apt-get install -y fail2ban
   sudo tee /etc/fail2ban/jail.local >/dev/null <<EOF
 [DEFAULT]
-# Skip tailnet (we do not want to auto-ban operator traffic
-# that loops through the tailnet). 100.64.0.0/10 is the CGNAT
-# range Tailscale allocates to every tailnet node.
 ignoreip = 127.0.0.1/8 ::1 100.64.0.0/10
-# Growing bans: first offence 1d, doubling each repeat up to 30d.
-# Absorbs the steady-state bot noise without the operator having
-# to look at the ban list every day.
 bantime = 1d
 bantime.increment = true
 bantime.factor = 2
@@ -338,26 +269,12 @@ EOF
 '
 ```
 
-Apply on VM 2 in parallel with the same `jail.local` contents.
-`journald` retention (Option 4) is still a good belt-and-suspenders
-even with fail2ban in place — it bounds the worst case if a new
-scanner wave ever outpaces ban issuance.
+Apply on VM2 in parallel with the same `jail.local`.
 
-**Field-tested behaviour.** On VM 1 the first bot-scanner IP got
-banned within ~60 s of the public 22 coming back up (5 failed
-attempts → 1 d ban), so steady-state log growth is dominated by
-fail2ban's own ban-state log rather than sshd auth attempts.
-Re-running the task is safe: the `jail.local` rewrite is
-deterministic and `systemctl enable --now fail2ban` no-ops when the
-unit is already active.
-
-### Option 4 (defense in depth, orthogonal): cap journald retention
-
-Even with Options 1/2/3 in place, cap the worst case so `/` can never
-be filled by log spam from any source:
+### Option 4 (defense in depth): cap journald retention
 
 ```bash
-ssh ubuntu@130.110.19.227 '
+'
   sudo mkdir -p /etc/systemd/journald.conf.d
   sudo tee /etc/systemd/journald.conf.d/retention.conf >/dev/null <<EOF
 [Journal]
@@ -370,39 +287,25 @@ EOF
 '
 ```
 
-Current usage is `112M`, so `200M` headroom absorbs seasonal spikes
-without impacting steady state.
-
 ## Recommended remediation order
 
-1. **Today**: §Critical — `chmod 600` the Google service-account key.
-2. **Today**: §High — wipe root/opc `authorized_keys`, lock `opc`,
+1. **Today — Critical**: `chmod 600` `.deploy/.env` + fix `data/`
+   permissions + verify Google service-account key.
+2. **Today — High**: wipe root/opc `authorized_keys`, lock `opc`,
    `PermitRootLogin no`.
-3. **Done, April 2026**: §Medium (log volume) — Option 3 (fail2ban
-   with systemd backend) + Option 4 (journald caps) applied on both
-   VM 1 and VM 2. Option 1 (Tailscale-only SSH) was attempted first
-   and reverted; see the rationale under "Option 1 (tried, reverted)"
-   above.
-4. **This week**: §Medium (kernel reboot).
-5. **Next deploy cycle**: §Medium — add the sandboxing block to
-   `dinary.service` and ship it via `inv deploy`.
-6. **Cleanup, no urgency**: §Low — repo litter and `.deploy.example`
-   permissions.
+3. **Today — Medium**: disable `X11Forwarding`, reinstall `fail2ban`
+   (regression from old VM).
+4. **This week — Low**: apply pending apt upgrades.
+5. **Next deploy cycle — Medium**: add systemd sandboxing block to
+   `dinary.service` unit template in `tasks/constants.py`, ship via
+   `inv deploy`.
 
 ## Productising the fixes
 
-Where the remediation is a one-liner on a running host (service
-account chmod, SSH Tailscale-only bind, journald retention, root key
-cleanup) it should become an idempotent `inv` task — same pattern as the
-swap setup now handled by `inv setup-server --no-swap`/`inv setup-replica`:
-
-- `inv secure-google-creds` — `chmod 600` the service account JSON.
-- `inv ssh-lockdown` — wipe root/opc keys, lock opc, set
-  `PermitRootLogin no`, bind sshd to Tailscale + loopback.
-- `inv journald-caps` — drop the retention config.
-- Updates to the existing unit template in `.deploy/dinary.service`
-  (or wherever `inv deploy` renders it) — ship the sandboxing block.
-
-Wiring them into `inv setup-server` means VM2, when it is provisioned for
-Litestream, inherits the same posture automatically and we don't
-repeat this audit.
+- `sync_remote_env` in `tasks/ssh_utils.py` → `chmod 600` after upload.
+- `inv deploy` / `inv restart-server` → ensure `data/` is `700`,
+  `dinary.db*` are `600`.
+- `inv setup-server` / `inv setup-replica` → include `fail2ban`
+  install + `jail.local`, `X11Forwarding no` drop-in, root/opc key
+  wipe, `PermitRootLogin no`. This ensures a fresh VM starts hardened
+  without a separate audit run.

@@ -1,111 +1,41 @@
+"""Resolution-pipeline tests for ``exchange_rates`` / ``nbs``.
+
+Pin ``_resolve_from_nbs`` across the full date-shape matrix —
+working-day hit / DB-cache hit / pre-publication walkback,
+weekend → Friday alias, holiday → previous-working-day alias,
+stale-walkback that must NOT alias under the requested date, and
+the no-rate-within-10-days terminal case — plus the Frankfurter
+fallback used for non-RSD pairs.
+
+Sibling :file:`test_currency_rates_misc.py` covers the
+end-to-end ``get_rate`` plumbing, failure-caching DOS guard, and
+``offline=True`` mode short-circuits.
+"""
+
 from datetime import date
 from decimal import Decimal
 from unittest.mock import MagicMock, call, patch
 
 import allure
-import pytest
 
-from dinary.services import db_migrations, ledger_repo, sqlite_types
-from dinary.services.exchange_rates import (
-    _fetch_frankfurter_rate,
-    _resolve_from_frankfurter,
-    get_rate,
+from dinary.services.exchange_rates import _resolve_from_frankfurter
+from dinary.services.nbs import _resolve_from_nbs
+
+from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
+    _CON,
+    _DAY_BEFORE_HOLIDAY,
+    _FRI,
+    _HOLIDAY,
+    _MON,
+    _RATE,
+    _SAT,
+    _SOURCE,
+    _SUN,
+    _TARGET,
+    _TUE,
+    _clear_ttl_caches,
+    nbs_mocks,
 )
-from dinary.services.nbs import _fetch_nbs_rate, _resolve_from_nbs
-
-
-@pytest.fixture(autouse=True)
-def _clear_ttl_caches():
-    """Clear in-memory TTL caches between tests to avoid cross-test pollution."""
-    _fetch_nbs_rate.cache.clear()
-    _fetch_frankfurter_rate.cache.clear()
-    yield
-    _fetch_nbs_rate.cache.clear()
-    _fetch_frankfurter_rate.cache.clear()
-
-
-@allure.epic("Services")
-@allure.feature("Exchange Rate")
-class TestExchangeRate:
-    @patch("dinary.services.rate_helpers.httpx.get")
-    def test_get_rate_fetches_and_stores(self, mock_get, tmp_path):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"exchange_middle": 117.32}
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.status_code = 200
-        mock_get.return_value = mock_resp
-
-        ledger_repo.ensure_data_dir()
-        db_path = tmp_path / "dinary.db"
-        db_migrations.migrate_db(db_path)
-
-        con = sqlite_types.connect(str(db_path))
-        try:
-            rate = get_rate(con, date(2026, 4, 1), "EUR", "RSD")
-            assert rate == Decimal("117.32")
-
-            stored = con.execute(
-                "SELECT rate FROM exchange_rates"
-                " WHERE source_currency = 'EUR' AND target_currency = 'RSD'"
-                " AND date = '2026-04-01'"
-            ).fetchone()
-            assert stored is not None
-        finally:
-            con.close()
-
-    def test_get_rate_identity_for_same_currency(self):
-        """EUR to EUR should return rate 1 without any DB access."""
-        assert get_rate(None, date(2026, 4, 1), "EUR", "EUR") == Decimal(1)
-
-    @patch("dinary.services.rate_helpers.httpx.get")
-    def test_get_rate_rsd_to_eur(self, mock_get, tmp_path):
-        db_path = tmp_path / "dinary.db"
-        db_migrations.migrate_db(db_path)
-
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"exchange_middle": 117.0}
-        mock_get.return_value = mock_resp
-
-        con = sqlite_types.connect(str(db_path))
-        try:
-            rate = get_rate(con, date(2026, 4, 1), "RSD", "EUR")
-            # NBS gives 1 EUR = 117 RSD → 1 RSD = 1/117 EUR
-            assert (Decimal("11700") * rate).quantize(Decimal("0.01")) == Decimal("100.00")
-        finally:
-            con.close()
-
-
-# --- _resolve_from_nbs unit tests ---
-# All external I/O (_get_db_rate, _save_db_rate, _fetch_nbs_rate) is mocked.
-
-# 2025-02-24 Mon, 25 Tue, 28 Fri, Mar 1 Sat, Mar 2 Sun
-_MON = date(2025, 2, 24)
-_TUE = date(2025, 2, 25)
-_FRI = date(2025, 2, 28)
-_SAT = date(2025, 3, 1)
-_SUN = date(2025, 3, 2)
-# 2025-01-01 Wed — Serbian New Year holiday
-_HOLIDAY = date(2025, 1, 1)
-_DAY_BEFORE_HOLIDAY = date(2024, 12, 31)
-
-_SOURCE = "EUR"
-_TARGET = "RSD"
-_RATE = Decimal("117.32")
-_CON = MagicMock(name="con")
-
-
-@pytest.fixture
-def nbs_mocks():
-    with (
-        patch("dinary.services.nbs._get_db_rate") as get_db,
-        patch("dinary.services.nbs._save_db_rate") as save_db,
-        patch("dinary.services.nbs._fetch_nbs_rate") as fetch_nbs,
-    ):
-        get_db.return_value = None
-        fetch_nbs.return_value = None
-        yield get_db, save_db, fetch_nbs
 
 
 @allure.epic("Services")
@@ -277,19 +207,6 @@ class TestResolveWeekendSaturdayCached:
 
 @allure.epic("Services")
 @allure.feature("NBS Exchange Rate")
-@allure.story("_resolve_from_nbs — working day, fetch error then walkback")
-class TestResolveWorkingDayErrorWalkback:
-    """Working day, today's fetch fails — walks back, does NOT alias-store."""
-
-    def test_no_alias_on_working_day(self, nbs_mocks):
-        _, save_db, fetch_nbs = nbs_mocks
-        fetch_nbs.side_effect = lambda d, c: _RATE if d == _MON else None
-        _resolve_from_nbs(_CON, _TUE, _SOURCE, _TARGET)
-        save_db.assert_called_once_with(_CON, _MON, _SOURCE, _TARGET, _RATE)
-
-
-@allure.epic("Services")
-@allure.feature("NBS Exchange Rate")
 @allure.story("_resolve_from_nbs — holiday")
 class TestResolveHoliday:
     """rate_date is a weekday holiday — walks back to previous working day."""
@@ -324,9 +241,6 @@ class TestResolveNoRateFound:
         save_db.assert_not_called()
 
 
-# --- Frankfurter resolution tests ---
-
-
 @allure.epic("Services")
 @allure.feature("Exchange Rate")
 @allure.story("Frankfurter — direct fetch")
@@ -357,76 +271,3 @@ class TestFrankfurterDirect:
         con = MagicMock()
         result = _resolve_from_frankfurter(con, _MON, "USD", "EUR")
         assert result is None
-
-
-# --- failure caching (DOS protection) tests ---
-
-
-@allure.epic("Services")
-@allure.feature("Exchange Rate")
-@allure.story("Failure caching — DOS protection")
-class TestFailureCaching:
-    """HTTP failures MUST be cached for the full TTL so a down upstream is not
-    hammered with retries on every incoming request.
-
-    This is intentional — do NOT change caching to skip ``None`` results.
-    These tests exist to catch that mistake.
-    """
-
-    @patch("dinary.services.nbs._get_json_or_none")
-    def test_nbs_failure_is_cached(self, mock_json):
-        mock_json.return_value = None
-        assert _fetch_nbs_rate(_MON, _SOURCE) is None
-        assert _fetch_nbs_rate(_MON, _SOURCE) is None
-        mock_json.assert_called_once()
-
-    @patch("dinary.services.exchange_rates._get_json_or_none")
-    def test_frankfurter_failure_is_cached(self, mock_json):
-        mock_json.return_value = None
-        assert _fetch_frankfurter_rate(_MON, "USD", "EUR") is None
-        assert _fetch_frankfurter_rate(_MON, "USD", "EUR") is None
-        mock_json.assert_called_once()
-
-
-# --- offline mode tests ---
-
-
-@allure.epic("Services")
-@allure.feature("Exchange Rate")
-@allure.story("get_rate — offline mode")
-class TestGetRateOffline:
-    """offline=True returns DB rate without HTTP calls; falls back to
-    online resolution only when DB has no rate."""
-
-    @patch("dinary.services.exchange_rates._resolve_from_nbs")
-    @patch("dinary.services.exchange_rates._get_db_rate")
-    def test_offline_returns_db_rate_without_fetch(self, mock_db, mock_nbs):
-        mock_db.return_value = _RATE
-        con = MagicMock()
-        result = get_rate(con, _MON, _SOURCE, _TARGET, offline=True)
-        assert result == _RATE
-        mock_nbs.assert_not_called()
-
-    @patch("dinary.services.exchange_rates._resolve_from_frankfurter")
-    @patch("dinary.services.exchange_rates._resolve_from_nbs")
-    @patch("dinary.services.exchange_rates._get_db_rate")
-    def test_offline_falls_back_to_online_when_db_empty(self, mock_db, mock_nbs, mock_frank):
-        mock_db.return_value = None
-        mock_nbs.return_value = _RATE
-        con = MagicMock()
-        result = get_rate(con, _MON, _SOURCE, _TARGET, offline=True)
-        assert result == _RATE
-        mock_nbs.assert_called_once()
-
-    @patch("dinary.services.exchange_rates._resolve_from_nbs")
-    @patch("dinary.services.exchange_rates._get_db_rate")
-    def test_online_does_not_check_db_first(self, mock_db, mock_nbs):
-        mock_nbs.return_value = _RATE
-        con = MagicMock()
-        result = get_rate(con, _MON, _SOURCE, _TARGET, offline=False)
-        assert result == _RATE
-        mock_db.assert_not_called()
-
-    def test_offline_identity_no_db_call(self):
-        result = get_rate(None, _MON, "EUR", "EUR", offline=True)
-        assert result == Decimal(1)

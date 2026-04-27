@@ -3,11 +3,13 @@
 import asyncio
 from unittest.mock import Mock, patch
 
+import allure
 import pytest
 
 from dinary.config import settings
 from dinary.main import _lifespan, create_app
 from dinary.services import ledger_repo, sheet_logging
+from dinary import __version__
 
 
 @pytest.fixture(autouse=True)
@@ -29,6 +31,15 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+@allure.epic("Build")
+@allure.feature("Version")
+def test_version():
+    assert __version__
+
+
+@allure.epic("Background Tasks")
+@allure.feature("Sheet logging drain loop")
+@allure.story("Drain runs on each tick when enabled")
 def test_periodic_drain_runs(monkeypatch):
     """Drain runs immediately + on each tick when enabled."""
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0.05)
@@ -62,6 +73,9 @@ def test_periodic_drain_runs(monkeypatch):
     assert mock_drain.call_count >= 2
 
 
+@allure.epic("Background Tasks")
+@allure.feature("Sheet logging drain loop")
+@allure.story("No-op when interval=0")
 def test_disabled_by_interval(monkeypatch):
     """No-op when interval=0."""
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0)
@@ -83,6 +97,9 @@ def test_disabled_by_interval(monkeypatch):
     assert mock_drain.call_count == 0
 
 
+@allure.epic("Background Tasks")
+@allure.feature("Sheet logging drain loop")
+@allure.story("No-op when sheet logging disabled")
 def test_disabled_by_sheet_logging(monkeypatch):
     """No-op when sheet logging is not enabled."""
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0.05)
@@ -104,6 +121,9 @@ def test_disabled_by_sheet_logging(monkeypatch):
     assert mock_drain.call_count == 0
 
 
+@allure.epic("Background Tasks")
+@allure.feature("Sheet logging drain loop")
+@allure.story("Loop survives a failing sweep")
 def test_failing_sweep_does_not_kill_loop(monkeypatch):
     """Loop survives a failing sweep."""
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0.05)
@@ -145,6 +165,9 @@ def test_failing_sweep_does_not_kill_loop(monkeypatch):
     assert call_count >= 2
 
 
+@allure.epic("Background Tasks")
+@allure.feature("Sheet logging drain loop")
+@allure.story("Clean cancellation on shutdown")
 def test_cancel_on_shutdown_is_clean(monkeypatch):
     """Task ends cleanly after lifespan exit, with no leaked warnings."""
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0.05)
@@ -186,6 +209,9 @@ def test_cancel_on_shutdown_is_clean(monkeypatch):
     assert task_ref.cancelled()
 
 
+@allure.epic("Background Tasks")
+@allure.feature("Sheet logging drain loop")
+@allure.story("notify_new_work wakes the loop immediately")
 def test_notify_new_work_wakes_drain_immediately(monkeypatch):
     """`notify_new_work` kicks the drain loop without waiting for the timer.
 
@@ -244,6 +270,9 @@ def test_notify_new_work_wakes_drain_immediately(monkeypatch):
     assert call_count >= 2  # noqa: PLR2004
 
 
+@allure.epic("Background Tasks")
+@allure.feature("Sheet logging drain loop")
+@allure.story("notify_new_work no-op without registered channel")
 def test_notify_new_work_without_registered_channel_is_noop():
     """Calling `notify_new_work` outside a lifespan must not raise."""
     sheet_logging.clear_wake_channel()

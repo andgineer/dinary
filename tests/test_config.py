@@ -8,12 +8,15 @@ import warnings
 from pathlib import Path
 from unittest.mock import patch
 
+import allure
 import pytest
 
 from dinary import config
 from dinary.imports import expense_import
 
 
+@allure.epic("Config")
+@allure.feature("Deprecated env vars")
 class TestDeprecatedEnvWarnings:
     @pytest.mark.parametrize(
         ("old_name", "new_name"),
@@ -81,6 +84,9 @@ def _reset_import_sources_cache():
     config._import_sources_cache = None
 
 
+@allure.epic("Config")
+@allure.feature("Import sources file")
+@allure.story("read_import_sources contract")
 class TestReadImportSources:
     """Contract tests for the file-backed import-sources loader.
 
@@ -250,6 +256,9 @@ class TestReadImportSources:
         assert config.get_import_source(1999) is None
 
 
+@allure.epic("Config")
+@allure.feature("Import sources file")
+@allure.story("ImportSourceRow dataclass shape")
 class TestImportSourceRow:
     def test_is_frozen_dataclass(self):
         row = config.ImportSourceRow(year=2026, spreadsheet_id="x")
@@ -265,6 +274,9 @@ class TestImportSourceRow:
         assert row.income_layout_key == ""
 
 
+@allure.epic("Config")
+@allure.feature("Import sources file")
+@allure.story("Fail-loud entry points when file missing")
 class TestFailLoudWhenSourcesMissing:
     """The import entry points must raise an actionable error when the
     operator tries to run an import task without
