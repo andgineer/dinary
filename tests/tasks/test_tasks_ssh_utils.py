@@ -17,6 +17,35 @@ import tasks.ssh_utils
 from tasks.ssh_utils import remote_snapshot_cmd, systemd_quote
 
 
+def _real_bash_available():
+    """Whether a real, executable POSIX ``bash`` is on PATH.
+
+    ``shutil.which("bash")`` alone is not enough on Windows: the
+    runner ships a ``bash.exe`` WSL stub even without an installed
+    distribution, and that stub prints a UTF-16 banner ("Windows
+    Subsystem for Linux has no installed distributions") and exits
+    1 for every command. Probe with a trivial ``echo ok`` so the
+    skip-condition tracks actual capability, not just PATH presence.
+    """
+    bash = shutil.which("bash")
+    if bash is None:
+        return False
+    try:
+        result = subprocess.run(
+            [bash, "-c", "echo ok"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and result.stdout.strip() == "ok"
+
+
+_BASH_AVAILABLE = _real_bash_available()
+
+
 @allure.epic("Deploy")
 @allure.feature("systemd EnvironmentFile quoting")
 class TestSystemdQuote:
@@ -91,12 +120,14 @@ class TestRemoteSnapshotCmd:
         assert "uv run python -m dinary.reports.expenses --year 2026 --csv" in cmd
 
     @pytest.mark.skipif(
-        shutil.which("bash") is None,
+        not _BASH_AVAILABLE,
         reason=(
             "regression for 527623d62 must run through a real bash because the "
             "remote transport executes the generated cmd via "
-            "``... | base64 -d | bash`` — there is no point asserting against a "
-            "Python-level shell-tokenizer stand-in"
+            "``... | base64 -d | bash`` — Windows runners typically ship only "
+            "the WSL ``bash.exe`` stub which exits non-zero without an installed "
+            "distribution, so we probe with ``bash -c 'echo ok'`` and skip when "
+            "no usable bash is on PATH"
         ),
     )
     def test_remote_sql_flags_survive_real_bash_tokenization(self):
