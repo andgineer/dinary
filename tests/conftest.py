@@ -1,4 +1,5 @@
 import shutil
+import socket
 import sqlite3
 import unittest.mock
 
@@ -7,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from dinary.config import settings
 from dinary.main import create_app
-from dinary.services import db_migrations, ledger_repo, sheet_mapping
+from dinary.services import db_migrations, ledger_repo, rate_helpers, sheet_mapping
 
 _REAL_ENSURE_FRESH = sheet_mapping.ensure_fresh
 
@@ -20,6 +21,13 @@ def _migration_connect(self, dburi):
     con.execute("PRAGMA synchronous=OFF")
     con.execute("PRAGMA busy_timeout=5000")
     return con
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _stub_socket_getfqdn():
+    """Prevent yoyo's migration logger from hanging on macOS CI reverse-DNS."""
+    with unittest.mock.patch.object(socket, "getfqdn", return_value="localhost"):
+        yield
 
 
 @pytest.fixture(scope="session")
@@ -135,7 +143,11 @@ def client():
     flips the client to production-like behavior: unhandled exceptions go
     through Starlette's error-handling middleware and come back as 500 with
     an empty body, just like a deployed instance would see.
+
+    ``_get_json_or_none`` is stubbed so the ``rate_prefetch_task`` background
+    task started by the lifespan never reaches kurs.resenje.org.
     """
-    app = create_app()
-    with TestClient(app, raise_server_exceptions=False) as c:
-        yield c
+    with unittest.mock.patch.object(rate_helpers, "_get_json_or_none", return_value=None):
+        app = create_app()
+        with TestClient(app, raise_server_exceptions=False) as c:
+            yield c

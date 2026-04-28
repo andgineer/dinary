@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import RetryError, retry, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def _get_json_or_none(url: str, **kwargs) -> dict | None:
     """_get_json_with_retry with exceptions as None."""
     try:
         return _get_json_with_retry(url, **kwargs)
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, ValueError, RetryError):
         logger.debug("HTTP fetch failed for %s, backing off %ds", url, _FETCH_RATE_CACHE_TIME)
         return None
 
