@@ -17,6 +17,10 @@ env:
   PYTHONUTF8: '1'
   PYTEST_CMD: >-
     python -m pytest
+    -v
+    --log-cli-level=DEBUG
+    --log-cli-date-format="%H:%M:%S.%f"
+    --log-cli-format="%(asctime)s %(levelname)s %(name)s %(message)s"
     --junitxml=pytest.xml
     --cov-report=term-missing:skip-covered
     --cov=src
