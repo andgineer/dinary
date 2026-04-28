@@ -24,7 +24,7 @@ import allure
 from dinary.config import settings
 from dinary.services import sheet_mapping
 
-from _admin_catalog_helpers import _tmp_db  # noqa: F401  (autouse)
+from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 
 
 @allure.epic("API")

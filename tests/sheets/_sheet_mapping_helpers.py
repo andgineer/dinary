@@ -7,6 +7,7 @@ into each split file rather than promoted to ``conftest.py``) so the
 per-test DB-path override does not leak into sibling tests.
 """
 
+import shutil
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,10 +16,11 @@ from dinary.services import ledger_repo
 
 
 @pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
+def db(tmp_path, monkeypatch, blank_db):
+    dst = tmp_path / "dinary.db"
+    shutil.copy(blank_db, dst)
     monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
-    ledger_repo.init_db()
+    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
     con = ledger_repo.get_connection()
     try:
         con.execute(
@@ -64,4 +66,4 @@ def _fake_sheet(ws):
     return sh
 
 
-__all__ = ["_catalog", "_fake_sheet", "_fake_worksheet", "_tmp_db"]
+__all__ = ["_catalog", "_fake_sheet", "_fake_worksheet", "db"]

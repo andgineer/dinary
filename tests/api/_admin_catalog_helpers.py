@@ -10,16 +10,19 @@ in each split file (we deliberately avoid promoting it to
 non-admin suites).
 """
 
+import shutil
+
 import pytest
 
 from dinary.services import ledger_repo
 
 
 @pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
+def db(tmp_path, monkeypatch, blank_db):
+    dst = tmp_path / "dinary.db"
+    shutil.copy(blank_db, dst)
     monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
-    ledger_repo.init_db()
+    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
     con = ledger_repo.get_connection()
     try:
         con.execute(
@@ -30,4 +33,4 @@ def _tmp_db(tmp_path, monkeypatch):
         con.close()
 
 
-__all__ = ["_tmp_db"]
+__all__ = ["db"]

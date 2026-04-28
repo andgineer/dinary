@@ -11,6 +11,7 @@ silently rewritten).
 """
 
 import contextlib
+import shutil
 import threading
 from decimal import Decimal
 from unittest.mock import patch
@@ -61,15 +62,12 @@ def _mock_get_rate(con, rate_date, source, target, *, offline=False):
 
 
 @pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    """Point the repo at a fresh per-test DB and seed a minimal catalog.
-
-    The ``client`` fixture's lifespan calls ``init_db`` again, which is
-    idempotent and reuses the already-migrated file in ``tmp_path``.
-    """
+def db(tmp_path, monkeypatch, blank_db):
+    """Point the repo at a fresh per-test DB and seed a minimal catalog."""
+    dst = tmp_path / "dinary.db"
+    shutil.copy(blank_db, dst)
     monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
-    ledger_repo.init_db()
+    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
 
     con = ledger_repo.get_connection()
     try:
@@ -105,4 +103,4 @@ def _tmp_db(tmp_path, monkeypatch):
         con.close()
 
 
-__all__ = ["_count_race_recoveries", "_mock_get_rate", "_tmp_db"]
+__all__ = ["_count_race_recoveries", "_mock_get_rate", "db"]

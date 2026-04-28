@@ -8,6 +8,7 @@ per-test DB-path override and the circuit-breaker reset do not leak
 into sibling tests.
 """
 
+import shutil
 from datetime import datetime
 from decimal import Decimal
 
@@ -18,7 +19,7 @@ from dinary.services import ledger_repo, sheet_logging
 
 
 @pytest.fixture(autouse=True)
-def _tmp_data_dir(tmp_path, monkeypatch):
+def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
     monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
     monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "test-spreadsheet-id")
@@ -35,14 +36,14 @@ def _reset_backoff():
 
 
 @pytest.fixture
-def setup() -> int:
+def setup(tmp_path, blank_db) -> int:
     """Seed the unified DB with one expense and its queue row.
 
     Returns the integer PK of that expense — the sheet-logging layer
     now keys queue rows on ``expenses.id`` rather than on a legacy
     string id.
     """
-    ledger_repo.init_db()
+    shutil.copy(blank_db, tmp_path / "dinary.db")
     con = ledger_repo.get_connection()
     try:
         con.execute(
@@ -112,4 +113,4 @@ def _expense_row(
     )
 
 
-__all__ = ["_expense_row", "_reset_backoff", "_tmp_data_dir", "setup"]
+__all__ = ["_expense_row", "_reset_backoff", "data_dir", "setup"]

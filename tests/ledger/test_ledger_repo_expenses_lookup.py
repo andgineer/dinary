@@ -9,7 +9,7 @@ import allure
 from dinary.services import ledger_repo
 
 from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
-    _tmp_data_dir,
+    data_dir,
     fresh_db,
     populated_catalog,
 )

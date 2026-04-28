@@ -6,6 +6,8 @@ skipped/unresolved/error counters). Resolution, rendering, and CLI
 dispatch live in sibling ``test_report_2d_3d_*.py`` files.
 """
 
+import shutil
+
 import allure
 
 from dinary.imports import report_2d_3d as report_module
@@ -21,7 +23,7 @@ from dinary.services import ledger_repo
 from _report_2d_3d_helpers import (  # noqa: F401  (autouse + helper)
     _seed_catalog,
     _stub_import_sources,
-    _tmp_data_dir,
+    data_dir,
 )
 
 
@@ -104,8 +106,8 @@ class TestBuildSummary:
 @allure.epic("Report")
 @allure.feature("Detail collection")
 class TestCollectDetailRows:
-    def test_collects_resolved_rows_for_year(self, monkeypatch):
-        _seed_catalog()
+    def test_collects_resolved_rows_for_year(self, monkeypatch, blank_db):
+        _seed_catalog(blank_db)
 
         seen_years: list[int] = []
 
@@ -156,8 +158,8 @@ class TestCollectDetailRows:
         assert by_cat["еда"].tags == "собака"
         assert by_cat["мобильник"].resolution_kind == "mapping"
 
-    def test_unresolved_row_increments_skipped(self, monkeypatch):
-        _seed_catalog()
+    def test_unresolved_row_increments_skipped(self, monkeypatch, blank_db):
+        _seed_catalog(blank_db)
 
         def fake_iter(_year, *, con=None):
             yield ParsedSheetRow(
@@ -183,10 +185,10 @@ class TestCollectDetailRows:
         assert stats.rows == 0
         assert stats.skipped_unresolved + stats.skipped_errors == 1
 
-    def test_unresolved_row_lands_in_skipped_unresolved_bucket(self, monkeypatch):
+    def test_unresolved_row_lands_in_skipped_unresolved_bucket(self, monkeypatch, blank_db):
         """Unknown-but-syntactically-valid 2D pairs land in
         ``skipped_unresolved``, not ``skipped_errors``."""
-        _seed_catalog()
+        _seed_catalog(blank_db)
 
         def fake_iter(_year, *, con=None):
             yield ParsedSheetRow(
@@ -212,10 +214,10 @@ class TestCollectDetailRows:
         assert stats.skipped_unresolved == 1
         assert stats.skipped_errors == 0
 
-    def test_missing_resolution_context_skips_year(self, monkeypatch):
+    def test_missing_resolution_context_skips_year(self, monkeypatch, blank_db):
         """No catalog seeded → build_resolution_context returns None and
         the year is skipped without consulting the iterator."""
-        ledger_repo.init_db()
+        shutil.copy(blank_db, ledger_repo.DB_PATH)
 
         called = {"value": False}
 
@@ -232,9 +234,9 @@ class TestCollectDetailRows:
         assert called["value"] is False
         assert stats.skipped_years == 1
 
-    def test_iter_exception_skips_year_only(self, monkeypatch):
+    def test_iter_exception_skips_year_only(self, monkeypatch, blank_db):
         """A failure in iter_parsed_sheet_rows must not abort the run."""
-        _seed_catalog()
+        _seed_catalog(blank_db)
 
         def fake_iter(year, *, con=None):
             if year == 2024:
@@ -263,9 +265,9 @@ class TestCollectDetailRows:
         assert stats.skipped_years == 1
         assert stats.rows == 0
 
-    def test_iter_exception_in_one_year_does_not_abort_others(self, monkeypatch):
+    def test_iter_exception_in_one_year_does_not_abort_others(self, monkeypatch, blank_db):
         """Failure in year N must not prevent year N+1 from producing rows."""
-        _seed_catalog()
+        _seed_catalog(blank_db)
         # Seed an additional vacation event so 2025 also has a valid
         # resolution context. Without this, build_resolution_context
         # would itself skip 2025 and we couldn't tell the two skip

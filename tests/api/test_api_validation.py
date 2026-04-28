@@ -9,7 +9,7 @@ import allure
 
 from dinary.services import ledger_repo
 
-from _api_helpers import _mock_get_rate, _tmp_db  # noqa: F401  (autouse + helper)
+from _api_helpers import _mock_get_rate, db  # noqa: F401  (autouse + helper)
 
 
 @allure.epic("API")

@@ -22,7 +22,7 @@ from dinary.services import sheet_logging
 from _sheet_logging_helpers import (  # noqa: F401  (autouse + helper)
     _expense_row,
     _reset_backoff,
-    _tmp_data_dir,
+    data_dir,
 )
 
 

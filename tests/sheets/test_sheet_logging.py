@@ -25,7 +25,7 @@ from dinary.services import ledger_repo, sheet_logging
 
 from _sheet_logging_helpers import (  # noqa: F401  (autouse + fixtures)
     _reset_backoff,
-    _tmp_data_dir,
+    data_dir,
     setup,
 )
 

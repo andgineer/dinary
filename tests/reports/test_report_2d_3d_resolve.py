@@ -14,15 +14,15 @@ from dinary.services import ledger_repo
 from _report_2d_3d_helpers import (  # noqa: F401  (autouse + helper)
     _seed_catalog,
     _stub_import_sources,
-    _tmp_data_dir,
+    data_dir,
 )
 
 
 @allure.epic("Report")
 @allure.feature("Row resolution")
 class TestResolveRowTo3d:
-    def test_mapping_resolution_kind(self):
-        _seed_catalog()
+    def test_mapping_resolution_kind(self, blank_db):
+        _seed_catalog(blank_db)
         con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
@@ -44,8 +44,8 @@ class TestResolveRowTo3d:
         finally:
             con.close()
 
-    def test_event_from_mapping(self):
-        _seed_catalog()
+    def test_event_from_mapping(self, blank_db):
+        _seed_catalog(blank_db)
         con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
@@ -65,9 +65,9 @@ class TestResolveRowTo3d:
         finally:
             con.close()
 
-    def test_heuristic_detection_small_amount(self):
+    def test_heuristic_detection_small_amount(self, blank_db):
         """Amount < 200 EUR on 'аренда'+'релокация' → 'коммунальные' via heuristic."""
-        _seed_catalog()
+        _seed_catalog(blank_db)
         con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
@@ -87,9 +87,9 @@ class TestResolveRowTo3d:
         finally:
             con.close()
 
-    def test_no_heuristic_for_large_amount(self):
+    def test_no_heuristic_for_large_amount(self, blank_db):
         """Amount >= 200 EUR on 'аренда'+'релокация' stays 'аренда'."""
-        _seed_catalog()
+        _seed_catalog(blank_db)
         con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
@@ -109,8 +109,8 @@ class TestResolveRowTo3d:
         finally:
             con.close()
 
-    def test_beneficiary_tag_added(self):
-        _seed_catalog()
+    def test_beneficiary_tag_added(self, blank_db):
+        _seed_catalog(blank_db)
         con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
@@ -130,8 +130,8 @@ class TestResolveRowTo3d:
         finally:
             con.close()
 
-    def test_returns_none_for_unknown_pair(self):
-        _seed_catalog()
+    def test_returns_none_for_unknown_pair(self, blank_db):
+        _seed_catalog(blank_db)
         con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
@@ -153,8 +153,8 @@ class TestResolveRowTo3d:
 @allure.epic("Report")
 @allure.feature("Post-import fix simulation")
 class TestPostImportFixViaResolve:
-    def test_comment_keyed_fix_overrides_mapping(self):
-        _seed_catalog()
+    def test_comment_keyed_fix_overrides_mapping(self, blank_db):
+        _seed_catalog(blank_db)
         con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(
@@ -175,8 +175,8 @@ class TestPostImportFixViaResolve:
         finally:
             con.close()
 
-    def test_unmatched_comment_keeps_mapping(self):
-        _seed_catalog()
+    def test_unmatched_comment_keeps_mapping(self, blank_db):
+        _seed_catalog(blank_db)
         con = ledger_repo.get_connection()
         try:
             result = resolve_row_to_3d(

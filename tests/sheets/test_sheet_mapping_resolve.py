@@ -25,7 +25,7 @@ from dinary.services import ledger_repo, sheet_mapping
 
 from _sheet_mapping_helpers import (  # noqa: F401  (autouse + helpers)
     _catalog,
-    _tmp_db,
+    db,
 )
 
 

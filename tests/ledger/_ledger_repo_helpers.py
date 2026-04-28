@@ -11,20 +11,22 @@ sibling tests that point at the real ``DATA_DIR`` or run against a
 mocked repo.
 """
 
+import shutil
+
 import pytest
 
 from dinary.services import ledger_repo
 
 
 @pytest.fixture(autouse=True)
-def _tmp_data_dir(tmp_path, monkeypatch):
+def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
     monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
 
 
 @pytest.fixture
-def fresh_db():
-    ledger_repo.init_db()
+def fresh_db(tmp_path, blank_db):
+    shutil.copy(blank_db, tmp_path / "dinary.db")
 
 
 @pytest.fixture
@@ -71,4 +73,4 @@ def populated_catalog(fresh_db):
         con.close()
 
 
-__all__ = ["_tmp_data_dir", "fresh_db", "populated_catalog"]
+__all__ = ["data_dir", "fresh_db", "populated_catalog"]

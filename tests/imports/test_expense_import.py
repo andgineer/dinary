@@ -1,5 +1,6 @@
 """Tests for the bootstrap budget import against the unified dinary.db."""
 
+import shutil
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -14,7 +15,7 @@ from dinary.services import ledger_repo
 
 
 @pytest.fixture(autouse=True)
-def _tmp_data_dir(tmp_path, monkeypatch):
+def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
     monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
 
@@ -39,7 +40,7 @@ def _stub_import_sources(monkeypatch):
     monkeypatch.setattr(config, "read_import_sources", lambda: list(rows))
 
 
-def _seed_catalog():
+def _seed_catalog(db_template):
     """Seed the minimum catalog needed by ``import_year(2026)``.
 
     ``import_year`` requires per-year synthetic vacation and business
@@ -47,7 +48,7 @@ def _seed_catalog():
     trip) and ``"релокация-в-Сербию"`` — the importer looks them up by
     name.
     """
-    ledger_repo.init_db()
+    shutil.copy(db_template, ledger_repo.DB_PATH)
     con = ledger_repo.get_connection()
     try:
         con.execute(
@@ -129,8 +130,8 @@ class TestImportYear:
         side_effect=_mock_prefetch_rates,
     )
     @patch("dinary.imports.expense_import.get_sheet")
-    def test_imports_rows_with_3d_dimensions(self, mock_sheet, _mr):
-        _seed_catalog()
+    def test_imports_rows_with_3d_dimensions(self, mock_sheet, _mr, blank_db):
+        _seed_catalog(blank_db)
         mock_sheet.return_value = _mock_sheet()
 
         result = import_year(2026)
@@ -159,8 +160,8 @@ class TestImportYear:
         side_effect=_mock_prefetch_rates,
     )
     @patch("dinary.imports.expense_import.get_sheet")
-    def test_attaches_tags_from_mapping(self, mock_sheet, _mr):
-        _seed_catalog()
+    def test_attaches_tags_from_mapping(self, mock_sheet, _mr, blank_db):
+        _seed_catalog(blank_db)
         mock_sheet.return_value = _mock_sheet()
         import_year(2026)
 
@@ -180,8 +181,8 @@ class TestImportYear:
         side_effect=_mock_prefetch_rates,
     )
     @patch("dinary.imports.expense_import.get_sheet")
-    def test_does_not_enqueue_logging_jobs(self, mock_sheet, _mr):
-        _seed_catalog()
+    def test_does_not_enqueue_logging_jobs(self, mock_sheet, _mr, blank_db):
+        _seed_catalog(blank_db)
         mock_sheet.return_value = _mock_sheet()
         import_year(2026)
 
@@ -196,8 +197,8 @@ class TestImportYear:
         side_effect=_mock_prefetch_rates,
     )
     @patch("dinary.imports.expense_import.get_sheet")
-    def test_re_import_is_destructive(self, mock_sheet, _mr):
-        _seed_catalog()
+    def test_re_import_is_destructive(self, mock_sheet, _mr, blank_db):
+        _seed_catalog(blank_db)
         mock_sheet.return_value = _mock_sheet()
         first = import_year(2026)
         second = import_year(2026)
@@ -224,12 +225,13 @@ class TestImportYear:
         self,
         mock_sheet,
         _mr,
+        blank_db,
     ):
         """If ``sheet_logging_jobs`` has pending rows from a prior runtime
         session, ``DELETE FROM expenses`` would fail with an FK violation
         (queue rows FK into ``expenses.id`` with no ON DELETE CASCADE).
         The fix deletes queue rows for *year* first."""
-        _seed_catalog()
+        _seed_catalog(blank_db)
         mock_sheet.return_value = _mock_sheet()
         import_year(2026)
 
@@ -263,11 +265,12 @@ class TestImportYear:
         mock_sheet,
         _mr,
         monkeypatch,
+        blank_db,
     ):
         """When ``_resolve_dimensions`` raises (e.g. a tag goes missing
         on the no-mapping fallback), the exception is caught per-row so
         the rest of the sheet still imports."""
-        _seed_catalog()
+        _seed_catalog(blank_db)
         mock_sheet.return_value = _mock_sheet()
 
         real_resolve = expense_import._resolve_dimensions

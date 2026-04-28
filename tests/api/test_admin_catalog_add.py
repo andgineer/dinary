@@ -13,7 +13,7 @@ reload-map plumbing (:file:`test_admin_catalog_meta.py`).
 
 import allure
 
-from _admin_catalog_helpers import _tmp_db  # noqa: F401  (autouse)
+from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 
 
 @allure.epic("API")

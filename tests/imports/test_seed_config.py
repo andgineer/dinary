@@ -54,7 +54,7 @@ SAMPLE_IMPORT_SOURCES = [
 
 
 @pytest.fixture(autouse=True)
-def _tmp_data_dir(tmp_path, monkeypatch):
+def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
     monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
 

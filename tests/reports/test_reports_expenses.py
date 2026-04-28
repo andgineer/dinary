@@ -3,6 +3,7 @@
 import argparse
 import io
 import json
+import shutil
 from decimal import Decimal
 
 import allure
@@ -13,7 +14,7 @@ from dinary.services import ledger_repo
 
 
 @pytest.fixture(autouse=True)
-def _tmp_data_dir(tmp_path, monkeypatch):
+def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
     monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
 
@@ -57,8 +58,8 @@ def _seed_catalog(con) -> None:
 
 
 @pytest.fixture
-def _seeded_con():
-    ledger_repo.init_db()
+def _seeded_con(tmp_path, blank_db):
+    shutil.copy(blank_db, tmp_path / "dinary.db")
     con = ledger_repo.get_connection()
     try:
         _seed_catalog(con)

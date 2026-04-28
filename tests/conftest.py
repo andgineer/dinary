@@ -1,11 +1,41 @@
+import shutil
+import sqlite3
+import unittest.mock
+
 import pytest
 from fastapi.testclient import TestClient
 
 from dinary.config import settings
 from dinary.main import create_app
-from dinary.services import ledger_repo, sheet_mapping
+from dinary.services import db_migrations, ledger_repo, sheet_mapping
 
 _REAL_ENSURE_FRESH = sheet_mapping.ensure_fresh
+
+
+def _migration_connect(self, dburi):
+    con = sqlite3.connect(
+        str(self.uri.database), detect_types=sqlite3.PARSE_DECLTYPES, isolation_level=None
+    )
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA synchronous=OFF")
+    con.execute("PRAGMA busy_timeout=5000")
+    return con
+
+
+@pytest.fixture(scope="session")
+def blank_db(tmp_path_factory):
+    path = tmp_path_factory.mktemp("db_template") / "dinary.db"
+    with unittest.mock.patch.object(db_migrations.SQLiteBackend, "connect", _migration_connect):
+        db_migrations.migrate_db(path)
+    return path
+
+
+@pytest.fixture
+def db(tmp_path, monkeypatch, blank_db):
+    dst = tmp_path / "dinary.db"
+    shutil.copy(blank_db, dst)
+    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
 
 
 def _reset_db_singleton() -> None:

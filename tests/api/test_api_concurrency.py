@@ -22,7 +22,7 @@ from dinary.services import ledger_repo
 from _api_helpers import (  # noqa: F401  (autouse + helpers)
     _count_race_recoveries,
     _mock_get_rate,
-    _tmp_db,
+    db,
 )
 
 

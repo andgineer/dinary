@@ -2,6 +2,7 @@
 
 import io
 import json
+import shutil
 from decimal import Decimal
 
 import allure
@@ -12,7 +13,7 @@ from dinary.services import ledger_repo
 
 
 @pytest.fixture(autouse=True)
-def _tmp_data_dir(tmp_path, monkeypatch):
+def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
     monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
 
@@ -38,8 +39,8 @@ def _seed_income(con) -> None:
 
 
 @pytest.fixture
-def _seeded_con():
-    ledger_repo.init_db()
+def _seeded_con(tmp_path, blank_db):
+    shutil.copy(blank_db, tmp_path / "dinary.db")
     con = ledger_repo.get_connection()
     try:
         _seed_income(con)
@@ -68,8 +69,8 @@ class TestAggregate:
         years = [r.year for r in rows]
         assert years == sorted(years, reverse=True)
 
-    def test_empty_income_table_returns_empty_list(self):
-        ledger_repo.init_db()
+    def test_empty_income_table_returns_empty_list(self, tmp_path, blank_db):
+        shutil.copy(blank_db, tmp_path / "dinary.db")
         con = ledger_repo.get_connection()
         try:
             rows = income_report.aggregate_income(con)

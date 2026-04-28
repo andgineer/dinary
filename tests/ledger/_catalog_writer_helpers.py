@@ -7,6 +7,7 @@ the per-call SQLite path override does not bleed into sibling
 non-catalog suites that have their own DB autouse machinery.
 """
 
+import shutil
 from datetime import datetime
 
 import pytest
@@ -17,10 +18,11 @@ _DT = datetime(2026, 4, 20, 10, 0, 0)
 
 
 @pytest.fixture
-def fresh_db(tmp_path, monkeypatch):
+def fresh_db(tmp_path, monkeypatch, blank_db):
+    dst = tmp_path / "dinary.db"
+    shutil.copy(blank_db, dst)
     monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
-    ledger_repo.init_db()
+    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
 
 
 def _seed_minimal(con):
