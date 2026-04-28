@@ -29,7 +29,7 @@
 | src/dinary/services/ledger\_repo.py           |      275 |       30 |     89% |62-63, 287-296, 304-310, 637, 672, 778, 784, 818, 845-854, 876-883, 1019-1020, 1036-1042, 1107 |
 | src/dinary/services/nbs.py                    |       47 |        0 |    100% |           |
 | src/dinary/services/qr\_parser.py             |       16 |        1 |     94% |        31 |
-| src/dinary/services/rate\_helpers.py          |       30 |        6 |     80% |26, 35-37, 68-74 |
+| src/dinary/services/rate\_helpers.py          |       30 |        2 |     93% |     68-74 |
 | src/dinary/services/seed\_config.py           |      137 |        7 |     95% |220-221, 515-517, 556-560 |
 | src/dinary/services/sheet\_logging.py         |      217 |       49 |     77% |96-100, 114-121, 129, 195, 199-201, 257-263, 276-278, 282-296, 325-326, 370, 435-436, 457-475, 484, 488 |
 | src/dinary/services/sheet\_mapping.py         |      252 |       54 |     79% |274, 346-348, 375-376, 383-389, 439, 442-454, 468-469, 479-497, 574-581, 609-661, 689, 700-705 |
@@ -40,7 +40,7 @@
 | src/dinary/tools/backup\_snapshots.py         |       79 |        7 |     91% |157, 213-218 |
 | src/dinary/tools/report\_helpers.py           |       30 |       10 |     67% |     44-53 |
 | src/dinary/tools/sql.py                       |       71 |        3 |     96% |86, 176, 183 |
-| **TOTAL**                                     | **4273** |  **961** | **78%** |           |
+| **TOTAL**                                     | **4273** |  **957** | **78%** |           |
 
 
 ## Setup coverage badge
