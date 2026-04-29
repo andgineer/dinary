@@ -15,12 +15,13 @@ env:
   # ``UnicodeDecodeError: 'charmap' codec can't decode byte 0x81``
   # failures at fixture-collection time.
   PYTHONUTF8: '1'
+  # for debug add
+  #     -v
+  #    --log-cli-level=DEBUG
+  #    --log-cli-date-format="%H:%M:%S.%f"
+  #    --log-cli-format="%(asctime)s %(levelname)s %(name)s %(message)s"
   PYTEST_CMD: >-
     python -m pytest
-    -v
-    --log-cli-level=DEBUG
-    --log-cli-date-format="%H:%M:%S.%f"
-    --log-cli-format="%(asctime)s %(levelname)s %(name)s %(message)s"
     --junitxml=pytest.xml
     --cov-report=term-missing:skip-covered
     --cov=src
