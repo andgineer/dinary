@@ -1,0 +1,1 @@
+2026-04-28 12:56:44,562 DEBUG    dinary.services.ledger_repo — BEGIN IMMEDIATE lost the write-lock race claiming 1

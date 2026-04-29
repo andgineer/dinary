@@ -1,0 +1,5 @@
+INFO     dinary.services.ledger_repo:ledger_repo.py:299 anchored accounting_currency=EUR in app_metadata
+INFO     dinary.background.sheet_logging_task:sheet_logging_task.py:64 sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+INFO     dinary.services.ledger_repo:ledger_repo.py:908 insert_expense conflict for client_expense_id='e_cat_change': diff=category_id: stored=1 incoming=2
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"

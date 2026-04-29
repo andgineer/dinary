@@ -1,0 +1,23 @@
+2026-04-27 16:41:23,017 INFO     yoyo.migrations — Applying 0001_initial_schema
+2026-04-27 16:41:23,017 INFO     yoyo.migrations —  - applying step 0
+2026-04-27 16:41:23,017 INFO     yoyo.migrations —  - applying step 1
+2026-04-27 16:41:23,017 INFO     yoyo.migrations —  - applying step 2
+2026-04-27 16:41:23,018 INFO     yoyo.migrations —  - applying step 3
+2026-04-27 16:41:23,018 INFO     yoyo.migrations —  - applying step 4
+2026-04-27 16:41:23,018 INFO     yoyo.migrations —  - applying step 5
+2026-04-27 16:41:23,018 INFO     yoyo.migrations —  - applying step 6
+2026-04-27 16:41:23,018 INFO     yoyo.migrations —  - applying step 7
+2026-04-27 16:41:23,019 INFO     yoyo.migrations —  - applying step 8
+2026-04-27 16:41:23,019 INFO     yoyo.migrations —  - applying step 9
+2026-04-27 16:41:23,019 INFO     yoyo.migrations —  - applying step 10
+2026-04-27 16:41:23,019 INFO     yoyo.migrations —  - applying step 11
+2026-04-27 16:41:23,019 INFO     yoyo.migrations —  - applying step 12
+2026-04-27 16:41:23,020 INFO     yoyo.migrations —  - applying step 13
+2026-04-27 16:41:23,020 INFO     yoyo.migrations —  - applying step 14
+2026-04-27 16:41:23,022 INFO     yoyo.migrations — Marking 0001_initial_schema applied
+2026-04-27 16:41:23,022 INFO     yoyo.migrations — Applying 0002_exchange_rates_source_target
+2026-04-27 16:41:23,023 INFO     yoyo.migrations —  - applying step 0
+2026-04-27 16:41:23,023 INFO     yoyo.migrations —  - applying step 1
+2026-04-27 16:41:23,025 INFO     yoyo.migrations — Marking 0002_exchange_rates_source_target applied
+2026-04-27 16:41:23,027 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-27 16:41:23,034 INFO     dinary.services.sheet_mapping — sheet_mapping reloaded: {'row_count': 1, 'modified_time': '2026-04-20T10:00:00Z', 'tab': 'map', 'modified_time_cached': True}

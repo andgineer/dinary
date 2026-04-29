@@ -1,0 +1,3 @@
+2026-04-29 07:39:20,259 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 07:39:20,262 INFO     dinary.imports.expense_import — Applied post-import fixes for 2026
+2026-04-29 07:39:20,267 INFO     dinary.imports.expense_import — Applied post-import fixes for 2026

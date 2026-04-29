@@ -1,0 +1,4 @@
+2026-04-28 06:42:45,866 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 06:42:45,867 INFO     dinary.background.sheet_logging_task — sheet-logging task started: interval=0.05s
+2026-04-28 06:42:45,868 DEBUG    dinary.background.sheet_logging_task — drain sweep: {'years': 0, 'attempted': 0, 'appended': 0, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}
+2026-04-28 06:42:45,919 DEBUG    dinary.background.sheet_logging_task — drain sweep: {'years': 0, 'attempted': 0, 'appended': 0, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}

@@ -1,0 +1,6 @@
+2026-04-29 04:26:28,114 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 04:26:28,115 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 04:26:28,120 INFO     dinary.services.catalog_writer — catalog_writer add_category(name='mapped-only'): bumped catalog_version
+2026-04-29 04:26:28,123 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/categories "HTTP/1.1 200 OK"
+2026-04-29 04:26:28,127 INFO     dinary.services.catalog_writer — catalog_writer delete_category(soft id=1): bumped catalog_version
+2026-04-29 04:26:28,129 INFO     httpx — HTTP Request: DELETE http://testserver/api/admin/catalog/categories/1 "HTTP/1.1 200 OK"

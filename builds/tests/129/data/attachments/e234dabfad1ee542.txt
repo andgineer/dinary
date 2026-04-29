@@ -1,0 +1,11 @@
+2026-04-29 08:45:32,402 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 08:45:32,403 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 08:45:32,422 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-29: 0.008517
+2026-04-29 08:45:32,424 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-29 08:45:32,426 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-29 08:45:32,427 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-29 08:45:32,428 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-29 08:45:32,430 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-29 08:45:32,431 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-29 08:45:32,433 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-29 08:45:32,438 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"

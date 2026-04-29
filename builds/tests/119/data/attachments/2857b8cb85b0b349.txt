@@ -1,0 +1,27 @@
+2026-04-27 10:49:31,033 INFO     yoyo.migrations — Applying 0001_initial_schema
+2026-04-27 10:49:31,034 INFO     yoyo.migrations —  - applying step 0
+2026-04-27 10:49:31,034 INFO     yoyo.migrations —  - applying step 1
+2026-04-27 10:49:31,034 INFO     yoyo.migrations —  - applying step 2
+2026-04-27 10:49:31,034 INFO     yoyo.migrations —  - applying step 3
+2026-04-27 10:49:31,034 INFO     yoyo.migrations —  - applying step 4
+2026-04-27 10:49:31,035 INFO     yoyo.migrations —  - applying step 5
+2026-04-27 10:49:31,035 INFO     yoyo.migrations —  - applying step 6
+2026-04-27 10:49:31,035 INFO     yoyo.migrations —  - applying step 7
+2026-04-27 10:49:31,035 INFO     yoyo.migrations —  - applying step 8
+2026-04-27 10:49:31,036 INFO     yoyo.migrations —  - applying step 9
+2026-04-27 10:49:31,036 INFO     yoyo.migrations —  - applying step 10
+2026-04-27 10:49:31,036 INFO     yoyo.migrations —  - applying step 11
+2026-04-27 10:49:31,036 INFO     yoyo.migrations —  - applying step 12
+2026-04-27 10:49:31,036 INFO     yoyo.migrations —  - applying step 13
+2026-04-27 10:49:31,037 INFO     yoyo.migrations —  - applying step 14
+2026-04-27 10:49:31,039 INFO     yoyo.migrations — Marking 0001_initial_schema applied
+2026-04-27 10:49:31,039 INFO     yoyo.migrations — Applying 0002_exchange_rates_source_target
+2026-04-27 10:49:31,040 INFO     yoyo.migrations —  - applying step 0
+2026-04-27 10:49:31,040 INFO     yoyo.migrations —  - applying step 1
+2026-04-27 10:49:31,041 INFO     yoyo.migrations — Marking 0002_exchange_rates_source_target applied
+2026-04-27 10:49:31,044 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-27 10:49:31,077 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-27 10:49:31,083 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-27: 0.008516
+2026-04-27 10:49:31,085 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-27 10:49:31,088 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e3': diff=amount: stored=Decimal('50') incoming=Decimal('99.0'); amount_original: stored=Decimal('50') incoming=Decimal('99.0')
+2026-04-27 10:49:31,089 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"

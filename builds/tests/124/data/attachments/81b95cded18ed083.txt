@@ -1,0 +1,15 @@
+2026-04-28 10:49:35,614 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 10:49:35,643 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-28 10:49:35,645 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-28 10:49:35,660 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-28: 0.008517
+2026-04-28 10:49:35,661 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-28 10:49:35,662 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('12') incoming=Decimal('13.0'); amount_original: stored=Decimal('12') incoming=Decimal('13.0')
+2026-04-28 10:49:35,664 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"
+2026-04-28 10:49:35,664 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('12') incoming=Decimal('15.0'); amount_original: stored=Decimal('12') incoming=Decimal('15.0')
+2026-04-28 10:49:35,665 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"
+2026-04-28 10:49:35,667 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('12') incoming=Decimal('11.0'); amount_original: stored=Decimal('12') incoming=Decimal('11.0')
+2026-04-28 10:49:35,668 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"
+2026-04-28 10:49:35,669 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('12') incoming=Decimal('10.0'); amount_original: stored=Decimal('12') incoming=Decimal('10.0')
+2026-04-28 10:49:35,670 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"
+2026-04-28 10:49:35,678 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('12') incoming=Decimal('14.0'); amount_original: stored=Decimal('12') incoming=Decimal('14.0')
+2026-04-28 10:49:35,681 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"

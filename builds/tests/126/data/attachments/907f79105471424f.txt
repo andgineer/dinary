@@ -1,0 +1,13 @@
+2026-04-29 04:26:29,550 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 04:26:29,551 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 04:26:29,570 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-29 04:26:29,571 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('10') incoming=Decimal('14.0'); amount_original: stored=Decimal('10') incoming=Decimal('14.0')
+2026-04-29 04:26:29,572 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"
+2026-04-29 04:26:29,572 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('10') incoming=Decimal('15.0'); amount_original: stored=Decimal('10') incoming=Decimal('15.0')
+2026-04-29 04:26:29,573 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"
+2026-04-29 04:26:29,574 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('10') incoming=Decimal('11.0'); amount_original: stored=Decimal('10') incoming=Decimal('11.0')
+2026-04-29 04:26:29,575 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"
+2026-04-29 04:26:29,576 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('10') incoming=Decimal('12.0'); amount_original: stored=Decimal('10') incoming=Decimal('12.0')
+2026-04-29 04:26:29,577 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"
+2026-04-29 04:26:29,577 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('10') incoming=Decimal('13.0'); amount_original: stored=Decimal('10') incoming=Decimal('13.0')
+2026-04-29 04:26:29,579 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"

@@ -1,0 +1,8 @@
+2026-04-29 04:26:28,234 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 04:26:28,235 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 04:26:28,240 INFO     dinary.services.catalog_writer — catalog_writer add_tag(name='auto-only'): bumped catalog_version
+2026-04-29 04:26:28,242 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/tags "HTTP/1.1 200 OK"
+2026-04-29 04:26:28,245 INFO     dinary.services.catalog_writer — catalog_writer add_event(name='trip-with-auto-tag'): bumped catalog_version
+2026-04-29 04:26:28,248 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/events "HTTP/1.1 200 OK"
+2026-04-29 04:26:28,251 INFO     dinary.services.catalog_writer — catalog_writer delete_tag(soft id=1): bumped catalog_version
+2026-04-29 04:26:28,253 INFO     httpx — HTTP Request: DELETE http://testserver/api/admin/catalog/tags/1 "HTTP/1.1 200 OK"

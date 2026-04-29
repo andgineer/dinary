@@ -1,0 +1,1 @@
+2026-04-28 12:56:43,236 INFO     dinary.imports.report_2d_3d — Year 2024: collected 2 detail rows

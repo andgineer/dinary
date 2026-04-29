@@ -1,0 +1,6 @@
+INFO     dinary.services.ledger_repo:ledger_repo.py:299 anchored accounting_currency=EUR in app_metadata
+INFO     dinary.background.sheet_logging_task:sheet_logging_task.py:64 sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+INFO     dinary.services.catalog_writer:catalog_writer.py:282 catalog_writer add_tag(name='drop-me'): bumped catalog_version
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/admin/catalog/tags "HTTP/1.1 200 OK"
+INFO     dinary.services.catalog_writer:catalog_writer.py:282 catalog_writer delete_tag(hard id=1): bumped catalog_version
+INFO     httpx:_client.py:1025 HTTP Request: DELETE http://testserver/api/admin/catalog/tags/1 "HTTP/1.1 200 OK"

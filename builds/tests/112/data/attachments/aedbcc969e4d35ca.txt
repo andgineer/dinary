@@ -1,0 +1,4 @@
+=== Installing Litestream binary ===
+=== Uploading /tmp/pytest-of-runner/pytest-0/test_chown_and_chmod_run_insid0/litestream.yml to /etc/litestream.yml ===
+=== Creating litestream systemd service ===
+=== Checking status ===

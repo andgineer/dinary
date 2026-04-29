@@ -1,0 +1,8 @@
+2026-04-28 10:49:34,337 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 10:49:34,343 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-28 10:49:34,344 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-28 10:49:34,350 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-28: 0.008517
+2026-04-28 10:49:34,351 INFO     dinary.services.catalog_writer — catalog_writer add_event(name='mapped-event'): bumped catalog_version
+2026-04-28 10:49:34,354 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/events "HTTP/1.1 200 OK"
+2026-04-28 10:49:34,359 INFO     dinary.services.catalog_writer — catalog_writer delete_event(soft id=1): bumped catalog_version
+2026-04-28 10:49:34,362 INFO     httpx — HTTP Request: DELETE http://testserver/api/admin/catalog/events/1 "HTTP/1.1 200 OK"

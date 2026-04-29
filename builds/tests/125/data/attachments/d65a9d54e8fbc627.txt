@@ -1,0 +1,1 @@
+INFO     dinary.services.sheets:sheets.py:538 Inserted logging row at 7 for month 12 (Food/Essentials)

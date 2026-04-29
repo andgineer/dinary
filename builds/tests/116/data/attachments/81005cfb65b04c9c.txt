@@ -1,0 +1,25 @@
+2026-04-26 19:30:37,075 INFO     yoyo.migrations — Applying 0001_initial_schema
+2026-04-26 19:30:37,076 INFO     yoyo.migrations —  - applying step 0
+2026-04-26 19:30:37,076 INFO     yoyo.migrations —  - applying step 1
+2026-04-26 19:30:37,076 INFO     yoyo.migrations —  - applying step 2
+2026-04-26 19:30:37,076 INFO     yoyo.migrations —  - applying step 3
+2026-04-26 19:30:37,076 INFO     yoyo.migrations —  - applying step 4
+2026-04-26 19:30:37,077 INFO     yoyo.migrations —  - applying step 5
+2026-04-26 19:30:37,077 INFO     yoyo.migrations —  - applying step 6
+2026-04-26 19:30:37,077 INFO     yoyo.migrations —  - applying step 7
+2026-04-26 19:30:37,077 INFO     yoyo.migrations —  - applying step 8
+2026-04-26 19:30:37,077 INFO     yoyo.migrations —  - applying step 9
+2026-04-26 19:30:37,078 INFO     yoyo.migrations —  - applying step 10
+2026-04-26 19:30:37,078 INFO     yoyo.migrations —  - applying step 11
+2026-04-26 19:30:37,078 INFO     yoyo.migrations —  - applying step 12
+2026-04-26 19:30:37,078 INFO     yoyo.migrations —  - applying step 13
+2026-04-26 19:30:37,079 INFO     yoyo.migrations —  - applying step 14
+2026-04-26 19:30:37,080 INFO     yoyo.migrations — Marking 0001_initial_schema applied
+2026-04-26 19:30:37,081 INFO     yoyo.migrations — Applying 0002_exchange_rates_source_target
+2026-04-26 19:30:37,081 INFO     yoyo.migrations —  - applying step 0
+2026-04-26 19:30:37,082 INFO     yoyo.migrations —  - applying step 1
+2026-04-26 19:30:37,083 INFO     yoyo.migrations — Marking 0002_exchange_rates_source_target applied
+2026-04-26 19:30:37,086 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-26 19:30:37,118 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-26 19:30:37,125 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-26: 0.008516
+2026-04-26 19:30:37,126 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"

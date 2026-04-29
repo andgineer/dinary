@@ -1,0 +1,13 @@
+INFO     dinary.services.ledger_repo:ledger_repo.py:299 anchored accounting_currency=EUR in app_metadata
+ERROR    dinary.imports.expense_import:expense_import.py:1220 Failed to resolve dimensions for ('еда', 'собака') in year 2026
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/imports/expense_import.py", line 1208, in import_year
+    resolved = _resolve_dimensions(
+        con,
+    ...<7 lines>...
+        relocation_event_id=ctx.relocation_event_id,
+    )
+  File "/home/runner/work/dinary/dinary/tests/imports/test_expense_import.py", line 283, in flaky_resolve
+    raise ValueError(msg)
+ValueError: tag 'phantom' not found in tags; re-seed required
+INFO     dinary.imports.expense_import:expense_import.py:1025 Applied post-import fixes for 2026

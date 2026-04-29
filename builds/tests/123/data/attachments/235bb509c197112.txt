@@ -1,0 +1,61 @@
+INFO     yoyo.migrations:base.py:527 Applying 0001_initial_schema
+INFO     yoyo.migrations:migrations.py:402  - applying step 0
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'CREATE TABLE category_groups (\n    id         INTEGER PRIMARY KEY,\n    name       TEXT UNIQUE NOT NULL,\n    sort_order INTEGER NOT NULL,\n    is_active  BOOLEAN NOT NULL DEFAULT 1\n);'
+INFO     yoyo.migrations:migrations.py:402  - applying step 1
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'CREATE TABLE categories (\n    id        INTEGER PRIMARY KEY,\n    name      TEXT UNIQUE NOT NULL,\n    group_id  INTEGER REFERENCES category_groups(id),\n    is_active BOOLEAN NOT NULL DEFAULT 1,\n    sheet_name  TEXT,\n    sheet_group TEXT\n);'
+INFO     yoyo.migrations:migrations.py:402  - applying step 2
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'-- ``auto_tags`` is a JSON array of tag names (e.g. \'["??????"]\'). When a\n-- runtime expense attaches an event, the listed tags are unioned into the\n-- expense\'s tag set both at POST time and during historical import. Empty\n-- array (default) means the event contributes no automatic tags.\nCREATE TABLE events (\n    id                  INTEGER PRIMARY KEY,\n    name                TEXT UNIQUE NOT NULL,\n    date_from           DATE NOT NULL,\n    date_to             DATE NOT NULL,\n    auto_attach_enabled BOOLEAN NOT NULL DEFAULT 0,\n    is_active           BOOLEAN NOT NULL DEFAULT 1,\n    auto_tags           TEXT NOT NULL DEFAULT \'[]\'\n);'
+INFO     yoyo.migrations:migrations.py:402  - applying step 3
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'CREATE TABLE tags (\n    id        INTEGER PRIMARY KEY,\n    name      TEXT UNIQUE NOT NULL,\n    is_active BOOLEAN NOT NULL DEFAULT 1\n);'
+INFO     yoyo.migrations:migrations.py:402  - applying step 4
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'CREATE TABLE exchange_rates (\n    currency TEXT NOT NULL,\n    date     DATE NOT NULL,\n    rate     DECIMAL(18,6) NOT NULL,\n    PRIMARY KEY (currency, date)\n);'
+INFO     yoyo.migrations:migrations.py:402  - applying step 5
+DEBUG    yoyo.migrations:migrations.py:375  - executing b"-- NOTE: ``import_sources`` used to live here as a per-year source\n-- registry. It has been moved out of the DB entirely ? the operator's\n-- local file ``.deploy/import_sources.json`` is now the sole source of\n-- truth. The file is OPTIONAL and only consumed by ``inv import-*``\n-- tasks; runtime (POST /api/expenses, sheet logging, map reload)\n-- never reads it. See ``dinary.config.read_import_sources`` and the\n-- repo-root ``imports/`` directory.\n\nCREATE TABLE import_mapping (\n    id             INTEGER PRIMARY KEY,\n    year           INTEGER NOT NULL DEFAULT 0,\n    sheet_category TEXT NOT NULL,\n    sheet_group    TEXT NOT NULL DEFAULT '',\n    category_id    INTEGER NOT NULL REFERENCES categories(id),\n    event_id       INTEGER REFERENCES events(id),\n    UNIQUE (year, sheet_category, sheet_group)\n);"
+INFO     yoyo.migrations:migrations.py:402  - applying step 6
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'CREATE TABLE import_mapping_tags (\n    mapping_id INTEGER NOT NULL REFERENCES import_mapping(id),\n    tag_id     INTEGER NOT NULL REFERENCES tags(id),\n    PRIMARY KEY (mapping_id, tag_id)\n);'
+INFO     yoyo.migrations:migrations.py:402  - applying step 7
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'-- ``sheet_mapping`` is the ordered, five-column runtime map that projects a\n-- 3D expense (category, event, tags) onto the 2D sheet columns\n-- (???????, ???????). Evaluated top-to-bottom by ``row_order``:\n--\n--   * ``category_id IS NULL`` / ``event_id IS NULL`` mean "wildcard" (any).\n--     A row with explicit ids only matches when every id matches.\n--   * ``sheet_mapping_tags`` is a required-set filter: the row matches only\n--     when every listed tag is present on the expense.\n--   * ``sheet_category`` / ``sheet_group`` carry two semantically distinct\n--     states: literal ``\'*\'`` ("don\'t decide, inherit from a later row" ?\n--     the map-tab parser also normalises empty / whitespace-only cells\n--     to ``\'*\'``, so the two surface shapes mean the same thing) and any\n--     other value (explicit assignment ? including the empty string,\n--     though that would have to be inserted directly into the table\n--     since the parser can never produce it). The resolver takes the\n--     first non-``*`` value per column independently.\n--\n-- Final fallbacks (applied only when no row assigned a value for a column):\n-- ``sheet_category`` defaults to the category\'s canonical name;\n-- ``sheet_group`` defaults to the empty string.\nCREATE TABLE sheet_mapping (\n    row_order      INTEGER PRIMARY KEY,\n    category_id    INTEGER REFERENCES categories(id),\n    event_id       INTEGER REFERENCES events(id),\n    sheet_category TEXT NOT NULL,\n    sheet_group    TEXT NOT NULL\n);'
+INFO     yoyo.migrations:migrations.py:402  - applying step 8
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'-- NOTE: ``sheet_mapping_tags.mapping_row_order`` deliberately does NOT\n-- carry a FOREIGN KEY to ``sheet_mapping(row_order)``. The two tables\n-- form a cache of the ``map`` Google Sheet tab, atomically wiped and\n-- repopulated by ``sheet_mapping._atomic_swap`` on every reload.\n-- Keeping the FK off is safe because the cache is derived state owned\n-- by one module: orphans are harmless because the Python-side\n-- ``logging_projection`` consumer reads the tag set for each row\n-- through a separate SELECT and naturally yields an empty set for any\n-- orphan, and every successful ``_atomic_swap`` reinserts both tables\n-- under one transaction so orphans cannot persist across a successful\n-- reload.\nCREATE TABLE sheet_mapping_tags (\n    mapping_row_order INTEGER NOT NULL,\n    tag_id            INTEGER NOT NULL REFERENCES tags(id),\n    PRIMARY KEY (mapping_row_order, tag_id)\n);'
+INFO     yoyo.migrations:migrations.py:402  - applying step 9
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'CREATE TABLE app_metadata (\n    key   TEXT PRIMARY KEY,\n    value TEXT NOT NULL\n);'
+INFO     yoyo.migrations:migrations.py:402  - applying step 10
+DEBUG    yoyo.migrations:migrations.py:375  - executing b"INSERT INTO app_metadata (key, value) VALUES ('catalog_version', '1');"
+INFO     yoyo.migrations:migrations.py:402  - applying step 11
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'-- =========================================================================\n-- Ledger tables\n-- =========================================================================\n\n-- SQLite assigns autoincrementing PKs automatically for INTEGER PRIMARY KEY\n-- columns; AUTOINCREMENT is used explicitly to forbid id reuse after DELETE,\n-- keeping the audit trail monotonic across re-imports.\nCREATE TABLE expenses (\n    id                 INTEGER PRIMARY KEY AUTOINCREMENT,\n    client_expense_id  TEXT UNIQUE,\n    datetime           TIMESTAMP NOT NULL,\n    amount             DECIMAL(12,2) NOT NULL,\n    amount_original    DECIMAL(12,2) NOT NULL,\n    currency_original  TEXT NOT NULL,\n    category_id        INTEGER NOT NULL REFERENCES categories(id),\n    event_id           INTEGER REFERENCES events(id),\n    comment            TEXT,\n    sheet_category     TEXT,\n    sheet_group        TEXT\n);'
+INFO     yoyo.migrations:migrations.py:402  - applying step 12
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'CREATE TABLE expense_tags (\n    expense_id INTEGER NOT NULL REFERENCES expenses(id),\n    tag_id     INTEGER NOT NULL REFERENCES tags(id),\n    PRIMARY KEY (expense_id, tag_id)\n);'
+INFO     yoyo.migrations:migrations.py:402  - applying step 13
+DEBUG    yoyo.migrations:migrations.py:375  - executing b"CREATE TABLE sheet_logging_jobs (\n    expense_id  INTEGER PRIMARY KEY REFERENCES expenses(id),\n    status      TEXT NOT NULL DEFAULT 'pending',\n    claim_token TEXT,\n    claimed_at  TIMESTAMP,\n    last_error  TEXT,\n    CHECK (status IN ('pending', 'in_progress', 'poisoned'))\n);"
+INFO     yoyo.migrations:migrations.py:402  - applying step 14
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'CREATE TABLE income (\n    year   INTEGER NOT NULL,\n    month  INTEGER NOT NULL,\n    amount DECIMAL(12,2) NOT NULL,\n    PRIMARY KEY (year, month),\n    CHECK (month BETWEEN 1 AND 12)\n);'
+INFO     yoyo.migrations:base.py:557 Marking 0001_initial_schema applied
+INFO     yoyo.migrations:base.py:527 Applying 0002_exchange_rates_source_target
+INFO     yoyo.migrations:migrations.py:402  - applying step 0
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'DROP TABLE IF EXISTS exchange_rates;'
+INFO     yoyo.migrations:migrations.py:402  - applying step 1
+DEBUG    yoyo.migrations:migrations.py:375  - executing b'CREATE TABLE exchange_rates (\n    date             DATE NOT NULL,\n    source_currency  TEXT NOT NULL,\n    target_currency  TEXT NOT NULL,\n    rate             DECIMAL(18,6) NOT NULL,\n    PRIMARY KEY (date, source_currency, target_currency)\n);'
+INFO     yoyo.migrations:base.py:557 Marking 0002_exchange_rates_source_target applied
+INFO     dinary.services.ledger_repo:ledger_repo.py:299 anchored accounting_currency=EUR in app_metadata
+DEBUG    asyncio:selector_events.py:64 Using selector: EpollSelector
+INFO     dinary.background.sheet_logging_task:sheet_logging_task.py:64 sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+INFO     dinary.services.catalog_writer:catalog_writer.py:282 catalog_writer add_tag(name='t1'): bumped catalog_version
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/admin/catalog/tags "HTTP/1.1 200 OK"
+DEBUG    httpcore.connection:_trace.py:47 connect_tcp.started host='kurs.resenje.org' port=443 local_address=None timeout=10 socket_options=None
+DEBUG    httpcore.connection:_trace.py:47 connect_tcp.complete return_value=<httpcore._backends.sync.SyncStream object at 0x7efed7c73230>
+DEBUG    httpcore.connection:_trace.py:47 start_tls.started ssl_context=<ssl.SSLContext object at 0x7efed7c20cd0> server_hostname='kurs.resenje.org' timeout=10
+DEBUG    httpcore.connection:_trace.py:47 start_tls.complete return_value=<httpcore._backends.sync.SyncStream object at 0x7efed7c9e990>
+DEBUG    httpcore.http11:_trace.py:47 send_request_headers.started request=<Request [b'GET']>
+DEBUG    httpcore.http11:_trace.py:47 send_request_headers.complete
+DEBUG    httpcore.http11:_trace.py:47 send_request_body.started request=<Request [b'GET']>
+DEBUG    httpcore.http11:_trace.py:47 send_request_body.complete
+DEBUG    httpcore.http11:_trace.py:47 receive_response_headers.started request=<Request [b'GET']>
+DEBUG    httpcore.http11:_trace.py:47 receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Tue, 28 Apr 2026 06:38:38 GMT'), (b'Content-Type', b'application/json; charset=utf-8'), (b'Content-Length', b'156'), (b'Connection', b'keep-alive'), (b'Cache-Control', b'no-cache, no-store, must-revalidate'), (b'Content-Encoding', b'gzip'), (b'Expires', b'0'), (b'Pragma', b'no-cache'), (b'Server', b'kurs/0.5.6-7a1c078'), (b'Vary', b'Accept-Encoding'), (b'X-Frame-Options', b'SAMEORIGIN'), (b'X-Xss-Protection', b'1; mode=block')])
+INFO     httpx:_client.py:1025 HTTP Request: GET https://kurs.resenje.org/api/v1/currencies/eur/rates/2026-04-28 "HTTP/1.1 200 OK"
+DEBUG    httpcore.http11:_trace.py:47 receive_response_body.started request=<Request [b'GET']>
+DEBUG    httpcore.http11:_trace.py:47 receive_response_body.complete
+DEBUG    httpcore.http11:_trace.py:47 response_closed.started
+DEBUG    httpcore.http11:_trace.py:47 response_closed.complete
+DEBUG    httpcore.connection:_trace.py:47 close.started
+DEBUG    httpcore.connection:_trace.py:47 close.complete
+INFO     dinary.services.nbs:nbs.py:46 Got rate from NBS

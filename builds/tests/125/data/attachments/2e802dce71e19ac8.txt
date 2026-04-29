@@ -1,0 +1,15 @@
+2026-04-28 12:56:38,570 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 12:56:38,602 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-28 12:56:38,604 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-28 12:56:38,621 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-28 12:56:38,622 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('11') incoming=Decimal('14.0'); amount_original: stored=Decimal('11') incoming=Decimal('14.0')
+2026-04-28 12:56:38,624 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"
+2026-04-28 12:56:38,624 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('11') incoming=Decimal('13.0'); amount_original: stored=Decimal('11') incoming=Decimal('13.0')
+2026-04-28 12:56:38,625 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"
+2026-04-28 12:56:38,626 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('11') incoming=Decimal('10.0'); amount_original: stored=Decimal('11') incoming=Decimal('10.0')
+2026-04-28 12:56:38,627 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"
+2026-04-28 12:56:38,628 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('11') incoming=Decimal('12.0'); amount_original: stored=Decimal('11') incoming=Decimal('12.0')
+2026-04-28 12:56:38,629 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"
+2026-04-28 12:56:38,635 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-28: 0.008517
+2026-04-28 12:56:38,638 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_concurrent_mixed': diff=amount: stored=Decimal('11') incoming=Decimal('15.0'); amount_original: stored=Decimal('11') incoming=Decimal('15.0')
+2026-04-28 12:56:38,640 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"

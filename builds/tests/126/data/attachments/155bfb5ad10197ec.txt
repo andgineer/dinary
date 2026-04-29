@@ -1,0 +1,5 @@
+2026-04-29 04:26:29,841 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 04:26:29,842 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 04:26:29,848 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-29 04:26:29,851 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_cat_change': diff=category_id: stored=1 incoming=2
+2026-04-29 04:26:29,852 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"

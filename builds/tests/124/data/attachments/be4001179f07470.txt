@@ -1,0 +1,1 @@
+2026-04-28 10:49:41,505 ERROR    dinary.services.sheet_logging — Logging projection: unknown category_id=1 for expense pk=1

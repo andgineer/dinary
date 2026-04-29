@@ -1,0 +1,2 @@
+2026-04-28 10:49:44,053 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 10:49:44,054 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)

@@ -1,0 +1,1 @@
+2026-04-29 07:39:23,766 INFO     dinary.services.sheets — Inserted logging row at 7 for month 12 (Food/Essentials)

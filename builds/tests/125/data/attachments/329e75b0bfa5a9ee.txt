@@ -1,0 +1,1 @@
+DEBUG    dinary.services.rate_helpers:rate_helpers.py:36 HTTP fetch failed for https://kurs.resenje.org/api/v1/currencies/eur/rates/2025-02-24, backing off 900s

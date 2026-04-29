@@ -1,0 +1,4 @@
+=== Installing baseline packages on ubuntu@dinary-replica ===
+=== Provisioning /var/lib/litestream ===
+=== Configuring VM1 Litestream replicator ===
+=== Replica bootstrap done ===

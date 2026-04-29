@@ -1,0 +1,26 @@
+INFO     yoyo.migrations:base.py:527 Applying 0001_initial_schema
+INFO     yoyo.migrations:migrations.py:402  - applying step 0
+INFO     yoyo.migrations:migrations.py:402  - applying step 1
+INFO     yoyo.migrations:migrations.py:402  - applying step 2
+INFO     yoyo.migrations:migrations.py:402  - applying step 3
+INFO     yoyo.migrations:migrations.py:402  - applying step 4
+INFO     yoyo.migrations:migrations.py:402  - applying step 5
+INFO     yoyo.migrations:migrations.py:402  - applying step 6
+INFO     yoyo.migrations:migrations.py:402  - applying step 7
+INFO     yoyo.migrations:migrations.py:402  - applying step 8
+INFO     yoyo.migrations:migrations.py:402  - applying step 9
+INFO     yoyo.migrations:migrations.py:402  - applying step 10
+INFO     yoyo.migrations:migrations.py:402  - applying step 11
+INFO     yoyo.migrations:migrations.py:402  - applying step 12
+INFO     yoyo.migrations:migrations.py:402  - applying step 13
+INFO     yoyo.migrations:migrations.py:402  - applying step 14
+INFO     yoyo.migrations:base.py:557 Marking 0001_initial_schema applied
+INFO     yoyo.migrations:base.py:527 Applying 0002_exchange_rates_source_target
+INFO     yoyo.migrations:migrations.py:402  - applying step 0
+INFO     yoyo.migrations:migrations.py:402  - applying step 1
+INFO     yoyo.migrations:base.py:557 Marking 0002_exchange_rates_source_target applied
+INFO     dinary.services.ledger_repo:ledger_repo.py:299 anchored accounting_currency=EUR in app_metadata
+INFO     dinary.imports.seed:seed.py:900 Seed complete: {'category_groups': 11, 'categories': 35, 'events': 27, 'tags': 9, 'mappings_created': 95}
+WARNING  dinary.imports.seed:seed.py:903 import-config inserted 95 new import_mapping row(s) without bumping catalog_version; run `inv import-catalog` to force PWA clients to refresh the catalog.
+INFO     dinary.imports.seed:seed.py:900 Seed complete: {'category_groups': 11, 'categories': 35, 'events': 27, 'tags': 9, 'mappings_created': 95}
+WARNING  dinary.imports.seed:seed.py:903 import-config inserted 95 new import_mapping row(s) without bumping catalog_version; run `inv import-catalog` to force PWA clients to refresh the catalog.

@@ -1,0 +1,24 @@
+2026-04-28 12:56:39,743 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 12:56:39,750 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-28 12:56:39,751 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-28 12:56:39,758 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 422 Unprocessable Entity"
+2026-04-28 12:56:39,761 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-28: 0.008517
+2026-04-28 12:56:39,782 DEBUG    httpcore.connection — connect_tcp.started host='kurs.resenje.org' port=443 local_address=None timeout=10 socket_options=None
+2026-04-28 12:56:39,851 DEBUG    httpcore.connection — connect_tcp.complete return_value=<httpcore._backends.sync.SyncStream object at 0x7fb656ca2ad0>
+2026-04-28 12:56:39,852 DEBUG    httpcore.connection — start_tls.started ssl_context=<ssl.SSLContext object at 0x7fb654b631b0> server_hostname='kurs.resenje.org' timeout=10
+2026-04-28 12:56:39,993 DEBUG    httpcore.connection — start_tls.complete return_value=<httpcore._backends.sync.SyncStream object at 0x7fb656cae8b0>
+2026-04-28 12:56:39,994 DEBUG    httpcore.http11 — send_request_headers.started request=<Request [b'GET']>
+2026-04-28 12:56:39,994 DEBUG    httpcore.http11 — send_request_headers.complete
+2026-04-28 12:56:39,994 DEBUG    httpcore.http11 — send_request_body.started request=<Request [b'GET']>
+2026-04-28 12:56:39,994 DEBUG    httpcore.http11 — send_request_body.complete
+2026-04-28 12:56:39,995 DEBUG    httpcore.http11 — receive_response_headers.started request=<Request [b'GET']>
+2026-04-28 12:56:40,066 DEBUG    httpcore.http11 — receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Tue, 28 Apr 2026 12:52:47 GMT'), (b'Content-Type', b'application/json; charset=utf-8'), (b'Content-Length', b'157'), (b'Connection', b'keep-alive'), (b'Cache-Control', b'no-cache, no-store, must-revalidate'), (b'Content-Encoding', b'gzip'), (b'Expires', b'0'), (b'Pragma', b'no-cache'), (b'Server', b'kurs/0.5.6-7a1c078'), (b'Vary', b'Accept-Encoding'), (b'X-Frame-Options', b'SAMEORIGIN'), (b'X-Xss-Protection', b'1; mode=block')])
+2026-04-28 12:56:40,067 INFO     httpx — HTTP Request: GET https://kurs.resenje.org/api/v1/currencies/eur/rates/2026-04-15 "HTTP/1.1 200 OK"
+2026-04-28 12:56:40,068 DEBUG    httpcore.http11 — receive_response_body.started request=<Request [b'GET']>
+2026-04-28 12:56:40,068 DEBUG    httpcore.http11 — receive_response_body.complete
+2026-04-28 12:56:40,068 DEBUG    httpcore.http11 — response_closed.started
+2026-04-28 12:56:40,068 DEBUG    httpcore.http11 — response_closed.complete
+2026-04-28 12:56:40,069 DEBUG    httpcore.connection — close.started
+2026-04-28 12:56:40,069 DEBUG    httpcore.connection — close.complete
+2026-04-28 12:56:40,069 INFO     dinary.services.nbs — Got rate from NBS
+2026-04-28 12:56:40,073 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"

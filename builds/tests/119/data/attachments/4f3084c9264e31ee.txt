@@ -1,0 +1,34 @@
+INFO     yoyo.migrations:base.py:527 Applying 0001_initial_schema
+INFO     yoyo.migrations:migrations.py:402  - applying step 0
+INFO     yoyo.migrations:migrations.py:402  - applying step 1
+INFO     yoyo.migrations:migrations.py:402  - applying step 2
+INFO     yoyo.migrations:migrations.py:402  - applying step 3
+INFO     yoyo.migrations:migrations.py:402  - applying step 4
+INFO     yoyo.migrations:migrations.py:402  - applying step 5
+INFO     yoyo.migrations:migrations.py:402  - applying step 6
+INFO     yoyo.migrations:migrations.py:402  - applying step 7
+INFO     yoyo.migrations:migrations.py:402  - applying step 8
+INFO     yoyo.migrations:migrations.py:402  - applying step 9
+INFO     yoyo.migrations:migrations.py:402  - applying step 10
+INFO     yoyo.migrations:migrations.py:402  - applying step 11
+INFO     yoyo.migrations:migrations.py:402  - applying step 12
+INFO     yoyo.migrations:migrations.py:402  - applying step 13
+INFO     yoyo.migrations:migrations.py:402  - applying step 14
+INFO     yoyo.migrations:base.py:557 Marking 0001_initial_schema applied
+INFO     yoyo.migrations:base.py:527 Applying 0002_exchange_rates_source_target
+INFO     yoyo.migrations:migrations.py:402  - applying step 0
+INFO     yoyo.migrations:migrations.py:402  - applying step 1
+INFO     yoyo.migrations:base.py:557 Marking 0002_exchange_rates_source_target applied
+INFO     dinary.services.ledger_repo:ledger_repo.py:299 anchored accounting_currency=EUR in app_metadata
+ERROR    dinary.imports.expense_import:expense_import.py:1220 Failed to resolve dimensions for ('еда', 'собака') in year 2026
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/imports/expense_import.py", line 1208, in import_year
+    resolved = _resolve_dimensions(
+        con,
+    ...<7 lines>...
+        relocation_event_id=ctx.relocation_event_id,
+    )
+  File "/home/runner/work/dinary/dinary/tests/imports/test_expense_import.py", line 280, in flaky_resolve
+    raise ValueError(msg)
+ValueError: tag 'phantom' not found in tags; re-seed required
+INFO     dinary.imports.expense_import:expense_import.py:1025 Applied post-import fixes for 2026

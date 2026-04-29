@@ -1,0 +1,27 @@
+DEBUG    asyncio:selector_events.py:64 Using selector: EpollSelector
+INFO     dinary.background.sheet_logging_task:sheet_logging_task.py:75 sheet-logging task started: interval=0.05s
+ERROR    dinary.background.sheet_logging_task:sheet_logging_task.py:97 drain sweep failed
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/background/sheet_logging_task.py", line 85, in sheet_logging_task
+    summary = await asyncio.to_thread(sheet_logging.drain_pending)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1240, in _execute_mock_call
+    result = effect(*args, **kwargs)
+  File "/home/runner/work/dinary/dinary/tests/test_main.py", line 144, in _side_effect
+    raise RuntimeError("Sheets API exploded")
+RuntimeError: Sheets API exploded
+DEBUG    dinary.background.sheet_logging_task:sheet_logging_task.py:93 drain sweep: {'years': 0, 'attempted': 0, 'appended': 0, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}
+DEBUG    dinary.background.sheet_logging_task:sheet_logging_task.py:93 drain sweep: {'years': 0, 'attempted': 0, 'appended': 0, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}
+DEBUG    dinary.background.sheet_logging_task:sheet_logging_task.py:93 drain sweep: {'years': 0, 'attempted': 0, 'appended': 0, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}
+DEBUG    dinary.background.sheet_logging_task:sheet_logging_task.py:93 drain sweep: {'years': 0, 'attempted': 0, 'appended': 0, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}

@@ -1,0 +1,25 @@
+2026-04-27 08:39:01,431 INFO     yoyo.migrations — Applying 0001_initial_schema
+2026-04-27 08:39:01,431 INFO     yoyo.migrations —  - applying step 0
+2026-04-27 08:39:01,431 INFO     yoyo.migrations —  - applying step 1
+2026-04-27 08:39:01,431 INFO     yoyo.migrations —  - applying step 2
+2026-04-27 08:39:01,432 INFO     yoyo.migrations —  - applying step 3
+2026-04-27 08:39:01,432 INFO     yoyo.migrations —  - applying step 4
+2026-04-27 08:39:01,432 INFO     yoyo.migrations —  - applying step 5
+2026-04-27 08:39:01,432 INFO     yoyo.migrations —  - applying step 6
+2026-04-27 08:39:01,432 INFO     yoyo.migrations —  - applying step 7
+2026-04-27 08:39:01,433 INFO     yoyo.migrations —  - applying step 8
+2026-04-27 08:39:01,433 INFO     yoyo.migrations —  - applying step 9
+2026-04-27 08:39:01,433 INFO     yoyo.migrations —  - applying step 10
+2026-04-27 08:39:01,433 INFO     yoyo.migrations —  - applying step 11
+2026-04-27 08:39:01,433 INFO     yoyo.migrations —  - applying step 12
+2026-04-27 08:39:01,434 INFO     yoyo.migrations —  - applying step 13
+2026-04-27 08:39:01,434 INFO     yoyo.migrations —  - applying step 14
+2026-04-27 08:39:01,437 INFO     yoyo.migrations — Marking 0001_initial_schema applied
+2026-04-27 08:39:01,438 INFO     yoyo.migrations — Applying 0002_exchange_rates_source_target
+2026-04-27 08:39:01,438 INFO     yoyo.migrations —  - applying step 0
+2026-04-27 08:39:01,438 INFO     yoyo.migrations —  - applying step 1
+2026-04-27 08:39:01,440 INFO     yoyo.migrations — Marking 0002_exchange_rates_source_target applied
+2026-04-27 08:39:01,443 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-27 08:39:01,450 INFO     dinary.services.sheet_mapping — sheet_mapping reloaded: {'row_count': 1, 'modified_time': '2026-04-20T10:00:00Z', 'tab': 'map', 'modified_time_cached': True}
+2026-04-27 08:39:01,451 INFO     dinary.services.sheet_mapping — sheet_mapping: map-tab changed (2026-04-20T10:00:00Z -> 2026-04-20T11:00:00Z); reloading
+2026-04-27 08:39:01,453 INFO     dinary.services.sheet_mapping — sheet_mapping reloaded: {'row_count': 1, 'modified_time': '2026-04-20T11:00:00Z', 'tab': 'map', 'modified_time_cached': True}

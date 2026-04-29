@@ -1,0 +1,2 @@
+WARNING  dinary.services.sheet_mapping:sheet_mapping.py:586 ensure_default_map_tab: skipping envelope override 'гигиена' -> 'гигиена' because the category is not in the active catalog; update sheet_mapping._CATEGORY_ENVELOPES after renaming categories
+WARNING  dinary.services.sheet_mapping:sheet_mapping.py:586 ensure_default_map_tab: skipping envelope override 'ЗОЖ' -> 'ЗОЖ' because the category is not in the active catalog; update sheet_mapping._CATEGORY_ENVELOPES after renaming categories

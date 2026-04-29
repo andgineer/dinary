@@ -1,0 +1,8 @@
+2026-04-29 08:45:30,810 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 08:45:30,811 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 08:45:30,818 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-29: 0.008517
+2026-04-29 08:45:30,819 INFO     dinary.services.catalog_writer — catalog_writer add_group(name='Blocked'): bumped catalog_version
+2026-04-29 08:45:30,821 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/groups "HTTP/1.1 200 OK"
+2026-04-29 08:45:30,825 INFO     dinary.services.catalog_writer — catalog_writer add_category(name='tenant'): bumped catalog_version
+2026-04-29 08:45:30,828 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/categories "HTTP/1.1 200 OK"
+2026-04-29 08:45:30,831 INFO     httpx — HTTP Request: DELETE http://testserver/api/admin/catalog/groups/2 "HTTP/1.1 409 Conflict"

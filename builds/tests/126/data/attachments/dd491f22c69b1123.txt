@@ -1,0 +1,6 @@
+2026-04-29 04:26:27,396 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 04:26:27,396 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 04:26:27,402 INFO     dinary.services.catalog_writer — catalog_writer add_group(name='Transport'): bumped catalog_version
+2026-04-29 04:26:27,404 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/groups "HTTP/1.1 200 OK"
+2026-04-29 04:26:27,408 INFO     dinary.services.catalog_writer — catalog_writer add_category(name='metro'): bumped catalog_version
+2026-04-29 04:26:27,410 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/categories "HTTP/1.1 200 OK"

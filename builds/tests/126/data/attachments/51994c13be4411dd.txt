@@ -1,0 +1,6 @@
+2026-04-29 04:26:30,600 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 04:26:30,601 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 04:26:30,606 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 422 Unprocessable Entity"
+2026-04-29 04:26:30,929 INFO     httpx — HTTP Request: GET https://kurs.resenje.org/api/v1/currencies/eur/rates/2026-04-15 "HTTP/1.1 200 OK"
+2026-04-29 04:26:30,930 INFO     dinary.services.nbs — Got rate from NBS
+2026-04-29 04:26:30,934 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"

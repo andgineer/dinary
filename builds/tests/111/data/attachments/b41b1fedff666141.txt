@@ -1,0 +1,29 @@
+2026-04-24 13:38:45,304 INFO     yoyo.migrations — Applying 0001_initial_schema
+2026-04-24 13:38:45,304 INFO     yoyo.migrations —  - applying step 0
+2026-04-24 13:38:45,305 INFO     yoyo.migrations —  - applying step 1
+2026-04-24 13:38:45,305 INFO     yoyo.migrations —  - applying step 2
+2026-04-24 13:38:45,305 INFO     yoyo.migrations —  - applying step 3
+2026-04-24 13:38:45,305 INFO     yoyo.migrations —  - applying step 4
+2026-04-24 13:38:45,306 INFO     yoyo.migrations —  - applying step 5
+2026-04-24 13:38:45,306 INFO     yoyo.migrations —  - applying step 6
+2026-04-24 13:38:45,306 INFO     yoyo.migrations —  - applying step 7
+2026-04-24 13:38:45,306 INFO     yoyo.migrations —  - applying step 8
+2026-04-24 13:38:45,306 INFO     yoyo.migrations —  - applying step 9
+2026-04-24 13:38:45,307 INFO     yoyo.migrations —  - applying step 10
+2026-04-24 13:38:45,307 INFO     yoyo.migrations —  - applying step 11
+2026-04-24 13:38:45,307 INFO     yoyo.migrations —  - applying step 12
+2026-04-24 13:38:45,307 INFO     yoyo.migrations —  - applying step 13
+2026-04-24 13:38:45,308 INFO     yoyo.migrations —  - applying step 14
+2026-04-24 13:38:45,313 INFO     yoyo.migrations — Marking 0001_initial_schema applied
+2026-04-24 13:38:45,313 INFO     yoyo.migrations — Applying 0002_exchange_rates_source_target
+2026-04-24 13:38:45,314 INFO     yoyo.migrations —  - applying step 0
+2026-04-24 13:38:45,314 INFO     yoyo.migrations —  - applying step 1
+2026-04-24 13:38:45,315 INFO     yoyo.migrations — Marking 0002_exchange_rates_source_target applied
+2026-04-24 13:38:45,318 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-24 13:38:45,322 ERROR    dinary.imports.report_2d_3d — Skipping year 2024: failed to fetch/parse sheet rows
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/imports/report_2d_3d.py", line 200, in _collect_year
+    parsed_rows = list(iter_parsed_sheet_rows(year, con=con))
+  File "/home/runner/work/dinary/dinary/tests/test_report_2d_3d.py", line 593, in fake_iter
+    raise RuntimeError(msg)
+RuntimeError: simulated gspread failure

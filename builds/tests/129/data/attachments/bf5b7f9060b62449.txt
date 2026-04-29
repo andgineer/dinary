@@ -1,0 +1,24 @@
+2026-04-29 08:45:34,849 INFO     yoyo.migrations — Applying 0001_initial_schema
+2026-04-29 08:45:34,850 INFO     yoyo.migrations —  - applying step 0
+2026-04-29 08:45:34,850 INFO     yoyo.migrations —  - applying step 1
+2026-04-29 08:45:34,850 INFO     yoyo.migrations —  - applying step 2
+2026-04-29 08:45:34,850 INFO     yoyo.migrations —  - applying step 3
+2026-04-29 08:45:34,850 INFO     yoyo.migrations —  - applying step 4
+2026-04-29 08:45:34,851 INFO     yoyo.migrations —  - applying step 5
+2026-04-29 08:45:34,851 INFO     yoyo.migrations —  - applying step 6
+2026-04-29 08:45:34,851 INFO     yoyo.migrations —  - applying step 7
+2026-04-29 08:45:34,851 INFO     yoyo.migrations —  - applying step 8
+2026-04-29 08:45:34,851 INFO     yoyo.migrations —  - applying step 9
+2026-04-29 08:45:34,852 INFO     yoyo.migrations —  - applying step 10
+2026-04-29 08:45:34,852 INFO     yoyo.migrations —  - applying step 11
+2026-04-29 08:45:34,852 INFO     yoyo.migrations —  - applying step 12
+2026-04-29 08:45:34,852 INFO     yoyo.migrations —  - applying step 13
+2026-04-29 08:45:34,853 INFO     yoyo.migrations —  - applying step 14
+2026-04-29 08:45:34,854 INFO     yoyo.migrations — Marking 0001_initial_schema applied
+2026-04-29 08:45:34,855 INFO     yoyo.migrations — Applying 0002_exchange_rates_source_target
+2026-04-29 08:45:34,855 INFO     yoyo.migrations —  - applying step 0
+2026-04-29 08:45:34,856 INFO     yoyo.migrations —  - applying step 1
+2026-04-29 08:45:34,857 INFO     yoyo.migrations — Marking 0002_exchange_rates_source_target applied
+2026-04-29 08:45:34,860 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 08:45:34,866 INFO     dinary.imports.seed — Seed complete: {'category_groups': 11, 'categories': 35, 'events': 27, 'tags': 9, 'mappings_created': 95}
+2026-04-29 08:45:34,866 WARNING  dinary.imports.seed — import-config inserted 95 new import_mapping row(s) without bumping catalog_version; run `inv import-catalog` to force PWA clients to refresh the catalog.

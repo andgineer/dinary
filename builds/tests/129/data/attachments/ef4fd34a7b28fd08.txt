@@ -1,0 +1,1 @@
+INFO     dinary.services.catalog_writer:catalog_writer.py:282 catalog_writer add_event(reactivate name='отпуск-2024'): bumped catalog_version

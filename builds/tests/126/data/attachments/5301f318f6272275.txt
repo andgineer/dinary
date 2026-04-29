@@ -1,0 +1,7 @@
+2026-04-29 04:26:28,053 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 04:26:28,054 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 04:26:28,059 INFO     dinary.services.catalog_writer — catalog_writer add_group(name='Blocked'): bumped catalog_version
+2026-04-29 04:26:28,061 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/groups "HTTP/1.1 200 OK"
+2026-04-29 04:26:28,064 INFO     dinary.services.catalog_writer — catalog_writer add_category(name='tenant'): bumped catalog_version
+2026-04-29 04:26:28,067 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/categories "HTTP/1.1 200 OK"
+2026-04-29 04:26:28,070 INFO     httpx — HTTP Request: DELETE http://testserver/api/admin/catalog/groups/2 "HTTP/1.1 409 Conflict"

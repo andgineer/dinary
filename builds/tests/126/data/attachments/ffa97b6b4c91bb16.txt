@@ -1,0 +1,8 @@
+2026-04-29 04:26:28,647 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 04:26:28,648 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 04:26:28,656 INFO     dinary.services.catalog_writer — catalog_writer add_tag(name='oldname'): bumped catalog_version
+2026-04-29 04:26:28,659 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/tags "HTTP/1.1 200 OK"
+2026-04-29 04:26:28,662 INFO     dinary.services.catalog_writer — catalog_writer add_event(name='evt-with-tag'): bumped catalog_version
+2026-04-29 04:26:28,664 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/events "HTTP/1.1 200 OK"
+2026-04-29 04:26:28,668 INFO     dinary.services.catalog_writer — catalog_writer edit_tag(id=1): bumped catalog_version
+2026-04-29 04:26:28,670 INFO     httpx — HTTP Request: PATCH http://testserver/api/admin/catalog/tags/1 "HTTP/1.1 200 OK"

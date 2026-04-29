@@ -1,0 +1,4 @@
+DEBUG    asyncio:selector_events.py:64 Using selector: EpollSelector
+INFO     dinary.background.sheet_logging_task:sheet_logging_task.py:75 sheet-logging task started: interval=0.05s
+DEBUG    dinary.background.sheet_logging_task:sheet_logging_task.py:93 drain sweep: {'years': 0, 'attempted': 0, 'appended': 0, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}
+DEBUG    dinary.background.sheet_logging_task:sheet_logging_task.py:93 drain sweep: {'years': 0, 'attempted': 0, 'appended': 0, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}

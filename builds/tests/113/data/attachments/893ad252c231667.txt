@@ -1,0 +1,1 @@
+Missing .deploy/.env. Copy .deploy.example/.env to .deploy/.env and fill in DINARY_DEPLOY_HOST / DINARY_TUNNEL / any sheet-logging settings you need.

@@ -1,0 +1,6 @@
+2026-04-28 12:56:47,251 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 12:56:47,253 INFO     dinary.background.sheet_logging_task — sheet-logging task started: interval=0.05s
+2026-04-28 12:56:47,253 INFO     dinary.background.sheet_logging_task — drain sweep: {'years': 1, 'attempted': 2, 'appended': 2, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}
+2026-04-28 12:56:47,305 INFO     dinary.background.sheet_logging_task — drain sweep: {'years': 1, 'attempted': 2, 'appended': 2, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}
+2026-04-28 12:56:47,356 INFO     dinary.background.sheet_logging_task — drain sweep: {'years': 1, 'attempted': 2, 'appended': 2, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}
+2026-04-28 12:56:47,407 INFO     dinary.background.sheet_logging_task — drain sweep: {'years': 1, 'attempted': 2, 'appended': 2, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}

@@ -1,0 +1,1 @@
+INFO     dinary.imports.report_2d_3d:report_2d_3d.py:259 Year 2024: collected 2 detail rows

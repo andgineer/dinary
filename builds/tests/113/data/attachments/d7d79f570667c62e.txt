@@ -1,0 +1,26 @@
+2026-04-26 15:06:49,937 INFO     yoyo.migrations — Applying 0001_initial_schema
+2026-04-26 15:06:49,938 INFO     yoyo.migrations —  - applying step 0
+2026-04-26 15:06:49,938 INFO     yoyo.migrations —  - applying step 1
+2026-04-26 15:06:49,938 INFO     yoyo.migrations —  - applying step 2
+2026-04-26 15:06:49,938 INFO     yoyo.migrations —  - applying step 3
+2026-04-26 15:06:49,938 INFO     yoyo.migrations —  - applying step 4
+2026-04-26 15:06:49,939 INFO     yoyo.migrations —  - applying step 5
+2026-04-26 15:06:49,939 INFO     yoyo.migrations —  - applying step 6
+2026-04-26 15:06:49,939 INFO     yoyo.migrations —  - applying step 7
+2026-04-26 15:06:49,939 INFO     yoyo.migrations —  - applying step 8
+2026-04-26 15:06:49,939 INFO     yoyo.migrations —  - applying step 9
+2026-04-26 15:06:49,940 INFO     yoyo.migrations —  - applying step 10
+2026-04-26 15:06:49,940 INFO     yoyo.migrations —  - applying step 11
+2026-04-26 15:06:49,940 INFO     yoyo.migrations —  - applying step 12
+2026-04-26 15:06:49,940 INFO     yoyo.migrations —  - applying step 13
+2026-04-26 15:06:49,940 INFO     yoyo.migrations —  - applying step 14
+2026-04-26 15:06:49,942 INFO     yoyo.migrations — Marking 0001_initial_schema applied
+2026-04-26 15:06:49,943 INFO     yoyo.migrations — Applying 0002_exchange_rates_source_target
+2026-04-26 15:06:49,943 INFO     yoyo.migrations —  - applying step 0
+2026-04-26 15:06:49,944 INFO     yoyo.migrations —  - applying step 1
+2026-04-26 15:06:49,945 INFO     yoyo.migrations — Marking 0002_exchange_rates_source_target applied
+2026-04-26 15:06:49,948 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-26 15:06:49,981 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-26 15:06:49,986 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-26: 0.008516
+2026-04-26 15:06:49,987 INFO     httpx — HTTP Request: GET http://testserver/api/catalog "HTTP/1.1 200 OK"
+2026-04-26 15:06:49,990 INFO     httpx — HTTP Request: GET http://testserver/api/catalog "HTTP/1.1 304 Not Modified"

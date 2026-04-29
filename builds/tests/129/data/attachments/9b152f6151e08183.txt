@@ -1,0 +1,1 @@
+2026-04-29 08:45:35,414 INFO     dinary.services.catalog_writer — catalog_writer add_group(reactivate name='already_here'): no-op (hash unchanged)

@@ -1,0 +1,45 @@
+INFO     yoyo.migrations:base.py:527 Applying 0001_initial_schema
+INFO     yoyo.migrations:migrations.py:402  - applying step 0
+INFO     yoyo.migrations:migrations.py:402  - applying step 1
+INFO     yoyo.migrations:migrations.py:402  - applying step 2
+INFO     yoyo.migrations:migrations.py:402  - applying step 3
+INFO     yoyo.migrations:migrations.py:402  - applying step 4
+INFO     yoyo.migrations:migrations.py:402  - applying step 5
+INFO     yoyo.migrations:migrations.py:402  - applying step 6
+INFO     yoyo.migrations:migrations.py:402  - applying step 7
+INFO     yoyo.migrations:migrations.py:402  - applying step 8
+INFO     yoyo.migrations:migrations.py:402  - applying step 9
+INFO     yoyo.migrations:migrations.py:402  - applying step 10
+INFO     yoyo.migrations:migrations.py:402  - applying step 11
+INFO     yoyo.migrations:migrations.py:402  - applying step 12
+INFO     yoyo.migrations:migrations.py:402  - applying step 13
+INFO     yoyo.migrations:migrations.py:402  - applying step 14
+INFO     yoyo.migrations:base.py:557 Marking 0001_initial_schema applied
+INFO     yoyo.migrations:base.py:527 Applying 0002_exchange_rates_source_target
+INFO     yoyo.migrations:migrations.py:402  - applying step 0
+INFO     yoyo.migrations:migrations.py:402  - applying step 1
+INFO     yoyo.migrations:base.py:557 Marking 0002_exchange_rates_source_target applied
+INFO     dinary.services.ledger_repo:ledger_repo.py:299 anchored accounting_currency=EUR in app_metadata
+ERROR    dinary.services.sheet_logging:sheet_logging.py:322 Append to sheet failed for expense pk=1
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/services/sheet_logging.py", line 299, in _drain_one_job
+    wrote_new_row = _append_row_to_sheet(
+        spreadsheet_id=spreadsheet_id,
+    ...<8 lines>...
+        rate=rate_str,
+    )
+  File "/home/runner/work/dinary/dinary/src/dinary/services/sheet_logging.py", line 372, in _append_row_to_sheet
+    written = append_expense_atomic(
+        ws,
+    ...<4 lines>...
+        rate=rate,
+    )
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1234, in _execute_mock_call
+    raise effect
+RuntimeError: simulated sheet failure

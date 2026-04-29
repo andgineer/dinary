@@ -1,0 +1,3 @@
+2026-04-29 04:26:28,419 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 04:26:28,420 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 04:26:28,430 INFO     httpx — HTTP Request: POST http://testserver/api/admin/reload-map "HTTP/1.1 503 Service Unavailable"

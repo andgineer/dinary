@@ -1,0 +1,4 @@
+2026-04-29 04:26:28,997 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 04:26:28,998 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 04:26:29,010 INFO     httpx — HTTP Request: GET http://testserver/api/catalog "HTTP/1.1 200 OK"
+2026-04-29 04:26:29,014 INFO     httpx — HTTP Request: GET http://testserver/api/catalog "HTTP/1.1 304 Not Modified"

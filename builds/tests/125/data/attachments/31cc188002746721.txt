@@ -1,0 +1,7 @@
+2026-04-28 12:56:38,856 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 12:56:38,862 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-28 12:56:38,863 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-28 12:56:38,870 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-28: 0.008517
+2026-04-28 12:56:38,872 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-28 12:56:38,875 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='shared': diff=datetime: stored=datetime.datetime(2026, 1, 15, 0, 0) incoming=datetime.datetime(2027, 1, 15, 0, 0)
+2026-04-28 12:56:38,876 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"

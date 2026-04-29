@@ -1,0 +1,2 @@
+DEBUG    asyncio:selector_events.py:64 Using selector: EpollSelector
+WARNING  dinary.background.rate_prefetch_task:rate_prefetch_task.py:99 rate for RSD/EUR on 2025-02-24 not written to DB (stale fallback 117.32), retrying in 30 min

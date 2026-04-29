@@ -1,0 +1,27 @@
+2026-04-29 08:45:29,439 INFO     yoyo.migrations — Applying 0001_initial_schema
+2026-04-29 08:45:29,440 INFO     yoyo.migrations —  - applying step 0
+2026-04-29 08:45:29,440 INFO     yoyo.migrations —  - applying step 1
+2026-04-29 08:45:29,440 INFO     yoyo.migrations —  - applying step 2
+2026-04-29 08:45:29,440 INFO     yoyo.migrations —  - applying step 3
+2026-04-29 08:45:29,441 INFO     yoyo.migrations —  - applying step 4
+2026-04-29 08:45:29,441 INFO     yoyo.migrations —  - applying step 5
+2026-04-29 08:45:29,441 INFO     yoyo.migrations —  - applying step 6
+2026-04-29 08:45:29,441 INFO     yoyo.migrations —  - applying step 7
+2026-04-29 08:45:29,441 INFO     yoyo.migrations —  - applying step 8
+2026-04-29 08:45:29,442 INFO     yoyo.migrations —  - applying step 9
+2026-04-29 08:45:29,442 INFO     yoyo.migrations —  - applying step 10
+2026-04-29 08:45:29,442 INFO     yoyo.migrations —  - applying step 11
+2026-04-29 08:45:29,442 INFO     yoyo.migrations —  - applying step 12
+2026-04-29 08:45:29,443 INFO     yoyo.migrations —  - applying step 13
+2026-04-29 08:45:29,443 INFO     yoyo.migrations —  - applying step 14
+2026-04-29 08:45:29,500 INFO     yoyo.migrations — Marking 0001_initial_schema applied
+2026-04-29 08:45:29,501 INFO     yoyo.migrations — Applying 0002_exchange_rates_source_target
+2026-04-29 08:45:29,502 INFO     yoyo.migrations —  - applying step 0
+2026-04-29 08:45:29,502 INFO     yoyo.migrations —  - applying step 1
+2026-04-29 08:45:29,503 INFO     yoyo.migrations — Marking 0002_exchange_rates_source_target applied
+2026-04-29 08:45:29,546 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 08:45:29,547 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 08:45:29,587 INFO     dinary.services.catalog_writer — catalog_writer add_tag(name='t1'): bumped catalog_version
+2026-04-29 08:45:29,596 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/tags "HTTP/1.1 200 OK"
+2026-04-29 08:45:30,032 INFO     httpx — HTTP Request: GET https://kurs.resenje.org/api/v1/currencies/eur/rates/2026-04-29 "HTTP/1.1 200 OK"
+2026-04-29 08:45:30,033 INFO     dinary.services.nbs — Got rate from NBS

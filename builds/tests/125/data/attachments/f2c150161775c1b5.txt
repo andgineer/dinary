@@ -1,0 +1,4 @@
+2026-04-28 12:56:37,428 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 12:56:37,434 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-28 12:56:37,435 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-28 12:56:37,442 INFO     httpx — HTTP Request: POST http://testserver/api/admin/reload-map "HTTP/1.1 400 Bad Request"

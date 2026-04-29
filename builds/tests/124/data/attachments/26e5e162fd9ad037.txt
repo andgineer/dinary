@@ -1,0 +1,2 @@
+2026-04-28 10:49:37,590 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 10:49:37,592 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2025-02-24: 117.32

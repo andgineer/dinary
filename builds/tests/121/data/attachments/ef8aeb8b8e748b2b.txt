@@ -1,0 +1,22 @@
+2026-04-27 17:33:51,825 INFO     yoyo.migrations — Applying 0001_initial_schema
+2026-04-27 17:33:51,825 INFO     yoyo.migrations —  - applying step 0
+2026-04-27 17:33:51,826 INFO     yoyo.migrations —  - applying step 1
+2026-04-27 17:33:51,826 INFO     yoyo.migrations —  - applying step 2
+2026-04-27 17:33:51,826 INFO     yoyo.migrations —  - applying step 3
+2026-04-27 17:33:51,826 INFO     yoyo.migrations —  - applying step 4
+2026-04-27 17:33:51,826 INFO     yoyo.migrations —  - applying step 5
+2026-04-27 17:33:51,827 INFO     yoyo.migrations —  - applying step 6
+2026-04-27 17:33:51,827 INFO     yoyo.migrations —  - applying step 7
+2026-04-27 17:33:51,827 INFO     yoyo.migrations —  - applying step 8
+2026-04-27 17:33:51,827 INFO     yoyo.migrations —  - applying step 9
+2026-04-27 17:33:51,827 INFO     yoyo.migrations —  - applying step 10
+2026-04-27 17:33:51,828 INFO     yoyo.migrations —  - applying step 11
+2026-04-27 17:33:51,828 INFO     yoyo.migrations —  - applying step 12
+2026-04-27 17:33:51,828 INFO     yoyo.migrations —  - applying step 13
+2026-04-27 17:33:51,828 INFO     yoyo.migrations —  - applying step 14
+2026-04-27 17:33:51,830 INFO     yoyo.migrations — Marking 0001_initial_schema applied
+2026-04-27 17:33:51,831 INFO     yoyo.migrations — Applying 0002_exchange_rates_source_target
+2026-04-27 17:33:51,832 INFO     yoyo.migrations —  - applying step 0
+2026-04-27 17:33:51,832 INFO     yoyo.migrations —  - applying step 1
+2026-04-27 17:33:51,834 INFO     yoyo.migrations — Marking 0002_exchange_rates_source_target applied
+2026-04-27 17:33:51,838 INFO     dinary.services.nbs — Got rate from NBS

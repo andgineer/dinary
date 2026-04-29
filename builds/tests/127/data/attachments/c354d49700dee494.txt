@@ -1,0 +1,2 @@
+INFO     dinary.services.ledger_repo:ledger_repo.py:299 anchored accounting_currency=EUR in app_metadata
+INFO     dinary.imports.expense_import:expense_import.py:1025 Applied post-import fixes for 2026

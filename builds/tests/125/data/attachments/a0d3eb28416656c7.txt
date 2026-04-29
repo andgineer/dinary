@@ -1,0 +1,1 @@
+INFO     dinary.services.sheet_logging:sheet_logging.py:382 Appended +1500.0 for еда/ in 2026-04 (pk=1)

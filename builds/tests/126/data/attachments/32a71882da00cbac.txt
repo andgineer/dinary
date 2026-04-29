@@ -1,0 +1,1 @@
+2026-04-29 04:26:35,641 WARNING  dinary.services.sheet_mapping — events.auto_tags for event_id=1 references unknown tag names ['missing']; dropping

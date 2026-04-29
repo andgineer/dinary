@@ -1,0 +1,102 @@
+"DESCRIPTION","DURATION IN MS","NAME","PARENT SUITE","START TIME","STATUS","STOP TIME","SUB SUITE","SUITE","TEST CLASS","TEST METHOD"
+"","2","cached snapshot is structurally identical to GET /api/catalog body","api.js — postAdmin catalog cache shape","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","2","expense stays in queue when offline","no data loss: enqueue-before-send contract","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","2","items sent in order (FIFO)","no data loss: flush partial failure","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","409 removes item from queue instead of retrying forever","deduplication: 409 conflict handling","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","17","test_patch_reactivates_soft_deleted_tag","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminPatch","test_admin_catalog","",""
+"","2","enqueue preserves all fields","offline-queue","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","10","test_patch_rename_and_deactivate_in_one_call","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminPatch","test_admin_catalog","",""
+"","10","expense is in IndexedDB before network call starts","no data loss: enqueue-before-send contract","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","4","test_reload_validation_error_surfaces_as_400","tests","Sun Apr 26 15:36:37 GMT 2026","passed","Sun Apr 26 15:36:37 GMT 2026","TestReloadMap","test_admin_catalog","",""
+"","2","all items sent on success — queue empty","no data loss: flush partial failure","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","expense stays in queue on connection refused","no data loss: enqueue-before-send contract","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","AbortController fires after 30s — expense not lost","no data loss: postExpense timeout","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","11","first-paint flow: category dropdown has real options after applyDefault","PWA default-group selection — case-insensitive group name match","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","multiple enqueues accumulate","offline-queue","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","enqueue rejection short-circuits the success side-effects","submit-side contract: enqueue failure must NOT trigger success path","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","unicode characters in all fields preserved","no data loss: data integrity after enqueue","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","13","test_delete_used_tag_is_soft","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminDelete","test_admin_catalog","",""
+"","11","test_add_bumps_catalog_version_visible_in_get_catalog","tests","Sun Apr 26 15:36:37 GMT 2026","passed","Sun Apr 26 15:36:37 GMT 2026","TestCatalogVersionE2E","test_admin_catalog","",""
+"","2","remove first item preserves remaining order","offline-queue: edge cases","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","very large amount is preserved","no data loss: data integrity after enqueue","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","27","findGroupByName('еда') matches the capitalised 'Еда' group","PWA default-group selection — case-insensitive group name match","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","expense stays in queue on server 500","no data loss: enqueue-before-send contract","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","11","test_delete_category_soft_when_used","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminDelete","test_admin_catalog","",""
+"","1","each item gets a unique auto-increment id","offline-queue: edge cases","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","4","test_add_event_rejects_bad_range","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminAdd","test_admin_catalog","",""
+"","1","count returns zero for empty queue","offline-queue","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","4","test_reload_503_when_spreadsheet_unset","tests","Sun Apr 26 15:36:37 GMT 2026","passed","Sun Apr 26 15:36:37 GMT 2026","TestReloadMap","test_admin_catalog","",""
+"","3","first item sent, second fails — second stays in queue","no data loss: flush partial failure","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","28","test_add_tag_returns_snapshot","tests","Sun Apr 26 15:36:35 GMT 2026","passed","Sun Apr 26 15:36:35 GMT 2026","TestAdminAdd","test_admin_catalog","",""
+"","3","failure at item 3 of 5 — items 3-5 remain in queue","no data loss: flush partial failure","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","queued_at timestamp is recent","offline-queue: edge cases","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","enqueue during failed flush preserves new item","no data loss: concurrent operations","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","all fields are preserved exactly in IndexedDB","no data loss: data integrity after enqueue","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","expense stays in queue on server 503","no data loss: enqueue-before-send contract","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","drops a pre-v2 queued item (no category_id) instead of retrying it forever","pre-v2 legacy-item guard","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","remove middle item preserves others","offline-queue: edge cases","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","11","test_delete_group_refuses_while_it_has_categories","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminDelete","test_admin_catalog","",""
+"","5","test_add_returns_created_on_new_name","tests","Sun Apr 26 15:36:37 GMT 2026","passed","Sun Apr 26 15:36:37 GMT 2026","TestAddStatus","test_admin_catalog","",""
+"","2","getAll returns items in insertion order","offline-queue: edge cases","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","9","test_delete_event_referenced_by_sheet_mapping_is_soft","tests","Sun Apr 26 15:36:37 GMT 2026","passed","Sun Apr 26 15:36:37 GMT 2026","TestAdminDelete","test_admin_catalog","",""
+"","3","rapid enqueue-flush cycles don't lose data","no data loss: concurrent operations","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","expense stays in queue on network timeout","no data loss: enqueue-before-send contract","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","2","expense stays in queue on server 502","no data loss: enqueue-before-send contract","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","fetchCatalog derives If-None-Match from cached catalog_version","api.js — postAdmin catalog cache shape","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","2","expense stays in queue on DNS resolution failure","no data loss: enqueue-before-send contract","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","2","expense stays in queue on ERR_CONNECTION_RESET","no data loss: enqueue-before-send contract","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","2","expense removed from queue only after 200","no data loss: enqueue-before-send contract","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"Renaming a tag via PATCH must rewrite every ``events.auto_tags``
+entry that references the old name.
+
+``auto_tags`` stores tag *names* (not ids) so the JSON value is
+stable across seed rebuilds that renumber ids, but that means a
+plain ``UPDATE tags SET name = ?`` would silently break the
+auto-attach pipeline: the next ``resolve_event_auto_tag_ids``
+call would log an ""unknown tag name"" WARN and drop the tag
+from every new expense created under that event. The cascade
+keeps auto-attach behaviour identical across the rename.
+","14","test_patch_rename_tag_cascades_into_events_auto_tags","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminPatch","test_admin_catalog","",""
+"","3","special characters in category and comment","offline-queue: edge cases","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","2","flush assigns a client_expense_id when the queued row has none","deduplication: stable identity contract","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","9","test_add_event_with_auto_tags","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminAdd","test_admin_catalog","",""
+"","1","empty comment is preserved","no data loss: data integrity after enqueue","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"``sheet_mapping`` carries a FK into ``categories``. Even when
+no expense row references the category, a surviving
+``sheet_mapping`` row would cause the hard DELETE to trip the
+FK constraint — the writer must detect that and soft-delete
+instead so the drain loop's atomic map-swap is the single
+place responsible for sheet_mapping churn.
+","10","test_delete_category_referenced_by_sheet_mapping_is_soft","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminDelete","test_admin_catalog","",""
+"","9","test_delete_group_hard_when_empty","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminDelete","test_admin_catalog","",""
+"","16","test_add_returns_reactivated_on_inactive_name","tests","Sun Apr 26 15:36:37 GMT 2026","passed","Sun Apr 26 15:36:37 GMT 2026","TestAddStatus","test_admin_catalog","",""
+"","1","decimal amounts preserved exactly","offline-queue: edge cases","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"``events.auto_tags`` (a JSON array of tag names) also counts
+as a mapping-side reference for the hard-vs-soft decision.
+Without this guard, deleting a tag that is only named by an
+event's ``auto_tags`` would remove the ``tags`` row but leave
+an orphan name pointer in the event; subsequent
+``resolve_event_auto_tag_ids`` calls would silently drop it
+(logging a WARN), which is a data-loss footgun operators
+can't recover from via the admin UI.
+","13","test_delete_tag_referenced_only_by_events_auto_tags_is_soft","tests","Sun Apr 26 15:36:37 GMT 2026","passed","Sun Apr 26 15:36:37 GMT 2026","TestAdminDelete","test_admin_catalog","",""
+"","11","test_add_group_then_category","tests","Sun Apr 26 15:36:35 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminAdd","test_admin_catalog","",""
+"","7","enqueue persists expense in IndexedDB","offline-queue","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","remove with non-existent id does not throw","offline-queue: edge cases","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","34","writes category_groups (not groups) into the cached snapshot","api.js — postAdmin catalog cache shape","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","5","handles many items (stress test)","offline-queue: edge cases","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","9","test_delete_unused_tag_is_hard","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminDelete","test_admin_catalog","",""
+"","9","test_delete_tag_referenced_by_sheet_mapping_tags_is_soft","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminDelete","test_admin_catalog","",""
+"","1","enqueue success runs the success side-effects exactly once","submit-side contract: enqueue failure must NOT trigger success path","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"PATCH ``is_active=False`` on a referenced row now succeeds
+(soft-retire), matching DELETE's semantics on the same row.
+The previous 409-on-in-use asymmetry between PATCH and DELETE
+was removed; operators use PATCH to flip the flag in either
+direction and DELETE to actually try to remove the row.","14","test_patch_soft_retire_referenced_category_succeeds","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminPatch","test_admin_catalog","",""
+"","6","test_add_event_with_range","tests","Sun Apr 26 15:36:36 GMT 2026","passed","Sun Apr 26 15:36:36 GMT 2026","TestAdminAdd","test_admin_catalog","",""
+"","1","replaceCachedCatalog strips admin-only fields","api.js — postAdmin catalog cache shape","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","explicit client_expense_id is preserved on enqueue and flush","deduplication: stable identity contract","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","2","parallel enqueues don't lose items","no data loss: concurrent operations","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","1","zero amount is preserved","no data loss: data integrity after enqueue","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""
+"","9","test_add_returns_noop_on_existing_active_name","tests","Sun Apr 26 15:36:37 GMT 2026","passed","Sun Apr 26 15:36:37 GMT 2026","TestAddStatus","test_admin_catalog","",""
+"","1","remove only deletes the specified item","offline-queue","Sun Apr 26 15:36:27 GMT 2026","passed","Sun Apr 26 15:36:27 GMT 2026","","","",""

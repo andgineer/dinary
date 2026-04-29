@@ -1,0 +1,2 @@
+2026-04-28 06:42:35,001 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 06:42:35,002 WARNING  dinary.background.rate_prefetch_task — rate for RSD/EUR on 2025-02-24 not written to DB (stale fallback 117.32), retrying in 30 min

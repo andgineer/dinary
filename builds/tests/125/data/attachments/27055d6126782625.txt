@@ -1,0 +1,1 @@
+DEBUG    dinary.services.exchange_rates:exchange_rates.py:69 Frankfurter unavailable, using last known rate for USD/EUR

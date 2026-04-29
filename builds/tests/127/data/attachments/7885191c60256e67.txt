@@ -1,0 +1,8 @@
+2026-04-29 07:39:21,944 ERROR    dinary.imports.report_2d_3d — Skipping year 2024: failed to fetch/parse sheet rows
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/imports/report_2d_3d.py", line 200, in _collect_year
+    parsed_rows = list(iter_parsed_sheet_rows(year, con=con))
+  File "/home/runner/work/dinary/dinary/tests/reports/test_report_2d_3d_aggregate.py", line 287, in fake_iter
+    raise RuntimeError(msg)
+RuntimeError: simulated gspread failure for 2024
+2026-04-29 07:39:21,945 INFO     dinary.imports.report_2d_3d — Year 2025: collected 1 detail rows

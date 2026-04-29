@@ -1,0 +1,2 @@
+DEBUG    asyncio:selector_events.py:64 Using selector: EpollSelector
+DEBUG    dinary.background.rate_prefetch_task:rate_prefetch_task.py:84 rate for 2025-02-24 already stored

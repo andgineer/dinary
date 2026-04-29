@@ -1,0 +1,2 @@
+No .deploy/litestream.yml locally.
+Copy .deploy.example/litestream.yml to .deploy/litestream.yml and fill in the SFTP target, then re-run.

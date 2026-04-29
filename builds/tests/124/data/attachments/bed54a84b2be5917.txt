@@ -1,0 +1,2 @@
+INFO     dinary.services.sheet_logging:sheet_logging.py:382 Appended +1500.0 for Food/Essentials in 2026-04 (pk=1)
+ERROR    dinary.services.sheet_logging:sheet_logging.py:315 Append succeeded for pk=1 but claim stolen; force-deleted

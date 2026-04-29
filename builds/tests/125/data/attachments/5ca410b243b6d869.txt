@@ -1,0 +1,5 @@
+2026-04-28 12:56:38,308 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 12:56:38,314 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-28 12:56:38,315 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-28 12:56:38,320 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-28: 0.008517
+2026-04-28 12:56:38,324 INFO     httpx — HTTP Request: GET http://testserver/api/catalog "HTTP/1.1 200 OK"

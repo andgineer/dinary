@@ -1,0 +1,24 @@
+DEBUG    asyncio:selector_events.py:64 Using selector: EpollSelector
+INFO     dinary.services.ledger_repo:ledger_repo.py:299 anchored accounting_currency=EUR in app_metadata
+INFO     dinary.background.sheet_logging_task:sheet_logging_task.py:64 sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 422 Unprocessable Entity"
+INFO     dinary.background.rate_prefetch_task:rate_prefetch_task.py:109 prefetched RSD/EUR rate for 2026-04-28: 0.008517
+DEBUG    httpcore.connection:_trace.py:47 connect_tcp.started host='kurs.resenje.org' port=443 local_address=None timeout=10 socket_options=None
+DEBUG    httpcore.connection:_trace.py:47 connect_tcp.complete return_value=<httpcore._backends.sync.SyncStream object at 0x7fb656ca2ad0>
+DEBUG    httpcore.connection:_trace.py:47 start_tls.started ssl_context=<ssl.SSLContext object at 0x7fb654b631b0> server_hostname='kurs.resenje.org' timeout=10
+DEBUG    httpcore.connection:_trace.py:47 start_tls.complete return_value=<httpcore._backends.sync.SyncStream object at 0x7fb656cae8b0>
+DEBUG    httpcore.http11:_trace.py:47 send_request_headers.started request=<Request [b'GET']>
+DEBUG    httpcore.http11:_trace.py:47 send_request_headers.complete
+DEBUG    httpcore.http11:_trace.py:47 send_request_body.started request=<Request [b'GET']>
+DEBUG    httpcore.http11:_trace.py:47 send_request_body.complete
+DEBUG    httpcore.http11:_trace.py:47 receive_response_headers.started request=<Request [b'GET']>
+DEBUG    httpcore.http11:_trace.py:47 receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Tue, 28 Apr 2026 12:52:47 GMT'), (b'Content-Type', b'application/json; charset=utf-8'), (b'Content-Length', b'157'), (b'Connection', b'keep-alive'), (b'Cache-Control', b'no-cache, no-store, must-revalidate'), (b'Content-Encoding', b'gzip'), (b'Expires', b'0'), (b'Pragma', b'no-cache'), (b'Server', b'kurs/0.5.6-7a1c078'), (b'Vary', b'Accept-Encoding'), (b'X-Frame-Options', b'SAMEORIGIN'), (b'X-Xss-Protection', b'1; mode=block')])
+INFO     httpx:_client.py:1025 HTTP Request: GET https://kurs.resenje.org/api/v1/currencies/eur/rates/2026-04-15 "HTTP/1.1 200 OK"
+DEBUG    httpcore.http11:_trace.py:47 receive_response_body.started request=<Request [b'GET']>
+DEBUG    httpcore.http11:_trace.py:47 receive_response_body.complete
+DEBUG    httpcore.http11:_trace.py:47 response_closed.started
+DEBUG    httpcore.http11:_trace.py:47 response_closed.complete
+DEBUG    httpcore.connection:_trace.py:47 close.started
+DEBUG    httpcore.connection:_trace.py:47 close.complete
+INFO     dinary.services.nbs:nbs.py:46 Got rate from NBS
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"

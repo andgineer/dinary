@@ -1,0 +1,10 @@
+2026-04-29 07:59:14,325 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 07:59:14,326 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 07:59:14,331 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-29: 0.008517
+2026-04-29 07:59:14,332 INFO     dinary.services.catalog_writer — catalog_writer add_tag(name='t'): bumped catalog_version
+2026-04-29 07:59:14,334 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/tags "HTTP/1.1 200 OK"
+2026-04-29 07:59:14,337 INFO     httpx — HTTP Request: GET http://testserver/api/catalog "HTTP/1.1 200 OK"
+2026-04-29 07:59:14,340 INFO     dinary.services.catalog_writer — catalog_writer edit_tag(id=1): bumped catalog_version
+2026-04-29 07:59:14,342 INFO     httpx — HTTP Request: PATCH http://testserver/api/admin/catalog/tags/1 "HTTP/1.1 200 OK"
+2026-04-29 07:59:14,345 INFO     dinary.services.catalog_writer — catalog_writer add_tag(reactivate name='t'): bumped catalog_version
+2026-04-29 07:59:14,346 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/tags "HTTP/1.1 200 OK"

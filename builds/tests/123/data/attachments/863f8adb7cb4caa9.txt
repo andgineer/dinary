@@ -1,0 +1,2 @@
+2026-04-28 06:42:34,978 DEBUG    asyncio — Using selector: EpollSelector
+2026-04-28 06:42:34,979 DEBUG    dinary.background.rate_prefetch_task — rate for 2025-02-24 already stored

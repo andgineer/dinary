@@ -1,0 +1,9 @@
+=== Installing apt packages (rclone, sqlite3, zstd) on ubuntu@dinary-replica ===
+=== Installing Litestream binary on replica ===
+=== Ensuring rclone 'yandex' remote is configured ===
+=== Preparing yandex:Backup/dinary/ ===
+=== Writing /usr/local/bin/dinary-backup ===
+=== Writing /usr/local/bin/dinary-backup-retention ===
+=== Installing systemd service + timer ===
+=== Running an initial backup to verify the pipeline end-to-end ===
+=== backup-cloud-setup done ===

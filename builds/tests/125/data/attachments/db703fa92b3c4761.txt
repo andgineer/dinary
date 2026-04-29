@@ -1,0 +1,1 @@
+2026-04-28 12:56:40,599 DEBUG    dinary.services.exchange_rates — Frankfurter unavailable, using last known rate for USD/EUR
