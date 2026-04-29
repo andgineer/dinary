@@ -4,6 +4,8 @@ import base64
 import sqlite3
 import subprocess
 import sys
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 from invoke import task
@@ -11,6 +13,20 @@ from invoke import task
 from .env import host
 from .restore_utils import apply_restore, confirm_overwrite
 from .ssh_utils import sqlite_backup_prologue, ssh_capture_bytes
+
+_LOCAL_DB_PATH = Path("data/dinary.db")
+
+
+@contextmanager
+def open_local_db() -> Generator[sqlite3.Connection]:
+    if not _LOCAL_DB_PATH.exists():
+        print(f"No local DB at {_LOCAL_DB_PATH}", file=sys.stderr)
+        sys.exit(1)
+    con = sqlite3.connect(_LOCAL_DB_PATH)
+    try:
+        yield con
+    finally:
+        con.close()
 
 
 @task(name="migrate")
@@ -56,19 +72,9 @@ def verify_db(c, remote=False):  # noqa: ARG001
         raw = ssh_capture_bytes(remote_cmd)
         output = raw.decode("utf-8", errors="replace")
     else:
-        db_path = Path("data/dinary.db")
-        if not db_path.exists():
-            print(
-                f"No local DB at {db_path}; run `inv dev` or `inv restore-primary` first.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        con = sqlite3.connect(db_path)
-        try:
+        with open_local_db() as con:
             rows = con.execute("PRAGMA integrity_check").fetchall()
             rows.extend(con.execute("PRAGMA foreign_key_check").fetchall())
-        finally:
-            con.close()
         output = "\n".join("|".join(str(col) for col in row) for row in rows)
     print(output, end="" if output.endswith("\n") else "\n")
     lines = [line for line in output.splitlines() if line.strip()]

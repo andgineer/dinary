@@ -1,14 +1,13 @@
 """Server-facing tasks: status, logs, restart, SSH sessions, healthcheck."""
 
-import sqlite3
 import sys
 from datetime import date as _date
 from datetime import timedelta as _timedelta
-from pathlib import Path
 
 from invoke import task
 
 from .constants import REMOTE_LITESTREAM_CONFIG_PATH, REPLICA_DB_NAME, REPLICA_LITESTREAM_DIR
+from .db import open_local_db
 from .env import _env, host, replica_host, tunnel
 from .ssh_utils import (
     sqlite_backup_prologue,
@@ -80,48 +79,67 @@ def ssh_replica(c):
     c.run(f"ssh {replica_host()}", pty=True)
 
 
-def _healthcheck_query_lines(c, remote: bool, rate_sql: str, sheet_sql: str) -> list[str]:  # noqa: ARG001
+def _healthcheck_run_queries(c, remote: bool, **queries: str) -> dict[str, str]:  # noqa: ARG001
+    names = list(queries)
+    sqls = list(queries.values())
     if remote:
+        combined = "; ".join(sqls)
         raw = ssh_capture_bytes(
-            sqlite_backup_prologue("dinary-healthcheck")
-            + f'sqlite3 "$SNAP" "{rate_sql}; {sheet_sql}"',
+            sqlite_backup_prologue("dinary-healthcheck") + f'sqlite3 "$SNAP" "{combined}"',
         )
-        return raw.decode("utf-8", errors="replace").strip().splitlines()
-    db_path = Path("data/dinary.db")
-    if not db_path.exists():
-        print(f"No local DB at {db_path}", file=sys.stderr)
-        sys.exit(1)
-    con = sqlite3.connect(db_path)
-    try:
-        return [str(con.execute(sql).fetchone()[0]) for sql in [rate_sql, sheet_sql]]
-    finally:
-        con.close()
+        values = raw.decode("utf-8", errors="replace").strip().splitlines()
+    else:
+        with open_local_db() as con:
+            values = [str(con.execute(sql).fetchone()[0]) for sql in sqls]
+    return dict(zip(names, values, strict=False))
 
 
-def _healthcheck_sheet_log(lines: list[str]) -> None:
-    expense_line = lines[1].strip() if len(lines) > 1 else ""
+def _healthcheck_sheet_log(results: dict[str, str]) -> None:
+    expense_line = results.get("sheet", "").strip()
     if not expense_line:
         print("OK: no expenses in DB, nothing to check")
         return
-    parts = expense_line.split("|")
-    expense_id = parts[0]
-    job_status = parts[1] if len(parts) > 1 else ""
+    expense_id, job_status = (expense_line.split("|", 1) + [""])[:2]
     if job_status == "poisoned":
         print(
-            f"FAIL: last expense (id={expense_id}) sheet logging is poisoned",
+            f"FAIL: last expense (id={expense_id}) sheet logging failed after all retries,"
+            " needs manual fix",
             file=sys.stderr,
         )
         sys.exit(1)
     if job_status in ("pending", "in_progress"):
-        print(f"OK: last expense (id={expense_id}) sheet logging {job_status} (in queue)")
+        print(f"OK: last expense (id={expense_id}) sheet logging in progress")
     elif not job_status:
         print(f"OK: last expense (id={expense_id}) logged to sheet")
     else:
         print(
-            f"FAIL: last expense (id={expense_id}) unexpected status: {job_status}",
+            f"FAIL: last expense (id={expense_id}) unexpected sheet logging status: {job_status!r}",
             file=sys.stderr,
         )
         sys.exit(1)
+
+
+def _fmt_amount(value: str) -> str:
+    try:
+        f = float(value)
+        return str(int(f)) if f == int(f) else f"{f:.2f}"
+    except (ValueError, OverflowError):
+        return value
+
+
+def _healthcheck_last_expense_info(results: dict[str, str]) -> None:
+    detail = results.get("last_expense", "").strip()
+    prev_total = results.get("prev_day_total", "").strip()
+    if detail:
+        amount_str, currency, category = (detail.split("|", 2) + ["", ""])[:3]
+        print(f"OK: last expense {_fmt_amount(amount_str)} {currency} ({category})")
+    if prev_total:
+        totals = ", ".join(
+            f"{_fmt_amount(total)} {cur}"
+            for entry in prev_total.split(",")
+            for cur, total in [entry.split(":", 1)]
+        )
+        print(f"OK: yesterday total {totals}")
 
 
 def _build_replica_page_count_script() -> str:
@@ -201,18 +219,35 @@ def healthcheck(c, remote=False):  # noqa: ARG001
         _healthcheck_replica_page_count()
 
     yesterday = (_date.today() - _timedelta(days=1)).isoformat()
-    rate_sql = f"SELECT count(*) FROM exchange_rates WHERE date = '{yesterday}'"  # noqa: S608
-    sheet_sql = (
-        "SELECT COALESCE("
-        "(SELECT e.id || '|' || COALESCE(slj.status, '')"
-        " FROM expenses e"
-        " LEFT JOIN sheet_logging_jobs slj ON slj.expense_id = e.id"
-        " ORDER BY e.id DESC LIMIT 1),"
-        " '')"
+    results = _healthcheck_run_queries(
+        c,
+        remote,
+        rate=f"SELECT count(*) FROM exchange_rates WHERE date = '{yesterday}'",  # noqa: S608
+        sheet=(
+            "SELECT COALESCE("
+            "(SELECT e.id || '|' || COALESCE(slj.status, '')"
+            " FROM expenses e"
+            " LEFT JOIN sheet_logging_jobs slj ON slj.expense_id = e.id"
+            " ORDER BY e.id DESC LIMIT 1),"
+            " '')"
+        ),
+        last_expense=(
+            "SELECT COALESCE("
+            "(SELECT CAST(e.amount_original AS TEXT) || '|' || e.currency_original || '|' || c.name"
+            " FROM expenses e"
+            " JOIN categories c ON c.id = e.category_id"
+            " ORDER BY e.id DESC LIMIT 1),"
+            " '')"
+        ),
+        prev_day_total=(
+            f"SELECT COALESCE(GROUP_CONCAT(currency_original || ':' || total, ','), '')"  # noqa: S608
+            f" FROM (SELECT currency_original, SUM(amount_original) AS total"
+            f" FROM expenses WHERE DATE(datetime) = '{yesterday}'"
+            f" GROUP BY currency_original)"
+        ),
     )
-    lines = _healthcheck_query_lines(c, remote, rate_sql, sheet_sql)
 
-    rate_count = int(lines[0]) if lines else 0
+    rate_count = int(results.get("rate", "0") or "0")
     if rate_count == 0:
         print(f"FAIL: no exchange rate cached for {yesterday}", file=sys.stderr)
         sys.exit(1)
@@ -220,6 +255,7 @@ def healthcheck(c, remote=False):  # noqa: ARG001
 
     if not _env().get("DINARY_SHEET_LOGGING_SPREADSHEET"):
         print("OK: sheet logging not configured, skipping")
-        return
+    else:
+        _healthcheck_sheet_log(results)
 
-    _healthcheck_sheet_log(lines)
+    _healthcheck_last_expense_info(results)

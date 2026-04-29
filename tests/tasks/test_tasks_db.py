@@ -96,16 +96,14 @@ class TestVerifyDbLocal:
     def test_fails_cleanly_when_db_is_missing(self, _cwd, capsys):
         """First-run UX: an operator who never ran ``inv dev`` or
         ``inv backup`` has no local DB. The task must exit 1 with a
-        pointer to what to run next, not a cryptic sqlite3 error.
+        clear message, not a cryptic sqlite3 error.
         """
         # Note: _cwd already created ``data/`` but not ``dinary.db``.
         c = MagicMock()
         with pytest.raises(SystemExit) as excinfo:
             self._verify_db(c)
         assert excinfo.value.code == 1
-        err = capsys.readouterr().err
-        assert "No local DB" in err
-        assert "inv dev" in err or "inv backup" in err
+        assert "No local DB" in capsys.readouterr().err
 
 
 @allure.epic("Deploy")
