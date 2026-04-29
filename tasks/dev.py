@@ -7,8 +7,6 @@ from pathlib import Path
 
 from invoke import task
 
-from dinary.__about__ import __version__
-
 
 @task
 def version(_c):
@@ -165,9 +163,26 @@ def dev(c, port=8000, sheet_logging=False, reset=False):
     c.run(cmd, pty=True)
 
 
+def _build_version() -> str:
+    """Return the git tag on HEAD (v-prefix stripped), or the short commit hash."""
+    try:
+        tag = subprocess.check_output(
+            ["git", "describe", "--exact-match", "--tags", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        return tag.lstrip("v")
+    except subprocess.CalledProcessError:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            text=True,
+        ).strip()
+
+
 @task(name="build-static")
 def build_static(c):  # noqa: ARG001
     """Replace __VERSION__ in static/ files, write to _static/."""
+    version = _build_version()
     src = Path("static")
     dst = Path("_static")
     data = Path("data")
@@ -178,8 +193,8 @@ def build_static(c):  # noqa: ARG001
 
     for filepath in [dst / "js" / "app.js", dst / "sw.js"]:
         text = filepath.read_text()
-        filepath.write_text(text.replace("__VERSION__", __version__))
+        filepath.write_text(text.replace("__VERSION__", version))
 
     data.mkdir(exist_ok=True)
-    (data / ".deployed_version").write_text(__version__)
-    print(f"Built _static/ with version {__version__}")
+    (data / ".deployed_version").write_text(version)
+    print(f"Built _static/ with version {version}")
