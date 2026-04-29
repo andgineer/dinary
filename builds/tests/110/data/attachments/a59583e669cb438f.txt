@@ -1,4 +1,0 @@
-=== Installing Litestream binary ===
-=== Uploading /tmp/pytest-of-runner/pytest-0/test_permissions_target_the_ca0/litestream.yml to /etc/litestream.yml ===
-=== Creating litestream systemd service ===
-=== Checking status ===

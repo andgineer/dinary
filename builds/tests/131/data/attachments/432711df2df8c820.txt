@@ -1,0 +1,5 @@
+2026-04-29 08:49:45,366 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 08:49:45,367 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 08:49:45,374 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-29: 0.008517
+2026-04-29 08:49:45,376 INFO     dinary.services.catalog_writer — catalog_writer add_event(name='trip-2026'): bumped catalog_version
+2026-04-29 08:49:45,378 INFO     httpx — HTTP Request: POST http://testserver/api/admin/catalog/events "HTTP/1.1 200 OK"

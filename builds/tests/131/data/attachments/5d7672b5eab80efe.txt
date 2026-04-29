@@ -1,0 +1,8 @@
+2026-04-29 08:49:49,450 INFO     dinary.services.ledger_repo — anchored accounting_currency=EUR in app_metadata
+2026-04-29 08:49:49,451 INFO     dinary.background.sheet_logging_task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-04-29 08:49:49,458 INFO     dinary.background.rate_prefetch_task — prefetched RSD/EUR rate for 2026-04-29: 0.008517
+2026-04-29 08:49:49,459 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-29 08:49:49,463 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 422 Unprocessable Entity"
+2026-04-29 08:49:49,466 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 200 OK"
+2026-04-29 08:49:49,468 INFO     dinary.services.ledger_repo — insert_expense conflict for client_expense_id='e_pin_1': diff=amount: stored=Decimal('10') incoming=Decimal('999.0'); amount_original: stored=Decimal('10') incoming=Decimal('999.0')
+2026-04-29 08:49:49,468 INFO     httpx — HTTP Request: POST http://testserver/api/expenses "HTTP/1.1 409 Conflict"

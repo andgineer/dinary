@@ -1,2 +1,0 @@
-Previous data/dinary.db saved as data/dinary.db.before-restore-20260424T1326Z
-Restored data/dinary.db from dinary-2026-04-22T0317Z.db.zst

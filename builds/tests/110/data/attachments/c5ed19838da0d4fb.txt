@@ -1,5 +1,0 @@
-=== Installing baseline packages on ubuntu@dinary-replica ===
-=== Provisioning /var/lib/litestream ===
-=== Allocating swap ===
-=== Restricting sshd to Tailscale + loopback ===
-=== Replica bootstrap done ===

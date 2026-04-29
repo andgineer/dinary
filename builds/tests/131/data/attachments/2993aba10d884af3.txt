@@ -1,0 +1,4 @@
+INFO     dinary.services.ledger_repo:ledger_repo.py:299 anchored accounting_currency=EUR in app_metadata
+INFO     dinary.background.sheet_logging_task:sheet_logging_task.py:64 sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/api/catalog "HTTP/1.1 304 Not Modified"
+INFO     dinary.background.rate_prefetch_task:rate_prefetch_task.py:109 prefetched RSD/EUR rate for 2026-04-29: 0.008517
