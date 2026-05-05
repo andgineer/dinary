@@ -119,9 +119,13 @@ def _tailscale_serve_stop() -> None:
             "have rows. Best-effort kills any lingering local uvicorn "
             "process holding the DB. Non-destructive if no DB exists yet."
         ),
+        "rebuild": (
+            "Force a full PWA rebuild even when ``_static/index.html`` "
+            "already exists. Use after editing anything under ``webapp/``."
+        ),
     },
 )
-def dev(c, port=8000, sheet_logging=False, reset=False):
+def dev(c, port=8000, sheet_logging=False, reset=False, rebuild=False):
     """Run the FastAPI server locally with auto-reload for PWA debugging.
 
     - Listens on http://127.0.0.1:<port> — open that URL in your
@@ -161,7 +165,10 @@ def dev(c, port=8000, sheet_logging=False, reset=False):
     iteration. Hard-refresh (Cmd-Shift-R) also bypasses the SW
     for that one navigation.
     """
-    _run_build(c, dev_mode=True)
+    if rebuild:
+        _run_build(c, dev_mode=True)
+    else:
+        _ensure_static_built(c)
 
     if reset:
         subprocess.run(
@@ -253,6 +260,11 @@ def _run_build(c, dev_mode: bool = False) -> None:
     (data / ".deployed_version").write_text(version)
     (_STATIC_DIR / "version.json").write_text(f'{{"version": "{version}"}}\n')
     print(f"Built _static/ with version {version}")
+
+
+def _ensure_static_built(c) -> None:
+    if not (_STATIC_DIR / "index.html").is_file():
+        build_static(c)
 
 
 @task(name="build-static")

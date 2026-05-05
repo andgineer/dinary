@@ -91,7 +91,8 @@ class TestBuildStatic:
         version_json = json.loads((static_dir / "version.json").read_text())
         assert version_json == {"version": "abc1234"}
 
-    def test_skip_install_omits_npm_ci(self, fake_repo):
+    def test_omits_npm_ci_when_node_modules_present(self, fake_repo):
+        (fake_repo / "webapp" / "node_modules").mkdir()
         static_dir = fake_repo / "_static"
 
         def write_index():
@@ -99,7 +100,7 @@ class TestBuildStatic:
             (static_dir / "index.html").write_text("<html></html>")
 
         ctx = _FakeContext(build_writer=write_index)
-        _build_static_fn(ctx, skip_install=True)
+        _build_static_fn(ctx)
 
         assert ctx.commands == ["npm --prefix webapp run build"]
 
@@ -111,9 +112,10 @@ class TestBuildStatic:
         assert ctx.commands == []
 
     def test_raises_when_vite_produces_no_index(self, fake_repo):
+        (fake_repo / "webapp" / "node_modules").mkdir()
         ctx = _FakeContext()
         with pytest.raises(RuntimeError, match="Vite build did not produce"):
-            _build_static_fn(ctx, skip_install=True)
+            _build_static_fn(ctx)
 
 
 @allure.epic("Deploy")
