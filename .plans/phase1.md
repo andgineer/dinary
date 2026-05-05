@@ -14,7 +14,9 @@
 > `RSD`) and `settings.accounting_currency` (DB storage + reports,
 > default `EUR`); `expenses.amount` and `income.amount` are now both
 > in the accounting currency. For the current architecture see
-> [`.plans/architecture.md`](architecture.md). Treat everything below as
+> [`.plans/architecture.md`](architecture.md), and for the Vue 3 + Pinia
+> PWA rewrite that replaces the original `static/` frontend see
+> [`.plans/vue-refactor.md`](vue-refactor.md). Treat everything below as
 > historical reference.
 >
 > It still uses the pre-rename names
@@ -539,9 +541,9 @@ Phase 1 implementation must verify this explicitly before changing the response 
 
 In:
 
-- [static/js/offline-queue.js](../static/js/offline-queue.js)
-- [static/js/app.js](../static/js/app.js)
-- [static/js/api.js](../static/js/api.js)
+- `static/js/offline-queue.js` *(historical — the legacy `static/` PWA was retired by [`vue-refactor.md`](vue-refactor.md))*
+- `static/js/app.js` *(historical)*
+- `static/js/api.js` *(historical)*
 
 Plan:
 

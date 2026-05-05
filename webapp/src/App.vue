@@ -1,0 +1,349 @@
+<script setup>
+import { computed, onMounted, onBeforeUnmount, ref } from "vue";
+import ExpenseForm from "./components/ExpenseForm.vue";
+import QrScanner from "./components/QrScanner.vue";
+import QueueModal from "./components/QueueModal.vue";
+import AddGroupModal from "./modals/AddGroupModal.vue";
+import AddCategoryModal from "./modals/AddCategoryModal.vue";
+import AddEventModal from "./modals/AddEventModal.vue";
+import AddTagModal from "./modals/AddTagModal.vue";
+import { useCatalogStore } from "./stores/catalog.js";
+import { useQueueStore } from "./stores/queue.js";
+import { useToastStore } from "./stores/toast.js";
+import { isFiscalReceiptUrl, parseReceiptUrl } from "./composables/receipt.js";
+import { flushQueue } from "./composables/flushQueue.js";
+
+const APP_VERSION =
+  typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
+
+const catalog = useCatalogStore();
+const queue = useQueueStore();
+const toast = useToastStore();
+
+const isOnline = ref(
+  typeof navigator !== "undefined" ? navigator.onLine : true,
+);
+const queueModalOpen = ref(false);
+const scanner = ref(null);
+const scannerActive = ref(false);
+const expenseForm = ref(null);
+
+const openAddModal = ref(null); // 'group' | 'category' | 'event' | 'tag' | null
+const addCategoryGroupId = ref(null);
+
+const queueCount = computed(() => queue.items.length);
+const headerVersionLabel = computed(() => `v${APP_VERSION}`);
+
+function onOnline() {
+  isOnline.value = true;
+  void flushQueue();
+}
+
+function onOffline() {
+  isOnline.value = false;
+}
+
+async function init() {
+  await queue.refresh();
+  if (isOnline.value && queue.items.length > 0) {
+    void flushQueue();
+  }
+}
+
+let _retryTimerId = null;
+function startRetryTimer() {
+  _retryTimerId = setInterval(() => {
+    if (isOnline.value && queue.items.length > 0) {
+      void flushQueue();
+    }
+  }, 30_000);
+}
+
+function stopRetryTimer() {
+  if (_retryTimerId) {
+    clearInterval(_retryTimerId);
+    _retryTimerId = null;
+  }
+}
+
+function onRequestAdd(detail) {
+  if (detail.kind === "category") {
+    if (!detail.groupId) {
+      toast.show("Select a group first", "error");
+      return;
+    }
+    addCategoryGroupId.value = Number(detail.groupId);
+  }
+  openAddModal.value = detail.kind;
+}
+
+function closeAddModal() {
+  openAddModal.value = null;
+  addCategoryGroupId.value = null;
+}
+
+function saveExpense() {
+  expenseForm.value?.save?.();
+}
+
+function toggleScanner() {
+  if (!scanner.value) return;
+  if (scannerActive.value) {
+    scanner.value.stop();
+    scannerActive.value = false;
+    return;
+  }
+  scannerActive.value = true;
+  scanner.value
+    .start()
+    .catch((err) => {
+      toast.show(err.message || "Camera failed", "error");
+      scannerActive.value = false;
+    });
+}
+
+function onScan(text) {
+  scannerActive.value = false;
+  if (!isFiscalReceiptUrl(text)) {
+    const preview = text.length > 80 ? text.slice(0, 80) + "…" : text;
+    toast.show(`Not a fiscal QR: ${preview}`, "error");
+    return;
+  }
+  try {
+    const parsed = parseReceiptUrl(text);
+    toast.show(`Receipt: ${parsed.amount} RSD, ${parsed.date}`, "success");
+    window.dispatchEvent(
+      new CustomEvent("dinary:receipt-parsed", { detail: parsed }),
+    );
+  } catch {
+    toast.show("Could not read receipt", "error");
+  }
+}
+
+function onScanError(err) {
+  toast.show(err?.message || "Camera failed", "error");
+  scannerActive.value = false;
+}
+
+function openQueue() {
+  queueModalOpen.value = true;
+}
+
+function closeQueue() {
+  queueModalOpen.value = false;
+}
+
+onMounted(() => {
+  window.addEventListener("online", onOnline);
+  window.addEventListener("offline", onOffline);
+  void init();
+  startRetryTimer();
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("online", onOnline);
+  window.removeEventListener("offline", onOffline);
+  stopRetryTimer();
+});
+</script>
+
+<template>
+  <header class="app-header">
+    <h1>
+      Dinary
+      <span class="header-version">{{ headerVersionLabel }}</span>
+    </h1>
+    <div class="header-right">
+      <span v-if="!isOnline" class="offline-hint">Offline</span>
+      <button
+        v-if="queueCount > 0"
+        type="button"
+        class="queue-badge"
+        :aria-label="`${queueCount} queued entries`"
+        data-testid="queue-badge"
+        @click="openQueue"
+      >
+        {{ queueCount }} queued
+      </button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <QrScanner
+      ref="scanner"
+      @scan="onScan"
+      @error="onScanError"
+    />
+
+    <ExpenseForm ref="expenseForm" @request-add="onRequestAdd" />
+  </main>
+
+  <footer class="action-bar">
+    <div class="action-bar-inner">
+      <button
+        type="button"
+        class="btn btn-primary action-qr"
+        :class="{ 'is-scanning': scannerActive }"
+        :aria-label="scannerActive ? 'Stop scanning' : 'Scan QR'"
+        data-testid="qr-btn"
+        @click="toggleScanner"
+      >
+        <span v-if="!scannerActive">QR</span>
+        <span v-else>Stop</span>
+      </button>
+      <button
+        type="button"
+        class="btn btn-secondary action-save"
+        data-testid="save-btn"
+        @click="saveExpense"
+      >
+        Save
+      </button>
+    </div>
+  </footer>
+
+  <QueueModal :open="queueModalOpen" @close="closeQueue" />
+
+  <AddGroupModal :open="openAddModal === 'group'" @close="closeAddModal" />
+  <AddCategoryModal
+    :open="openAddModal === 'category'"
+    :group-id="addCategoryGroupId"
+    @close="closeAddModal"
+  />
+  <AddEventModal :open="openAddModal === 'event'" @close="closeAddModal" />
+  <AddTagModal :open="openAddModal === 'tag'" @close="closeAddModal" />
+
+  <div
+    class="toast"
+    :class="{
+      show: toast.visible,
+      success: toast.type === 'success',
+      error: toast.type === 'error',
+      info: toast.type === 'info',
+    }"
+    role="status"
+    aria-live="polite"
+  >
+    {{ toast.message }}
+  </div>
+</template>
+
+<style scoped>
+.app-header {
+  background: var(--surface);
+  padding: 1rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--surface-2);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.app-header h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.header-version {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 0.35rem;
+  cursor: pointer;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.queue-badge {
+  background: var(--warning);
+  color: #000;
+  border: none;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  width: auto;
+}
+
+.app-main {
+  flex: 1;
+  padding: 1.25rem;
+  padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+  max-width: 480px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+@media (min-width: 600px) {
+  .app-main {
+    padding: 2rem;
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+.form-placeholder .muted {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.action-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--surface-2);
+  padding: 0.6rem 1rem;
+  padding-bottom: calc(0.6rem + env(safe-area-inset-bottom, 0px));
+  z-index: 15;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.action-bar-inner {
+  display: flex;
+  align-items: stretch;
+  gap: 0.6rem;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.action-bar .btn {
+  margin: 0;
+  width: auto;
+}
+
+.action-qr {
+  flex: 0 0 auto;
+  padding-inline: 1.05rem;
+  min-width: 3.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    0 0 0 1px rgba(233, 69, 96, 0.25),
+    0 4px 14px rgba(233, 69, 96, 0.35);
+}
+
+.action-qr:hover {
+  box-shadow:
+    0 0 0 1px rgba(233, 69, 96, 0.5),
+    0 6px 18px rgba(233, 69, 96, 0.5);
+}
+
+.action-qr.is-scanning {
+  background: var(--surface-2);
+}
+
+.action-save {
+  flex: 1;
+}
+</style>

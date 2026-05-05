@@ -1,11 +1,13 @@
 """Local development tasks: version, test, dev, build-static, backup."""
 
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 from invoke import task
+
+_WEBAPP_DIR = Path("webapp")
+_STATIC_DIR = Path("_static")
 
 
 @task
@@ -63,12 +65,12 @@ def test(c):
     """
     c.run("rm -rf allure-results")
     py_result = c.run("uv run pytest tests/ -v --alluredir=allure-results", warn=True)
-    js_result = c.run("npm test", warn=True)
+    js_result = c.run("npm --prefix webapp test", warn=True)
     failed = []
     if py_result is not None and py_result.exited != 0:
         failed.append(f"pytest (exit {py_result.exited})")
     if js_result is not None and js_result.exited != 0:
-        failed.append(f"npm test (exit {js_result.exited})")
+        failed.append(f"npm --prefix webapp test (exit {js_result.exited})")
     if failed:
         print(f"Test failures: {', '.join(failed)}")
         sys.exit(1)
@@ -102,10 +104,18 @@ def dev(c, port=8000, sheet_logging=False, reset=False):
     - Listens on http://127.0.0.1:<port> — open that URL in your
       browser instead of pushing to Oracle Cloud on every iteration.
     - ``uvicorn --reload`` watches ``src/`` and re-imports on Python
-      changes. Static files (``static/``) are served straight from
-      disk on every request, so editing ``static/css/style.css`` or
-      ``static/js/app.js`` only needs a browser refresh — no server
-      restart, no rebuild.
+      changes.
+    - The PWA source lives in ``webapp/`` (Vue 3 + Pinia + Vite +
+      ``vite-plugin-pwa``); FastAPI serves the **built** assets from
+      ``_static/``. **Run ``inv build-static`` explicitly after any
+      change under ``webapp/``** — uvicorn does not rebuild the PWA
+      on file changes. As a safety net, this task auto-runs
+      ``inv build-static`` if ``_static/index.html`` is missing, but
+      it will NOT auto-rebuild a stale ``_static/`` (one whose
+      ``index.html`` already exists from a previous build). For HMR
+      while iterating on Vue, run ``npm --prefix webapp run dev`` in
+      a separate terminal — it serves on :5173 and proxies ``/api``
+      to this server.
     - Sheet-logging is **disabled** by default
       (``DINARY_SHEET_LOGGING_SPREADSHEET=`` overrides the value
       from ``.deploy/.env``), so test expenses you create in dev
@@ -128,6 +138,8 @@ def dev(c, port=8000, sheet_logging=False, reset=False):
     iteration. Hard-refresh (Cmd-Shift-R) also bypasses the SW
     for that one navigation.
     """
+    _ensure_static_built(c)
+
     if reset:
         subprocess.run(
             ["pkill", "-f", "uvicorn dinary"],
@@ -179,22 +191,73 @@ def _build_version() -> str:
         ).strip()
 
 
-@task(name="build-static")
-def build_static(c):  # noqa: ARG001
-    """Replace __VERSION__ in static/ files, write to _static/."""
+@task(
+    name="build-static",
+    help={
+        "skip-install": (
+            "Skip ``npm ci`` (use the existing ``webapp/node_modules``). "
+            "Use locally to iterate faster after the first build. The "
+            "deploy pipeline always runs the full install."
+        ),
+    },
+)
+def build_static(c, skip_install=False):
+    """Build the Vue 3 PWA into ``_static/`` and write the deployed version.
+
+    The Vue source is in ``webapp/``. The Vite config writes to
+    ``_static/`` at the repo root; ``vite-plugin-pwa`` regenerates the
+    service worker on every build, and the build version (git tag /
+    short hash) is injected via ``__APP_VERSION__`` at build time.
+
+    This task additionally writes ``data/.deployed_version`` so that
+    ``GET /api/version`` keeps reporting the deployed git ref the way
+    the older copy-only pipeline did.
+
+    Run it after editing anything under ``webapp/``. ``inv dev``
+    invokes it implicitly on first run when ``_static/`` is missing.
+    """
+    if not _WEBAPP_DIR.is_dir():
+        msg = (
+            f"Cannot build PWA: {_WEBAPP_DIR}/ is missing. The Vue 3 "
+            "source must be present at the repo root."
+        )
+        raise RuntimeError(msg)
+
     version = _build_version()
-    src = Path("static")
-    dst = Path("_static")
     data = Path("data")
 
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(src, dst)
+    if not skip_install:
+        print("=== npm ci (webapp/) ===")
+        c.run("npm --prefix webapp ci --no-audit --no-fund")
 
-    for filepath in [dst / "js" / "app.js", dst / "sw.js"]:
-        text = filepath.read_text()
-        filepath.write_text(text.replace("__VERSION__", version))
+    print(f"=== Building _static/ via Vite (version {version}) ===")
+    c.run("npm --prefix webapp run build")
+
+    index = _STATIC_DIR / "index.html"
+    if not index.is_file():
+        msg = (
+            f"Vite build did not produce {index}. Check the output of "
+            "``npm --prefix webapp run build`` for errors."
+        )
+        raise RuntimeError(msg)
 
     data.mkdir(exist_ok=True)
     (data / ".deployed_version").write_text(version)
+    (_STATIC_DIR / "version.json").write_text(f'{{"version": "{version}"}}\n')
     print(f"Built _static/ with version {version}")
+
+
+def _ensure_static_built(c) -> None:
+    """Build ``_static/`` on first run so ``inv dev`` shows the PWA.
+
+    Without ``_static/`` FastAPI has nothing to mount at ``/`` and the
+    PWA is unreachable. Trigger a build here when the directory or its
+    ``index.html`` is missing so the very first ``inv dev`` after a
+    fresh checkout still serves a working app.
+    """
+    needs_build = not _STATIC_DIR.is_dir() or not (_STATIC_DIR / "index.html").is_file()
+    if not needs_build:
+        return
+
+    print("=== _static/ missing — building Vue PWA before starting uvicorn ===")
+    build_static(c)

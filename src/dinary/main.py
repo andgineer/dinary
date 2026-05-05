@@ -13,15 +13,14 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from dinary import __version__
-from dinary.api import admin_catalog, catalog, expenses, qr
+from dinary.api import admin_catalog, catalog, currencies, expenses, qr
 from dinary.background.rate_prefetch_task import rate_prefetch_task
 from dinary.background.sheet_logging_task import sheet_logging_task, warm_sheet_mapping
 from dinary.config import settings
 from dinary.services import ledger_repo
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_BUILT_STATIC = _PROJECT_ROOT / "_static"
-STATIC_DIR = _BUILT_STATIC if _BUILT_STATIC.is_dir() else _PROJECT_ROOT / "static"
+_STATIC_DIR = _PROJECT_ROOT / "_static"
 
 
 def _read_deployed_version() -> str:
@@ -80,6 +79,7 @@ def create_app() -> FastAPI:
     app.include_router(qr.router)
     app.include_router(catalog.router)
     app.include_router(admin_catalog.router)
+    app.include_router(currencies.router)
 
     @app.get("/api/health")
     def health() -> dict:
@@ -98,8 +98,8 @@ def create_app() -> FastAPI:
 
     app.add_middleware(NoCacheSW)
 
-    if STATIC_DIR.is_dir():
-        app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+    if _STATIC_DIR.is_dir():
+        app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")
 
     return app
 

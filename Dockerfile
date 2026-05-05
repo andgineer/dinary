@@ -1,5 +1,15 @@
-FROM python:3.13-slim
+# syntax=docker/dockerfile:1.6
 
+# Stage 1: build the Vue 3 PWA into _static/
+FROM node:22-slim AS webapp-build
+WORKDIR /webapp
+COPY webapp/package.json webapp/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY webapp/ ./
+RUN npm run build && test -f /_static/index.html
+
+# Stage 2: Python runtime
+FROM python:3.13-slim
 WORKDIR /app
 
 RUN pip install --no-cache-dir uv
@@ -10,7 +20,8 @@ COPY src/dinary/__init__.py src/dinary/__init__.py
 RUN uv pip install --system .
 
 COPY src/ src/
-COPY static/ static/
+# Vue PWA build output served by FastAPI at /.
+COPY --from=webapp-build /_static/ _static/
 
 EXPOSE 8000
 

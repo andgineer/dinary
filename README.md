@@ -10,25 +10,76 @@ Track expenses, scan receipts, analyze spending with AI
 
 # Local development
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
+The PWA is a Vue 3 + Pinia app under `webapp/`, built with Vite into
+`_static/` (gitignored). FastAPI serves the built assets from the same
+origin as the API, so on `http://127.0.0.1:8000` you see the same PWA
+the production VM serves.
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Node.js 22+, then:
 
 ```bash
 uv sync
 
-# Create .deploy/.env from the template (one-time, .deploy/ is gitignored)
+# One-time: copy .deploy/.env from the template (.deploy/ is gitignored).
 cp -r .deploy.example .deploy
 
-# First time — or whenever you want a clean slate:
-#   wipes data/dinary.db (and the WAL/SHM sidecars), runs schema migrations, seeds the
-#   hardcoded 3D taxonomy (groups / categories / events / tags), then
-#   starts uvicorn on http://127.0.0.1:8000 with auto-reload.
-uv run inv dev --reset
+# Build the Vue PWA into _static/ (gitignored). Run this:
+#   * the very first time,
+#   * after pulling commits that touch webapp/,
+#   * after editing anything under webapp/ yourself.
+# ``--skip-install`` skips ``npm ci`` (use after the first full build for
+# faster iteration). The full build runs ``npm ci`` + ``vite build`` and
+# writes data/.deployed_version + _static/version.json.
+uv run inv build-static                 # full build (npm ci + vite build)
+uv run inv build-static --skip-install  # faster: skips npm ci
 
-# Subsequent runs — DB is preserved, migrations still apply on startup
-# via the FastAPI lifespan, so editing a migration and restarting is
-# enough (no separate ``inv migrate`` needed for the local DB):
+# Run the FastAPI server. Same migration path as prod ``systemctl restart``:
+#   * starts uvicorn on http://127.0.0.1:8000 with auto-reload,
+#   * the FastAPI lifespan calls ``ledger_repo.init_db()`` which runs
+#     yoyo migrations against the existing data/dinary.db (or creates
+#     a fresh schema if no DB is there yet).
+# As a safety net, ``inv dev`` will also run ``inv build-static`` itself
+# if _static/index.html is missing — but always run the build explicitly
+# whenever you change webapp/ so the served PWA matches your source.
 uv run inv dev
 ```
+
+To exercise migrations against a realistic dataset, replace `data/dinary.db`
+with a fresh prod snapshot before starting:
+
+```bash
+uv run inv restore-primary
+uv run inv dev
+```
+
+Pass `--reset` **only** when you want a clean slate — it wipes
+`data/dinary.db` (plus its WAL/SHM sidecars), creates the schema from
+scratch, and re-seeds the hardcoded 3D taxonomy (groups / categories /
+events / tags). Use it for first-time bootstrap or after changing
+`seed_config.py`. It is not the right way to test that migrations apply
+cleanly to existing data:
+
+```bash
+uv run inv dev --reset
+```
+
+After editing anything under `webapp/`, rebuild `_static/`:
+
+```bash
+uv run inv build-static                # full rebuild (npm ci + vite build)
+uv run inv build-static --skip-install # faster local rebuild after first run
+```
+
+While iterating on Vue/JS, you can run the Vite dev server with HMR
+(it proxies `/api` calls to FastAPI on port 8000):
+
+```bash
+npm --prefix webapp run dev   # http://127.0.0.1:5173
+```
+
+Note: `vite dev` does **not** register a service worker, so offline
+and PWA behavior must be tested against a real `_static/` build (run
+`uv run inv build-static`, then hit FastAPI on port 8000).
 
 `inv dev` **disables Google-Sheets logging by default** so test expenses
 you create while debugging don't leak into the prod logging spreadsheet

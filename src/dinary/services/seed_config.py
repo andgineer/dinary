@@ -533,8 +533,7 @@ def _bump_catalog_version(con: sqlite3.Connection, *, previous: int) -> int:
     One of the two write paths that touch ``catalog_version`` — the
     other is ``catalog_writer._commit_with_bump`` on the admin-API
     path. Both funnel through ``ledger_repo.set_catalog_version`` so
-    future auditing hooks can intercept writes uniformly. See
-    ``.plans/architecture.md`` §Catalog versioning.
+    future auditing hooks can intercept writes uniformly.
     """
     new_version = previous + 1
     ledger_repo.set_catalog_version(con, new_version)

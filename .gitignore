@@ -12,7 +12,7 @@ pytest.xml
 pytest-coverage.txt
 *.py-e
 .venv/
-data/
+/data/
 **/_mkdocs.yml*
 **/ru/images/
 **/ru/reference.md
@@ -24,6 +24,6 @@ credentials.json
 /.env
 /.deploy/
 node_modules/
-data/
+webapp/node_modules/
 _static/
 backups/

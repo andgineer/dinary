@@ -2,6 +2,7 @@ import shutil
 import socket
 import sqlite3
 import unittest.mock
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +10,12 @@ from fastapi.testclient import TestClient
 from dinary.config import settings
 from dinary.main import create_app
 from dinary.services import db_migrations, ledger_repo, rate_helpers, sheet_mapping
+
+# Tests that need the built Vue PWA must depend on ``built_static_dir``;
+# the fixture FAILS LOUDLY when ``_static/`` is absent (instead of
+# silently skipping) so a missing build never hides a regression.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_BUILT_STATIC = _PROJECT_ROOT / "_static"
 
 _REAL_ENSURE_FRESH = sheet_mapping.ensure_fresh
 
@@ -131,6 +138,24 @@ def real_ensure_fresh(monkeypatch):
     callable for the duration of the test.
     """
     monkeypatch.setattr(sheet_mapping, "ensure_fresh", _REAL_ENSURE_FRESH)
+
+
+@pytest.fixture(scope="session")
+def built_static_dir() -> Path:
+    """Path to the built Vue PWA (``_static/``); FAIL LOUDLY if absent.
+
+    Opt-in fixture. Tests that exercise the built Vue bundle (icons,
+    index.html, service worker, hashed assets) declare this fixture.
+    Building the PWA is a prerequisite for the test suite — silently
+    skipping these tests would mask real regressions in the bundle,
+    so we fail with an actionable instruction instead.
+    """
+    if not _BUILT_STATIC.is_dir():
+        pytest.fail(
+            "_static/ not built — run `uv run inv build-static` "
+            "(or `npm --prefix webapp run build`) before the tests.",
+        )
+    return _BUILT_STATIC
 
 
 @pytest.fixture

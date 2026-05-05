@@ -67,10 +67,10 @@ jobs:
         node-version: 22
 
     - name: Install JS dependencies
-      run: npm ci
+      run: npm --prefix webapp ci
 
     - name: Run JS tests
-      run: npm test
+      run: npm --prefix webapp test
 
     - name: Test with pytest
       run: ${{ env.PYTEST_CMD }}
@@ -103,10 +103,10 @@ jobs:
         node-version: 22
 
     - name: Install JS dependencies
-      run: npm ci
+      run: npm --prefix webapp ci
 
     - name: Run JS tests with Allure
-      run: npm test
+      run: npm --prefix webapp test
 
     - name: Test with pytest and Allure report
       run: "${{ env.PYTEST_CMD }} --alluredir=./allure-results"
@@ -165,3 +165,32 @@ jobs:
       with:
         fail_ci_if_error: true
         token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Smoke job: build the multi-stage Docker image and assert _static/ is
+  # populated by the Vue build. Catches regressions where the Node stage
+  # silently produces an empty _static/ (e.g. wrong outDir, missing
+  # index.html) before they reach a real deploy.
+  docker-image-smoke:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build image
+      run: docker build -t dinary-smoke:ci .
+
+    - name: Verify _static/ is populated
+      run: |
+        cid=$(docker create dinary-smoke:ci)
+        docker cp "$cid":/app/_static ./_static_smoke
+        docker rm "$cid" >/dev/null
+        if [ ! -f ./_static_smoke/index.html ]; then
+          echo "::error::_static/index.html missing in built image"
+          ls -la ./_static_smoke || true
+          exit 1
+        fi
+        if ! ls ./_static_smoke/sw.js >/dev/null 2>&1; then
+          echo "::error::sw.js missing in built image"
+          ls -la ./_static_smoke || true
+          exit 1
+        fi
+        echo "_static/ contains: $(ls ./_static_smoke | wc -l) entries"

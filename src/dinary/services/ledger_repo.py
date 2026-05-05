@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 from dinary.config import settings
-from dinary.services import db_migrations
+from dinary.services import currency_repo, db_migrations
 from dinary.services import sqlite_types as _sqlite_types
 from dinary.services.sql_loader import fetchall_as, fetchone_as, load_sql
 
@@ -207,6 +207,11 @@ def init_db() -> None:
     con = _sqlite_types.connect(str(_get_db_path()))
     try:
         _reconcile_accounting_currency(con)
+        # Seed the PWA currency picker with the operator's
+        # ``app_currency`` on first boot so the picker is never empty.
+        # No-op once any saved-currencies row exists, so operator
+        # adds/removes are not re-asserted across reboots.
+        currency_repo.seed_default_if_empty(con, settings.app_currency)
     finally:
         con.close()
 

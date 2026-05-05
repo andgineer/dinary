@@ -160,6 +160,27 @@ class TestCatalogRemovableFlag:
         # Sibling unreferenced category stays removable.
         assert cats[2] is True
 
+    def test_event_becomes_non_removable_when_referenced_by_expense(self, client):
+        # Events used by at least one expense must report
+        # ``removable=false`` so the PWA hides the Delete button and
+        # avoids the silent soft-delete-then-hide UX. Without this
+        # guarantee the manage list offers Delete on used events;
+        # pressing it soft-deletes (because of the FK), the row
+        # vanishes from "active", and the operator is left wondering
+        # why expense history "lost" the event reference.
+        con = ledger_repo.get_connection()
+        try:
+            con.execute(
+                "INSERT INTO expenses (id, client_expense_id, datetime, amount,"
+                " amount_original, currency_original, category_id, event_id)"
+                " VALUES (10, 'e10', '2026-04-21 12:00:00', 10.0, 10.0, 'RSD', 1, 1)",
+            )
+        finally:
+            con.close()
+        data = client.get("/api/catalog").json()
+        events = {ev["id"]: ev["removable"] for ev in data["events"]}
+        assert events[1] is False
+
     def test_tag_non_removable_if_in_any_event_auto_tags(self, client):
         # Add a tag, then list it in an event's ``auto_tags`` JSON
         # payload. The FK engine won't see the name->name link, but

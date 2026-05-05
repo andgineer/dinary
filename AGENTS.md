@@ -42,6 +42,19 @@
 - Data literals (category names, sheet headers, envelope names) keep their
   original script as in the Comments rule above.
 
+## Never reference plan files from code
+
+- **Code comments and docstrings must NOT cite `.plans/*.md` files**, refer
+  to "Step N of <plan>", "(Step 14 of vue-refactor)", etc. Plans are
+  ephemeral working notes; once the work lands, only the code is the
+  source of truth. References to plan steps inside code rot the moment
+  the plan is renamed, archived, or superseded.
+- This applies to comments, docstrings, file-headers, commit messages
+  embedded in code, and any other in-source prose. Plain English about
+  *what* the code does and *why* is fine; pointers to plan files are not.
+- If a comment needs to explain rationale, restate the rationale inline
+  rather than redirecting the reader to a plan document.
+
 ## Communication with the user
 
 - Reply to the user in the language they used (Russian or English), using

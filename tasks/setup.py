@@ -65,6 +65,20 @@ def setup_server(c, no_swap=False, tailscale=False):  # noqa: PLR0915
         "apt update && sudo apt install -y python3 python3-pip git curl sqlite3 rclone",
     )
 
+    print("=== Installing Node.js 22 (NodeSource) for the Vue PWA build ===")
+    # The deploy pipeline runs ``inv build-static`` on the server, which
+    # invokes ``npm ci`` and ``npm run build`` against ``webapp/``. The
+    # remote VM therefore needs a recent Node + npm. NodeSource's apt
+    # script is the canonical way to get Node 22 on Ubuntu/Debian.
+    install_node = (
+        'NODE_MAJOR="$(node -v 2>/dev/null | sed -e "s/^v//" -e "s/\\..*//")"; '
+        'if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 22 ]; then '
+        "  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && "
+        "  sudo apt install -y nodejs; "
+        "fi; node -v && npm -v"
+    )
+    ssh_run(c, install_node)
+
     print("=== Installing fail2ban ===")
     ssh_run(c, build_install_fail2ban_script())
 

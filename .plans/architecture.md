@@ -15,7 +15,7 @@ prioritizing clean data model and scriptability over UI polish.
 
 | Repository         | Language | Role                                                                                                                                                                       |
 |--------------------|---|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **dinary**  | Python (FastAPI + SQLite) | Backend — REST API, data storage, rule-based classification, dashboards, Google Sheets sync. Also: PWA mobile frontend (in `static/`), user manuals (MkDocs in `docs/`), deployment configs. |
+| **dinary**  | Python (FastAPI + SQLite) | Backend — REST API, data storage, rule-based classification, dashboards, Google Sheets sync. Also: Vue 3 + Pinia PWA mobile frontend (source in `webapp/`, built into `_static/` by Vite + `vite-plugin-pwa`; see [`.plans/vue-refactor.md`](./vue-refactor.md)), user manuals (MkDocs in `docs/`), deployment configs. |
 | **dinary** | Rust | Desktop app (macOS/Windows): daemon for background AI tasks via `claude -p`, and GUI for analysis parameters, interactive results view, and quick data entry (text/PDF receipt import). Communicates with dinary API. |
 
 #### Documentation convention
@@ -474,8 +474,13 @@ For expenses without QR codes (cafés, services, cash payments, foreign purchase
 
 ### Mobile Input Interface (Current PWA + Future Expansion)
 
-The shipped mobile client is the installable PWA in `static/`, served by the
-same FastAPI app as the API. The broader architecture remains thin-client
+The shipped mobile client is an installable Vue 3 + Pinia PWA whose source
+lives in `webapp/` and which builds into `_static/` via Vite +
+`vite-plugin-pwa`. FastAPI's `StaticFiles` mount serves `_static/` at `/`;
+there is no fallback — if the Vite build output is missing the PWA route
+is unmounted and only the API is reachable. Rollback is "redeploy the
+previous container image" (see [`.plans/vue-refactor.md`](./vue-refactor.md)
+"Rollback strategy"). The broader architecture remains thin-client
 friendly, but the current implementation is no longer tool-agnostic in
 practice: the custom PWA is the real runtime surface.
 
@@ -938,7 +943,7 @@ No new database, no line-item parsing — just a mobile frontend that writes dir
 
 **Deliverables**
 
-- PWA frontend (in `static/`), backend, manuals, deployment scripts — all in the dinary repo
+- PWA frontend (Vue 3 + Pinia source in `webapp/`, built into `_static/`), backend, manuals, deployment scripts — all in the dinary repo
 - The `dinary` repo is not used in Phase 0 (reserved for the Rust desktop app, Phase 4+)
 
 **Operational conventions introduced by the completed MVP:**

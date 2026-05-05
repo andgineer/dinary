@@ -1,32 +1,52 @@
 # Frontend Status and Evaluation
 
-> **Status note (2026-04):** the frontend decision is no longer hypothetical.
-> The custom PWA is the production/mobile client in this repo. Source files
-> live in `static/`, deployment builds are emitted to `_static/` by
-> `inv build-static`, and FastAPI serves the resulting assets from the same
-> origin as the API. This file keeps the original evaluation result, but now
-> also documents the currently shipped frontend surface.
+> **Status note (2026-05):** the frontend decision is no longer hypothetical.
+> The custom PWA is the production/mobile client in this repo. After the
+> vanilla-JS prototype reached its complexity ceiling, it was rewritten in
+> Vue 3 + Pinia under `webapp/` and is built into `_static/` by Vite +
+> `vite-plugin-pwa` (see [`vue-refactor.md`](vue-refactor.md)). FastAPI
+> serves the resulting assets from the same origin as the API. This file
+> keeps the original evaluation result, but now also documents the
+> currently shipped frontend surface.
 
 ## Current Shipped Frontend
 
 - **Platform:** custom installable PWA, same-origin with the FastAPI backend.
-- **Source layout:** `static/index.html`, `static/css/style.css`, and vanilla
-  JS modules in `static/js/`.
-- **Offline contract:** IndexedDB-backed queue in `static/js/offline-queue.js`;
-  entries are persisted locally before network send.
-- **QR flow:** browser camera scanning via `zbar-wasm`; the client can extract
-  amount/date from Serbian fiscal QR URLs locally and still has backend QR
-  parsing as a fallback.
-- **Catalog model:** the live UI is already beyond the original Phase 0 shape.
-  It consumes `GET /api/catalog`, posts 3D ids to `POST /api/expenses`
-  (`category_id`, optional `event_id`, `tag_ids[]`), caches the catalog by
-  `catalog_version`, and supports inactive-row management plus inline add/edit
-  flows for groups, categories, events, and tags through `/api/admin/catalog/*`.
-- **Deployment packaging:** `inv build-static` copies `static/` to `_static/`,
-  substitutes `__VERSION__`, and writes `data/.deployed_version`; the server
-  exposes the deployed version at `/api/version`.
-- **Tests:** Vitest (`npm test`) covers the frontend modules; `inv test` runs
-  both pytest and Vitest.
+- **Stack:** Vue 3 (Composition API) + Pinia + Vite + `vite-plugin-pwa`
+  (Workbox-based service worker with `registerType: 'autoUpdate'`,
+  `skipWaiting`, `clientsClaim`, and `NetworkOnly` for `/api/*`).
+- **Source layout:** `webapp/src/` (entry `webapp/src/main.js`, root
+  component `webapp/src/App.vue`, components/modals/stores/composables in
+  the usual subfolders), Vite config in `webapp/vite.config.js`. Deployment
+  build output is `_static/` at the repo root (gitignored).
+- **Offline contract:** Pinia-backed queue persisted to IndexedDB
+  (`dinary-v2`) via `webapp/src/db.js`; entries are written locally first
+  and only removed after confirmed server success. The legacy `dinary`
+  IndexedDB database from the vanilla-JS app is purged at boot.
+- **QR flow:** browser camera scanning via `zbar-wasm`, mounted in
+  `webapp/src/components/QrScanner.vue`. Amount/date can be extracted from
+  Serbian fiscal QR URLs locally; the backend QR endpoint remains as a
+  fallback.
+- **Catalog model:** consumes `GET /api/catalog`, posts 3D ids to
+  `POST /api/expenses` (`category_id`, optional `event_id`, `tag_ids[]`),
+  caches the catalog by `catalog_version`, and supports inactive-row
+  management plus inline add/edit flows for groups, categories, events,
+  and tags through `/api/admin/catalog/*`.
+- **Currency model:** the PWA owns its own currency picker state via
+  `useCurrencyStore` (saved codes + last-used). It talks to
+  `GET / POST / DELETE /api/currencies` and exposes a `CurrencyPicker`
+  next to the amount field. The PWA does **not** fetch exchange rates;
+  conversion to the accounting currency is the server's responsibility
+  and runs inside `POST /api/expenses` at write time.
+- **Deployment packaging:** `inv build-static` runs
+  `npm --prefix webapp ci` + `npm --prefix webapp run build`, which emits
+  hashed assets and a generated service worker into `_static/`, then
+  writes the deployed git short hash into `data/.deployed_version` and
+  `_static/version.json`; the server exposes the deployed version at
+  `/api/version`.
+- **Tests:** Vitest (`npm --prefix webapp test`) covers components,
+  modals, stores, and composables. `inv test` runs both pytest and
+  Vitest.
 
 ## Decision Criteria
 

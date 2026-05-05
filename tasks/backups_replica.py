@@ -279,8 +279,10 @@ def setup_replica(c, swap_size_gb=1, no_swap=False):
 
     VM2's sshd stays bound to the public interface so the operator
     can ``ssh ubuntu@<public-ip>`` without a Tailscale hop; hardening
-    (X11 off, root login off, fail2ban) is applied but ssh-tailscale-
-    only is intentionally NOT — see ``.plans/cloud-security.md``.
+    (X11 off, root login off, fail2ban) is applied, but
+    ``ssh-tailscale-only`` is intentionally NOT, because the replica
+    must remain reachable from operator workstations even when the
+    primary VM (which owns the tailnet relay) is offline.
 
     Flags:
         --swap-size-gb N   Swap size in gigabytes (default 1).

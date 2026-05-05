@@ -103,10 +103,11 @@ class CatalogResponse(BaseModel):
 def _etag_for(catalog_version: int) -> str:
     """Canonical ETag string for a given ``catalog_version``.
 
-    Mirrored in the PWA (``static/js/api.js::etagFor``) so the client
-    can derive the ETag it needs to send in ``If-None-Match`` without
-    us having to ship the string in the response body. Any change
-    here must stay in lockstep with the client copy.
+    Mirrored in the PWA (``webapp/src/api/catalog.js::etagFor``) so
+    the client can derive the ETag it needs to send in
+    ``If-None-Match`` without us having to ship the string in the
+    response body. Any change here must stay in lockstep with the
+    client copy.
     """
     return f'W/"catalog-v{catalog_version}"'
 

@@ -1,13 +1,15 @@
 # Phase 0 Implementation Plan
 
-> **Status note (2026-04):** this file is historical implementation history for
-> the direct-to-Google-Sheets MVP. The live system has moved on: FastAPI now
-> serves the same-origin PWA plus a DuckDB-backed API, static assets are built
-> from `static/` into `_static/` via `inv build-static`, runtime configuration
-> lives in `.deploy/.env`, and operator workflows are centered on `tasks.py`
-> plus the single-file `data/dinary.duckdb` design documented in
-> [architecture.md](architecture.md). Keep this file as Phase 0 context, not as
-> current operational guidance.
+> **Status note (2026-04, updated 2026-05):** this file is historical
+> implementation history for the direct-to-Google-Sheets MVP. The live system
+> has moved on: FastAPI now serves the same-origin PWA plus a SQLite-backed
+> API, the PWA was rewritten in Vue 3 + Pinia (source in `webapp/`, built
+> into `_static/` by Vite + `vite-plugin-pwa` via `inv build-static`),
+> runtime configuration lives in `.deploy/.env`, and operator workflows are
+> centered on `tasks/` plus the single-file `data/dinary.db` design
+> documented in [architecture.md](architecture.md) and
+> [vue-refactor.md](vue-refactor.md). Keep this file as Phase 0 context, not
+> as current operational guidance.
 
 ## Current State
 

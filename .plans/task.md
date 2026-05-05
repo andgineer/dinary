@@ -2,11 +2,13 @@
 
 > **Status note (2026-04):** this file is the original problem statement that
 > motivated the project. It no longer describes the live system architecture.
-> Today the active implementation is a FastAPI + single-file DuckDB backend
-> with a same-origin PWA in `static/`, export-only Google Sheets logging, and
-> operator workflows in `tasks.py`. For the current design and runtime
-> contracts, see [architecture.md](architecture.md). Keep this file as product
-> context and requirements history, not as a source of implementation truth.
+> Today the active implementation is a FastAPI + single-file SQLite (WAL +
+> Litestream) backend with a same-origin Vue 3 + Pinia PWA whose source lives
+> in `webapp/` and ships from `_static/`, export-only Google Sheets logging,
+> and operator workflows in `tasks/`. For the current design and runtime
+> contracts, see [architecture.md](architecture.md); for the PWA refactor
+> see [vue-refactor.md](vue-refactor.md). Keep this file as product context
+> and requirements history, not as a source of implementation truth.
 
 ## Current Status Snapshot
 
