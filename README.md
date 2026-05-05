@@ -27,11 +27,12 @@
 | src/dinary/services/catalog\_writer.py        |      422 |       79 |     81% |177-178, 340-344, 498-500, 520-562, 571, 686, 698, 706, 835-837, 870, 879-884, 893, 895, 900, 905, 915, 931, 971-973, 1009, 1018, 1032-1034, 1059, 1091, 1096, 1113, 1209, 1241, 1245-1247, 1254-1256, 1277, 1281-1283, 1290-1292, 1314, 1327-1329 |
 | src/dinary/services/currency\_repo.py         |       34 |        5 |     85% |21-22, 59-64 |
 | src/dinary/services/db\_migrations.py         |       54 |        2 |     96% |    86, 89 |
-| src/dinary/services/exchange\_rates.py        |       44 |        9 |     80% |49-52, 112-117 |
+| src/dinary/services/exchange\_rates.py        |       38 |        1 |     97% |        64 |
 | src/dinary/services/ledger\_repo.py           |      276 |       30 |     89% |62-63, 292-301, 309-315, 642, 677, 783, 789, 823, 850-859, 881-888, 1024-1025, 1041-1047, 1112 |
+| src/dinary/services/nbp.py                    |       37 |        0 |    100% |           |
 | src/dinary/services/nbs.py                    |       47 |        0 |    100% |           |
 | src/dinary/services/qr\_parser.py             |       16 |        1 |     94% |        31 |
-| src/dinary/services/rate\_helpers.py          |       30 |        2 |     93% |     68-74 |
+| src/dinary/services/rate\_helpers.py          |       27 |        0 |    100% |           |
 | src/dinary/services/seed\_config.py           |      137 |        7 |     95% |220-221, 515-517, 555-559 |
 | src/dinary/services/sheet\_logging.py         |      217 |       49 |     77% |96-100, 114-121, 129, 195, 199-201, 257-263, 276-278, 282-296, 325-326, 370, 435-436, 457-475, 484, 488 |
 | src/dinary/services/sheet\_mapping.py         |      252 |       54 |     79% |274, 346-348, 375-376, 383-389, 439, 442-454, 468-469, 479-497, 574-581, 609-661, 689, 700-705 |
@@ -42,7 +43,7 @@
 | src/dinary/tools/backup\_snapshots.py         |       79 |        7 |     91% |157, 213-218 |
 | src/dinary/tools/report\_helpers.py           |       30 |       10 |     67% |     44-53 |
 | src/dinary/tools/sql.py                       |       71 |        3 |     96% |86, 176, 183 |
-| **TOTAL**                                     | **4349** |  **963** | **78%** |           |
+| **TOTAL**                                     | **4377** |  **953** | **78%** |           |
 
 
 ## Setup coverage badge
