@@ -23,6 +23,13 @@ dependencies = [
     "tenacity>=9.1.4",
     "cachetools>=7.0.6",
     "tzdata>=2024.1",
+    # ``invoke`` is a runtime dependency on the prod VM: deploy / admin /
+    # import operations (``inv build-static``, ``inv bootstrap-catalog``,
+    # ``inv import-*``, ``inv migrate``) all run on the server through
+    # ``uv run inv …``. Keeping it in runtime deps lets ``uv sync --no-dev``
+    # produce a lean prod env that still has the orchestrator those flows
+    # need, instead of silently re-pulling the full ``dev`` group.
+    "invoke>=2.2.0",
 ]
 [[project.authors]]
 name = "Andrey Sorokin"
@@ -60,7 +67,6 @@ path = "src/dinary/__about__.py"
 # noisy warning on every ``uv run`` until it is migrated.
 dev = [
     "allure-pytest>=2.14.2",
-    "invoke>=2.2.0",
     "mkdocs-awesome-pages-plugin>=2.10.1",
     "mkdocs-material>=9.6.13",
     "mkdocstrings[python]>=0.29.1",

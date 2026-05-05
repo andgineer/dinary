@@ -15,6 +15,12 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
+# hatchling's metadata 2.4 builder reads ``[project.license].file`` and
+# ``readme`` at wheel-prep time and aborts if those files are missing
+# from the build context — so they must be COPY'd before ``uv pip
+# install``, even though the resulting image never references them at
+# runtime.
+COPY LICENSE.txt README.md ./
 COPY src/dinary/__about__.py src/dinary/__about__.py
 COPY src/dinary/__init__.py src/dinary/__init__.py
 RUN uv pip install --system .

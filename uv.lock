@@ -395,6 +395,7 @@ dependencies = [
     { name = "gspread" },
     { name = "holidays" },
     { name = "httpx" },
+    { name = "invoke" },
     { name = "pydantic-settings" },
     { name = "sr-invoice-parser" },
     { name = "tenacity" },
@@ -407,7 +408,6 @@ dependencies = [
 dev = [
     { name = "allure-pytest" },
     { name = "anyio", extra = ["trio"] },
-    { name = "invoke" },
     { name = "mkdocs-awesome-pages-plugin" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
@@ -428,6 +428,7 @@ requires-dist = [
     { name = "gspread", specifier = ">=6.1.0" },
     { name = "holidays", specifier = ">=0.94" },
     { name = "httpx", specifier = ">=0.28.0" },
+    { name = "invoke", specifier = ">=2.2.0" },
     { name = "pydantic-settings", specifier = ">=2.8.0" },
     { name = "sr-invoice-parser", specifier = ">=1.0.3" },
     { name = "tenacity", specifier = ">=9.1.4" },
@@ -440,7 +441,6 @@ requires-dist = [
 dev = [
     { name = "allure-pytest", specifier = ">=2.14.2" },
     { name = "anyio", extras = ["trio"], specifier = ">=4.9.0" },
-    { name = "invoke", specifier = ">=2.2.0" },
     { name = "mkdocs-awesome-pages-plugin", specifier = ">=2.10.1" },
     { name = "mkdocs-material", specifier = ">=9.6.13" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.29.1" },
