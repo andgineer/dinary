@@ -248,7 +248,10 @@ CREATE TABLE expenses (
     event_id           INTEGER REFERENCES events(id),
     comment            TEXT,
     sheet_category     TEXT,
-    sheet_group        TEXT
+    sheet_group        TEXT,
+    receipt_id         INTEGER REFERENCES receipts(id),  -- NULL for manual entries
+    store_id           INTEGER REFERENCES stores(id),    -- NULL for non-receipt entries
+    confidence_level   INTEGER  -- 2/3/4 for receipt-originated rows; NULL for manual entries
 );
 
 CREATE TABLE expense_tags (
@@ -282,6 +285,111 @@ CREATE TABLE income (
     amount DECIMAL(12,2) NOT NULL,
     PRIMARY KEY (year, month),
     CHECK (month BETWEEN 1 AND 12)
+);
+
+-- -------------------------------------------------------------------------
+-- Receipt pipeline tables (Phase 2).
+-- -------------------------------------------------------------------------
+
+-- Normalised store/chain registry. PIB (Serbian tax ID) is the reliable
+-- primary key: all branches of "Lidl" share one PIB, so store identification
+-- is a single SQL lookup on every repeat visit.
+CREATE TABLE stores (
+    id        INTEGER PRIMARY KEY,
+    pib       TEXT UNIQUE,           -- Serbian PIB; NULL for stores identified without it
+    name      TEXT UNIQUE NOT NULL,  -- normalised chain name: "Lidl", "Maxi", "DM"
+    is_active BOOLEAN NOT NULL DEFAULT 1
+);
+
+-- One row per scanned fiscal receipt. Raw HTML is cached for reproducibility
+-- and re-parsing. store_id is NULL until the background drain resolves it.
+CREATE TABLE receipts (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_receipt_id TEXT UNIQUE NOT NULL,  -- PWA-generated UUID (idempotency key)
+    url               TEXT NOT NULL,         -- suf.purs.gov.rs URL from QR code
+    raw_html          TEXT,                  -- cached HTML
+    store_id          INTEGER REFERENCES stores(id),
+    store_name_raw    TEXT,                  -- store name exactly as on receipt
+    store_pib         TEXT,                  -- PIB extracted from receipt HTML
+    store_address     TEXT,                  -- branch address (future analytics)
+    datetime          TIMESTAMP NOT NULL,
+    total_amount      DECIMAL(12,2)
+);
+
+-- Individual line items parsed from a receipt.
+-- category_id and confidence_level are NULL until the classification drain runs.
+-- expense_id is NULL until the drain aggregates items into expense rows.
+-- SQLite does not enforce FK creation order so the forward-reference to
+-- expenses(id) is declared here; the FK is only checked at DML time.
+CREATE TABLE receipt_items (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    receipt_id       INTEGER NOT NULL REFERENCES receipts(id),
+    name_raw         TEXT NOT NULL,       -- item name exactly as on receipt
+    name_normalized  TEXT,               -- lowercase, units/weights stripped
+    quantity         DECIMAL(10,3),
+    total_price      DECIMAL(12,2) NOT NULL,
+    category_id      INTEGER REFERENCES categories(id),   -- set by classification drain
+    confidence_level INTEGER,                             -- 1-4; NULL = not yet classified
+    expense_id       INTEGER REFERENCES expenses(id)      -- set after expense aggregation
+);
+
+-- Accumulated classification knowledge base.
+-- store_id = NULL means the rule applies across all stores (generic rule).
+-- Store-specific rules take priority over generic ones in the SQL lookup.
+-- Rule is created when an item is classified for the first time (confidence 2-4).
+-- source = 'user_correction' supersedes source = 'llm' on a conflict.
+CREATE TABLE classification_rules (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id             INTEGER REFERENCES stores(id),
+    item_name_normalized TEXT NOT NULL,
+    category_id          INTEGER NOT NULL REFERENCES categories(id),
+    confidence_level     INTEGER NOT NULL,  -- 1-4
+    source               TEXT NOT NULL DEFAULT 'llm',  -- 'llm' | 'user_correction'
+    created_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (store_id, item_name_normalized)
+);
+
+-- Queue for background receipt classification; mirrors sheet_logging_jobs pattern.
+-- Producer: POST /api/receipts inserts one row per receipt in the same transaction.
+-- Consumer: lifespan-managed periodic drain (see "Classification Layer").
+CREATE TABLE receipt_classification_jobs (
+    receipt_id  INTEGER PRIMARY KEY REFERENCES receipts(id),
+    status      TEXT NOT NULL DEFAULT 'pending',
+    claim_token TEXT,
+    claimed_at  TIMESTAMP,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT,
+    CHECK (status IN ('pending', 'in_progress', 'poisoned'))
+);
+
+-- LLM provider registry. Multiple providers with priority-based automatic
+-- failover. Managed via Admin API from the PWA; env vars seed initial rows only.
+CREATE TABLE llm_providers (
+    id          INTEGER PRIMARY KEY,
+    label       TEXT NOT NULL,    -- "DeepSeek free", "Gemini backup"
+    provider    TEXT NOT NULL,    -- 'deepseek' | 'gemini' | 'groq' | 'openrouter'
+    model       TEXT NOT NULL,
+    api_key     TEXT NOT NULL,
+    daily_limit INTEGER,          -- NULL = unlimited / unknown
+    rpm_limit   INTEGER,          -- NULL = unlimited / unknown
+    priority    INTEGER NOT NULL, -- 1 = first tried; higher = later fallback
+    is_enabled  BOOLEAN NOT NULL DEFAULT 1
+);
+
+-- Bounded audit log for LLM API calls. The drain trims to the last 200 rows
+-- after each successful sweep to keep the table small on the 1 GB server.
+CREATE TABLE llm_call_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    provider    TEXT NOT NULL,
+    model       TEXT NOT NULL,
+    receipt_id  INTEGER REFERENCES receipts(id),
+    tokens_in   INTEGER,
+    tokens_out  INTEGER,
+    duration_ms INTEGER,
+    status      TEXT NOT NULL,  -- 'ok' | 'rate_limit' | 'error'
+    error       TEXT
 );
 ```
 
@@ -437,33 +545,12 @@ Serbian fiscal receipts contain a QR code with a URL to `suf.purs.gov.rs`. The H
 
 **Flow:**
 
-1. User scans QR code on phone → extracts URL.
-2. URL is sent to the backend.
-3. Backend fetches the HTML page from SUF PURS, parses line items.
-4. Raw HTML is cached in `receipts.raw_html` for reproducibility.
-5. Each line item is inserted into `expenses` with `classification_status = 'pending'`.
-6. Category rules are applied immediately (pattern matching); matched items get `classification_status = 'auto'`.
-7. Unmatched items remain `'pending'` for batch AI classification (see below).
-
-#### Future Receipt Queue Note
-
-The flow above reflects the original design intent, but it is **not** the desired
-target architecture for future receipt ingestion.
-
-In future versions, receipt processing should use a **separate asynchronous
-pipeline**:
-
-1. A scanned receipt creates a receipt-ingestion job in a dedicated queue / staging area.
-2. Parsing, rule-based classification, AI classification, and user-required
-   disambiguation happen **outside** the `expenses` table.
-3. Only after the receipt is fully resolved are the final expense rows inserted
-   into `expenses`.
-
-This means `expenses` is the **committed ledger of finalized expenses**, not a
-staging table for partially classified receipt lines. Any future receipt queue,
-raw receipt storage, AI suggestions, or user-resolution tasks should live in
-separate pipeline tables rather than overloading `expenses` with intermediate
-states.
+1. User scans QR code on phone → browser decodes QR locally via `zbar-wasm`, extracts the `suf.purs.gov.rs` URL.
+2. PWA enqueues `POST /api/receipts {url, client_receipt_id}` (offline-safe; stored in IndexedDB first, same pattern as manual expenses).
+3. Server fetches the SUF PURS page, parses line items via `sr-invoice-parser`, extracts PIB / store name / address / items.
+4. Raw HTML is cached in `receipts.raw_html` for reproducibility. `receipts` + `receipt_items` + one `receipt_classification_jobs` row are inserted in a single transaction.
+5. Server returns `200 OK` immediately — no classification happens on the hot path.
+6. Background classification drain picks up the job: PIB-based store lookup, `classification_rules` SQL match per item, LLM API call for unmatched items, expense aggregation by category. See "Classification Layer" below.
 
 ### Manual Entry
 
@@ -547,40 +634,93 @@ Nice-to-have:
 
 ## Classification Layer
 
-### Three-tier Classification
+Receipt classification runs as a **server-side background process** modelled on the sheet-logging drain (same claim/release/poison queue pattern, same lifespan-managed periodic sweep). Classification calls an external LLM API — no AI workload runs in-process; the server issues ordinary HTTP requests. Multiple providers are configured in `llm_providers` with priority-based automatic failover.
 
-**Tier 1: Fuzzy ML based classification like in other personal expense tracking apps.
+### Confidence Levels
 
-**Tier 2: AI batch classification (deferred, economical).** Unclassified items (`classification_status = 'pending'`) accumulate on dinary throughout the day.
-When the user runs dinary (manually or via scheduler), it fetches pending items from the server API and classifies them using `claude -p`:
+Every `receipt_item` is assigned a confidence level after classification:
 
-```bash
-# dinary fetches pending items from dinary
-dinary classify
+| Level | Label | Expense created? | User action |
+|-------|-------|-----------------|-------------|
+| 1 — unresolvable | AI cannot determine any category | No — item waits in `receipt_items` | **Required**: user must classify manually |
+| 2 — uncertain | AI offered a category with low confidence | Yes | Should review when possible |
+| 3 — review | AI is fairly confident | Yes | Can skim at leisure |
+| 4 — confident | Full confidence | Yes | None needed |
 
-# Under the hood:
-# 1. GET https://server/api/tasks/pending-classifications
-# 2. Feeds items to claude -p with category list and classification prompt
-# 3. POST https://server/api/tasks/classifications with results
-```
-
-This runs on the user's laptop under the existing Claude subscription via `claude -p` (Claude Code CLI, non-interactive mode). No API costs.
-Typical batch: 20-50 items, easily fits in a single prompt. dinary applies the results to the SQLite ledger.
-
-**Tier 3: Manual confirmation.** AI suggestions are stored as `ai_category_suggestion` and `classification_status = 'ai_suggested'`. The user reviews and confirms (or corrects) via the dashboard or a CLI script. Confirmed classifications can optionally generate new rules in `category_rules` (with `created_by = 'ai'`), so similar items are auto-classified in the future.
-
-### Rule Learning Loop
+### Classification Pipeline
 
 ```
-New item → Rule match? → YES → auto-classify, done
-                       → NO  → mark 'pending'
-                              → AI batch suggests category + rule
-                              → User confirms/corrects
-                              → New rule added to category_rules
-                              → Next time this item appears → auto-classified
+PWA → POST /api/receipts {url, client_receipt_id}
+          ↓
+  server: fetch suf.purs.gov.rs → parse via sr-invoice-parser
+  INSERT receipts + receipt_items + receipt_classification_jobs
+  → 200 OK  (immediately)
+          ↓
+  [background drain — lifespan-managed, same pattern as sheet_logging]
+          ↓
+  1. store resolution:
+       SELECT id FROM stores WHERE pib = store_pib
+       → hit  → store_id resolved, no LLM needed for store
+       → miss → LLM normalises store_name_raw → "Lidl" → INSERT stores
+
+  2. normalise item names (lowercase; strip weights, volumes, pack codes)
+
+  3. rules lookup per item (SQL, no fuzzy matching):
+       SELECT category_id, confidence_level FROM classification_rules
+       WHERE (store_id = ? OR store_id IS NULL)
+         AND item_name_normalized = ?
+       ORDER BY store_id NULLS LAST   -- store-specific beats generic
+       LIMIT 1
+       → hit  → category and confidence ready
+       → miss → item queued for LLM batch
+
+  4. single LLM call per receipt (unmatched items only):
+       prompt includes category list + all unmatched items
+       response: [{item_name_normalized, category_id, confidence_level 1-4}]
+
+  5. aggregate receipt_items by category_id:
+       → one expenses row per category (amount = sum of items in group)
+       → expense.confidence_level = MIN(confidence_level of items in group)
+       → confidence=1 items: no expense created; items stay in receipt_items
+
+  6. INSERT expenses; UPDATE receipt_items.expense_id
+
+  7. INSERT classification_rules for all newly classified items (confidence 2-4)
 ```
 
-Over time, the rule table grows and the AI batch shrinks. After a few months, most items are auto-classified; AI handles only genuinely new products.
+### Classification Rules
+
+`classification_rules(store_id, item_name_normalized)` is the accumulated knowledge base:
+
+- **Rule created** when an item is classified for the first time at confidence 2-4. Level-1 items get no rule until the user manually resolves them.
+- **Rule updated** (`source = 'user_correction'`) when the user corrects a misclassified expense. `updated_at` is refreshed.
+- **Store-specific vs generic**: `store_id = NULL` applies to any store; store-specific rows take priority in the SQL lookup (`ORDER BY store_id NULLS LAST`).
+- **Batch correction**: correcting a rule triggers a server-side sweep that finds all `receipt_items` previously classified by that rule, recalculates the affected expense aggregations, and returns how many were updated automatically — the user corrects once, the system propagates.
+
+### LLM Provider Failover
+
+Providers in `llm_providers` are tried in `priority ASC` order. Rate limit state is tracked per-provider in `app_metadata` (`llm_rl_{id}_until`, `llm_req_{id}_today`, `llm_req_{id}_date`):
+
+```
+for each enabled provider (priority ASC):
+    if rate_limited_until > now → skip
+    → attempt LLM call
+    → 429 or daily_limit exhausted → set rate_limited_until, try next provider
+    → success → update request counters, trim llm_call_log to last 200 rows, done
+all providers exhausted → leave job as 'pending'; drain retries on next tick
+```
+
+`GET /api/admin/llm-status` exposes per-provider usage (requests today / daily limit, rate-limited-until). `llm_providers` rows are managed via Admin API from the PWA; env vars `DINARY_LLM_*` seed the initial row on first boot only (same pattern as `accounting_currency`).
+
+### PWA Review UI
+
+Three lists, always visible in the review screen:
+
+- **🔴 Requires action** (level 1): badge count on the main icon; items with no category at all. User must assign a category for each item; the assignment creates a `classification_rules` row and triggers expense creation.
+- **🟡 Review recommended** (level 2): expense exists but AI was not confident. Sorted by recency.
+- **🔵 Optional review** (level 3): collapsed by default; AI was fairly confident.
+
+Correction flow: user taps an expense → picks the correct category → server asks "Fix N similar items too?" → one tap for batch update.
 
 ---
 
@@ -810,20 +950,18 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 ### dinary (VPS)
 
 **What it does:**
-- Accepts expenses from dinary-app (REST API).
+- Accepts manual expenses (`POST /api/expenses`) and receipt QR URLs (`POST /api/receipts`) from the PWA (REST API).
 - Stores everything in SQLite (single `data/dinary.db` file, WAL mode).
 - Runs a Litestream sidecar that streams the WAL to a secondary Oracle Cloud VM over SFTP (see `.plans/storage-migration.md`).
-- Applies Tier 1 classification (rule-based pattern matching) immediately on ingestion.
+- **Background receipt classification**: PIB-based store lookup, `classification_rules` matching, external LLM API calls (DeepSeek / Gemini / Groq — lightweight HTTP, not in-process AI), expense aggregation by category. See "Classification Layer" above.
 - Serves operational and analytical dashboards (static HTML or SPA).
 - Syncs aggregated data to Google Sheets on schedule or on demand.
-- Exposes a **task queue API** for the local agent:
-  - `GET /api/tasks/pending-classifications` — returns unclassified items as JSON.
-  - `POST /api/tasks/classifications` — accepts classification results, updates the ledger.
+- Exposes a **task queue API** for the local agent (spending analysis):
   - `GET /api/tasks/analysis-export?period=2026-Q1` — returns aggregated data for AI analysis.
   - `POST /api/tasks/analysis-report` — stores the AI-generated report.
 
 **What it does NOT do:**
-- Any AI/LLM calls. All AI work is delegated to dinary.
+- Run local AI or LLM workloads in-process. Receipt classification calls external LLM APIs as ordinary HTTP requests (trivial memory footprint). Spending analysis, pattern recognition, and other heavy AI tasks remain laptop-side via the dinary daemon (`claude -p`).
 
 **Hosting (free, always-on options):**
 
@@ -976,13 +1114,18 @@ Detailed plan: [phase1.md](phase1.md) (frozen; treat as context, not current doc
 - Monotonic `catalog_version` (KV row in `app_metadata`) bumped by `inv import-catalog` and by the Admin API via `catalog_writer` (hash-gated); echoed by `GET /api/catalog` and `POST /api/expenses`. The PWA uses it as the cache key for its in-memory 3D catalog snapshot.
 - Destructive operator commands (`import-catalog`, `import-budget`, `import-budget-all`, `import-income`, `import-income-all`) print loud warnings and require `--yes`. The coordinated reset flow is: stop server → deploy code/assets → `import-catalog --yes` → `import-budget-all --yes` → `import-income-all --yes` → `import-verify-bootstrap-all` → `import-verify-income-all` → start server. The legacy standalone `inv import-sheet` operator workflow is retired (Phase 1 has no partial re-import semantics).
 
-### Phase 2: Receipt Parser
-- Integrate or adapt sr-invoice-parser for fetching and parsing Serbian fiscal receipts from SUF PURS URLs.
-- Add a separate **receipt-ingestion queue** (out of the `expenses` ledger) where parsing, rule/AI classification, and user disambiguation happen *before* a final expense row lands in `expenses`.
-- Implement AI auto-classification that produces 3D classification directly (`category`, `event`, `tag_ids[]`).
-- Switch the PWA receipt flow so a scan submits the receipt-ingestion job immediately; later user interaction is review/correction, not the initial submission.
-- Extend non-destructive `catalog_version` handling where the receipt pipeline
-  eventually exposes client-visible catalog-adjacent state.
+### Phase 2: Receipt Pipeline
+
+Detailed plan: [`.plans/receipt-pipeline.md`](./receipt-pipeline.md).
+
+- Integrate `sr-invoice-parser` (Python, MIT) for fetching and parsing Serbian fiscal receipts from `suf.purs.gov.rs`.
+- New tables: `stores`, `receipts`, `receipt_items`, `classification_rules`, `receipt_classification_jobs`, `llm_providers`, `llm_call_log`.
+- `expenses` gains `receipt_id`, `store_id`, `confidence_level`.
+- `POST /api/receipts` accepts QR URL + `client_receipt_id`; inserts receipt + items + classification job in one transaction; returns `200 OK` immediately.
+- Background classification drain (same pattern as sheet-logging drain): PIB store lookup → `classification_rules` SQL match → LLM API call for unmatched items → expense aggregation by category (one `expenses` row per category per receipt). Confidence levels 1-4; level-1 items are held in `receipt_items` pending mandatory user classification.
+- LLM provider registry with priority-based automatic failover. Multiple providers (DeepSeek, Gemini, Groq, etc.) managed via Admin API from the PWA; env vars seed the initial row on first boot only.
+- Store normalisation: PIB is the primary store key; new PIBs are resolved to a chain name by the LLM on first encounter, then cached in `stores`.
+- PWA receipt flow: scan → immediate `200 OK` confirmation → background classification. Review screen with three confidence-level lists (🔴 required / 🟡 recommended / 🔵 optional). One-tap batch correction propagates a rule fix to all matching historical items.
 
 ### Phase 3: Mobile Input — Expand the Existing PWA
 
