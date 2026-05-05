@@ -1,24 +1,22 @@
-"""Resolution-pipeline tests for ``exchange_rates`` / ``nbs``.
+"""Resolution-pipeline tests for the NBS resolver.
 
 Pin ``_resolve_from_nbs`` across the full date-shape matrix —
 working-day hit / DB-cache hit / pre-publication walkback,
 weekend → Friday alias, holiday → previous-working-day alias,
 stale-walkback that must NOT alias under the requested date, and
-the no-rate-within-10-days terminal case — plus the Frankfurter
-fallback used for non-RSD pairs.
+the no-rate-within-10-days terminal case.
 
 Sibling :file:`test_currency_rates_misc.py` covers the
-end-to-end ``get_rate`` plumbing, failure-caching DOS guard, and
-``offline=True`` mode short-circuits.
+end-to-end ``get_rate`` plumbing (NBS primary → NBP fallback
+chain, ``offline=True`` short-circuits, failure-caching DOS guard).
+NBP-resolver internals live in :file:`test_currency_rates_nbp.py`.
 """
 
 from datetime import date
-from decimal import Decimal
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import call
 
 import allure
 
-from dinary.services.exchange_rates import _resolve_from_frankfurter
 from dinary.services.nbs import _resolve_from_nbs
 
 from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
@@ -239,35 +237,3 @@ class TestResolveNoRateFound:
         _, save_db, _ = nbs_mocks
         _resolve_from_nbs(_CON, _MON, _SOURCE, _TARGET)
         save_db.assert_not_called()
-
-
-@allure.epic("Services")
-@allure.feature("Exchange Rate")
-@allure.story("Frankfurter — direct fetch")
-class TestFrankfurterDirect:
-    """Frankfurter API used for non-RSD pairs."""
-
-    @patch("dinary.services.exchange_rates._fetch_frankfurter_rate")
-    def test_returns_rate(self, mock_fetch):
-        mock_fetch.return_value = Decimal("1.08")
-        con = MagicMock()
-        result = _resolve_from_frankfurter(con, _MON, "USD", "EUR")
-        assert result == Decimal("1.08")
-
-    @patch("dinary.services.exchange_rates._fetch_frankfurter_rate")
-    @patch("dinary.services.exchange_rates._get_latest_db_rate")
-    def test_fallback_to_last_known(self, mock_latest, mock_fetch):
-        mock_fetch.return_value = None
-        mock_latest.return_value = Decimal("1.07")
-        con = MagicMock()
-        result = _resolve_from_frankfurter(con, _MON, "USD", "EUR")
-        assert result == Decimal("1.07")
-
-    @patch("dinary.services.exchange_rates._fetch_frankfurter_rate")
-    @patch("dinary.services.exchange_rates._get_latest_db_rate")
-    def test_returns_none_when_no_data(self, mock_latest, mock_fetch):
-        mock_fetch.return_value = None
-        mock_latest.return_value = None
-        con = MagicMock()
-        result = _resolve_from_frankfurter(con, _MON, "USD", "EUR")
-        assert result is None

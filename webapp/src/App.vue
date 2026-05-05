@@ -16,6 +16,8 @@ import { flushQueue } from "./composables/flushQueue.js";
 const APP_VERSION =
   typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
 
+const isDev = import.meta.env.VITE_DEV_MODE === "true";
+
 const catalog = useCatalogStore();
 const queue = useQueueStore();
 const toast = useToastStore();
@@ -148,7 +150,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <header class="app-header">
+  <div v-if="isDev" class="dev-banner">DEV MODE</div>
+  <header class="app-header" :class="{ 'below-banner': isDev }">
     <h1>
       Dinary
       <span class="header-version">{{ headerVersionLabel }}</span>
@@ -229,6 +232,25 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.dev-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: #f59e0b;
+  color: #000;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 700;
+  padding: 6px 0;
+  line-height: 1.4;
+}
+
+.app-header.below-banner {
+  top: 36px;
+}
+
 .app-header {
   background: var(--surface);
   padding: 1rem 1.25rem;

@@ -61,14 +61,3 @@ def _save_db_rate(con, rate_date: date, source: str, target: str, rate: Decimal)
             [rate_date, target, source, inverse],
         ],
     )
-
-
-def _get_latest_db_rate(con, source: str, target: str) -> Decimal | None:
-    """Last known rate regardless of date. Fallback when Frankfurter is down."""
-    row = con.execute(
-        "SELECT rate FROM exchange_rates"
-        " WHERE source_currency = ? AND target_currency = ?"
-        " ORDER BY date DESC LIMIT 1",
-        [source, target],
-    ).fetchone()
-    return Decimal(str(row[0])) if row else None

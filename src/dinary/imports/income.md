@@ -21,11 +21,9 @@ expense ledger.
 | 2023 | `Balance` | RSD -> accounting currency |
 | 2024-2026 | `Income` | RSD -> accounting currency |
 
-Conversion uses the 1st-of-month rate:
-
-- NBS for RSD-anchored conversions.
-- Frankfurter for historical RUB, bridged through `EUR -> RSD` where
-  needed.
+Conversion uses the 1st-of-month rate via the standard
+`get_rate` chain (NBS primary → NBP fallback bridging through PLN;
+see `services/exchange_rates.py` module docstring).
 
 ## Commands
 

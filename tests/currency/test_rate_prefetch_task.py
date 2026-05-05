@@ -292,9 +292,11 @@ class TestFetchError:
 @allure.story("Stale fallback — retries instead of sleeping until tomorrow")
 class TestStaleFallback:
     """get_rate returns a rate but does not write it to DB for today (e.g.
-    Frankfurter is down and _get_latest_db_rate returned a stale entry).
-    The task must retry rather than sleep until tomorrow so the daily write
-    still happens once the upstream recovers."""
+    NBS walked back to a previous-working-day rate without aliasing it
+    under today, or NBP returned its weekly table-B publication that
+    pre-dates today). The task must retry rather than sleep until
+    tomorrow so the daily write still happens once a fresh rate
+    appears upstream."""
 
     def test_retries_when_rate_not_written_to_db(self):
         monday_9am = _belgrade_dt(9)

@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dinary.services.exchange_rates import _fetch_frankfurter_rate
+from dinary.services.nbp import _fetch_nbp_pln_leg
 from dinary.services.nbs import _fetch_nbs_rate
 
 # 2025-02-24 Mon, 25 Tue, 28 Fri, Mar 1 Sat, Mar 2 Sun
@@ -37,10 +37,10 @@ _CON = MagicMock(name="con")
 def _clear_ttl_caches():
     """Clear in-memory TTL caches between tests to avoid cross-test pollution."""
     _fetch_nbs_rate.cache.clear()
-    _fetch_frankfurter_rate.cache.clear()
+    _fetch_nbp_pln_leg.cache.clear()
     yield
     _fetch_nbs_rate.cache.clear()
-    _fetch_frankfurter_rate.cache.clear()
+    _fetch_nbp_pln_leg.cache.clear()
 
 
 @pytest.fixture

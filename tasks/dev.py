@@ -1,5 +1,7 @@
 """Local development tasks: version, test, dev, build-static, backup."""
 
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -82,6 +84,27 @@ def pre(c):
     c.run("pre-commit run --verbose --all-files")
 
 
+def _tailscale_serve_start(port: int) -> str | None:
+    if not shutil.which("tailscale"):
+        return None
+    result = subprocess.run(
+        ["tailscale", "serve", "--bg", str(port)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        print(f"=== tailscale serve failed: {(result.stderr or result.stdout).strip()} ===")
+        return None
+    match = re.search(r"https://\S+", result.stdout + result.stderr)
+    return match.group(0).rstrip("/") if match else None
+
+
+def _tailscale_serve_stop() -> None:
+    if shutil.which("tailscale"):
+        subprocess.run(["tailscale", "serve", "off"], check=False)
+
+
 @task(
     help={
         "port": "TCP port to listen on (default 8000).",
@@ -138,7 +161,7 @@ def dev(c, port=8000, sheet_logging=False, reset=False):
     iteration. Hard-refresh (Cmd-Shift-R) also bypasses the SW
     for that one navigation.
     """
-    _ensure_static_built(c)
+    _run_build(c, dev_mode=True)
 
     if reset:
         subprocess.run(
@@ -172,7 +195,15 @@ def dev(c, port=8000, sheet_logging=False, reset=False):
         f"--reload --reload-dir src "
         f"--host 127.0.0.1 --port {port}"
     )
-    c.run(cmd, pty=True)
+    url = _tailscale_serve_start(port)
+    if url:
+        print(f"\n=== Tailscale HTTPS: {url} ===\n")
+    else:
+        print(f"\n=== Local only: http://127.0.0.1:{port} ===\n")
+    try:
+        c.run(cmd, pty=True)
+    finally:
+        _tailscale_serve_stop()
 
 
 def _build_version() -> str:
@@ -191,31 +222,7 @@ def _build_version() -> str:
         ).strip()
 
 
-@task(
-    name="build-static",
-    help={
-        "skip-install": (
-            "Skip ``npm ci`` (use the existing ``webapp/node_modules``). "
-            "Use locally to iterate faster after the first build. The "
-            "deploy pipeline always runs the full install."
-        ),
-    },
-)
-def build_static(c, skip_install=False):
-    """Build the Vue 3 PWA into ``_static/`` and write the deployed version.
-
-    The Vue source is in ``webapp/``. The Vite config writes to
-    ``_static/`` at the repo root; ``vite-plugin-pwa`` regenerates the
-    service worker on every build, and the build version (git tag /
-    short hash) is injected via ``__APP_VERSION__`` at build time.
-
-    This task additionally writes ``data/.deployed_version`` so that
-    ``GET /api/version`` keeps reporting the deployed git ref the way
-    the older copy-only pipeline did.
-
-    Run it after editing anything under ``webapp/``. ``inv dev``
-    invokes it implicitly on first run when ``_static/`` is missing.
-    """
+def _run_build(c, dev_mode: bool = False) -> None:
     if not _WEBAPP_DIR.is_dir():
         msg = (
             f"Cannot build PWA: {_WEBAPP_DIR}/ is missing. The Vue 3 "
@@ -226,12 +233,13 @@ def build_static(c, skip_install=False):
     version = _build_version()
     data = Path("data")
 
-    if not skip_install:
+    if not (_WEBAPP_DIR / "node_modules").is_dir():
         print("=== npm ci (webapp/) ===")
         c.run("npm --prefix webapp ci --no-audit --no-fund")
 
+    env_prefix = "VITE_DEV_MODE=true " if dev_mode else ""
     print(f"=== Building _static/ via Vite (version {version}) ===")
-    c.run("npm --prefix webapp run build")
+    c.run(f"{env_prefix}npm --prefix webapp run build")
 
     index = _STATIC_DIR / "index.html"
     if not index.is_file():
@@ -247,17 +255,20 @@ def build_static(c, skip_install=False):
     print(f"Built _static/ with version {version}")
 
 
-def _ensure_static_built(c) -> None:
-    """Build ``_static/`` on first run so ``inv dev`` shows the PWA.
+@task(name="build-static")
+def build_static(c):
+    """Build the Vue 3 PWA into ``_static/`` and write the deployed version.
 
-    Without ``_static/`` FastAPI has nothing to mount at ``/`` and the
-    PWA is unreachable. Trigger a build here when the directory or its
-    ``index.html`` is missing so the very first ``inv dev`` after a
-    fresh checkout still serves a working app.
+    The Vue source is in ``webapp/``. The Vite config writes to
+    ``_static/`` at the repo root; ``vite-plugin-pwa`` regenerates the
+    service worker on every build, and the build version (git tag /
+    short hash) is injected via ``__APP_VERSION__`` at build time.
+
+    This task additionally writes ``data/.deployed_version`` so that
+    ``GET /api/version`` keeps reporting the deployed git ref the way
+    the older copy-only pipeline did.
+
+    Run it after editing anything under ``webapp/``.
+    ``npm ci`` runs automatically only when ``webapp/node_modules`` is absent.
     """
-    needs_build = not _STATIC_DIR.is_dir() or not (_STATIC_DIR / "index.html").is_file()
-    if not needs_build:
-        return
-
-    print("=== _static/ missing — building Vue PWA before starting uvicorn ===")
-    build_static(c)
+    _run_build(c)
