@@ -417,6 +417,9 @@ class TestRestoreFromYadiskResync:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(tasks.backups_restore.shutil, "which", lambda name: f"/fake/{name}")
         monkeypatch.setattr(
+            tasks.backups_restore, "ensure_local_yandex_rclone_configured", lambda: None
+        )
+        monkeypatch.setattr(
             tasks.backups_restore,
             "yadisk_list_snapshots",
             lambda: [("dinary-2026-04-22T0317Z.db.zst", 1000)],
