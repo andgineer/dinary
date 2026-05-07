@@ -429,8 +429,12 @@ class TestRestoreFromYadiskResync:
             import sqlite3
 
             db = workpath / "restored.db"
-            with sqlite3.connect(db) as con:
+            con = sqlite3.connect(str(db))
+            try:
                 con.execute("CREATE TABLE expense (id INTEGER PRIMARY KEY)")
+                con.commit()
+            finally:
+                con.close()
             return db
 
         monkeypatch.setattr(tasks.backups_restore, "_download_and_verify", fake_download)
