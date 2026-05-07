@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, watch } from "vue";
+import { Copy, RefreshCw, X } from "lucide-vue-next";
 import { useQueueStore } from "../stores/queue.js";
 import { useToastStore } from "../stores/toast.js";
 
@@ -89,7 +90,7 @@ function close() {
           aria-label="Close"
           @click="close"
         >
-          ×
+          <X :size="18" aria-hidden="true" />
         </button>
       </div>
 
@@ -118,6 +119,7 @@ function close() {
           class="btn btn-secondary"
           @click="copyToClipboard"
         >
+          <Copy :size="16" aria-hidden="true" />
           Copy to clipboard
         </button>
       </div>
@@ -131,6 +133,7 @@ function close() {
             class="btn-inline reload-btn"
             @click="reloadApp"
           >
+            <RefreshCw :size="13" aria-hidden="true" />
             Reload
           </button>
         </span>

@@ -351,6 +351,24 @@ non-zero exit pipes the captured output through `send_fail_email`
 Four checks per day is cheap and catches a missed 03:17 UTC run
 within hours rather than the next morning.
 
+### Local Yandex.Disk access: `inv setup-yadisk`
+
+`restore-cloud-backup` reads from `yandex:` on whichever machine it
+runs. `inv setup-yadisk` configures that remote locally — on VM 1
+during disaster recovery, or on the operator laptop for debug
+bootstraps:
+
+```bash
+inv setup-yadisk
+```
+
+Uses the same WebDAV + app-password flow as `inv setup-replica` (no
+browser OAuth needed). Idempotent: skips the prompt if `yandex:` is
+already configured and healthy.
+
+`restore-cloud-backup` calls this automatically when `yandex:` is
+absent, so running it beforehand is optional.
+
 ## Point-in-time restore from Yandex.Disk
 
 ```bash
@@ -387,19 +405,15 @@ operator machine.
 | `--list-only` | off | Read-only: enumerate available snapshots and exit |
 | `--yes` | off | Skip the "type yes to proceed" gate (preservation backup still happens) |
 
-### Preconditions (operator machine, one-time)
+### Preconditions (one-time per machine)
 
-- `rclone` installed (`apt install rclone` on Ubuntu, `brew install
-  rclone` on macOS). Already pre-installed on VM 1 by `inv setup-server` so
-  no manual install is needed during disaster recovery.
-- A `yandex:` rclone remote configured locally, pointing at the
-  same Yandex.Disk account used by `inv setup-replica`. If
-  the operator machine never had `inv setup-replica` run
-  from it, configure it once with
-  `rclone config create yandex webdav url=https://webdav.yandex.ru vendor=other user=<login>`
-  (it will prompt for the app-password via `rclone obscure`).
-- `sqlite3` + `zstd` installed (both are already on VM 1 via
-  `inv setup-server` and on macOS via `brew install sqlite zstd`).
+- `rclone`, `sqlite3`, `zstd` installed. All three are already
+  present on VM 1 via `inv setup-server`. On macOS: `brew install
+  rclone sqlite zstd`.
+- A `yandex:` rclone remote configured locally. If it is absent,
+  **`restore-cloud-backup` prompts automatically** (same WebDAV +
+  app-password flow as `inv setup-replica`). To pre-configure before
+  the first restore run: `inv setup-yadisk`.
 
 ### Safety guarantees
 

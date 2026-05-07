@@ -1,4 +1,5 @@
 <script setup>
+import { Pencil, EyeOff, Eye, Trash2 } from "lucide-vue-next";
 const props = defineProps({
   kind: {
     type: String,
@@ -66,26 +67,29 @@ function rowClass(primary) {
         type="button"
         class="btn-inline inactive-edit"
         :disabled="isPending(item)"
+        aria-label="Edit"
         @click="emitAction('edit', item)"
       >
-        Edit
+        <Pencil :size="13" aria-hidden="true" />
       </button>
       <button
         type="button"
         class="btn-inline inactive-hide"
         :disabled="isPending(item)"
+        aria-label="Hide"
         @click="emitAction('deactivate', item)"
       >
-        Hide
+        <EyeOff :size="13" aria-hidden="true" />
       </button>
       <button
         v-if="item.removable"
         type="button"
         class="btn-inline inactive-delete"
         :disabled="isPending(item)"
+        aria-label="Delete"
         @click="onDelete(item)"
       >
-        Delete
+        <Trash2 :size="13" aria-hidden="true" />
       </button>
     </div>
 
@@ -101,18 +105,20 @@ function rowClass(primary) {
         type="button"
         class="btn-inline inactive-activate"
         :disabled="isPending(item)"
+        aria-label="Restore"
         @click="emitAction('reactivate', item)"
       >
-        Restore
+        <Eye :size="13" aria-hidden="true" />
       </button>
       <button
         v-if="item.removable"
         type="button"
         class="btn-inline inactive-delete"
         :disabled="isPending(item)"
+        aria-label="Delete"
         @click="onDelete(item)"
       >
-        Delete
+        <Trash2 :size="13" aria-hidden="true" />
       </button>
     </div>
   </div>

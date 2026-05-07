@@ -1,15 +1,17 @@
-"""Yandex.Disk rclone bootstrap on VM2.
+"""Yandex.Disk rclone bootstrap — VM2 (via SSH) and local machine.
 
 Splits out the interactive credential prompt + ``rclone config create``
-flow so :func:`ensure_yandex_rclone_configured` can be invoked from
-``inv setup-replica`` (or any future task) without dragging the rest of
-the backup pipeline along.
+flow so the bootstrap can be invoked from ``inv setup-replica`` (VM2,
+via SSH) or ``inv setup-yadisk`` (local machine, run directly on VM1 or
+the operator laptop) without dragging the rest of the backup pipeline.
 """
 
 import base64
 import getpass
 import subprocess
 import sys
+
+from invoke import task
 
 from .env import replica_host
 
@@ -199,6 +201,121 @@ def install_yandex_rclone_remote(login: str, app_password: str) -> None:
             "prompt for credentials fresh.\n",
         )
         sys.exit(proc.returncode)
+
+
+def local_has_working_yandex_remote() -> bool:
+    """Return True iff the local rclone has a working ``yandex:`` remote.
+
+    Uses the same two-step contract as :func:`replica_has_working_yandex_remote`:
+    exact-line match in ``listremotes`` + ``lsd`` smoke-test. A stale
+    remote (listed but lsd fails) is rolled back inline so the next
+    call re-prompts for fresh credentials.
+    """
+    listed = subprocess.run(
+        ["rclone", "listremotes"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if "yandex:" not in listed.stdout.splitlines():
+        return False
+    lsd = subprocess.run(
+        ["rclone", "lsd", "yandex:", "--low-level-retries", "1", "--retries", "1"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if lsd.returncode != 0:
+        subprocess.run(
+            ["rclone", "config", "delete", "yandex"],
+            capture_output=True,
+            check=False,
+        )
+        sys.stderr.write("stale yandex: remote removed from local rclone — re-prompting\n")
+        return False
+    return True
+
+
+def install_local_yandex_rclone_remote(login: str, app_password: str) -> None:
+    """Configure the ``yandex:`` WebDAV remote on the local machine.
+
+    Equivalent to :func:`install_yandex_rclone_remote` but runs all
+    ``rclone`` subcommands locally without SSH. The app-password travels
+    only on stdin of ``rclone obscure -`` and is never placed in argv.
+    Rolls back the remote and exits 1 if the smoke-test fails so the
+    next call re-prompts for fresh credentials.
+    """
+    obs = subprocess.run(
+        ["rclone", "obscure", "-"],
+        input=app_password,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    obscured = obs.stdout.strip()
+    subprocess.run(
+        [
+            "rclone",
+            "config",
+            "create",
+            "--no-obscure",
+            "yandex",
+            "webdav",
+            "url",
+            "https://webdav.yandex.ru",
+            "vendor",
+            "other",
+            "user",
+            login,
+            "pass",
+            obscured,
+        ],
+        check=True,
+        capture_output=True,
+    )
+    lsd = subprocess.run(
+        ["rclone", "lsd", "yandex:", "--low-level-retries", "1", "--retries", "1", "-v"],
+        check=False,
+    )
+    if lsd.returncode != 0:
+        subprocess.run(
+            ["rclone", "config", "delete", "yandex"],
+            capture_output=True,
+            check=False,
+        )
+        sys.stderr.write("rclone lsd yandex: failed; broken remote removed\n")
+        sys.exit(1)
+
+
+def ensure_local_yandex_rclone_configured() -> None:
+    """Idempotent: ensure the local machine has a working ``yandex:`` WebDAV remote.
+
+    Called by ``inv setup-yadisk`` and automatically by
+    ``inv restore-cloud-backup`` when the remote is absent. Uses
+    WebDAV + app-password so no browser OAuth is required on headless
+    machines (VM1).
+    """
+    if local_has_working_yandex_remote():
+        print("yandex: remote already configured and healthy — skipping prompt.")
+        return
+    login, app_password = prompt_yandex_credentials()
+    install_local_yandex_rclone_remote(login, app_password)
+    print("yandex: remote configured and verified (rclone lsd succeeded).")
+
+
+@task(name="setup-yadisk")
+def setup_yadisk(c):  # noqa: ARG001
+    """Configure the yandex: WebDAV rclone remote on this machine.
+
+    Run directly on the machine that needs Yandex.Disk access — VM1 for
+    ``inv restore-cloud-backup``, or the operator laptop for local use.
+    Prompts for Yandex login + app-password; re-running is safe (skips
+    the prompt when the remote already works).
+
+    ``inv restore-cloud-backup`` calls this automatically when the remote
+    is absent, so manual pre-flight is optional.
+    """
+    ensure_local_yandex_rclone_configured()
 
 
 def ensure_yandex_rclone_configured(c):  # noqa: ARG001

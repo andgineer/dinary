@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref } from "vue";
+import { QrCode, X, Save } from "lucide-vue-next";
 import ExpenseForm from "./components/ExpenseForm.vue";
 import QrScanner from "./components/QrScanner.vue";
 import QueueModal from "./components/QueueModal.vue";
@@ -191,8 +192,8 @@ onBeforeUnmount(() => {
         data-testid="qr-btn"
         @click="toggleScanner"
       >
-        <span v-if="!scannerActive">QR</span>
-        <span v-else>Stop</span>
+        <QrCode v-if="!scannerActive" :size="20" aria-hidden="true" />
+        <X v-else :size="20" aria-hidden="true" />
       </button>
       <button
         type="button"
@@ -200,6 +201,7 @@ onBeforeUnmount(() => {
         data-testid="save-btn"
         @click="saveExpense"
       >
+        <Save :size="20" aria-hidden="true" />
         Save
       </button>
     </div>

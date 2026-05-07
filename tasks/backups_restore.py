@@ -26,8 +26,8 @@ from dinary.tools.backup_snapshots import (
     sqlite_row_count,
 )
 
-from .backups_replica import replica_resync
-from .env import _env, replica_host
+from .backups_yandex import ensure_local_yandex_rclone_configured
+from .restore_utils import litestream_active, local_replica_resync
 
 
 def yadisk_list_snapshots():
@@ -102,27 +102,27 @@ def _download_and_verify(c, picked, workpath: Path) -> Path:
 
 @task(name="restore-cloud-backup")
 def restore_from_yadisk(c, snapshot="latest", list_only=False, yes=False, no_resync=False):
-    """Restore DB from Yandex.Disk snapshots written by the Litestream replica (VM2).
+    """Loads snapshot from Yandex.Disk and write to data/dinary.db
+
+    The snapshots are written by DB replica (VM2).
 
     The replica continuously pushes compressed SQLite snapshots to Yandex.Disk
     via ``rclone``.  This task downloads and restores from that same remote,
     making it the DR counterpart of the replica's backup job.
 
-    **Run on the server** (``ssh ubuntu@dinary && cd ~/dinary``), not locally.
     Writes to ``./data/dinary.db`` relative to the cwd.
 
-    After the restore, automatically resyncs the Litestream replica
-    (``inv replica-resync``) so its WAL position matches the restored DB.
-    Skip with ``--no-resync`` if ``DINARY_REPLICA_HOST`` is not configured
-    or the replica is already stopped.
+    When run on VM1 (litestream.service is active), automatically resyncs
+    the replica so VM2's WAL position matches the restored DB.
 
     Flags:
         --snapshot DATE   pick by date prefix (e.g. ``2026-04-22``). Default ``latest``.
         --list-only       enumerate snapshots and exit without writing.
         --yes             skip the "type yes to proceed" gate.
-        --no-resync       skip automatic replica resync after restore.
+        --no-resync       skip replica resync even when litestream is active.
     """
     assert_local_binaries(["rclone", "sqlite3", "zstd"])
+    ensure_local_yandex_rclone_configured()
 
     snapshots = yadisk_list_snapshots()
     if not snapshots:
@@ -165,13 +165,5 @@ def restore_from_yadisk(c, snapshot="latest", list_only=False, yes=False, no_res
         shutil.move(str(restored), str(target_db))
 
     print(f"Restored data/dinary.db from {picked[0]}")
-
-    if no_resync:
-        print("=== --no-resync set: skipping replica resync. ===")
-        return
-
-    if not _env().get("DINARY_REPLICA_HOST"):
-        print("=== DINARY_REPLICA_HOST not set: skipping replica resync. ===")
-        return
-    print(f"=== Replica {replica_host()} detected — resyncing to match restored DB ===")
-    replica_resync(c)
+    if litestream_active() and not no_resync:
+        local_replica_resync(c)

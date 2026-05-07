@@ -683,3 +683,65 @@ class TestSetupResyncTask:
         assert stop_idx is not None
         assert start_idx is not None
         assert stop_idx < start_idx, "start must come after stop on VM1"
+
+
+@allure.epic("Deploy")
+@allure.feature("restore-replica: resync")
+class TestRestoreReplicaResync:
+    """restore-replica auto-resyncs when litestream is active (VM1 context)
+    and skips resync on a developer laptop or when --no-resync is passed.
+    """
+
+    @pytest.fixture
+    def _patched(self, monkeypatch, tmp_path):
+        (tmp_path / "data").mkdir()
+        deploy_dir = tmp_path / ".deploy"
+        deploy_dir.mkdir()
+        (deploy_dir / ".env").write_text(
+            "DINARY_DEPLOY_HOST=ubuntu@test-primary\n"
+            "DINARY_REPLICA_HOST=ubuntu@test-replica\n"
+            "DINARY_TUNNEL=tailscale\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            tasks.backups_replica,
+            "ssh_replica_capture_bytes",
+            lambda script: b"SQLite format 3\x00" + b"\x00" * 96,
+        )
+        monkeypatch.setattr(
+            tasks.backups_replica,
+            "apply_restore",
+            lambda db_bytes, target: target.write_bytes(db_bytes),
+        )
+        return monkeypatch
+
+    def test_resync_triggered_when_litestream_active(self, _patched):
+        """On VM1 (litestream.service active), resync must fire after restore."""
+        resync_calls = []
+        _patched.setattr(tasks.backups_replica, "litestream_active", lambda: True)
+        _patched.setattr(
+            tasks.backups_replica, "local_replica_resync", lambda c: resync_calls.append(c)
+        )
+        tasks.restore_replica.body(MagicMock(), yes=True)
+        assert len(resync_calls) == 1
+
+    def test_resync_skipped_when_litestream_inactive(self, _patched):
+        """On a developer laptop, resync must be skipped silently."""
+        resync_calls = []
+        _patched.setattr(tasks.backups_replica, "litestream_active", lambda: False)
+        _patched.setattr(
+            tasks.backups_replica, "local_replica_resync", lambda c: resync_calls.append(c)
+        )
+        tasks.restore_replica.body(MagicMock(), yes=True)
+        assert resync_calls == []
+
+    def test_resync_skipped_when_no_resync_flag(self, _patched):
+        """``--no-resync`` suppresses resync even when litestream is active."""
+        resync_calls = []
+        _patched.setattr(tasks.backups_replica, "litestream_active", lambda: True)
+        _patched.setattr(
+            tasks.backups_replica, "local_replica_resync", lambda c: resync_calls.append(c)
+        )
+        tasks.restore_replica.body(MagicMock(), yes=True, no_resync=True)
+        assert resync_calls == []

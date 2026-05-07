@@ -1,5 +1,6 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref, watch, nextTick } from "vue";
+import { X } from "lucide-vue-next";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -79,7 +80,7 @@ onBeforeUnmount(() => {
           aria-label="Close"
           @click="close"
         >
-          ×
+          <X :size="18" aria-hidden="true" />
         </button>
       </div>
       <div class="modal-body">

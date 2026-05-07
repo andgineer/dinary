@@ -40,7 +40,7 @@ from .constants import (
     VM1_LITESTREAM_KEY_PATH,
 )
 from .env import litestream_retention, replica_host
-from .restore_utils import apply_restore, confirm_overwrite
+from .restore_utils import apply_restore, confirm_overwrite, litestream_active, local_replica_resync
 from .ssh_utils import (
     build_add_known_host_script,
     build_ensure_vm1_replica_key_script,
@@ -434,18 +434,22 @@ def replica_resync(c):
 
 
 @task(name="restore-replica")
-def restore_replica(c, output=None, yes=False, timestamp=None):  # noqa: ARG001
+def restore_replica(c, output=None, yes=False, timestamp=None, no_resync=False):
     """Restore a snapshot from VM2's Litestream LTX archive and write to data/dinary.db.
 
     VM2 holds a continuous WAL stream pushed by VM1. This gives a more
     current snapshot than ``inv restore-cloud`` (which uses daily
     Yandex.Disk snapshots).
 
+    When run on VM1 (litestream.service is active), automatically resyncs
+    the replica so VM2's WAL position matches the restored DB.
+
     Flags:
         -o / --output PATH      Write to PATH (default: data/dinary.db).
         --yes                   Skip the "type yes to proceed" gate.
         --timestamp ISO8601     Restore to a specific point in time
                                 (e.g. ``2026-04-27T12:00:00Z``). Default: latest.
+        --no-resync             Skip replica resync even when litestream is active.
     """
     target = Path(output) if output else Path("data/dinary.db")
     incoming_desc = (
@@ -461,3 +465,5 @@ def restore_replica(c, output=None, yes=False, timestamp=None):  # noqa: ARG001
     db_bytes = ssh_replica_capture_bytes(_build_replica_restore_script(timestamp))
     apply_restore(db_bytes, target)
     print(f"=== Restored {len(db_bytes) / 1024:.1f} KB → {target} ===")
+    if litestream_active() and not no_resync:
+        local_replica_resync(c)
