@@ -1,8 +1,10 @@
 """Tests for helpers in :mod:`tasks.dev`."""
 
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import allure
@@ -91,8 +93,14 @@ class TestBuildStatic:
         version_json = json.loads((static_dir / "version.json").read_text())
         assert version_json == {"version": "abc1234"}
 
-    def test_omits_npm_ci_when_node_modules_present(self, fake_repo):
+    def test_omits_npm_ci_when_node_modules_up_to_date(self, fake_repo):
         (fake_repo / "webapp" / "node_modules").mkdir()
+        lock = fake_repo / "webapp" / "package-lock.json"
+        lock.write_text("{}")
+        node_lock = fake_repo / "webapp" / "node_modules" / ".package-lock.json"
+        node_lock.write_text("{}")
+        past = time.time() - 60
+        os.utime(lock, (past, past))
         static_dir = fake_repo / "_static"
 
         def write_index():
@@ -103,6 +111,28 @@ class TestBuildStatic:
         _build_static_fn(ctx)
 
         assert ctx.commands == ["npm --prefix webapp run build"]
+
+    def test_runs_npm_ci_when_lockfile_newer_than_installed(self, fake_repo):
+        (fake_repo / "webapp" / "node_modules").mkdir()
+        node_lock = fake_repo / "webapp" / "node_modules" / ".package-lock.json"
+        node_lock.write_text("{}")
+        past = time.time() - 60
+        os.utime(node_lock, (past, past))
+        lock = fake_repo / "webapp" / "package-lock.json"
+        lock.write_text("{}")
+        static_dir = fake_repo / "_static"
+
+        def write_index():
+            static_dir.mkdir(exist_ok=True)
+            (static_dir / "index.html").write_text("<html></html>")
+
+        ctx = _FakeContext(build_writer=write_index)
+        _build_static_fn(ctx)
+
+        assert ctx.commands == [
+            "npm --prefix webapp ci --no-audit --no-fund",
+            "npm --prefix webapp run build",
+        ]
 
     def test_raises_when_webapp_missing(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

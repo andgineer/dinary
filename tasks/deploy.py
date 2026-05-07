@@ -8,7 +8,7 @@ from pathlib import Path
 
 from invoke import task
 
-from .constants import _REMOTE_DB_PATH, DINARY_SERVICE, REMOTE_LEGACY_ENV_PATH
+from .constants import _REMOTE_DB_PATH, DINARY_SERVICE
 from .env import bind_host, host, tunnel
 from .ssh_utils import (
     build_data_dir_permissions_script,
@@ -135,9 +135,6 @@ def deploy(c, ref="", no_start=False):
     bh = bind_host(deploy_tunnel)
     print(f"=== Re-rendering dinary systemd unit (bind {bh}) ===")
     render_service(c, "dinary", DINARY_SERVICE.format(host=bh))
-
-    print("=== Cleaning up legacy ~/dinary/.env (if present) ===")
-    ssh_run(c, f"rm -f {REMOTE_LEGACY_ENV_PATH}")
 
     print("=== Building _static/ with version ===")
     ssh_run(c, "cd ~/dinary && source ~/.local/bin/env && uv run inv build-static")

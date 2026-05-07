@@ -240,7 +240,14 @@ def _run_build(c, dev_mode: bool = False) -> None:
     version = _build_version()
     data = Path("data")
 
-    if not (_WEBAPP_DIR / "node_modules").is_dir():
+    lock = _WEBAPP_DIR / "package-lock.json"
+    node_lock = _WEBAPP_DIR / "node_modules" / ".package-lock.json"
+    needs_install = (
+        not (_WEBAPP_DIR / "node_modules").is_dir()
+        or not node_lock.exists()
+        or (lock.exists() and lock.stat().st_mtime > node_lock.stat().st_mtime)
+    )
+    if needs_install:
         print("=== npm ci (webapp/) ===")
         c.run("npm --prefix webapp ci --no-audit --no-fund")
 

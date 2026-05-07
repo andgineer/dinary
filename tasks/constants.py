@@ -152,7 +152,6 @@ LOCAL_ENV_EXAMPLE_PATH = ".deploy.example/.env"
 LOCAL_IMPORT_SOURCES_PATH = ".deploy/import_sources.json"
 REMOTE_DEPLOY_DIR = "/home/ubuntu/dinary/.deploy"
 REMOTE_ENV_PATH = f"{REMOTE_DEPLOY_DIR}/.env"
-REMOTE_LEGACY_ENV_PATH = "/home/ubuntu/dinary/.env"
 REMOTE_IMPORT_SOURCES_PATH = f"{REMOTE_DEPLOY_DIR}/import_sources.json"
 REMOTE_LITESTREAM_CONFIG_PATH = "/etc/litestream.yml"
 
@@ -227,7 +226,6 @@ __all__ = [
     "VM1_LITESTREAM_KEY_PATH",
     "REMOTE_ENV_PATH",
     "REMOTE_IMPORT_SOURCES_PATH",
-    "REMOTE_LEGACY_ENV_PATH",
     "REMOTE_LITESTREAM_CONFIG_PATH",
     "REPLICA_DB_NAME",
     "REPLICA_LITESTREAM_DIR",
