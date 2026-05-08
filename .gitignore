@@ -27,3 +27,4 @@ node_modules/
 webapp/node_modules/
 _static/
 backups/
+/local/
