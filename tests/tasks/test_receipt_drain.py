@@ -569,16 +569,13 @@ class TestProcessJobEdgeCases:
             f"expected purchase date 2026-01-10, got {exp_dt[0]}"
         )
 
-    def test_conf1_rule_cached_and_prevents_llm_recall(self, drain_db):  # noqa: ARG002
-        """Items penalised to conf=1 store a rule; the drain skips LLM on the next pass."""
+    def test_conf1_items_do_not_create_rules(self, drain_db):  # noqa: ARG002
+        """Items penalised to conf=1 do not store a rule; the LLM is called again next pass."""
         from dinary.background.receipt_classification_task import _process_job
         from dinary.services.llm_client import ClassificationResult
         from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
         from dinary.services.receipt_repo import ReceiptJobRow
 
-        # LLM returns conf=4 but journal-fallback penalty (−1) and failover penalty (−1)
-        # reduce it to conf=2. Use conf=2 so we can test conf=1 separately via a direct case.
-        # For a true conf=1 outcome: LLM returns conf=3, two penalties → conf=1.
         parsed = ParsedReceipt(
             store_name="Lidl",
             store_pib="100",
@@ -607,7 +604,7 @@ class TestProcessJobEdgeCases:
                         item_name_normalized="nepoznato", category_id=1, confidence_level=2
                     )
                 ],
-                False,  # no failover penalty
+                False,
             )
         )
 
@@ -646,11 +643,9 @@ class TestProcessJobEdgeCases:
 
         conn = ledger_repo.get_connection()
         try:
-            # No expense — conf=1 items are unresolved
             exp_count = conn.execute(
                 "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
             ).fetchone()[0]
-            # Rule stored at conf=1 with the LLM's category_id
             rule = conn.execute(
                 "SELECT category_id, confidence_level FROM classification_rules"
                 " WHERE item_name_normalized = 'nepoznato'"
@@ -659,57 +654,4 @@ class TestProcessJobEdgeCases:
             conn.close()
 
         assert exp_count == 0, "conf=1 items must not generate expenses"
-        assert rule is not None, "conf=1 rule must be stored to prevent future LLM re-calls"
-        assert rule[0] == 1, f"rule category_id should be 1, got {rule[0]}"
-        assert rule[1] == 1, f"rule confidence should be 1, got {rule[1]}"
-
-        # Second pass: LLM must NOT be called again (rule hit prevents it).
-        conn = ledger_repo.get_connection()
-        try:
-            conn.execute(
-                "INSERT INTO receipts (client_receipt_id, url) VALUES ('c1-r2', 'https://y')"
-            )
-            receipt_id2 = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-            conn.execute(
-                "INSERT INTO receipt_items"
-                " (receipt_id, name_raw, name_normalized, unit_price, quantity, total_price, tax_label)"
-                " VALUES (?, 'NEPOZNATO', 'nepoznato', 50.0, 1.0, 50.0, 'E')",
-                [receipt_id2],
-            )
-            conn.execute(
-                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id2]
-            )
-            conn.execute(
-                "INSERT INTO receipts (client_receipt_id, url) VALUES ('c1-r1-parsed', 'x')"
-                " ON CONFLICT DO NOTHING"
-            )
-            conn.execute(
-                "UPDATE receipts SET store_id = (SELECT id FROM stores WHERE chain_name = 'Lidl'),"
-                " parsed_at = '2026-05-01', store_name_raw = 'Lidl', store_pib_raw = '100'"
-                " WHERE id = ?",
-                [receipt_id2],
-            )
-        finally:
-            conn.close()
-
-        pool2 = MagicMock()
-        pool2.get_chain_name = AsyncMock(return_value="Lidl")
-        pool2.classify_receipt = AsyncMock(return_value=([], False))
-
-        job2 = ReceiptJobRow(
-            receipt_id=receipt_id2,
-            url="https://y",
-            store_name_raw="Lidl",
-            store_pib_raw="100",
-            invoice_number="INV-C1-2",
-            parsed_at="2026-05-01",
-            used_journal_fallback=False,
-            claim_token="tok2",
-        )
-
-        with patch(
-            "dinary.background.receipt_classification_task.ProviderPool", return_value=pool2
-        ):
-            asyncio.run(_process_job(job2))
-
-        pool2.classify_receipt.assert_not_called(), "LLM must not be called when conf=1 rule exists"
+        assert rule is None, "conf=1 items must not store a rule (plan step 9: confidence 2-4 only)"

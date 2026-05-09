@@ -46,18 +46,18 @@ class TestVerifyDbLocal:
     def test_passes_on_healthy_db(self, _cwd, capsys):
         db_path = _cwd / "data" / "dinary.db"
 
-        with sqlite3.connect(db_path) as con:
-            con.executescript(
-                "PRAGMA foreign_keys=ON;"
-                "CREATE TABLE parent (id INTEGER PRIMARY KEY);"
-                "CREATE TABLE child ("
-                "  id INTEGER PRIMARY KEY,"
-                "  parent_id INTEGER NOT NULL REFERENCES parent(id)"
-                ");"
-                "INSERT INTO parent (id) VALUES (1);"
-                "INSERT INTO child (id, parent_id) VALUES (1, 1);"
-            )
-            con.close()
+        con = sqlite3.connect(db_path)
+        con.executescript(
+            "PRAGMA foreign_keys=ON;"
+            "CREATE TABLE parent (id INTEGER PRIMARY KEY);"
+            "CREATE TABLE child ("
+            "  id INTEGER PRIMARY KEY,"
+            "  parent_id INTEGER NOT NULL REFERENCES parent(id)"
+            ");"
+            "INSERT INTO parent (id) VALUES (1);"
+            "INSERT INTO child (id, parent_id) VALUES (1, 1);"
+        )
+        con.close()
         c = MagicMock()
         self._verify_db(c)
         out = capsys.readouterr().out
@@ -72,19 +72,19 @@ class TestVerifyDbLocal:
         """
         db_path = _cwd / "data" / "dinary.db"
 
-        with sqlite3.connect(db_path) as con:
-            con.executescript(
-                "CREATE TABLE parent (id INTEGER PRIMARY KEY);"
-                "CREATE TABLE child ("
-                "  id INTEGER PRIMARY KEY,"
-                "  parent_id INTEGER NOT NULL REFERENCES parent(id)"
-                ");"
-                # FKs are OFF by default on a fresh connection, so
-                # this orphan insert succeeds even though parent_id=42
-                # does not exist.
-                "INSERT INTO child (id, parent_id) VALUES (1, 42);"
-            )
-            con.close()
+        con = sqlite3.connect(db_path)
+        con.executescript(
+            "CREATE TABLE parent (id INTEGER PRIMARY KEY);"
+            "CREATE TABLE child ("
+            "  id INTEGER PRIMARY KEY,"
+            "  parent_id INTEGER NOT NULL REFERENCES parent(id)"
+            ");"
+            # FKs are OFF by default on a fresh connection, so
+            # this orphan insert succeeds even though parent_id=42
+            # does not exist.
+            "INSERT INTO child (id, parent_id) VALUES (1, 42);"
+        )
+        con.close()
         c = MagicMock()
         with pytest.raises(SystemExit) as excinfo:
             self._verify_db(c)
