@@ -151,6 +151,7 @@ class TestRestoreFromYadiskTask:
                 "CREATE TABLE expense (id INTEGER PRIMARY KEY, amount REAL);"
                 "INSERT INTO expense (amount) VALUES (1.0), (2.0);",
             )
+            con.close()
 
     @pytest.fixture
     def _mock_binaries_present(self, monkeypatch):
@@ -223,6 +224,7 @@ class TestRestoreFromYadiskTask:
         assert target.exists()
         with sqlite3.connect(target) as con:
             count = con.execute("SELECT COUNT(*) FROM expense").fetchone()[0]
+            con.close()
         assert count == 2
 
     def test_preserves_existing_db_before_overwrite(

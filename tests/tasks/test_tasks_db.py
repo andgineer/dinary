@@ -57,6 +57,7 @@ class TestVerifyDbLocal:
                 "INSERT INTO parent (id) VALUES (1);"
                 "INSERT INTO child (id, parent_id) VALUES (1, 1);"
             )
+            con.close()
         c = MagicMock()
         self._verify_db(c)
         out = capsys.readouterr().out
@@ -83,6 +84,7 @@ class TestVerifyDbLocal:
                 # does not exist.
                 "INSERT INTO child (id, parent_id) VALUES (1, 42);"
             )
+            con.close()
         c = MagicMock()
         with pytest.raises(SystemExit) as excinfo:
             self._verify_db(c)

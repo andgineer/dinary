@@ -308,7 +308,7 @@ async def _classify_and_persist(  # noqa: C901, PLR0912, PLR0913, PLR0915
     for item in items:
         norm = item_norms[item.id]
         rule = classify_by_rules(conn, store_id, norm)
-        if rule:
+        if rule and rule[1] > 1:
             rule_hits[item.id] = rule
         else:
             llm_queue.append((item.id, norm))
@@ -380,14 +380,6 @@ async def _classify_and_persist(  # noqa: C901, PLR0912, PLR0913, PLR0915
         for item, _ in unresolved_items:
             norm = item_norms[item.id]
             update_receipt_item(conn, item.id, norm, None, 1, None)
-            # If the LLM returned a category but penalty drove conf to 1, cache a conf=1
-            # rule so the drain won't call the LLM again for this item on future passes.
-            # Items where the LLM truly couldn't classify (category_id=None) have no rule
-            # to cache (classification_rules.category_id is NOT NULL).
-            if norm and item.id not in rule_hits:
-                cat_id_from_llm, _ = item_classifications.get(item.id, (None, 1))
-                if cat_id_from_llm is not None:
-                    create_or_update_rule(conn, store_id, norm, cat_id_from_llm, 1, "llm")
 
         for cat_id, cat_items in by_category.items():
             total = round(sum(i.total_price for i, _ in cat_items), 2)
