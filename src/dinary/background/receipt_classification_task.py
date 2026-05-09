@@ -24,11 +24,21 @@ from sr_invoice_parser.exceptions import ParserParseException, ParserRequestExce
 
 from dinary.config import settings
 from dinary.services import ledger_repo
-from dinary.services.classification_rules import classify_by_rules, create_or_update_rule
+from dinary.services.classification_rules import (
+    RuleSpec,
+    classify_by_rules,
+    create_or_update_rule,
+)
 from dinary.services.item_normalizer import normalize_item_name
-from dinary.services.llm_client import AllProvidersExhausted, ClassificationResult, ProviderPool
+from dinary.services.llm_client import (
+    AllProvidersExhausted,
+    ClassificationResult,
+    ProviderPool,
+    ReceiptContext,
+)
 from dinary.services.receipt_parser import ParsedReceipt, parse_receipt
 from dinary.services.receipt_repo import (
+    ItemClassification,
     ReceiptItemRow,
     ReceiptJobRow,
     claim_next_job,
@@ -189,8 +199,7 @@ async def _process_job(job: ReceiptJobRow) -> None:
                 raise
             return
 
-        categories = _load_categories(conn)
-        await _classify_and_persist(conn, pool, job, items, store_id, categories)
+        await _classify_and_persist(conn, pool, job, items, store_id)
     finally:
         conn.close()
 
@@ -277,79 +286,81 @@ def _load_categories(conn: sqlite3.Connection) -> dict[int, str]:
     return {int(r[0]): f"{r[1]}: {r[2]}" if r[1] else str(r[2]) for r in rows}
 
 
-async def _classify_and_persist(  # noqa: C901, PLR0912, PLR0913, PLR0915
+def _run_rules_pass(
     conn: sqlite3.Connection,
-    pool: ProviderPool,
-    job: ReceiptJobRow,
     items: list[ReceiptItemRow],
     store_id: int | None,
-    categories: dict[int, str],
-) -> None:
-    # Idempotency: skip LLM calls entirely if expenses already exist (e.g., stale job
-    # after a prior run committed but crashed before complete_job).
-    if conn.execute(
-        "SELECT 1 FROM expenses WHERE receipt_id = ? LIMIT 1",
-        [job.receipt_id],
-    ).fetchone():
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            complete_job(conn, job.receipt_id)
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        return
-
-    item_norms: dict[int, str] = {item.id: normalize_item_name(item.name_raw) for item in items}
-
+) -> tuple[dict[int, tuple[int, int]], list[tuple[int, str]]]:
+    """Classify items by rules; return (rule_hits, llm_queue) for remaining items."""
     rule_hits: dict[int, tuple[int, int]] = {}
     llm_queue: list[tuple[int, str]] = []
-
     for item in items:
-        norm = item_norms[item.id]
+        norm = normalize_item_name(item.name_raw)
         rule = classify_by_rules(conn, store_id, norm)
         if rule and rule[1] > 1:
             rule_hits[item.id] = rule
         else:
             llm_queue.append((item.id, norm))
+    return rule_hits, llm_queue
 
-    llm_results: dict[str, ClassificationResult] = {}
-    used_failover = False
 
-    if llm_queue:
-        normalized_names = [name for _, name in llm_queue]
-        results, used_failover = await pool.classify_receipt(
-            conn=conn,
-            items=normalized_names,
-            store_name_raw=job.store_name_raw or "Unknown Store",
-            categories=categories,
-            receipt_id=job.receipt_id,
-            invoice_number=job.invoice_number,
-        )
-        for (_, name), result in zip(llm_queue, results, strict=False):
-            llm_results[name] = result
+async def _run_llm_pass(
+    pool: ProviderPool,
+    conn: sqlite3.Connection,
+    job: ReceiptJobRow,
+    llm_queue: list[tuple[int, str]],
+    categories: dict[int, str],
+) -> tuple[dict[int, ClassificationResult], bool]:
+    """Call LLM for queued items; return (results keyed by item_id, used_failover)."""
+    if not llm_queue:
+        return {}, False
+    normalized_names = [name for _, name in llm_queue]
+    results, used_failover = await pool.classify_receipt(
+        conn=conn,
+        items=normalized_names,
+        store_name_raw=job.store_name_raw or "Unknown Store",
+        categories=categories,
+        ctx=ReceiptContext(receipt_id=job.receipt_id, invoice_number=job.invoice_number),
+    )
+    return (
+        {item_id: result for (item_id, _), result in zip(llm_queue, results, strict=False)},
+        used_failover,
+    )
 
-    journal_penalty = 1 if job.used_journal_fallback else 0
-    failover_penalty = 1 if used_failover else 0
 
-    item_classifications: dict[int, tuple[int | None, int]] = {}
+def _compute_classifications(
+    items: list[ReceiptItemRow],
+    rule_hits: dict[int, tuple[int, int]],
+    llm_results: dict[int, ClassificationResult],
+    total_penalty: int,
+) -> dict[int, tuple[int | None, int]]:
+    """Merge rule and LLM results into {item_id: (category_id, confidence)}."""
+    result: dict[int, tuple[int | None, int]] = {}
     for item in items:
-        norm = item_norms[item.id]
         if item.id in rule_hits:
-            item_classifications[item.id] = rule_hits[item.id]
+            result[item.id] = rule_hits[item.id]
         else:
-            result = llm_results.get(norm)
-            if result is None:
-                item_classifications[item.id] = (None, 1)
+            llm = llm_results.get(item.id)
+            if llm is None:
+                result[item.id] = (None, 1)
             else:
-                conf = max(1, result.confidence_level - journal_penalty - failover_penalty)
-                item_classifications[item.id] = (result.category_id, conf)
+                conf = max(1, llm.confidence_level - total_penalty)
+                result[item.id] = (llm.category_id, conf)
+    return result
 
+
+def _persist_classification_results(
+    conn: sqlite3.Connection,
+    job: ReceiptJobRow,
+    items: list[ReceiptItemRow],
+    classifications: dict[int, tuple[int | None, int]],
+    store_id: int | None,
+) -> None:
+    """Write classification results atomically; handles idempotency inside the transaction."""
     by_category: defaultdict[int, list[tuple[ReceiptItemRow, int]]] = defaultdict(list)
     unresolved_items: list[tuple[ReceiptItemRow, int]] = []
-
     for item in items:
-        cat_id, conf = item_classifications.get(item.id, (None, 1))
+        cat_id, conf = classifications.get(item.id, (None, 1))
         if cat_id is None or conf <= 1:
             unresolved_items.append((item, conf if cat_id is None else 1))
         else:
@@ -367,8 +378,6 @@ async def _classify_and_persist(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
     conn.execute("BEGIN IMMEDIATE")
     try:
-        # Idempotency: check again inside the transaction — a prior run may have
-        # committed expenses and crashed before complete_job.
         if conn.execute(
             "SELECT 1 FROM expenses WHERE receipt_id = ? LIMIT 1",
             [job.receipt_id],
@@ -378,13 +387,16 @@ async def _classify_and_persist(  # noqa: C901, PLR0912, PLR0913, PLR0915
             return
 
         for item, _ in unresolved_items:
-            norm = item_norms[item.id]
-            update_receipt_item(conn, item.id, norm, None, 1, None)
+            update_receipt_item(
+                conn,
+                item.id,
+                normalize_item_name(item.name_raw),
+                ItemClassification(None, 1, None),
+            )
 
         for cat_id, cat_items in by_category.items():
             total = round(sum(i.total_price for i, _ in cat_items), 2)
             min_conf = min(conf for _, conf in cat_items)
-
             conn.execute(
                 """
                 INSERT INTO expenses
@@ -395,12 +407,16 @@ async def _classify_and_persist(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 [receipt_dt, total, total, cat_id, min_conf, job.receipt_id, store_id],
             )
             expense_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
-
             for item, conf in cat_items:
-                norm = item_norms[item.id]
-                update_receipt_item(conn, item.id, norm, cat_id, conf, expense_id)
+                norm = normalize_item_name(item.name_raw)
+                update_receipt_item(
+                    conn,
+                    item.id,
+                    norm,
+                    ItemClassification(cat_id, conf, expense_id),
+                )
                 if norm and conf >= 2:
-                    create_or_update_rule(conn, store_id, norm, cat_id, conf, "llm")
+                    create_or_update_rule(conn, store_id, norm, RuleSpec(cat_id, conf, "llm"))
 
         trim_llm_call_log(conn)
         complete_job(conn, job.receipt_id)
@@ -408,6 +424,33 @@ async def _classify_and_persist(  # noqa: C901, PLR0912, PLR0913, PLR0915
     except BaseException:
         conn.execute("ROLLBACK")
         raise
+
+
+async def _classify_and_persist(
+    conn: sqlite3.Connection,
+    pool: ProviderPool,
+    job: ReceiptJobRow,
+    items: list[ReceiptItemRow],
+    store_id: int | None,
+) -> None:
+    if conn.execute(
+        "SELECT 1 FROM expenses WHERE receipt_id = ? LIMIT 1",
+        [job.receipt_id],
+    ).fetchone():
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            complete_job(conn, job.receipt_id)
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        return
+    rule_hits, llm_queue = _run_rules_pass(conn, items, store_id)
+    categories = _load_categories(conn)
+    llm_results, used_failover = await _run_llm_pass(pool, conn, job, llm_queue, categories)
+    total_penalty = (1 if job.used_journal_fallback else 0) + (1 if used_failover else 0)
+    classifications = _compute_classifications(items, rule_hits, llm_results, total_penalty)
+    _persist_classification_results(conn, job, items, classifications, store_id)
 
 
 def _write_fetch_fallback_metadata(

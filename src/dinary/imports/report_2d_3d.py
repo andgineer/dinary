@@ -220,10 +220,7 @@ def _collect_year(con, year: int, stats: CollectStats) -> list[DetailRow]:
                 comment=parsed.comment,
                 amount_eur=parsed.amount_eur,
                 year=parsed.year,
-                travel_event_id=ctx.travel_event_id,
-                business_trip_event_id=ctx.business_trip_event_id,
-                relocation_event_id=ctx.relocation_event_id,
-                russia_trip_event_id=ctx.russia_trip_event_id,
+                ctx=ctx,
                 beneficiary_raw=parsed.beneficiary_raw,
             )
         except ValueError:

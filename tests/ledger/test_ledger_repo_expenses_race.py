@@ -57,14 +57,16 @@ class TestInsertExpenseRaceRecovery:
         try:
             result = ledger_repo.insert_expense(
                 con,
-                client_expense_id="race-x",
-                expense_datetime=datetime(2026, 5, 5, 12),
-                amount=10.0,
-                amount_original=10.0,
-                currency_original="EUR",
-                category_id=1,
-                comment="winner",
-                tag_ids=[1],
+                ledger_repo.ExpensePayload(
+                    client_expense_id="race-x",
+                    expense_datetime=datetime(2026, 5, 5, 12),
+                    amount=10.0,
+                    amount_original=10.0,
+                    currency_original="EUR",
+                    category_id=1,
+                    comment="winner",
+                    tag_ids=[1],
+                ),
                 enqueue_logging=False,
             )
             assert result == "created"
@@ -107,14 +109,16 @@ class TestInsertExpenseRaceRecovery:
         try:
             result = ledger_repo.insert_expense(
                 con,
-                client_expense_id="race-x",
-                expense_datetime=datetime(2026, 5, 5, 12),
-                amount=10.0,
-                amount_original=10.0,
-                currency_original="EUR",
-                category_id=1,
-                comment="winner",
-                tag_ids=[1],
+                ledger_repo.ExpensePayload(
+                    client_expense_id="race-x",
+                    expense_datetime=datetime(2026, 5, 5, 12),
+                    amount=10.0,
+                    amount_original=10.0,
+                    currency_original="EUR",
+                    category_id=1,
+                    comment="winner",
+                    tag_ids=[1],
+                ),
                 enqueue_logging=False,
             )
         finally:
@@ -142,14 +146,16 @@ class TestInsertExpenseRaceRecovery:
         try:
             result = ledger_repo.insert_expense(
                 con,
-                client_expense_id="race-x",
-                expense_datetime=datetime(2026, 5, 5, 12),
-                amount=99.0,
-                amount_original=99.0,
-                currency_original="EUR",
-                category_id=1,
-                comment="loser",
-                tag_ids=[1],
+                ledger_repo.ExpensePayload(
+                    client_expense_id="race-x",
+                    expense_datetime=datetime(2026, 5, 5, 12),
+                    amount=99.0,
+                    amount_original=99.0,
+                    currency_original="EUR",
+                    category_id=1,
+                    comment="loser",
+                    tag_ids=[1],
+                ),
                 enqueue_logging=False,
             )
         finally:

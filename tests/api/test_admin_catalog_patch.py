@@ -62,17 +62,19 @@ class TestAdminPatch:
         try:
             ledger_repo.insert_expense(
                 con,
-                client_expense_id="pin-cat-e2e",
-                expense_datetime=datetime(2026, 4, 20, 10, 0, 0),
-                amount=1.0,
-                amount_original=1.0,
-                currency_original="RSD",
-                category_id=cid,
-                event_id=None,
-                comment="",
-                sheet_category=None,
-                sheet_group=None,
-                tag_ids=[],
+                ledger_repo.ExpensePayload(
+                    client_expense_id="pin-cat-e2e",
+                    expense_datetime=datetime(2026, 4, 20, 10, 0, 0),
+                    amount=1.0,
+                    amount_original=1.0,
+                    currency_original="RSD",
+                    category_id=cid,
+                    event_id=None,
+                    comment="",
+                    sheet_category=None,
+                    sheet_group=None,
+                    tag_ids=[],
+                ),
                 enqueue_logging=False,
             )
         finally:

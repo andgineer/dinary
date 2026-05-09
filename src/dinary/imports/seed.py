@@ -308,7 +308,65 @@ VACATION_ENVELOPES: frozenset[str] = frozenset(
 )
 
 
-def canonical_category_for_source(  # noqa: C901, PLR0911, PLR0912
+def _category_for_wellness(envelope_lower: str) -> str:
+    if envelope_lower in _SKI_ENVELOPES:
+        return "лыжи"
+    if envelope_lower == "спорт":
+        return "спорт"
+    if envelope_lower == "yazio":
+        return "ЗОЖ"
+    return "гигиена"
+
+
+def _category_for_sport_or_razvl(source_lower: str, envelope_lower: str) -> str:
+    if envelope_lower in _SKI_ENVELOPES:
+        return "лыжи"
+    if source_lower == "развлечения":
+        return _RAZVL_SUB.get(envelope_lower, "развлечения")
+    return "спорт"
+
+
+def _category_for_household(envelope_lower: str) -> str | None:
+    if envelope_lower in {"налог", "налоги"}:
+        return "налог"
+    if envelope_lower == "мебель":
+        return "мебель"
+    if envelope_lower == "страховка":
+        return "коммунальные"
+    if envelope_lower in {"diy", "dyi"}:
+        return "гаджеты"
+    return None
+
+
+# source_lower → (sub-dict, default) for simple envelope-lookup cases
+_ENVELOPE_DICT_DISPATCH: dict[str, tuple[dict[str, str], str]] = {
+    "отпуск": (_VACATION_CATEGORY_BY_ENVELOPE, "аренда"),
+    "командировка": (_KOMANDIROVKA_CATEGORY_BY_ENVELOPE, "аренда"),
+    "еда": (_EDA_SUB, "еда"),
+    "еда&бытовые": (_EDA_SUB, "еда"),
+    "коммунальные": (_COMMUNAL_SUB, "коммунальные"),
+    "машина": (_MASHINA_SUB, "машина"),
+    "дача": (_DACHA_SUB, "хозтовары"),
+}
+
+
+def _dispatch_source_category(source_lower: str, envelope_lower: str) -> str | None:
+    """Dispatch envelope-sensitive source types; returns None for simple fallthrough."""
+    if source_lower == "приложения":
+        return "развлечения" if not envelope_lower else "продуктивность"
+    if source_lower in {"wellness", "welness"}:
+        return _category_for_wellness(envelope_lower)
+    if source_lower in _ENVELOPE_DICT_DISPATCH:
+        sub_map, default = _ENVELOPE_DICT_DISPATCH[source_lower]
+        return sub_map.get(envelope_lower, default)
+    if source_lower in {"развлечения", "спорт"}:
+        return _category_for_sport_or_razvl(source_lower, envelope_lower)
+    if source_lower == "household":
+        return _category_for_household(envelope_lower)
+    return None
+
+
+def canonical_category_for_source(
     source_type: str,
     source_envelope: str,
 ) -> str:
@@ -324,50 +382,9 @@ def canonical_category_for_source(  # noqa: C901, PLR0911, PLR0912
 
     if source_type == BULAVKI_CATEGORY:
         return "карманные"
-    if source_lower == "приложения":
-        # Empty envelope = entertainment apps, "профессиональное" envelope = work
-        # productivity tools. Without this split the year=0 fallback collapses
-        # both into one row and conflicts with EXPLICIT_MAPPING_OVERRIDES.
-        if not envelope_lower:
-            return "развлечения"
-        return "продуктивность"
-    if source_lower in {"wellness", "welness"}:
-        if envelope_lower in _SKI_ENVELOPES:
-            return "лыжи"
-        if envelope_lower == "спорт":
-            return "спорт"
-        if envelope_lower in {"yazio"}:
-            return "ЗОЖ"
-        return "гигиена"
-    if source_lower == "отпуск":
-        return _VACATION_CATEGORY_BY_ENVELOPE.get(envelope_lower, "аренда")
-    if source_lower == "командировка":
-        return _KOMANDIROVKA_CATEGORY_BY_ENVELOPE.get(envelope_lower, "аренда")
-    if source_lower in {"еда", LEGACY_FOOD_CATEGORY}:
-        return _EDA_SUB.get(envelope_lower, "еда")
-    if source_lower == "коммунальные":
-        return _COMMUNAL_SUB.get(envelope_lower, "коммунальные")
-    if source_lower == "машина":
-        return _MASHINA_SUB.get(envelope_lower, "машина")
-    if source_lower == "дача":
-        return _DACHA_SUB.get(envelope_lower, "хозтовары")
-    if source_lower == "развлечения":
-        if envelope_lower in _SKI_ENVELOPES:
-            return "лыжи"
-        return _RAZVL_SUB.get(envelope_lower, "развлечения")
-    if source_lower == "спорт":
-        if envelope_lower in _SKI_ENVELOPES:
-            return "лыжи"
-        return "спорт"
-    if source_lower == "household":
-        if envelope_lower in {"налог", "налоги"}:
-            return "налог"
-        if envelope_lower == "мебель":
-            return "мебель"
-        if envelope_lower == "страховка":
-            return "коммунальные"
-        if envelope_lower in {"diy", "dyi"}:
-            return "гаджеты"
+    dispatched = _dispatch_source_category(source_lower, envelope_lower)
+    if dispatched is not None:
+        return dispatched
     if source_lower in _CATEGORY_BY_SOURCE_TYPE:
         return _CATEGORY_BY_SOURCE_TYPE[source_lower]
     if source_type in TAXONOMY_CATEGORIES:
@@ -380,7 +397,13 @@ def canonical_category_for_source(  # noqa: C901, PLR0911, PLR0912
     raise ValueError(msg)
 
 
-def tags_for_source(  # noqa: C901
+def _komandirovka_sphere_tag(source_lower: str, envelope_lower: str, year: int) -> str | None:
+    if source_lower == "командировка" or envelope_lower == "командировка":
+        return "релокация" if year > BUSINESS_TRIP_EVENT_LAST_YEAR else "профессиональное"
+    return None
+
+
+def tags_for_source(
     source_type: str,
     source_envelope: str,
     year: int,
@@ -406,20 +429,14 @@ def tags_for_source(  # noqa: C901
         tags.add("Аня")
     if source_lower == "школа":
         tags.add("Аня")
-
     if source_envelope in _SPHERE_BY_ENVELOPE:
         tags.add(_SPHERE_BY_ENVELOPE[source_envelope])
     if source_lower == "дача":
         tags.add("дача")
-
     if year != 0:
-        is_komandirovka = source_lower == "командировка" or envelope_lower == "командировка"
-        if is_komandirovka:
-            if year > BUSINESS_TRIP_EVENT_LAST_YEAR:
-                tags.add("релокация")
-            else:
-                tags.add("профессиональное")
-
+        tag = _komandirovka_sphere_tag(source_lower, envelope_lower, year)
+        if tag is not None:
+            tags.add(tag)
     return sorted(tags)
 
 
@@ -583,13 +600,58 @@ def _purge_mapping_tables(con: sqlite3.Connection) -> None:
     # sheet_mapping(_tags) are owned by sheet_mapping.py; seed never touches them.
 
 
-def _rebuild_import_mapping(  # noqa: C901, PLR0915
-    # This function was extracted verbatim from the old
-    # ``seed_classification_catalog`` (which itself carried
-    # ``# noqa: C901, PLR0915, PLR0912``) during the 2026-04 seed split.
-    # Splitting it further would fragment the single transactional
-    # boundary that owns the ``import_mapping`` rebuild, so we preserve
-    # the pre-split complexity as-is.
+def _insert_generic_pair_rows(pairs: list, insert_fn) -> None:  # type: ignore[type-arg]
+    for c in pairs:
+        sheet_category = c.name
+        sheet_group = c.group or ""
+        try:
+            category_name = canonical_category_for_source(sheet_category, sheet_group)
+        except ValueError:
+            logger.exception(
+                "No legacy mapping for (%r, %r); add a rule to imports.seed.",
+                sheet_category,
+                sheet_group,
+            )
+            raise
+        tag_names = tags_for_source(sheet_category, sheet_group, 0)
+        insert_fn(0, sheet_category, sheet_group, category_name, tag_names, None)
+
+
+def _insert_per_year_event_rows(pairs: list, insert_fn) -> None:  # type: ignore[type-arg]
+    for c in pairs:
+        sheet_category = c.name
+        sheet_group = c.group or ""
+        category_name = canonical_category_for_source(sheet_category, sheet_group)
+        for y in range(HISTORICAL_YEAR_FROM, HISTORICAL_YEAR_TO + 1):
+            event_name = event_name_for_source(sheet_category, sheet_group, y)
+            if event_name is None:
+                continue
+            tag_names = tags_for_source(sheet_category, sheet_group, y)
+            insert_fn(y, sheet_category, sheet_group, category_name, tag_names, event_name)
+
+
+def _insert_forward_projection_rows(
+    con: sqlite3.Connection,
+    cat_id_by_name: dict,
+    insert_fn,
+) -> None:  # type: ignore[type-arg]
+    latest_year = max(
+        (r.year for r in config.read_import_sources() if r.year > 0),
+        default=0,
+    )
+    if not latest_year:
+        return
+    for cat_name, cat_id in cat_id_by_name.items():
+        existing = con.execute(
+            "SELECT 1 FROM import_mapping WHERE year = ? AND category_id = ? LIMIT 1",
+            [latest_year, cat_id],
+        ).fetchone()
+        if existing:
+            continue
+        insert_fn(latest_year, cat_name, "", cat_name, (), None)
+
+
+def _rebuild_import_mapping(
     con: sqlite3.Connection,
     id_maps: TaxonomyIdMaps,
     pairs: list[Category],
@@ -622,7 +684,7 @@ def _rebuild_import_mapping(  # noqa: C901, PLR0915
     mapping_count = 0
     next_mapping_id = 1
 
-    def insert_mapping(  # noqa: PLR0913
+    def insert_mapping(
         seed_year: int,
         sheet_category: str,
         sheet_group: str,
@@ -646,10 +708,6 @@ def _rebuild_import_mapping(  # noqa: C901, PLR0915
             if t not in tag_id_by_name:
                 msg = f"Seeded mapping references unknown tag {t!r}"
                 raise ValueError(msg)
-
-        # UNIQUE (year, sheet_category, sheet_group); step 8 may revisit
-        # the same triple via canonical forward-projection. Skip duplicates
-        # silently — the first insert wins.
         existing = con.execute(
             "SELECT id FROM import_mapping"
             " WHERE year = ? AND sheet_category = ? AND sheet_group = ?",
@@ -657,7 +715,6 @@ def _rebuild_import_mapping(  # noqa: C901, PLR0915
         ).fetchone()
         if existing is not None:
             return
-
         mapping_id = next_mapping_id
         next_mapping_id += 1
         con.execute(
@@ -673,23 +730,7 @@ def _rebuild_import_mapping(  # noqa: C901, PLR0915
                 [mapping_id, tag_id],
             )
 
-    # 5. Generic year=0 rows from discovered pairs.
-    for c in pairs:
-        sheet_category = c.name
-        sheet_group = c.group or ""
-        try:
-            category_name = canonical_category_for_source(sheet_category, sheet_group)
-        except ValueError:
-            logger.exception(
-                "No legacy mapping for (%r, %r); add a rule to imports.seed.",
-                sheet_category,
-                sheet_group,
-            )
-            raise
-        tag_names = tags_for_source(sheet_category, sheet_group, 0)
-        insert_mapping(0, sheet_category, sheet_group, category_name, tag_names, None)
-
-    # 6. Per-year explicit overrides.
+    _insert_generic_pair_rows(pairs, insert_mapping)
     for row in EXPLICIT_MAPPING_OVERRIDES:
         insert_mapping(
             row.year,
@@ -699,43 +740,8 @@ def _rebuild_import_mapping(  # noqa: C901, PLR0915
             row.tags,
             row.event_name,
         )
-
-    # 7. Per-year synthetic event mappings derived from generic pairs
-    # (e.g. "отпуск-2026" event for a vacation pair). Only emit when
-    # the year-aware derivation actually produces an event different
-    # from the generic row. ``canonical_category_for_source`` cannot
-    # raise here: step 5 above iterates the same ``pairs`` and
-    # re-raises on every unmapped pair, so by the time we reach step 7
-    # every pair is known to resolve.
-    for c in pairs:
-        sheet_category = c.name
-        sheet_group = c.group or ""
-        category_name = canonical_category_for_source(sheet_category, sheet_group)
-        for y in range(HISTORICAL_YEAR_FROM, HISTORICAL_YEAR_TO + 1):
-            event_name = event_name_for_source(sheet_category, sheet_group, y)
-            if event_name is None:
-                continue
-            tag_names = tags_for_source(sheet_category, sheet_group, y)
-            insert_mapping(y, sheet_category, sheet_group, category_name, tag_names, event_name)
-
-    # 8. Forward-projection coverage: every hardcoded category needs
-    # at least one row in the latest sheet year so
-    # ``POST /api/expenses`` can always resolve a sheet target. Emit a
-    # default-landing mapping (sheet_category=<category_name>,
-    # sheet_group="") for the latest year.
-    latest_year = max(
-        (r.year for r in config.read_import_sources() if r.year > 0),
-        default=0,
-    )
-    if latest_year:
-        for cat_name, cat_id in cat_id_by_name.items():
-            existing = con.execute(
-                "SELECT 1 FROM import_mapping WHERE year = ? AND category_id = ? LIMIT 1",
-                [latest_year, cat_id],
-            ).fetchone()
-            if existing:
-                continue
-            insert_mapping(latest_year, cat_name, "", cat_name, (), None)
+    _insert_per_year_event_rows(pairs, insert_mapping)
+    _insert_forward_projection_rows(con, cat_id_by_name, insert_mapping)
 
     return {"mappings_created": mapping_count}
 

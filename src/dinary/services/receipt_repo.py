@@ -8,6 +8,15 @@ from datetime import UTC, datetime
 from dinary.services.receipt_parser import ParsedReceipt
 
 
+@dataclass(frozen=True, slots=True)
+class ItemClassification:
+    """Classification output for one receipt item."""
+
+    category_id: int | None
+    confidence_level: int | None
+    expense_id: int | None
+
+
 @dataclass(slots=True)
 class ReceiptJobRow:
     receipt_id: int
@@ -191,13 +200,11 @@ def get_receipt_items(conn: sqlite3.Connection, receipt_id: int) -> list[Receipt
     ]
 
 
-def update_receipt_item(  # noqa: PLR0913
+def update_receipt_item(
     conn: sqlite3.Connection,
     item_id: int,
     name_normalized: str,
-    category_id: int | None,
-    confidence_level: int | None,
-    expense_id: int | None,
+    classification: ItemClassification,
 ) -> None:
     conn.execute(
         """
@@ -205,7 +212,13 @@ def update_receipt_item(  # noqa: PLR0913
            SET name_normalized = ?, category_id = ?, confidence_level = ?, expense_id = ?
          WHERE id = ?
         """,
-        [name_normalized, category_id, confidence_level, expense_id, item_id],
+        [
+            name_normalized,
+            classification.category_id,
+            classification.confidence_level,
+            classification.expense_id,
+            item_id,
+        ],
     )
 
 

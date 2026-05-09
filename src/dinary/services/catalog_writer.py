@@ -651,7 +651,29 @@ def add_category(
         raise
 
 
-def edit_category(  # noqa: PLR0912, PLR0913, C901
+def _validate_category_edit(
+    con: sqlite3.Connection,
+    category_id: int,
+    name: str | None,
+    group_id: int | None,
+) -> None:
+    row = con.execute("SELECT id FROM categories WHERE id = ?", [category_id]).fetchone()
+    if row is None:
+        raise CatalogNotFoundError(f"category id={category_id} not found")
+    if name is not None:
+        conflict = con.execute(
+            "SELECT id FROM categories WHERE name = ? AND id != ?",
+            [name, category_id],
+        ).fetchone()
+        if conflict is not None:
+            raise CatalogConflictError(
+                f"category name {name!r} already in use by id={int(conflict[0])}",
+            )
+    if group_id is not None:
+        _require_active_group(con, group_id)
+
+
+def edit_category(
     con: sqlite3.Connection,
     category_id: int,
     *,
@@ -678,44 +700,12 @@ def edit_category(  # noqa: PLR0912, PLR0913, C901
     con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
-        row = con.execute(
-            "SELECT id FROM categories WHERE id = ?",
-            [category_id],
-        ).fetchone()
-        if row is None:
-            raise CatalogNotFoundError(f"category id={category_id} not found")
-        # --- validate all inputs first ---
+        _validate_category_edit(con, category_id, name, group_id)
         if name is not None:
-            conflict = con.execute(
-                "SELECT id FROM categories WHERE name = ? AND id != ?",
-                [name, category_id],
-            ).fetchone()
-            if conflict is not None:
-                raise CatalogConflictError(
-                    f"category name {name!r} already in use by id={int(conflict[0])}",
-                )
+            con.execute("UPDATE categories SET name = ? WHERE id = ?", [name, category_id])
         if group_id is not None:
-            _require_active_group(con, group_id)
-        # --- then apply ---
-        if name is not None:
-            con.execute(
-                "UPDATE categories SET name = ? WHERE id = ?",
-                [name, category_id],
-            )
-        if group_id is not None:
-            con.execute(
-                "UPDATE categories SET group_id = ? WHERE id = ?",
-                [group_id, category_id],
-            )
-        # Empty string is the sentinel for "clear this column back
-        # to NULL" — the PATCH body type is ``str | None`` where
-        # ``None`` means "don't touch", so we need a second in-band
-        # value for "explicitly reset". ``""`` is safe because an
-        # empty ``sheet_name`` / ``sheet_group`` has no meaning
-        # anywhere downstream (the drain worker reads them as
-        # optional overrides), and the in-app editor will need this
-        # affordance to remove stale mappings without dropping and
-        # re-adding the category.
+            con.execute("UPDATE categories SET group_id = ? WHERE id = ?", [group_id, category_id])
+        # Empty string = sentinel for "clear back to NULL"; None = "don't touch".
         if sheet_name is not None:
             con.execute(
                 "UPDATE categories SET sheet_name = ? WHERE id = ?",
@@ -762,7 +752,7 @@ def _encode_auto_tags(auto_tags: list[str] | tuple[str, ...] | None) -> str:
     return json.dumps(names, ensure_ascii=False)
 
 
-def add_event(  # noqa: PLR0913
+def add_event(
     con: sqlite3.Connection,
     *,
     name: str,
@@ -837,7 +827,41 @@ def add_event(  # noqa: PLR0913
         raise
 
 
-def edit_event(  # noqa: PLR0912, PLR0913, C901
+def _validate_event_edit(
+    con: sqlite3.Connection,
+    event_id: int,
+    name: str | None,
+    dates: tuple[date | None, date | None],
+    auto_tags,
+) -> None:
+    row = con.execute(
+        "SELECT id, date_from, date_to FROM events WHERE id = ?",
+        [event_id],
+    ).fetchone()
+    if row is None:
+        raise CatalogNotFoundError(f"event id={event_id} not found")
+    date_from, date_to = dates
+    new_from = date_from if date_from is not None else row[1]
+    new_to = date_to if date_to is not None else row[2]
+    if new_from > new_to:
+        raise CatalogWriteError(
+            f"event date_from ({new_from}) must be <= date_to ({new_to})",
+            http_status=422,
+        )
+    if name is not None:
+        conflict = con.execute(
+            "SELECT id FROM events WHERE name = ? AND id != ?",
+            [name, event_id],
+        ).fetchone()
+        if conflict is not None:
+            raise CatalogConflictError(
+                f"event name {name!r} already in use by id={int(conflict[0])}",
+            )
+    if auto_tags is not None:
+        _require_known_tag_names(con, auto_tags)
+
+
+def edit_event(
     con: sqlite3.Connection,
     event_id: int,
     *,
@@ -862,45 +886,13 @@ def edit_event(  # noqa: PLR0912, PLR0913, C901
     con.execute("BEGIN IMMEDIATE")
     try:
         before = _hash_state(con)
-        row = con.execute(
-            "SELECT id, date_from, date_to FROM events WHERE id = ?",
-            [event_id],
-        ).fetchone()
-        if row is None:
-            raise CatalogNotFoundError(f"event id={event_id} not found")
-        new_from = date_from if date_from is not None else row[1]
-        new_to = date_to if date_to is not None else row[2]
-        if new_from > new_to:
-            raise CatalogWriteError(
-                f"event date_from ({new_from}) must be <= date_to ({new_to})",
-                http_status=422,
-            )
-        if name is not None:
-            conflict = con.execute(
-                "SELECT id FROM events WHERE name = ? AND id != ?",
-                [name, event_id],
-            ).fetchone()
-            if conflict is not None:
-                raise CatalogConflictError(
-                    f"event name {name!r} already in use by id={int(conflict[0])}",
-                )
-        # ``is_active=False`` is always allowed (soft-retire). See the
-        # ``edit_category`` docstring for the rationale — PATCH and
-        # DELETE must not disagree on the same end-state.
-        if auto_tags is not None:
-            _require_known_tag_names(con, auto_tags)
+        _validate_event_edit(con, event_id, name, (date_from, date_to), auto_tags)
         if name is not None:
             con.execute("UPDATE events SET name = ? WHERE id = ?", [name, event_id])
         if date_from is not None:
-            con.execute(
-                "UPDATE events SET date_from = ? WHERE id = ?",
-                [date_from, event_id],
-            )
+            con.execute("UPDATE events SET date_from = ? WHERE id = ?", [date_from, event_id])
         if date_to is not None:
-            con.execute(
-                "UPDATE events SET date_to = ? WHERE id = ?",
-                [date_to, event_id],
-            )
+            con.execute("UPDATE events SET date_to = ? WHERE id = ?", [date_to, event_id])
         if auto_attach_enabled is not None:
             con.execute(
                 "UPDATE events SET auto_attach_enabled = ? WHERE id = ?",

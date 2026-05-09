@@ -1,4 +1,4 @@
-"""Tests for healthcheck helpers in :mod:`tasks.server`.
+"""Tests for healthcheck helpers in :mod:`tasks.healthcheck`.
 
 Covers the pure-Python helpers that parse query results and emit
 ``OK:`` / ``FAIL:`` lines.  The SQL execution path (local) is tested
@@ -12,29 +12,33 @@ from unittest.mock import MagicMock
 import allure
 import pytest
 
-import tasks.server
+from tasks.healthcheck import (
+    _healthcheck_last_expense_info,
+    _healthcheck_run_queries,
+    _healthcheck_sheet_log,
+)
 
 
 @allure.epic("Deploy")
 @allure.feature("healthcheck: sheet logging status display")
 class TestHealthcheckSheetLog:
     def test_logged_to_sheet(self, capsys):
-        tasks.server._healthcheck_sheet_log({"sheet": "3889|"})
+        _healthcheck_sheet_log({"sheet": "3889|"})
         assert "logged to sheet" in capsys.readouterr().out
 
     def test_pending_shows_in_progress(self, capsys):
-        tasks.server._healthcheck_sheet_log({"sheet": "3889|pending"})
+        _healthcheck_sheet_log({"sheet": "3889|pending"})
         out = capsys.readouterr().out
         assert "3889" in out
         assert "in progress" in out
 
     def test_in_progress_shows_in_progress(self, capsys):
-        tasks.server._healthcheck_sheet_log({"sheet": "3889|in_progress"})
+        _healthcheck_sheet_log({"sheet": "3889|in_progress"})
         assert "in progress" in capsys.readouterr().out
 
     def test_poisoned_exits_1_with_manual_fix_message(self, capsys):
         with pytest.raises(SystemExit) as excinfo:
-            tasks.server._healthcheck_sheet_log({"sheet": "3889|poisoned"})
+            _healthcheck_sheet_log({"sheet": "3889|poisoned"})
         assert excinfo.value.code == 1
         err = capsys.readouterr().err
         assert "3889" in err
@@ -43,14 +47,14 @@ class TestHealthcheckSheetLog:
 
     def test_unexpected_status_exits_1(self, capsys):
         with pytest.raises(SystemExit) as excinfo:
-            tasks.server._healthcheck_sheet_log({"sheet": "3889|weird_status"})
+            _healthcheck_sheet_log({"sheet": "3889|weird_status"})
         assert excinfo.value.code == 1
         err = capsys.readouterr().err
         assert "unexpected" in err
         assert "weird_status" in err
 
     def test_no_expenses_in_db(self, capsys):
-        tasks.server._healthcheck_sheet_log({"sheet": ""})
+        _healthcheck_sheet_log({"sheet": ""})
         assert "no expenses" in capsys.readouterr().out
 
 
@@ -58,25 +62,23 @@ class TestHealthcheckSheetLog:
 @allure.feature("healthcheck: last expense info display")
 class TestHealthcheckLastExpenseInfo:
     def test_shows_whole_amount_currency_category(self, capsys):
-        tasks.server._healthcheck_last_expense_info(
+        _healthcheck_last_expense_info(
             {"last_expense": "1500.00|RSD|Groceries", "prev_day_total": ""}
         )
         assert "1500 RSD (Groceries)" in capsys.readouterr().out
 
     def test_shows_fractional_amount(self, capsys):
-        tasks.server._healthcheck_last_expense_info(
+        _healthcheck_last_expense_info(
             {"last_expense": "1500.50|RSD|Groceries", "prev_day_total": ""}
         )
         assert "1500.50 RSD" in capsys.readouterr().out
 
     def test_shows_yesterday_total_single_currency(self, capsys):
-        tasks.server._healthcheck_last_expense_info(
-            {"last_expense": "", "prev_day_total": "RSD:8200.00"}
-        )
+        _healthcheck_last_expense_info({"last_expense": "", "prev_day_total": "RSD:8200.00"})
         assert "yesterday total 8200 RSD" in capsys.readouterr().out
 
     def test_shows_yesterday_total_multiple_currencies(self, capsys):
-        tasks.server._healthcheck_last_expense_info(
+        _healthcheck_last_expense_info(
             {"last_expense": "", "prev_day_total": "RSD:5000.00,EUR:20.50"}
         )
         out = capsys.readouterr().out
@@ -84,7 +86,7 @@ class TestHealthcheckLastExpenseInfo:
         assert "20.50 EUR" in out
 
     def test_empty_results_prints_nothing(self, capsys):
-        tasks.server._healthcheck_last_expense_info({})
+        _healthcheck_last_expense_info({})
         assert capsys.readouterr().out == ""
 
 
@@ -103,7 +105,7 @@ class TestHealthcheckRunQueriesLocal:
             con.execute("CREATE TABLE t (v TEXT)")
             con.execute("INSERT INTO t VALUES ('hello')")
 
-        results = tasks.server._healthcheck_run_queries(
+        results = _healthcheck_run_queries(
             MagicMock(),
             False,
             greeting="SELECT v FROM t LIMIT 1",
@@ -115,6 +117,6 @@ class TestHealthcheckRunQueriesLocal:
 
     def test_exits_1_when_db_missing(self, _cwd, capsys):
         with pytest.raises(SystemExit) as excinfo:
-            tasks.server._healthcheck_run_queries(MagicMock(), False, q="SELECT 1")
+            _healthcheck_run_queries(MagicMock(), False, q="SELECT 1")
         assert excinfo.value.code == 1
         assert "No local DB" in capsys.readouterr().err

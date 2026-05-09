@@ -121,6 +121,34 @@ def report_income(c, csv=False, remote=False):  # noqa: A002
     _run_report_module(c, "income", flags, remote=remote)
 
 
+def _run_local_sql(c, sql_text: str, csv: bool, json_mode: bool, write: bool) -> None:
+    local_flags = ["--query", sql_text]
+    if csv:
+        local_flags.append("--csv")
+    elif json_mode:
+        local_flags.append("--json")
+    if write:
+        local_flags.append("--write")
+    c.run(f"uv run python -m dinary.tools.sql {shlex.join(local_flags)}")
+
+
+def _run_remote_sql(sql_text: str, csv: bool, json_mode: bool) -> None:
+    remote_flags = ["--query", sql_text, "--json"]
+    try:
+        raw = ssh_capture_bytes(remote_snapshot_cmd("dinary.tools.sql", remote_flags))
+    except subprocess.CalledProcessError:
+        sys.exit(1)
+    if json_mode:
+        sys.stdout.buffer.write(raw)
+        return
+    payload = _json.loads(raw.decode("utf-8"))
+    columns, rows = sql_module.rows_from_json(payload)
+    if csv:
+        sql_module.render_csv(columns, rows, stream=sys.stdout)
+    else:
+        sql_module.render_rich(columns, rows, stream=sys.stdout)
+
+
 @task(
     name="sql",
     help={
@@ -137,7 +165,7 @@ def report_income(c, csv=False, remote=False):  # noqa: A002
         ),
     },
 )
-def sql_query(c, query="", file="", csv=False, json=False, write=False, remote=False):  # noqa: A002,PLR0913,C901,PLR0912
+def sql_query(c, query="", file="", csv=False, json=False, write=False, remote=False):  # noqa: A002
     """Run a SQL query against ``data/dinary.db``.
 
     By default the connection is opened ``mode=ro`` via the SQLite
@@ -196,33 +224,7 @@ def sql_query(c, query="", file="", csv=False, json=False, write=False, remote=F
         )
 
     sql_text = Path(file).read_text(encoding="utf-8") if file else query
-
-    sql_flags = ["--query", sql_text]
-
     if not remote:
-        local_flags = [*sql_flags]
-        if csv:
-            local_flags.append("--csv")
-        elif json:
-            local_flags.append("--json")
-        if write:
-            local_flags.append("--write")
-        c.run(f"uv run python -m dinary.tools.sql {shlex.join(local_flags)}")
-        return
-
-    remote_flags = [*sql_flags, "--json"]
-    try:
-        raw = ssh_capture_bytes(remote_snapshot_cmd("dinary.tools.sql", remote_flags))
-    except subprocess.CalledProcessError:
-        sys.exit(1)
-
-    if json:
-        sys.stdout.buffer.write(raw)
-        return
-
-    payload = _json.loads(raw.decode("utf-8"))
-    columns, rows = sql_module.rows_from_json(payload)
-    if csv:
-        sql_module.render_csv(columns, rows, stream=sys.stdout)
+        _run_local_sql(c, sql_text, csv, json, write)
     else:
-        sql_module.render_rich(columns, rows, stream=sys.stdout)
+        _run_remote_sql(sql_text, csv, json)

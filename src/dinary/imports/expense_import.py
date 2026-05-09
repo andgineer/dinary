@@ -374,7 +374,44 @@ def _read_amounts_for_row(
     )
 
 
-def _apply_housing_heuristics(  # noqa: C901, PLR0912
+def _resolve_diy_category(comment_lower: str, default: str) -> str:
+    # DIY/DYI priority: power tool > electronics > repair material > default
+    if any(kw in comment_lower for kw in _TOOL_KEYWORDS):
+        return "инструменты"
+    if any(kw in comment_lower for kw in _ELECTRONICS_KEYWORDS):
+        return "гаджеты"
+    if any(kw in comment_lower for kw in _MATERIAL_KEYWORDS):
+        return "ремонт"
+    return default
+
+
+def _resolve_housing_source_category(comment_lower: str, default: str) -> str:
+    if any(kw in comment_lower for kw in _TOOL_KEYWORDS):
+        return "инструменты"
+    if any(kw in comment_lower for kw in _REPAIR_KEYWORDS):
+        return "ремонт"
+    if any(kw in comment_lower for kw in _FURNITURE_KEYWORDS):
+        return "мебель"
+    if any(kw in comment_lower for kw in _APPLIANCE_KEYWORDS):
+        return "бытовая техника"
+    return default
+
+
+def _resolve_explicit_housing_type(
+    source_type: str,
+    source_envelope: str,
+    amount_eur: float,
+) -> str | None:
+    if source_type == "аренда" and source_envelope == "релокация":
+        return "коммунальные" if amount_eur < _RELOCATION_UTILITIES_THRESHOLD_EUR else "аренда"
+    if source_type == "Household" and source_envelope == "Бытовая техника":
+        return "бытовая техника"
+    if source_type == "Ремонт комнаты Ани":
+        return "ремонт"
+    return None
+
+
+def _apply_housing_heuristics(
     *,
     source_type: str,
     source_envelope: str,
@@ -382,47 +419,20 @@ def _apply_housing_heuristics(  # noqa: C901, PLR0912
     amount_eur: float,
     default_category_name: str,
 ) -> str:
-    category_name = default_category_name
     source_lower = source_type.lower()
     envelope_lower = source_envelope.lower()
     comment_lower = comment.lower()
 
-    # DIY/DYI is a mixed envelope. Priority (target category in parens):
-    #   1) explicit power tool                                     ("инструменты")
-    #   2) electronics: soldering, LEDs, Raspberry, ...            ("гаджеты")
-    #   3) repair materials: plywood, acrylic, varnish, tape, ...  ("ремонт")
-    #   4) default (historically the user used DIY for maker hobby) ("гаджеты")
     if envelope_lower in {"diy", "dyi"}:
-        if any(kw in comment_lower for kw in _TOOL_KEYWORDS):
-            return "инструменты"
-        if any(kw in comment_lower for kw in _ELECTRONICS_KEYWORDS):
-            return "гаджеты"
-        if any(kw in comment_lower for kw in _MATERIAL_KEYWORDS):
-            return "ремонт"
-        return default_category_name
-
+        return _resolve_diy_category(comment_lower, default_category_name)
     if source_lower == "дача" and any(kw in comment_lower for kw in _TOOL_KEYWORDS):
         return "инструменты"
-
-    if source_type == "аренда" and source_envelope == "релокация":
-        category_name = (
-            "коммунальные" if amount_eur < _RELOCATION_UTILITIES_THRESHOLD_EUR else "аренда"
-        )
-    elif source_type == "Household" and source_envelope == "Бытовая техника":
-        category_name = "бытовая техника"
-    elif source_type == "Ремонт комнаты Ани":
-        category_name = "ремонт"
-    elif source_lower in _HOUSING_SOURCE_TYPES:
-        if any(keyword in comment_lower for keyword in _TOOL_KEYWORDS):
-            category_name = "инструменты"
-        elif any(keyword in comment_lower for keyword in _REPAIR_KEYWORDS):
-            category_name = "ремонт"
-        elif any(keyword in comment_lower for keyword in _FURNITURE_KEYWORDS):
-            category_name = "мебель"
-        elif any(keyword in comment_lower for keyword in _APPLIANCE_KEYWORDS):
-            category_name = "бытовая техника"
-
-    return category_name
+    explicit = _resolve_explicit_housing_type(source_type, source_envelope, amount_eur)
+    if explicit is not None:
+        return explicit
+    if source_lower in _HOUSING_SOURCE_TYPES:
+        return _resolve_housing_source_category(comment_lower, default_category_name)
+    return default_category_name
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +490,69 @@ def _business_trip_event_for_year(year: int) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_dimensions(  # noqa: C901, PLR0913, PLR0912
+def _resolve_base_category(
+    con,
+    source_type: str,
+    source_envelope: str,
+    year: int,
+) -> tuple[int, int | None, list[int], str | None] | None:
+    """Resolve mapping row or canonical fallback → (category_id, event_id, tag_ids, canonical).
+
+    Returns None when no mapping can be derived for this source pair.
+    """
+    mapping = ledger_repo.resolve_mapping_for_year(con, source_type, source_envelope, year)
+    if mapping is not None:
+        category_id = mapping.category_id
+        event_id = mapping.event_id
+        tag_ids = ledger_repo.get_mapping_tag_ids(con, mapping.id)
+        row = con.execute("SELECT name FROM categories WHERE id = ?", [category_id]).fetchone()
+        canonical_default = row[0] if row else None
+        return category_id, event_id, tag_ids, canonical_default
+
+    try:
+        canonical_default = canonical_category_for_source(source_type, source_envelope)
+    except ValueError:
+        return None
+    category_id = _resolve_category_id(con, canonical_default)
+    if category_id is None:
+        return None
+    tag_ids = _resolve_tag_ids(con, tags_for_source(source_type, source_envelope, year))
+    return category_id, None, tag_ids, canonical_default
+
+
+def _resolve_event_id_for_row(
+    source_type: str,
+    source_envelope: str,
+    year: int,
+    travel_event_id: int,
+    business_trip_event_id: int | None,
+) -> int | None:
+    """Derive event_id from synthetic event name; warn on post-cutover vacation rows."""
+    ev_name = event_name_for_source(source_type, source_envelope, year)
+    if ev_name is not None:
+        if ev_name.startswith(BUSINESS_TRIP_EVENT_PREFIX):
+            return business_trip_event_id
+        if ev_name.startswith(SYNTHETIC_EVENT_PREFIX):
+            return travel_event_id
+        return None
+    if year > VACATION_EVENT_YEAR_TO:
+        source_lower = source_type.lower().strip()
+        envelope_lower = source_envelope.lower().strip()
+        if source_lower == "отпуск" or envelope_lower in VACATION_ENVELOPES:
+            logger.warning(
+                "Vacation-shaped row in year %d has no synthetic event (post-%d cut-over)"
+                " — create a manual event via PWA / Admin API before re-running import"
+                " or the row will lose 'отпуск'/'путешествия' auto_tags."
+                " source_type=%r source_envelope=%r",
+                year,
+                VACATION_EVENT_YEAR_TO,
+                source_type,
+                source_envelope,
+            )
+    return None
+
+
+def _resolve_dimensions(
     con,
     *,
     source_type: str,
@@ -488,9 +560,7 @@ def _resolve_dimensions(  # noqa: C901, PLR0913, PLR0912
     comment: str,
     amount_eur: float,
     year: int,
-    travel_event_id: int,
-    business_trip_event_id: int | None,
-    relocation_event_id: int | None,
+    ctx: "ResolutionContext",
 ) -> tuple[int, int | None, list[int]] | None:
     """Resolve ``(sheet_category, sheet_group)`` to ``(category_id, event_id, tag_ids)``.
 
@@ -500,26 +570,10 @@ def _resolve_dimensions(  # noqa: C901, PLR0913, PLR0912
     classification, RUB fallback). Returns None when no mapping exists at
     all (caller logs+skips).
     """
-    mapping = ledger_repo.resolve_mapping_for_year(con, source_type, source_envelope, year)
-    if mapping is not None:
-        category_id = mapping.category_id
-        event_id = mapping.event_id
-        tag_ids = ledger_repo.get_mapping_tag_ids(con, mapping.id)
-        canonical_default_name = con.execute(
-            "SELECT name FROM categories WHERE id = ?",
-            [category_id],
-        ).fetchone()
-        canonical_default = canonical_default_name[0] if canonical_default_name else None
-    else:
-        try:
-            canonical_default = canonical_category_for_source(source_type, source_envelope)
-        except ValueError:
-            return None
-        category_id = _resolve_category_id(con, canonical_default)
-        if category_id is None:
-            return None
-        event_id = None
-        tag_ids = _resolve_tag_ids(con, tags_for_source(source_type, source_envelope, year))
+    base = _resolve_base_category(con, source_type, source_envelope, year)
+    if base is None:
+        return None
+    category_id, event_id, tag_ids, canonical_default = base
 
     if canonical_default is not None:
         adjusted_name = _apply_housing_heuristics(
@@ -535,41 +589,15 @@ def _resolve_dimensions(  # noqa: C901, PLR0913, PLR0912
                 category_id = adjusted_id
 
     if event_id is None:
-        ev_name = event_name_for_source(source_type, source_envelope, year)
-        if ev_name is not None:
-            if ev_name.startswith(BUSINESS_TRIP_EVENT_PREFIX):
-                event_id = business_trip_event_id
-            elif ev_name.startswith(SYNTHETIC_EVENT_PREFIX):
-                event_id = travel_event_id
-        elif year > VACATION_EVENT_YEAR_TO:
-            source_lower = source_type.lower().strip()
-            envelope_lower = source_envelope.lower().strip()
-            is_vacation_row = source_lower == "отпуск" or envelope_lower in VACATION_ENVELOPES
-            if is_vacation_row:
-                # ``seed_config`` only pre-creates synthetic vacation
-                # events through ``VACATION_EVENT_YEAR_TO``; rows past
-                # that cut-over need a manually-created event so
-                # ``auto_tags`` (``отпуск`` / ``путешествия``) can
-                # attach. If nobody created one yet the row goes in
-                # without any vacation tag — warn loudly so the
-                # importer run flags this as an action item instead of
-                # silently losing analytics value.
-                logger.warning(
-                    "Vacation-shaped row in year %d has no synthetic "
-                    "event (post-%d cut-over) — create a manual "
-                    "event via PWA / Admin API before re-running "
-                    "import or the row will lose "
-                    "'отпуск'/'путешествия' auto_tags. "
-                    "source_type=%r source_envelope=%r comment=%r",
-                    year,
-                    VACATION_EVENT_YEAR_TO,
-                    source_type,
-                    source_envelope,
-                    comment,
-                )
+        event_id = _resolve_event_id_for_row(
+            source_type,
+            source_envelope,
+            year,
+            ctx.travel_event_id,
+            ctx.business_trip_event_id,
+        )
 
-    # Relocation tag implies the relocation event when we don't already have one.
-    if event_id is None and tag_ids and relocation_event_id is not None:
+    if event_id is None and tag_ids and ctx.relocation_event_id is not None:
         placeholders = ",".join("?" * len(tag_ids))
         tag_names = {
             r[0]
@@ -579,7 +607,7 @@ def _resolve_dimensions(  # noqa: C901, PLR0913, PLR0912
             ).fetchall()
         }
         if "релокация" in tag_names:
-            event_id = relocation_event_id
+            event_id = ctx.relocation_event_id
 
     return category_id, event_id, tag_ids
 
@@ -724,7 +752,7 @@ def _simulate_post_import_fix(
     return None
 
 
-def resolve_row_to_3d(  # noqa: PLR0913
+def resolve_row_to_3d(
     con,
     *,
     sheet_category: str,
@@ -732,10 +760,7 @@ def resolve_row_to_3d(  # noqa: PLR0913
     comment: str,
     amount_eur: float,
     year: int,
-    travel_event_id: int,
-    business_trip_event_id: int | None,
-    relocation_event_id: int | None,
-    russia_trip_event_id: int | None = None,
+    ctx: ResolutionContext,
     beneficiary_raw: str = "",
 ) -> RowResolution | None:
     """Resolve a raw sheet row to 3D dimensions with provenance.
@@ -770,9 +795,7 @@ def resolve_row_to_3d(  # noqa: PLR0913
         comment=comment,
         amount_eur=amount_eur,
         year=year,
-        travel_event_id=travel_event_id,
-        business_trip_event_id=business_trip_event_id,
-        relocation_event_id=relocation_event_id,
+        ctx=ctx,
     )
     if resolved is None:
         return None
@@ -795,7 +818,7 @@ def resolve_row_to_3d(  # noqa: PLR0913
         con,
         comment=comment,
         year=year,
-        russia_trip_event_id=russia_trip_event_id,
+        russia_trip_event_id=ctx.russia_trip_event_id,
     )
     if postfix is not None:
         category_id, fix_event_id = postfix
@@ -861,7 +884,7 @@ def _apply_post_import_fixes(
     )
 
 
-def _update_expenses(  # noqa: PLR0913
+def _update_expenses(
     con,
     *,
     where_clause: str,
@@ -1129,7 +1152,66 @@ def iter_parsed_sheet_rows(year: int, *, con=None):
 # ---------------------------------------------------------------------------
 
 
-def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
+def _prepare_row_dimensions(
+    con,
+    ctx,
+    parsed,
+    year: int,
+) -> tuple[int, int | None, list[int]] | None:
+    """Resolve and augment 3D dimensions for one import row.
+
+    Returns (category_id, event_id, tag_ids) or None to signal "skip this row".
+    """
+    try:
+        resolved = _resolve_dimensions(
+            con,
+            source_type=parsed.sheet_category,
+            source_envelope=parsed.sheet_group,
+            comment=parsed.comment,
+            amount_eur=parsed.amount_eur,
+            year=year,
+            ctx=ctx,
+        )
+    except ValueError:
+        logger.exception(
+            "Failed to resolve dimensions for (%r, %r) in year %d",
+            parsed.sheet_category,
+            parsed.sheet_group,
+            year,
+        )
+        return None
+
+    if resolved is None:
+        logger.warning(
+            "No mapping for (%r, %r) in year %d; skipping row",
+            parsed.sheet_category,
+            parsed.sheet_group,
+            year,
+        )
+        return None
+
+    category_id, event_id, tag_ids = resolved
+
+    if parsed.beneficiary_raw:
+        who_key = parsed.beneficiary_raw.lower().strip()
+        tag_name = _SHEET_BENEFICIARY_TAG_BY_VALUE.get(who_key)
+        if tag_name is not None:
+            try:
+                extra_ids = _resolve_tag_ids(con, [tag_name])
+            except ValueError:
+                logger.exception(
+                    "Failed to resolve beneficiary tag %r for row %d",
+                    tag_name,
+                    parsed.row_idx,
+                )
+                return None
+            tag_ids = sorted(set(tag_ids) | set(extra_ids))
+
+    tag_ids = _union_event_auto_tags(con, event_id=event_id, tag_ids=tag_ids)
+    return category_id, event_id, tag_ids
+
+
+def import_year(year: int) -> dict:
     """Import all months for *year* from the configured sheet into SQLite.
 
     Always destructive for rows whose year matches ``year`` in the
@@ -1204,78 +1286,29 @@ def import_year(year: int) -> dict:  # noqa: C901, PLR0915, PLR0912
         months_seen: set[int] = set()
 
         for parsed in iter_parsed_sheet_rows(year, con=con):
-            try:
-                resolved = _resolve_dimensions(
-                    con,
-                    source_type=parsed.sheet_category,
-                    source_envelope=parsed.sheet_group,
-                    comment=parsed.comment,
-                    amount_eur=parsed.amount_eur,
-                    year=year,
-                    travel_event_id=ctx.travel_event_id,
-                    business_trip_event_id=ctx.business_trip_event_id,
-                    relocation_event_id=ctx.relocation_event_id,
-                )
-            except ValueError:
-                logger.exception(
-                    "Failed to resolve dimensions for (%r, %r) in year %d",
-                    parsed.sheet_category,
-                    parsed.sheet_group,
-                    year,
-                )
+            dims = _prepare_row_dimensions(con, ctx, parsed, year)
+            if dims is None:
                 errors += 1
                 continue
-
-            if resolved is None:
-                logger.warning(
-                    "No mapping for (%r, %r) in year %d; skipping row",
-                    parsed.sheet_category,
-                    parsed.sheet_group,
-                    year,
-                )
-                errors += 1
-                continue
-            category_id, event_id, tag_ids = resolved
-
-            if parsed.beneficiary_raw:
-                who_key = parsed.beneficiary_raw.lower().strip()
-                tag_name = _SHEET_BENEFICIARY_TAG_BY_VALUE.get(who_key)
-                if tag_name is not None:
-                    try:
-                        extra_ids = _resolve_tag_ids(con, [tag_name])
-                    except ValueError:
-                        logger.exception(
-                            "Failed to resolve beneficiary tag %r for row %d",
-                            tag_name,
-                            parsed.row_idx,
-                        )
-                        errors += 1
-                        continue
-                    tag_ids = sorted(set(tag_ids) | set(extra_ids))
-
-            tag_ids = _union_event_auto_tags(
-                con,
-                event_id=event_id,
-                tag_ids=tag_ids,
-            )
-
+            category_id, event_id, tag_ids = dims
             months_seen.add(parsed.month)
             expense_dt = datetime(year, parsed.month, 1, 12, 0, 0)
-
             try:
                 ledger_repo.insert_expense(
                     con,
-                    client_expense_id=None,
-                    expense_datetime=expense_dt,
-                    amount=parsed.amount_acc,
-                    amount_original=parsed.amount_original,
-                    currency_original=parsed.currency_original,
-                    category_id=category_id,
-                    event_id=event_id,
-                    comment=parsed.comment,
-                    sheet_category=parsed.sheet_category,
-                    sheet_group=parsed.sheet_group,
-                    tag_ids=tag_ids,
+                    ledger_repo.ExpensePayload(
+                        client_expense_id=None,
+                        expense_datetime=expense_dt,
+                        amount=parsed.amount_acc,
+                        amount_original=parsed.amount_original,
+                        currency_original=parsed.currency_original,
+                        category_id=category_id,
+                        event_id=event_id,
+                        comment=parsed.comment,
+                        sheet_category=parsed.sheet_category,
+                        sheet_group=parsed.sheet_group,
+                        tag_ids=tag_ids,
+                    ),
                     enqueue_logging=False,
                 )
                 created += 1

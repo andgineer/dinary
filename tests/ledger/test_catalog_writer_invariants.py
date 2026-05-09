@@ -154,17 +154,19 @@ class TestIntegrityRules:
             _seed_minimal(con)
             ledger_repo.insert_expense(
                 con,
-                client_expense_id="pin-cat",
-                expense_datetime=_DT,
-                amount=1.0,
-                amount_original=1.0,
-                currency_original="RSD",
-                category_id=1,
-                event_id=None,
-                comment="",
-                sheet_category=None,
-                sheet_group=None,
-                tag_ids=[],
+                ledger_repo.ExpensePayload(
+                    client_expense_id="pin-cat",
+                    expense_datetime=_DT,
+                    amount=1.0,
+                    amount_original=1.0,
+                    currency_original="RSD",
+                    category_id=1,
+                    event_id=None,
+                    comment="",
+                    sheet_category=None,
+                    sheet_group=None,
+                    tag_ids=[],
+                ),
                 enqueue_logging=False,
             )
             catalog_writer.set_category_active(con, 1, active=False)

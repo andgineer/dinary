@@ -4,8 +4,18 @@ Chain-specific rules take precedence over generic rules (store_id IS NULL).
 User corrections always store confidence_level=4.
 """
 
+import dataclasses
 import sqlite3
 from datetime import UTC, datetime
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class RuleSpec:
+    """Classification assignment for one item."""
+
+    category_id: int
+    confidence_level: int
+    source: str
 
 
 def classify_by_rules(
@@ -35,19 +45,20 @@ def classify_by_rules(
     return int(row[0]), int(row[1])
 
 
-def create_or_update_rule(  # noqa: PLR0913
+def create_or_update_rule(
     conn: sqlite3.Connection,
     store_id: int | None,
     item_name_normalized: str,
-    category_id: int,
-    confidence_level: int,
-    source: str,
+    spec: RuleSpec,
 ) -> None:
     """Upsert a classification rule.
 
-    ``source`` must be 'llm' or 'user_correction'.
+    ``spec.source`` must be 'llm' or 'user_correction'.
     User corrections always set confidence_level=4 regardless of what is passed.
     """
+    category_id = spec.category_id
+    confidence_level = spec.confidence_level
+    source = spec.source
     if source == "user_correction":
         confidence_level = 4
 

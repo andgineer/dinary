@@ -9,6 +9,7 @@ queue rows as ``poisoned`` and continue.
 """
 
 import asyncio
+import dataclasses
 import enum
 import logging
 import time
@@ -180,135 +181,138 @@ def _derive_app_currency_amount_for_sheet(
     return float((expense.amount * rate).quantize(Decimal("0.01")))
 
 
-def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ResolvedJob:
+    expense: ledger_repo.ExpenseRow
+    claim_token: str
+    marker_key: str
+    sheet_category: str
+    sheet_group: str
+
+
+def _release_claim_best_effort(con, expense_pk: int, claim_token: str) -> None:
+    try:
+        ledger_repo.release_logging_claim(con, expense_pk, claim_token)
+    except Exception:
+        logger.exception("Failed to release claim for pk=%d", expense_pk)
+
+
+def _claim_and_resolve(
+    con,
+    expense_pk: int,
+) -> _ResolvedJob | DrainResult:
+    """Claim the job and resolve the sheet target; handles orphan/poison internally."""
+    claim_token = ledger_repo.claim_logging_job(con, expense_pk)
+    if claim_token is None:
+        return DrainResult.FAILED
+
+    try:
+        expense = ledger_repo.get_expense_by_id(con, expense_pk)
+        if expense is None:
+            logger.warning("Queue row for missing expense pk=%d; clearing", expense_pk)
+            ledger_repo.clear_logging_job(con, expense_pk, claim_token)
+            return DrainResult.NOOP_ORPHAN
+
+        if expense.client_expense_id is None:
+            logger.error(
+                "Queue row for pk=%d has no client_expense_id; "
+                "poisoning (runtime rows must carry a UUID)",
+                expense_pk,
+            )
+            ledger_repo.poison_logging_job(
+                con,
+                expense_pk,
+                f"Runtime expense pk={expense_pk} has no client_expense_id",
+            )
+            return DrainResult.POISONED
+
+        tag_ids = ledger_repo.get_expense_tags(con, expense_pk)
+        projection = ledger_repo.logging_projection(
+            con,
+            category_id=expense.category_id,
+            event_id=expense.event_id,
+            tag_ids=tag_ids,
+        )
+        if projection is None:
+            logger.error(
+                "Logging projection: unknown category_id=%d for expense pk=%d",
+                expense.category_id,
+                expense_pk,
+            )
+            ledger_repo.poison_logging_job(
+                con,
+                expense_pk,
+                f"No sheet_mapping fallback possible for category_id={expense.category_id}",
+            )
+            return DrainResult.POISONED
+
+        sheet_category, sheet_group = projection
+        return _ResolvedJob(
+            expense=expense,
+            claim_token=claim_token,
+            marker_key=expense.client_expense_id,
+            sheet_category=sheet_category,
+            sheet_group=sheet_group,
+        )
+    except Exception:
+        _release_claim_best_effort(con, expense_pk, claim_token)
+        raise
+
+
+def _drain_one_job(
     expense_pk: int,
     *,
     spreadsheet_id: str,
 ) -> DrainResult:
     """Atomically claim, append, and clear one queue row."""
     con = ledger_repo.get_connection()
-    claim_token: str | None = None
     try:
-        try:
-            claim_token = ledger_repo.claim_logging_job(con, expense_pk)
-            if claim_token is None:
-                return DrainResult.FAILED
+        resolved = _claim_and_resolve(con, expense_pk)
+        if isinstance(resolved, DrainResult):
+            return resolved
 
-            expense = ledger_repo.get_expense_by_id(con, expense_pk)
-            if expense is None:
-                logger.warning("Queue row for missing expense pk=%d; clearing", expense_pk)
-                ledger_repo.clear_logging_job(con, expense_pk, claim_token)
-                return DrainResult.NOOP_ORPHAN
-
-            # The J-marker contract is "UUID of the last expense appended
-            # to this row". Only the bootstrap importer inserts rows with
-            # ``client_expense_id=NULL``, and it explicitly passes
-            # ``enqueue_logging=False``, so reaching the drain with a
-            # NULL UUID means a runtime row was created with a broken
-            # producer. Poison the queue row rather than silently writing
-            # a synthetic non-UUID marker that would poison future
-            # duplicate detection on the sheet. Checked before the
-            # logging-projection lookup so we don't waste two SELECTs
-            # resolving a row we're about to poison.
-            if expense.client_expense_id is None:
-                logger.error(
-                    "Queue row for pk=%d has no client_expense_id; "
-                    "poisoning (runtime rows must carry a UUID)",
-                    expense_pk,
-                )
-                ledger_repo.poison_logging_job(
-                    con,
-                    expense_pk,
-                    f"Runtime expense pk={expense_pk} has no client_expense_id",
-                )
-                return DrainResult.POISONED
-
-            marker_key = expense.client_expense_id
-
-            tag_ids = ledger_repo.get_expense_tags(con, expense_pk)
-
-            projection = ledger_repo.logging_projection(
-                con,
-                category_id=expense.category_id,
-                event_id=expense.event_id,
-                tag_ids=tag_ids,
-            )
-            if projection is None:
-                # ``logging_projection`` only returns ``None`` when the
-                # expense points at an unknown ``category_id`` — it
-                # otherwise applies the category-name / empty-group
-                # fallback per column itself. An unknown category is
-                # unrecoverable at drain time (we cannot invent a
-                # landing cell), so poison the job and let the operator
-                # fix the catalog upstream.
-                logger.error(
-                    "Logging projection: unknown category_id=%d for expense pk=%d",
-                    expense.category_id,
-                    expense_pk,
-                )
-                ledger_repo.poison_logging_job(
-                    con,
-                    expense_pk,
-                    f"No sheet_mapping fallback possible for category_id={expense.category_id}",
-                )
-                return DrainResult.POISONED
-
-            sheet_category, sheet_group = projection
-        except Exception:
-            if claim_token is not None:
-                try:
-                    ledger_repo.release_logging_claim(con, expense_pk, claim_token)
-                except Exception:
-                    logger.exception("Failed to release claim for pk=%d", expense_pk)
-            raise
-
-        # Fetch accounting_currency -> app_currency rate for column H.
-        # Column B stores the app-currency amount, column C is the
-        # accounting-currency projection via ``=B/H``.
+        expense = resolved.expense
         expense_date = expense.datetime.date()
-        app_currency = settings.app_currency.upper()
         accounting_currency = settings.accounting_currency.upper()
+        app_currency = settings.app_currency.upper()
         rate: Decimal | None = None
         rate_str: str | None = None
         try:
             rate = get_rate(con, expense_date, accounting_currency, app_currency)
             rate_str = str(rate)
         except (ValueError, OSError):
-            rate = None
-            rate_str = None
+            pass
 
         amount_app = _derive_app_currency_amount_for_sheet(con, expense, rate, expense_date)
         if amount_app is None:
             logger.warning(
-                "Skip sheet append for pk=%d: no rate on %s to convert "
-                "%s %s to %s; will retry on next sweep",
+                "Skip sheet append for pk=%d: no rate on %s to convert %s %s to %s;"
+                " will retry on next sweep",
                 expense_pk,
                 expense_date,
                 expense.amount,
                 accounting_currency,
                 app_currency,
             )
-            if claim_token is not None:
-                try:
-                    ledger_repo.release_logging_claim(con, expense_pk, claim_token)
-                except Exception:
-                    logger.exception("Failed to release claim for pk=%d", expense_pk)
+            _release_claim_best_effort(con, expense_pk, resolved.claim_token)
             return DrainResult.FAILED
 
         try:
             wrote_new_row = _append_row_to_sheet(
-                spreadsheet_id=spreadsheet_id,
-                expense_pk=expense_pk,
-                marker_key=marker_key,
-                month=expense.datetime.month,
-                sheet_category=sheet_category,
-                sheet_group=sheet_group,
-                amount=amount_app,
-                comment=expense.comment or "",
-                expense_date=expense_date,
-                rate=rate_str,
+                spreadsheet_id,
+                _ExpenseSheetRow(
+                    expense_pk=expense_pk,
+                    marker_key=resolved.marker_key,
+                    month=expense.datetime.month,
+                    sheet_category=resolved.sheet_category,
+                    sheet_group=resolved.sheet_group,
+                    amount=amount_app,
+                    comment=expense.comment or "",
+                    expense_date=expense_date,
+                    rate=rate_str,
+                ),
             )
-            cleared = ledger_repo.clear_logging_job(con, expense_pk, claim_token)
+            cleared = ledger_repo.clear_logging_job(con, expense_pk, resolved.claim_token)
             if not cleared:
                 deleted = ledger_repo.force_clear_logging_job(con, expense_pk)
                 if deleted:
@@ -320,27 +324,28 @@ def _drain_one_job(  # noqa: C901, PLR0911, PLR0912, PLR0915
             return DrainResult.APPENDED if wrote_new_row else DrainResult.ALREADY_LOGGED
         except Exception:
             logger.exception("Append to sheet failed for expense pk=%d", expense_pk)
-            try:
-                ledger_repo.release_logging_claim(con, expense_pk, claim_token)
-            except Exception:
-                logger.exception("Failed to release claim for pk=%d", expense_pk)
+            _release_claim_best_effort(con, expense_pk, resolved.claim_token)
             raise
     finally:
         con.close()
 
 
-def _append_row_to_sheet(  # noqa: PLR0913
-    *,
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ExpenseSheetRow:
+    expense_pk: int
+    marker_key: str
+    month: int
+    sheet_category: str
+    sheet_group: str
+    amount: float
+    comment: str
+    expense_date: date
+    rate: str | None
+
+
+def _append_row_to_sheet(
     spreadsheet_id: str,
-    expense_pk: int,
-    marker_key: str,
-    month: int,
-    sheet_category: str,
-    sheet_group: str,
-    amount: float,
-    comment: str,
-    expense_date,
-    rate: str | None,
+    expense_row: "_ExpenseSheetRow",
 ) -> bool:
     """Project one expense onto Google Sheets.
 
@@ -353,49 +358,49 @@ def _append_row_to_sheet(  # noqa: PLR0913
     ws = ss.sheet1
     all_values = ws.get_all_values()
     years_by_row = fetch_row_years(ws, len(all_values))
-    target_year = expense_date.year
+    target_year = expense_row.expense_date.year
 
-    row, all_values = ensure_category_row(
+    sheet_row, all_values = ensure_category_row(
         ws,
         all_values,
-        month,
-        sheet_category,
-        sheet_group,
-        expense_date,
+        expense_row.month,
+        expense_row.sheet_category,
+        expense_row.sheet_group,
+        expense_row.expense_date,
         years_by_row=years_by_row,
-        rate=rate,
+        rate=expense_row.rate,
     )
 
     if len(all_values) > len(years_by_row):
-        years_by_row = years_by_row[: row - 1] + [target_year] + years_by_row[row - 1 :]
+        years_by_row = years_by_row[: sheet_row - 1] + [target_year] + years_by_row[sheet_row - 1 :]
 
     written = append_expense_atomic(
         ws,
-        row,
-        marker_key=marker_key,
-        amount_app=amount,
-        comment=comment,
-        rate=rate,
+        sheet_row,
+        marker_key=expense_row.marker_key,
+        amount_app=expense_row.amount,
+        comment=expense_row.comment,
+        rate=expense_row.rate,
     )
 
     if written:
         logger.info(
             "Appended +%s for %s/%s in %d-%02d (pk=%d)",
-            amount,
-            sheet_category,
-            sheet_group,
-            expense_date.year,
-            month,
-            expense_pk,
+            expense_row.amount,
+            expense_row.sheet_category,
+            expense_row.sheet_group,
+            expense_row.expense_date.year,
+            expense_row.month,
+            expense_row.expense_pk,
         )
     else:
         logger.info(
             "Skipped duplicate for %s/%s in %d-%02d (pk=%d, marker present)",
-            sheet_category,
-            sheet_group,
-            expense_date.year,
-            month,
-            expense_pk,
+            expense_row.sheet_category,
+            expense_row.sheet_group,
+            expense_row.expense_date.year,
+            expense_row.month,
+            expense_row.expense_pk,
         )
     return written
 
@@ -405,7 +410,30 @@ def _append_row_to_sheet(  # noqa: PLR0913
 # ---------------------------------------------------------------------------
 
 
-def drain_pending() -> dict:  # noqa: C901, PLR0912, PLR0915
+def _poison_failing_job(expense_pk: int, exc: Exception) -> None:
+    con = ledger_repo.get_connection()
+    try:
+        ledger_repo.poison_logging_job(con, expense_pk, f"{type(exc).__name__}: {exc}")
+    finally:
+        con.close()
+
+
+def _update_drain_summary(summary: dict, outcome: DrainResult) -> None:
+    if outcome is DrainResult.APPENDED:
+        summary["appended"] += 1
+    elif outcome is DrainResult.ALREADY_LOGGED:
+        summary["already_logged"] += 1
+    elif outcome is DrainResult.RECOVERED_WITH_DUPLICATE:
+        summary["recovered_with_duplicate"] += 1
+    elif outcome is DrainResult.NOOP_ORPHAN:
+        summary["noop_orphan"] += 1
+    elif outcome is DrainResult.POISONED:
+        summary["poisoned"] += 1
+    else:
+        summary["failed"] += 1
+
+
+def drain_pending() -> dict:
     """Drain ``sheet_logging_jobs`` from the single ``dinary.db``."""
     spreadsheet_id = get_logging_spreadsheet_id()
     if spreadsheet_id is None:
@@ -436,8 +464,7 @@ def drain_pending() -> dict:  # noqa: C901, PLR0912, PLR0915
         return summary
 
     # Lazy sheet-mapping refresh: cheap modifiedTime check via Drive API;
-    # only reparses the map tab when it actually changed. Failures here
-    # downgrade to a warning and we drain with the cached mapping.
+    # only reparses the map tab when it actually changed.
     sheet_mapping.ensure_fresh()
 
     attempts = 0
@@ -461,31 +488,11 @@ def drain_pending() -> dict:  # noqa: C901, PLR0912, PLR0915
                 summary["failed"] += 1
                 summary["cap_reached"] = cap_reached
                 return summary
-            con2 = ledger_repo.get_connection()
-            try:
-                ledger_repo.poison_logging_job(
-                    con2,
-                    expense_pk,
-                    f"{type(exc).__name__}: {exc}",
-                )
-            finally:
-                con2.close()
+            _poison_failing_job(expense_pk, exc)
             summary["poisoned"] += 1
             attempts += 1
             continue
-
-        if outcome is DrainResult.APPENDED:
-            summary["appended"] += 1
-        elif outcome is DrainResult.ALREADY_LOGGED:
-            summary["already_logged"] += 1
-        elif outcome is DrainResult.RECOVERED_WITH_DUPLICATE:
-            summary["recovered_with_duplicate"] += 1
-        elif outcome is DrainResult.NOOP_ORPHAN:
-            summary["noop_orphan"] += 1
-        elif outcome is DrainResult.POISONED:
-            summary["poisoned"] += 1
-        else:
-            summary["failed"] += 1
+        _update_drain_summary(summary, outcome)
         attempts += 1
 
     if not cap_reached:

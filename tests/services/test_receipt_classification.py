@@ -123,7 +123,7 @@ class TestClassifyAndPersist:
         items = get_receipt_items(conn, receipt_id)
         pool = _mock_pool()
 
-        asyncio.run(_classify_and_persist(conn, pool, job, items, None, _categories(conn)))
+        asyncio.run(_classify_and_persist(conn, pool, job, items, None))
 
         pool.classify_receipt.assert_not_called()
         exp = conn.execute(
@@ -142,9 +142,7 @@ class TestClassifyAndPersist:
         items = get_receipt_items(conn, receipt_id)
 
         asyncio.run(
-            _classify_and_persist(
-                conn, pool := _mock_pool(cat_id=1, conf=3), job, items, None, _categories(conn)
-            )
+            _classify_and_persist(conn, pool := _mock_pool(cat_id=1, conf=3), job, items, None)
         )  # noqa: E731
 
         pool.classify_receipt.assert_called_once()
@@ -174,7 +172,7 @@ class TestClassifyAndPersist:
             )
         )
 
-        asyncio.run(_classify_and_persist(conn, pool, job, items, None, _categories(conn)))
+        asyncio.run(_classify_and_persist(conn, pool, job, items, None))
 
         exp_count = conn.execute(
             "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
@@ -187,7 +185,7 @@ class TestClassifyAndPersist:
         job = claim_next_job(conn)
         items = get_receipt_items(conn, receipt_id)
 
-        asyncio.run(_classify_and_persist(conn, _mock_pool(), job, items, None, _categories(conn)))
+        asyncio.run(_classify_and_persist(conn, _mock_pool(), job, items, None))
 
         # Job must be deleted (complete_job was called inside the transaction)
         job_row = conn.execute(
@@ -212,7 +210,7 @@ class TestClassifyAndPersist:
         job = _make_job(receipt_id)
         items = get_receipt_items(conn, receipt_id)
 
-        asyncio.run(_classify_and_persist(conn, pool, job, items, None, _categories(conn)))
+        asyncio.run(_classify_and_persist(conn, pool, job, items, None))
 
         pool.classify_receipt.assert_not_called()
         exp_count = conn.execute(
@@ -241,9 +239,7 @@ class TestClassifyAndPersist:
         )
         items = get_receipt_items(conn, receipt_id)
 
-        asyncio.run(
-            _classify_and_persist(conn, _mock_pool(conf=3), job, items, None, _categories(conn))
-        )
+        asyncio.run(_classify_and_persist(conn, _mock_pool(conf=3), job, items, None))
 
         exp = conn.execute(
             "SELECT confidence_level FROM expenses WHERE receipt_id = ?", [receipt_id]
@@ -256,9 +252,7 @@ class TestClassifyAndPersist:
         job = claim_next_job(conn)
         items = get_receipt_items(conn, receipt_id)
 
-        asyncio.run(
-            _classify_and_persist(conn, _mock_pool(conf=3), job, items, None, _categories(conn))
-        )
+        asyncio.run(_classify_and_persist(conn, _mock_pool(conf=3), job, items, None))
 
         rule = conn.execute(
             "SELECT category_id, confidence_level, source FROM classification_rules"
@@ -282,7 +276,7 @@ class TestClassifyAndPersist:
         items = get_receipt_items(conn, receipt_id)
         pool = _mock_pool(cat_id=1, conf=3)
 
-        asyncio.run(_classify_and_persist(conn, pool, job, items, None, _categories(conn)))
+        asyncio.run(_classify_and_persist(conn, pool, job, items, None))
 
         pool.classify_receipt.assert_called_once()
         exp = conn.execute(
@@ -314,7 +308,7 @@ class TestClassifyAndPersist:
             )
         )
 
-        asyncio.run(_classify_and_persist(conn, pool, job, items, None, _categories(conn)))
+        asyncio.run(_classify_and_persist(conn, pool, job, items, None))
 
         # conf=1 → item skipped, no new expense
         exp_count = conn.execute(

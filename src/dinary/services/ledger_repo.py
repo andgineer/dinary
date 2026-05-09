@@ -17,11 +17,11 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlparse
 
 from dinary.config import settings
 from dinary.services import currency_repo, db_migrations
 from dinary.services import sqlite_types as _sqlite_types
+from dinary.services.llm_bootstrap import seed_llm_provider_if_empty
 from dinary.services.sql_loader import fetchall_as, fetchone_as, load_sql
 
 logger = logging.getLogger(__name__)
@@ -213,7 +213,7 @@ def init_db() -> None:
         # No-op once any saved-currencies row exists, so operator
         # adds/removes are not re-asserted across reboots.
         currency_repo.seed_default_if_empty(con, settings.app_currency)
-        _seed_llm_provider_if_empty(con)
+        seed_llm_provider_if_empty(con)
     finally:
         con.close()
 
@@ -334,53 +334,6 @@ def _reconcile_accounting_currency(con: sqlite3.Connection) -> None:
         "before restarting."
     )
     raise RuntimeError(msg)
-
-
-def _seed_llm_provider_if_empty(con: sqlite3.Connection) -> None:
-    """Seed llm_providers from DINARY_LLM_* env vars on first boot.
-
-    No-op when the table already has rows (operator manages providers
-    via the admin API after initial setup). Only seeds when
-    DINARY_LLM_BASE_URL and DINARY_LLM_API_KEY are both non-empty.
-    """
-    if not settings.llm_base_url or not settings.llm_api_key:
-        return
-    existing = con.execute("SELECT COUNT(*) FROM llm_providers").fetchone()[0]
-    if existing:
-        return
-    label = _label_from_base_url(settings.llm_base_url)
-    con.execute("BEGIN IMMEDIATE")
-    try:
-        con.execute(
-            "INSERT INTO llm_providers (label, base_url, api_key, model, priority)"
-            " VALUES (?, ?, ?, ?, 0)",
-            [label, settings.llm_base_url, settings.llm_api_key, settings.llm_model],
-        )
-        con.execute("COMMIT")
-    except Exception:
-        with contextlib.suppress(sqlite3.Error):
-            con.execute("ROLLBACK")
-        raise
-    logger.info("seeded llm_providers from env: %s / %s", label, settings.llm_model)
-
-
-def _label_from_base_url(base_url: str) -> str:
-    """Derive a human-readable provider label from the base URL."""
-    lower = base_url.lower()
-    if "groq" in lower:
-        return "Groq"
-    if "openrouter" in lower:
-        return "OpenRouter"
-    if "gemini" in lower or "googleapis" in lower or "aistudio" in lower:
-        return "Gemini"
-    if "cerebras" in lower:
-        return "Cerebras"
-    # Fall back to the hostname
-    try:
-        host = urlparse(base_url).hostname or base_url
-        return host.split(".")[0].capitalize()
-    except Exception:  # noqa: BLE001
-        return base_url[:40]
 
 
 def get_connection() -> sqlite3.Connection:
@@ -639,6 +592,23 @@ def lookup_existing_expense(
 InsertExpenseResult = Literal["created", "duplicate", "conflict"]
 
 
+@dataclasses.dataclass(frozen=True)
+class ExpensePayload:
+    """All fields needed to insert or compare one expense row."""
+
+    client_expense_id: str | None
+    expense_datetime: datetime
+    amount: float
+    amount_original: float
+    currency_original: str
+    category_id: int
+    event_id: int | None = None
+    comment: str = ""
+    sheet_category: str | None = None
+    sheet_group: str | None = None
+    tag_ids: list[int] = dataclasses.field(default_factory=list)
+
+
 #: Names of the stored/incoming tuple components, kept 1:1 with the
 #: ``stored = (...)`` / ``incoming = (...)`` order inside
 #: ``insert_expense``. Used by ``_format_expense_diff`` to produce
@@ -692,20 +662,9 @@ def _to_decimal(value: float | Decimal) -> Decimal:
     return Decimal(str(value))
 
 
-def describe_expense_conflict(  # noqa: PLR0913
+def describe_expense_conflict(
     con: sqlite3.Connection,
-    *,
-    client_expense_id: str,
-    expense_datetime: datetime,
-    amount: float,
-    amount_original: float,
-    currency_original: str,
-    category_id: int,
-    event_id: int | None,
-    comment: str,
-    sheet_category: str | None,
-    sheet_group: str | None,
-    tag_ids: list[int],
+    payload: ExpensePayload,
 ) -> str | None:
     """Re-run the stored-vs-incoming compare and return a human-readable diff.
 
@@ -720,7 +679,7 @@ def describe_expense_conflict(  # noqa: PLR0913
         ExistingExpenseRow,
         con,
         load_sql("get_existing_expense.sql"),
-        [client_expense_id],
+        [payload.client_expense_id],
     )
     if existing is None:
         return None
@@ -744,34 +703,161 @@ def describe_expense_conflict(  # noqa: PLR0913
         existing_tag_ids,
     )
     incoming = (
-        _to_decimal(amount),
-        _to_decimal(amount_original),
-        currency_original,
-        category_id,
-        event_id,
-        comment,
-        expense_datetime,
-        sheet_category,
-        sheet_group,
-        sorted(int(t) for t in tag_ids),
+        _to_decimal(payload.amount),
+        _to_decimal(payload.amount_original),
+        payload.currency_original,
+        payload.category_id,
+        payload.event_id,
+        payload.comment,
+        payload.expense_datetime,
+        payload.sheet_category,
+        payload.sheet_group,
+        sorted(int(t) for t in payload.tag_ids),
     )
     return _format_expense_diff(stored, incoming)
 
 
-def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
+def _validate_expense_refs(
     con: sqlite3.Connection,
-    *,
-    client_expense_id: str | None,
-    expense_datetime: datetime,
-    amount: float,
-    amount_original: float,
-    currency_original: str,
     category_id: int,
-    event_id: int | None = None,
-    comment: str = "",
-    sheet_category: str | None = None,
-    sheet_group: str | None = None,
-    tag_ids: list[int] | None = None,
+    event_id: int | None,
+    tag_ids: list[int],
+) -> None:
+    """Validate FK refs inside an open transaction; raises ValueError if any ID is missing."""
+    if not con.execute("SELECT 1 FROM categories WHERE id = ?", [category_id]).fetchone():
+        raise ValueError(f"category_id {category_id} not found in categories")
+    if (
+        event_id is not None
+        and not con.execute(
+            "SELECT 1 FROM events WHERE id = ?",
+            [event_id],
+        ).fetchone()
+    ):
+        raise ValueError(f"event_id {event_id} not found in events")
+    for tid in tag_ids:
+        if not con.execute("SELECT 1 FROM tags WHERE id = ?", [tid]).fetchone():
+            raise ValueError(f"tag_id {tid} not found in tags")
+
+
+def _try_insert_expense_row(
+    con: sqlite3.Connection,
+    sql_params: list,
+    client_expense_id: str | None,
+) -> tuple[tuple | None, bool]:
+    """Run INSERT ... ON CONFLICT DO NOTHING RETURNING, handling unique-key races.
+
+    Returns ``(row, tx_rolled_back)``:
+    - ``(row_tuple, False)`` — success; tx still open.
+    - ``(None, False)``      — ON CONFLICT fired; tx still open, caller must ROLLBACK.
+    - ``(None, True)``       — race exception absorbed; tx was rolled back by this function.
+    """
+    try:
+        return con.execute(load_sql("insert_expense.sql"), sql_params).fetchone(), False
+    except _RACE_EXCS as exc:
+        if not _is_unique_violation_of_client_expense_id(exc):
+            raise
+        best_effort_rollback(
+            con,
+            context=(
+                f"insert_expense race-recovery at INSERT (client_expense_id={client_expense_id!r})"
+            ),
+        )
+        return None, True
+
+
+def _commit_expense_row(
+    con: sqlite3.Connection,
+    expense_pk: int,
+    tag_ids: list[int],
+    enqueue_logging: bool,
+    client_expense_id: str | None,
+) -> bool:
+    """Insert tags, optionally enqueue a logging job, and COMMIT.
+
+    Returns True on success. Returns False if a race on COMMIT was absorbed
+    (transaction has already been rolled back by this function).
+    """
+    for tid in tag_ids:
+        con.execute(
+            "INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)"
+            " ON CONFLICT (expense_id, tag_id) DO NOTHING",
+            [expense_pk, tid],
+        )
+    if enqueue_logging:
+        con.execute(
+            "INSERT INTO sheet_logging_jobs (expense_id, status)"
+            " VALUES (?, 'pending') ON CONFLICT (expense_id) DO NOTHING",
+            [expense_pk],
+        )
+    try:
+        con.execute("COMMIT")
+        return True
+    except _RACE_EXCS as exc:
+        if not _is_unique_violation_of_client_expense_id(exc):
+            raise
+        best_effort_rollback(
+            con,
+            context=f"insert_expense race-recovery (client_expense_id={client_expense_id!r})",
+        )
+        return False
+
+
+def _compare_with_stored(
+    con: sqlite3.Connection,
+    client_expense_id: str | None,
+    incoming: tuple,
+) -> InsertExpenseResult:
+    """Load the committed winner row and compare to incoming payload.
+
+    Returns 'duplicate' if all fields match, 'conflict' otherwise.
+    """
+    existing = fetchone_as(
+        ExistingExpenseRow,
+        con,
+        load_sql("get_existing_expense.sql"),
+        [client_expense_id],
+    )
+    if existing is None:
+        msg = (
+            f"insert_expense: client_expense_id={client_expense_id!r} "
+            "disappeared between ON CONFLICT/race recovery and the "
+            "compare SELECT — concurrent writer rolled back after "
+            "its commit? DB state is inconsistent with our assumptions."
+        )
+        raise RuntimeError(msg)
+    existing_tag_ids = sorted(
+        int(r[0])
+        for r in con.execute(
+            "SELECT tag_id FROM expense_tags WHERE expense_id = ?",
+            [existing.id],
+        ).fetchall()
+    )
+    stored = (
+        existing.amount,
+        existing.amount_original,
+        existing.currency_original,
+        existing.category_id,
+        existing.event_id,
+        existing.comment,
+        existing.datetime,
+        existing.sheet_category,
+        existing.sheet_group,
+        existing_tag_ids,
+    )
+    if stored == incoming:
+        return "duplicate"
+    logger.info(
+        "insert_expense conflict for client_expense_id=%r: diff=%s",
+        client_expense_id,
+        _format_expense_diff(stored, incoming),
+    )
+    return "conflict"
+
+
+def insert_expense(
+    con: sqlite3.Connection,
+    payload: ExpensePayload,
+    *,
     enqueue_logging: bool = True,
 ) -> InsertExpenseResult:
     """Insert an expense + tags + queue row in one transaction.
@@ -782,195 +868,79 @@ def insert_expense(  # noqa: PLR0913, C901, PLR0912, PLR0915
     the loser falls through to the compare path against the winner's
     committed row.
     """
-    if (sheet_category is None) != (sheet_group is None):
+    if (payload.sheet_category is None) != (payload.sheet_group is None):
         msg = (
             "sheet_category and sheet_group must be both NULL (runtime row) "
             "or both non-NULL (bootstrap-imported provenance row)"
         )
         raise ValueError(msg)
 
-    tag_ids = tag_ids or []
+    tag_ids = list(payload.tag_ids) if payload.tag_ids else []
     incoming_tag_ids = sorted(int(t) for t in tag_ids)
-    amount_dec = _to_decimal(amount)
-    amount_original_dec = _to_decimal(amount_original)
+    amount_dec = _to_decimal(payload.amount)
+    amount_original_dec = _to_decimal(payload.amount_original)
     incoming = (
         amount_dec,
         amount_original_dec,
-        currency_original,
-        category_id,
-        event_id,
-        comment,
-        expense_datetime,
-        sheet_category,
-        sheet_group,
+        payload.currency_original,
+        payload.category_id,
+        payload.event_id,
+        payload.comment,
+        payload.expense_datetime,
+        payload.sheet_category,
+        payload.sheet_group,
         incoming_tag_ids,
     )
+    sql_params = [
+        payload.client_expense_id,
+        payload.expense_datetime,
+        amount_dec,
+        amount_original_dec,
+        payload.currency_original,
+        payload.category_id,
+        payload.event_id,
+        payload.comment,
+        payload.sheet_category,
+        payload.sheet_group,
+    ]
 
-    # ``BEGIN IMMEDIATE`` makes this transaction a writer from the start
-    # (upgrades the SHARED lock to RESERVED), which forces any other
-    # concurrent writer to serialize on the SQLite file lock instead of
-    # deferring the contention to the first UPDATE/INSERT. That lets
-    # the ``busy_timeout`` we set at connect time actually kick in
-    # here (the default "DEFERRED" transaction would upgrade lazily
-    # at the first write statement, which can give a BUSY on commit
-    # that is harder to recover cleanly).
+    # ``BEGIN IMMEDIATE`` serialises writers from the start; see note in _try_insert_expense_row.
     con.execute("BEGIN IMMEDIATE")
     tx_active = True
     try:
-        if not con.execute(
-            "SELECT 1 FROM categories WHERE id = ?",
-            [category_id],
-        ).fetchone():
-            raise ValueError(f"category_id {category_id} not found in categories")
-        if (
-            event_id is not None
-            and not con.execute(
-                "SELECT 1 FROM events WHERE id = ?",
-                [event_id],
-            ).fetchone()
-        ):
-            raise ValueError(f"event_id {event_id} not found in events")
-        for tid in tag_ids:
-            if not con.execute(
-                "SELECT 1 FROM tags WHERE id = ?",
-                [tid],
-            ).fetchone():
-                raise ValueError(f"tag_id {tid} not found in tags")
+        _validate_expense_refs(con, payload.category_id, payload.event_id, tag_ids)
+        inserted, tx_rolled_back = _try_insert_expense_row(
+            con,
+            sql_params,
+            payload.client_expense_id,
+        )
 
-        # Under SQLite's single-writer model, ``ON CONFLICT DO NOTHING``
-        # silently absorbs conflicts with rows already committed at
-        # statement time; the RETURNING clause returns an empty result
-        # set in that case and we fall through to the compare-outside-
-        # tx path. A concurrent in-flight writer holding the same
-        # UNIQUE key either blocks us (via busy_timeout) or raises
-        # ``OperationalError`` ("database is locked") — those are
-        # NOT duplicate-key races and must propagate.
-        #
-        # The ``_RACE_EXCS`` branch below is a defensive backstop for
-        # any future writer that skips ``ON CONFLICT`` and bubbles an
-        # IntegrityError. We clean up the aborted TX and fall through
-        # to the compare-against-winner path.
-        inserted: tuple | None
-        try:
-            inserted = con.execute(
-                load_sql("insert_expense.sql"),
-                [
-                    client_expense_id,
-                    expense_datetime,
-                    amount_dec,
-                    amount_original_dec,
-                    currency_original,
-                    category_id,
-                    event_id,
-                    comment,
-                    sheet_category,
-                    sheet_group,
-                ],
-            ).fetchone()
-        except _RACE_EXCS as exc:
-            if not _is_unique_violation_of_client_expense_id(exc):
-                raise
-            best_effort_rollback(
-                con,
-                context=(
-                    "insert_expense race-recovery at INSERT "
-                    f"(client_expense_id={client_expense_id!r})"
-                ),
-            )
-            inserted = None
+        if tx_rolled_back:
             tx_active = False
-
-        if inserted is not None:
+        elif inserted is not None:
             expense_pk = int(inserted[0])
-            for tid in tag_ids:
-                con.execute(
-                    "INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)"
-                    " ON CONFLICT (expense_id, tag_id) DO NOTHING",
-                    [expense_pk, tid],
-                )
-            if enqueue_logging:
-                con.execute(
-                    "INSERT INTO sheet_logging_jobs (expense_id, status)"
-                    " VALUES (?, 'pending') ON CONFLICT (expense_id) DO NOTHING",
-                    [expense_pk],
-                )
-            try:
-                con.execute("COMMIT")
-            except _RACE_EXCS as exc:
-                if not _is_unique_violation_of_client_expense_id(exc):
-                    raise
-                best_effort_rollback(
-                    con,
-                    context=(
-                        f"insert_expense race-recovery (client_expense_id={client_expense_id!r})"
-                    ),
-                )
-                tx_active = False
-            else:
+            committed = _commit_expense_row(
+                con,
+                expense_pk,
+                tag_ids,
+                enqueue_logging,
+                payload.client_expense_id,
+            )
+            if committed:
                 return "created"
-        elif tx_active:
-            # ON CONFLICT DO NOTHING hit on an already-committed winner:
-            # close our still-open read transaction cleanly before
-            # running the compare in auto-commit.
+            tx_active = False
+        else:
+            # ON CONFLICT DO NOTHING absorbed an already-committed winner:
+            # close the still-open read transaction cleanly.
             con.execute("ROLLBACK")
             tx_active = False
 
-        # Compare path — runs in auto-commit against the committed
-        # winner row. client_expense_id is guaranteed non-None here:
-        # NULL rows can't trigger either branch because UNIQUE allows
-        # multiple NULLs, so a NULL incoming UUID always ends up in
-        # the happy-path above.
-        existing = fetchone_as(
-            ExistingExpenseRow,
-            con,
-            load_sql("get_existing_expense.sql"),
-            [client_expense_id],
-        )
-        if existing is None:
-            msg = (
-                f"insert_expense: client_expense_id={client_expense_id!r} "
-                "disappeared between ON CONFLICT/race recovery and the "
-                "compare SELECT — concurrent writer rolled back after "
-                "its commit? DB state is inconsistent with our "
-                "assumptions."
-            )
-            raise RuntimeError(msg)
-
-        existing_tag_ids = sorted(
-            int(r[0])
-            for r in con.execute(
-                "SELECT tag_id FROM expense_tags WHERE expense_id = ?",
-                [existing.id],
-            ).fetchall()
-        )
-
-        stored = (
-            existing.amount,
-            existing.amount_original,
-            existing.currency_original,
-            existing.category_id,
-            existing.event_id,
-            existing.comment,
-            existing.datetime,
-            existing.sheet_category,
-            existing.sheet_group,
-            existing_tag_ids,
-        )
-
-        if stored == incoming:
-            return "duplicate"
-        logger.info(
-            "insert_expense conflict for client_expense_id=%r: diff=%s",
-            client_expense_id,
-            _format_expense_diff(stored, incoming),
-        )
-        return "conflict"
-
+        return _compare_with_stored(con, payload.client_expense_id, incoming)
     except Exception:
         if tx_active:
             best_effort_rollback(
                 con,
-                context=f"insert_expense(client_expense_id={client_expense_id!r})",
+                context=f"insert_expense(client_expense_id={payload.client_expense_id!r})",
             )
         raise
 

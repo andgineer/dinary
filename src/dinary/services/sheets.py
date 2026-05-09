@@ -204,7 +204,21 @@ def fmt_amount(amount: float) -> str:
 _SHEETS_EPOCH = date(1899, 12, 30)
 
 
-def _year_from_a_value(value: object) -> int | None:  # noqa: PLR0911
+def _year_from_serial(value: int | float) -> int | None:
+    try:
+        return (_SHEETS_EPOCH + timedelta(days=int(value))).year
+    except (OverflowError, ValueError, TypeError):
+        return None
+
+
+def _year_from_iso_string(value: str) -> int | None:
+    try:
+        return date.fromisoformat(value[:10]).year
+    except ValueError:
+        return None
+
+
+def _year_from_a_value(value: object) -> int | None:
     """Extract the year from a column-A cell read with ``UNFORMATTED_VALUE``.
 
     ``insert_logging_row`` writes the first day of the month with
@@ -214,33 +228,13 @@ def _year_from_a_value(value: object) -> int | None:  # noqa: PLR0911
     empty cell, an unrecognised string) returns ``None`` and is treated
     as "year unknown" by the matching helpers — those rows still match
     on (month, cat, grp) only, preserving backwards compatibility.
-
-    The PLR0911 suppression is intentional: the function is a flat
-    type-dispatch table — one ``return`` per observable input class
-    (``None``/empty, bool, valid date serial, NaN/inf serial, ISO
-    string, malformed string, unknown type). Folding the returns into
-    a single chained expression would obscure the decision table
-    without removing any logic.
     """
-    if value is None or value == "":
-        return None
-    if isinstance(value, bool):
-        # ``bool`` is a subclass of ``int`` — guard explicitly so a
-        # stray TRUE/FALSE doesn't get interpreted as a date serial.
+    if value is None or value == "" or isinstance(value, bool):
         return None
     if isinstance(value, int | float):
-        # ``int(value)`` can raise ``ValueError`` on NaN, ``OverflowError``
-        # on +/-inf, and ``TypeError`` on rare numeric subclasses with
-        # broken ``__int__``. None of those are valid date serials.
-        try:
-            return (_SHEETS_EPOCH + timedelta(days=int(value))).year
-        except (OverflowError, ValueError, TypeError):
-            return None
+        return _year_from_serial(value)
     if isinstance(value, str):
-        try:
-            return date.fromisoformat(value[:10]).year
-        except ValueError:
-            return None
+        return _year_from_iso_string(value)
     return None
 
 
@@ -339,7 +333,7 @@ def _row_year_matches(
     return row_year is None or row_year == target_year
 
 
-def find_category_row(  # noqa: PLR0913
+def find_category_row(
     all_values: list[list[str]],
     target_month: int,
     category: str,
@@ -424,7 +418,7 @@ def find_month_range(
     return (first, last)
 
 
-def _find_insertion_row(  # noqa: PLR0913
+def _find_insertion_row(
     all_values: list[list[str]],
     target_month: int,
     category: str,
@@ -484,7 +478,7 @@ def _find_insertion_row(  # noqa: PLR0913
     return HEADER_ROWS + 1
 
 
-def insert_logging_row(  # noqa: PLR0913
+def insert_logging_row(
     ws: gspread.Worksheet,
     insert_at: int,
     expense_date: date,
@@ -544,7 +538,7 @@ def insert_logging_row(  # noqa: PLR0913
     )
 
 
-def ensure_category_row(  # noqa: PLR0913
+def ensure_category_row(
     ws: gspread.Worksheet,
     all_values: list[list[str]],
     target_month: int,
@@ -677,7 +671,7 @@ def _first_cell(batch_get_result: list[list[str]]) -> str:
     return str(first_row[0]) if first_row[0] is not None else ""
 
 
-def append_expense_atomic(  # noqa: PLR0913
+def append_expense_atomic(
     ws: gspread.Worksheet,
     row: int,
     *,

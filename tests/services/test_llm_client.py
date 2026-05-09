@@ -14,6 +14,7 @@ from dinary.services.llm_client import (
     AllProvidersExhausted,
     OpenAICompatibleClient,
     ProviderPool,
+    ReceiptContext,
     _build_user_message,
     _parse_response,
 )
@@ -235,7 +236,9 @@ class TestProviderPool:
         pool = ProviderPool()
         with pytest.raises(AllProvidersExhausted):
             asyncio.run(
-                pool.classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES, receipt_id=1)
+                pool.classify_receipt(
+                    pool_conn, ["hleb"], "Lidl", _CATEGORIES, ctx=ReceiptContext(receipt_id=1)
+                )
             )
 
     def test_success_on_first_provider(self, pool_conn):

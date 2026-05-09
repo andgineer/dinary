@@ -26,6 +26,7 @@ from .dev import (
     ver_task_factory,
     version,
 )
+from .healthcheck import healthcheck
 from .imports import (
     import_budget,
     import_budget_all,
@@ -40,7 +41,7 @@ from .imports import (
 )
 from .receipt import classify_receipt, reclassify_receipts
 from .reports import report_expenses, report_income, sql_query
-from .server import healthcheck, logs, restart_server, ssh, ssh_replica, status
+from .server import logs, restart_server, ssh, ssh_replica, status
 from .setup import setup_server
 
 __all__ = [

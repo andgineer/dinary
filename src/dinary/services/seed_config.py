@@ -296,12 +296,11 @@ def _upsert_category(
     return cid
 
 
-def _upsert_event(  # noqa: PLR0913
+def _upsert_event(
     con: sqlite3.Connection,
-    *,
     name: str,
-    date_from: date,
-    date_to: date,
+    date_range: tuple[date, date],
+    *,
     auto_attach_enabled: bool,
     auto_tags: tuple[str, ...] | list[str] = (),
 ) -> int:
@@ -315,6 +314,7 @@ def _upsert_event(  # noqa: PLR0913
     that — seed explicitly orders tag upserts before event upserts so
     the invariant holds.
     """
+    date_from, date_to = date_range
     auto_tags_json = json.dumps(list(auto_tags), ensure_ascii=False)
     row = con.execute("SELECT id FROM events WHERE name = ?", [name]).fetchone()
     if row is not None:
@@ -355,7 +355,7 @@ def _upsert_tag(con: sqlite3.Connection, *, name: str) -> int:
 # ---------------------------------------------------------------------------
 
 
-def seed_classification_catalog(  # noqa: PLR0915
+def seed_classification_catalog(
     con: sqlite3.Connection,
     *,
     year: int | None = None,
@@ -431,9 +431,8 @@ def seed_classification_catalog(  # noqa: PLR0915
         date_to_value = VACATION_EVENT_2026_END if y == VACATION_EVENT_YEAR_TO else date(y, 12, 31)
         event_id_by_name[name] = _upsert_event(
             con,
-            name=name,
-            date_from=date(y, 1, 1),
-            date_to=date_to_value,
+            name,
+            (date(y, 1, 1), date_to_value),
             auto_attach_enabled=True,
             auto_tags=vacation_auto_tags,
         )
@@ -441,24 +440,21 @@ def seed_classification_catalog(  # noqa: PLR0915
         name = f"{BUSINESS_TRIP_EVENT_PREFIX}{y}"
         event_id_by_name[name] = _upsert_event(
             con,
-            name=name,
-            date_from=date(y, 1, 1),
-            date_to=date(y, 12, 31),
+            name,
+            (date(y, 1, 1), date(y, 12, 31)),
             auto_attach_enabled=True,
         )
     event_id_by_name[RELOCATION_EVENT_NAME] = _upsert_event(
         con,
-        name=RELOCATION_EVENT_NAME,
-        date_from=RELOCATION_EVENT_FROM,
-        date_to=RELOCATION_EVENT_TO,
+        RELOCATION_EVENT_NAME,
+        (RELOCATION_EVENT_FROM, RELOCATION_EVENT_TO),
         auto_attach_enabled=False,
     )
     for ev in EXPLICIT_EVENTS:
         event_id_by_name[ev.name] = _upsert_event(
             con,
-            name=ev.name,
-            date_from=ev.date_from,
-            date_to=ev.date_to,
+            ev.name,
+            (ev.date_from, ev.date_to),
             auto_attach_enabled=ev.auto_attach_enabled,
             auto_tags=ev.auto_tags,
         )

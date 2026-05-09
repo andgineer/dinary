@@ -8,7 +8,7 @@ fix path. Aggregation, rendering and CLI dispatch live in sibling
 
 import allure
 
-from dinary.imports.expense_import import resolve_row_to_3d
+from dinary.imports.expense_import import ResolutionContext, resolve_row_to_3d
 from dinary.services import ledger_repo
 
 from _report_2d_3d_helpers import (  # noqa: F401  (autouse + helper)
@@ -32,9 +32,12 @@ class TestResolveRowTo3d:
                 comment="lunch",
                 amount_eur=45.0,
                 year=2024,
-                travel_event_id=1,
-                business_trip_event_id=None,
-                relocation_event_id=2,
+                ctx=ResolutionContext(
+                    travel_event_id=1,
+                    business_trip_event_id=None,
+                    relocation_event_id=2,
+                    russia_trip_event_id=None,
+                ),
             )
             assert result is not None
             assert result.category_name == "еда"
@@ -55,9 +58,12 @@ class TestResolveRowTo3d:
                 comment="resort",
                 amount_eur=30.0,
                 year=2024,
-                travel_event_id=1,
-                business_trip_event_id=None,
-                relocation_event_id=2,
+                ctx=ResolutionContext(
+                    travel_event_id=1,
+                    business_trip_event_id=None,
+                    relocation_event_id=2,
+                    russia_trip_event_id=None,
+                ),
             )
             assert result is not None
             assert result.event_id == 1
@@ -77,9 +83,12 @@ class TestResolveRowTo3d:
                 comment="water bill",
                 amount_eur=50.0,
                 year=2024,
-                travel_event_id=1,
-                business_trip_event_id=None,
-                relocation_event_id=2,
+                ctx=ResolutionContext(
+                    travel_event_id=1,
+                    business_trip_event_id=None,
+                    relocation_event_id=2,
+                    russia_trip_event_id=None,
+                ),
             )
             assert result is not None
             assert result.category_name == "коммунальные"
@@ -99,9 +108,12 @@ class TestResolveRowTo3d:
                 comment="monthly rent",
                 amount_eur=500.0,
                 year=2024,
-                travel_event_id=1,
-                business_trip_event_id=None,
-                relocation_event_id=2,
+                ctx=ResolutionContext(
+                    travel_event_id=1,
+                    business_trip_event_id=None,
+                    relocation_event_id=2,
+                    russia_trip_event_id=None,
+                ),
             )
             assert result is not None
             assert result.category_name == "аренда"
@@ -120,9 +132,12 @@ class TestResolveRowTo3d:
                 comment="phone case",
                 amount_eur=30.0,
                 year=2024,
-                travel_event_id=1,
-                business_trip_event_id=None,
-                relocation_event_id=None,
+                ctx=ResolutionContext(
+                    travel_event_id=1,
+                    business_trip_event_id=None,
+                    relocation_event_id=None,
+                    russia_trip_event_id=None,
+                ),
                 beneficiary_raw="ребенок",
             )
             assert result is not None
@@ -141,9 +156,12 @@ class TestResolveRowTo3d:
                 comment="",
                 amount_eur=100.0,
                 year=2024,
-                travel_event_id=1,
-                business_trip_event_id=None,
-                relocation_event_id=None,
+                ctx=ResolutionContext(
+                    travel_event_id=1,
+                    business_trip_event_id=None,
+                    relocation_event_id=None,
+                    russia_trip_event_id=None,
+                ),
             )
             assert result is None
         finally:
@@ -164,9 +182,12 @@ class TestPostImportFixViaResolve:
                 comment="эпоксидка гриль зарядник батарейки ножи аккумулятор",
                 amount_eur=100.0,
                 year=2024,
-                travel_event_id=1,
-                business_trip_event_id=None,
-                relocation_event_id=None,
+                ctx=ResolutionContext(
+                    travel_event_id=1,
+                    business_trip_event_id=None,
+                    relocation_event_id=None,
+                    russia_trip_event_id=None,
+                ),
             )
             assert result is not None
             assert result.category_name == "бытовая техника"
@@ -186,9 +207,12 @@ class TestPostImportFixViaResolve:
                 comment="regular grocery shopping",
                 amount_eur=45.0,
                 year=2024,
-                travel_event_id=1,
-                business_trip_event_id=None,
-                relocation_event_id=None,
+                ctx=ResolutionContext(
+                    travel_event_id=1,
+                    business_trip_event_id=None,
+                    relocation_event_id=None,
+                    russia_trip_event_id=None,
+                ),
             )
             assert result is not None
             assert result.category_name == "еда"

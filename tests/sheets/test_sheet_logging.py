@@ -144,17 +144,19 @@ class TestDrainRateLimit:
             for i in range(n):
                 ledger_repo.insert_expense(
                     con,
-                    client_expense_id=f"extra-{i:03d}",
-                    expense_datetime=datetime(2026, 6, 1 + i % 25, 10),
-                    amount=10.0,
-                    amount_original=10.0,
-                    currency_original="EUR",
-                    category_id=1,
-                    event_id=None,
-                    comment="",
-                    sheet_category=None,
-                    sheet_group=None,
-                    tag_ids=[],
+                    ledger_repo.ExpensePayload(
+                        client_expense_id=f"extra-{i:03d}",
+                        expense_datetime=datetime(2026, 6, 1 + i % 25, 10),
+                        amount=10.0,
+                        amount_original=10.0,
+                        currency_original="EUR",
+                        category_id=1,
+                        event_id=None,
+                        comment="",
+                        sheet_category=None,
+                        sheet_group=None,
+                        tag_ids=[],
+                    ),
                     enqueue_logging=True,
                 )
         finally:

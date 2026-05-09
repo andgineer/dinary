@@ -154,13 +154,11 @@ def _wrap_catalog_error(exc: catalog_writer.CatalogWriteError) -> HTTPException:
     return HTTPException(status_code=exc.http_status, detail=str(exc))
 
 
-def _snapshot_response(  # noqa: PLR0913
+def _snapshot_response(
     con,
     response: Response,
-    new_id: int | None = None,
-    status: AddStatusLiteral | None = None,
-    delete_status: DeleteStatusLiteral | None = None,
-    usage_count: int | None = None,
+    add_result: "catalog_writer.AddResult | None" = None,
+    delete_result: "catalog_writer.DeleteResult | None" = None,
 ) -> AdminCatalogResponse:
     """Build the full catalog snapshot response every admin write returns.
 
@@ -170,10 +168,10 @@ def _snapshot_response(  # noqa: PLR0913
     snapshot = build_catalog_snapshot(con)
     response.headers["ETag"] = _etag_for(snapshot["catalog_version"])
     return AdminCatalogResponse(
-        new_id=new_id,
-        status=status,
-        delete_status=delete_status,
-        usage_count=usage_count,
+        new_id=add_result.id if add_result else None,
+        status=add_result.status if add_result else None,
+        delete_status=delete_result.status if delete_result else None,
+        usage_count=delete_result.usage_count if delete_result else None,
         **snapshot,
     )
 
@@ -198,7 +196,7 @@ def add_group(
             )
         except catalog_writer.CatalogWriteError as exc:
             raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response, new_id=result.id, status=result.status)
+        return _snapshot_response(con, response, add_result=result)
     finally:
         con.close()
 
@@ -237,12 +235,7 @@ def delete_group(
             result = catalog_writer.delete_group(con, group_id)
         except catalog_writer.CatalogWriteError as exc:
             raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(
-            con,
-            response,
-            delete_status=result.status,
-            usage_count=result.usage_count,
-        )
+        return _snapshot_response(con, response, delete_result=result)
     finally:
         con.close()
 
@@ -269,7 +262,7 @@ def add_category(
             )
         except catalog_writer.CatalogWriteError as exc:
             raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response, new_id=result.id, status=result.status)
+        return _snapshot_response(con, response, add_result=result)
     finally:
         con.close()
 
@@ -313,12 +306,7 @@ def delete_category(
             result = catalog_writer.delete_category(con, category_id)
         except catalog_writer.CatalogWriteError as exc:
             raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(
-            con,
-            response,
-            delete_status=result.status,
-            usage_count=result.usage_count,
-        )
+        return _snapshot_response(con, response, delete_result=result)
     finally:
         con.close()
 
@@ -346,7 +334,7 @@ def add_event(
             )
         except catalog_writer.CatalogWriteError as exc:
             raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response, new_id=result.id, status=result.status)
+        return _snapshot_response(con, response, add_result=result)
     finally:
         con.close()
 
@@ -388,12 +376,7 @@ def delete_event(
             result = catalog_writer.delete_event(con, event_id)
         except catalog_writer.CatalogWriteError as exc:
             raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(
-            con,
-            response,
-            delete_status=result.status,
-            usage_count=result.usage_count,
-        )
+        return _snapshot_response(con, response, delete_result=result)
     finally:
         con.close()
 
@@ -414,7 +397,7 @@ def add_tag(
             result = catalog_writer.add_tag(con, name=body.name)
         except catalog_writer.CatalogWriteError as exc:
             raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response, new_id=result.id, status=result.status)
+        return _snapshot_response(con, response, add_result=result)
     finally:
         con.close()
 
@@ -452,12 +435,7 @@ def delete_tag(
             result = catalog_writer.delete_tag(con, tag_id)
         except catalog_writer.CatalogWriteError as exc:
             raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(
-            con,
-            response,
-            delete_status=result.status,
-            usage_count=result.usage_count,
-        )
+        return _snapshot_response(con, response, delete_result=result)
     finally:
         con.close()
 

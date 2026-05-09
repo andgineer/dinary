@@ -302,7 +302,7 @@ def _title_suffix(year: int | None, month: tuple[int, int] | None) -> str:
     return "all time"
 
 
-def render(  # noqa: PLR0913 — all args are cosmetic format knobs dispatched inline
+def render(
     rows: list[ExpenseSummaryRow],
     *,
     year: int | None = None,

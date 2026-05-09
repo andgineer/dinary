@@ -57,6 +57,9 @@ search_path = ["src", "."]
 [tool.ruff]
 line-length = 99
 
+[tool.ruff.lint.pylint]
+max-args = 8
+
 [tool.hatch.version]
 path = "src/dinary/__about__.py"
 

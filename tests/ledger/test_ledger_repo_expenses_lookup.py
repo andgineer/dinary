@@ -23,14 +23,16 @@ class TestLookupExistingExpense:
         try:
             ledger_repo.insert_expense(
                 con,
-                client_expense_id="L1",
-                expense_datetime=datetime(2026, 4, 15, 12),
-                amount=42.0,
-                amount_original=42.0,
-                currency_original="EUR",
-                category_id=1,
-                comment="lunch",
-                tag_ids=[],
+                ledger_repo.ExpensePayload(
+                    client_expense_id="L1",
+                    expense_datetime=datetime(2026, 4, 15, 12),
+                    amount=42.0,
+                    amount_original=42.0,
+                    currency_original="EUR",
+                    category_id=1,
+                    comment="lunch",
+                    tag_ids=[],
+                ),
                 enqueue_logging=False,
             )
         finally:
@@ -54,14 +56,16 @@ class TestGetExpenseById:
         try:
             ledger_repo.insert_expense(
                 con,
-                client_expense_id="E1",
-                expense_datetime=datetime(2026, 3, 3, 12),
-                amount=1.5,
-                amount_original=1.5,
-                currency_original="EUR",
-                category_id=1,
-                comment="c",
-                tag_ids=[],
+                ledger_repo.ExpensePayload(
+                    client_expense_id="E1",
+                    expense_datetime=datetime(2026, 3, 3, 12),
+                    amount=1.5,
+                    amount_original=1.5,
+                    currency_original="EUR",
+                    category_id=1,
+                    comment="c",
+                    tag_ids=[],
+                ),
                 enqueue_logging=False,
             )
             pk = con.execute(

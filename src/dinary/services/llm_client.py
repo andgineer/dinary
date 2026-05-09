@@ -2,7 +2,7 @@ import json
 import logging
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -24,6 +24,14 @@ class ClassificationResult:
     item_name_normalized: str
     category_id: int | None
     confidence_level: int
+
+
+@dataclass(frozen=True, slots=True)
+class ReceiptContext:
+    """Optional receipt metadata for LLM call audit logging."""
+
+    receipt_id: int | None = None
+    invoice_number: str = field(default="")
 
 
 class LLMClient(Protocol):
@@ -250,17 +258,52 @@ async def _call_provider_chain_name(provider: _ProviderRow, store_name_raw: str)
     return await client.get_chain_name(store_name_raw)
 
 
+def _record_provider_switch(
+    conn: sqlite3.Connection,
+    provider: "_ProviderRow",
+    providers: list,
+    idx: int,
+    reason: str,
+) -> str:
+    """Record a provider switch in app_metadata. Returns next_label."""
+    next_idx = (idx + 1) % len(providers)
+    next_label = providers[next_idx].label if len(providers) > 1 else "none"
+    now_str = datetime.now(UTC).isoformat()
+    _set_metadata(
+        conn,
+        "llm_provider_switch_last",
+        f"{now_str} | from: {provider.label} | reason: {reason} | to: {next_label}",
+    )
+    _increment_metadata_int(conn, "llm_provider_switch_count")
+    return next_label
+
+
+def _on_provider_success(
+    conn: sqlite3.Connection,
+    providers: list,
+    idx: int,
+    used_failover: bool,
+) -> None:
+    """Update metadata after a successful provider call."""
+    next_idx = (idx + 1) % len(providers)
+    _set_metadata(conn, "llm_last_provider_idx", str(next_idx))
+    if not used_failover:
+        conn.execute(
+            "DELETE FROM app_metadata"
+            " WHERE key IN ('llm_all_exhausted_last', 'llm_provider_switch_last')",
+        )
+
+
 class ProviderPool:
     """Round-robin LLM provider pool with failover, rate-limit tracking, and DB audit."""
 
-    async def classify_receipt(  # noqa: PLR0913, PLR0915
+    async def classify_receipt(
         self,
         conn: sqlite3.Connection,
         items: list[str],
         store_name_raw: str,
         categories: dict[int, str],
-        receipt_id: int | None = None,
-        invoice_number: str = "",
+        ctx: ReceiptContext | None = None,
     ) -> tuple[list[ClassificationResult], bool]:
         """Return (results, used_failover).
 
@@ -268,6 +311,8 @@ class ProviderPool:
         a different provider answered — caller should apply a −1 confidence penalty.
         Raises AllProvidersExhausted when every provider fails.
         """
+        if ctx is None:
+            ctx = ReceiptContext()
         providers = _load_providers(conn)
         if not providers:
             raise AllProvidersExhausted("No enabled LLM providers configured")
@@ -289,35 +334,23 @@ class ProviderPool:
             try:
                 results = await _call_provider_classify(provider, items, store_name_raw, categories)
                 latency_ms = int((time.monotonic() - t0) * 1000)
-                _log_call(conn, provider.id, receipt_id, "ok", latency_ms)
-                next_idx = (idx + 1) % len(providers)
-                _set_metadata(conn, "llm_last_provider_idx", str(next_idx))
-                # Only clear the switch/exhausted markers when the *primary* provider
-                # succeeds (no failover used).  Clearing on a failover success would
-                # hide the fact that the primary is still rate-limited.
-                if not used_failover:
-                    conn.execute(
-                        "DELETE FROM app_metadata"
-                        " WHERE key IN ('llm_all_exhausted_last', 'llm_provider_switch_last')",
-                    )
+                _log_call(conn, provider.id, ctx.receipt_id, "ok", latency_ms)
+                _on_provider_success(conn, providers, idx, used_failover)
                 return results, used_failover
 
             except httpx.HTTPStatusError as exc:
                 latency_ms = int((time.monotonic() - t0) * 1000)
                 status_code = exc.response.status_code
                 if status_code in (429, 503):
-                    retry_after = _retry_after(exc.response)
-                    _mark_rate_limited(conn, provider.id, retry_after)
-                    _log_call(conn, provider.id, receipt_id, str(status_code), latency_ms)
-                    next_idx = (idx + 1) % len(providers)
-                    next_label = providers[next_idx].label if len(providers) > 1 else "none"
-                    now_str = datetime.now(UTC).isoformat()
-                    switch_msg = (
-                        f"{now_str} | from: {provider.label}"
-                        f" | reason: {status_code} | to: {next_label}"
+                    _mark_rate_limited(conn, provider.id, _retry_after(exc.response))
+                    _log_call(conn, provider.id, ctx.receipt_id, str(status_code), latency_ms)
+                    next_label = _record_provider_switch(
+                        conn,
+                        provider,
+                        providers,
+                        idx,
+                        str(status_code),
                     )
-                    _set_metadata(conn, "llm_provider_switch_last", switch_msg)
-                    _increment_metadata_int(conn, "llm_provider_switch_count")
                     logger.warning(
                         "Provider %s returned %s, switching to %s",
                         provider.label,
@@ -326,22 +359,19 @@ class ProviderPool:
                     )
                     used_failover = True
                 else:
-                    _log_call(conn, provider.id, receipt_id, "error", latency_ms)
+                    _log_call(conn, provider.id, ctx.receipt_id, "error", latency_ms)
                     raise
 
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
                 latency_ms = int((time.monotonic() - t0) * 1000)
-                _log_call(conn, provider.id, receipt_id, "error", latency_ms)
-                next_idx = (idx + 1) % len(providers)
-                next_label = providers[next_idx].label if len(providers) > 1 else "none"
-                now_str = datetime.now(UTC).isoformat()
-                _set_metadata(
+                _log_call(conn, provider.id, ctx.receipt_id, "error", latency_ms)
+                next_label = _record_provider_switch(
                     conn,
-                    "llm_provider_switch_last",
-                    f"{now_str} | from: {provider.label}"
-                    f" | reason: {type(exc).__name__} | to: {next_label}",
+                    provider,
+                    providers,
+                    idx,
+                    type(exc).__name__,
                 )
-                _increment_metadata_int(conn, "llm_provider_switch_count")
                 logger.warning(
                     "Provider %s network error (%s), switching to %s",
                     provider.label,
@@ -352,11 +382,14 @@ class ProviderPool:
 
             except Exception:
                 latency_ms = int((time.monotonic() - t0) * 1000)
-                _log_call(conn, provider.id, receipt_id, "error", latency_ms)
+                _log_call(conn, provider.id, ctx.receipt_id, "error", latency_ms)
                 raise
 
-        now_str = datetime.now(UTC).isoformat()
-        exhausted_val = f"{now_str} | invoice: {invoice_number}" if invoice_number else now_str
+        exhausted_val = (
+            f"{datetime.now(UTC).isoformat()} | invoice: {ctx.invoice_number}"
+            if ctx.invoice_number
+            else datetime.now(UTC).isoformat()
+        )
         _set_metadata(conn, "llm_all_exhausted_last", exhausted_val)
         raise AllProvidersExhausted("All LLM providers exhausted")
 

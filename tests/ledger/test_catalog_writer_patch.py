@@ -198,17 +198,19 @@ class TestTagUsage:
             con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 't1', TRUE)")
             ledger_repo.insert_expense(
                 con,
-                client_expense_id="tag-pin",
-                expense_datetime=_DT,
-                amount=1.0,
-                amount_original=1.0,
-                currency_original="RSD",
-                category_id=1,
-                event_id=None,
-                comment="",
-                sheet_category=None,
-                sheet_group=None,
-                tag_ids=[1],
+                ledger_repo.ExpensePayload(
+                    client_expense_id="tag-pin",
+                    expense_datetime=_DT,
+                    amount=1.0,
+                    amount_original=1.0,
+                    currency_original="RSD",
+                    category_id=1,
+                    event_id=None,
+                    comment="",
+                    sheet_category=None,
+                    sheet_group=None,
+                    tag_ids=[1],
+                ),
                 enqueue_logging=False,
             )
             catalog_writer.set_tag_active(con, 1, active=False)

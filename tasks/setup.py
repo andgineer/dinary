@@ -23,26 +23,7 @@ from .ssh_utils import (
 )
 
 
-@task(name="setup-server")
-def setup_server(c, no_swap=False, tailscale=False):  # noqa: PLR0915
-    """One-time VM1 setup: install deps, clone repo, create services, upload creds.
-
-    To seed categories to the DB call `inv bootstrap-catalog --yes`.
-
-    Flags:
-        --no-swap          Skip swap provisioning (already allocated on re-run).
-        --tailscale        After joining the tailnet (requires
-            ``DINARY_TUNNEL=tailscale``), rebind ``sshd`` to the
-            Tailscale IP + loopback only, closing public TCP/22.
-            Off by default so a first-time operator is never locked out.
-            Break-glass if locked out: Oracle Cloud → VM Instance page →
-            Console connection → Launch Cloud Shell, then delete
-            ``/etc/ssh/sshd_config.d/10-tailscale-only.conf`` and
-            ``systemctl reload ssh``.
-    """
-    setup_host = host()
-    setup_tunnel = tunnel()
-
+def _setup_system_packages(c, no_swap: bool) -> None:
     print("=== Hardening: disable rpcbind, verify iptables ===")
     ssh_run(
         c,
@@ -55,21 +36,11 @@ def setup_server(c, no_swap=False, tailscale=False):  # noqa: PLR0915
         "sudo netfilter-persistent save 2>/dev/null; "
         "true",
     )
-
     print("=== Hardening: sshd (X11 off, PermitRootLogin no, wipe root/opc keys) ===")
     ssh_run(c, build_harden_sshd_script())
-
     print("=== Installing system packages ===")
-    ssh_sudo(
-        c,
-        "apt update && sudo apt install -y python3 python3-pip git curl sqlite3 rclone",
-    )
-
+    ssh_sudo(c, "apt update && sudo apt install -y python3 python3-pip git curl sqlite3 rclone")
     print("=== Installing Node.js 22 (NodeSource) for the Vue PWA build ===")
-    # The deploy pipeline runs ``inv build-static`` on the server, which
-    # invokes ``npm ci`` and ``npm run build`` against ``webapp/``. The
-    # remote VM therefore needs a recent Node + npm. NodeSource's apt
-    # script is the canonical way to get Node 22 on Ubuntu/Debian.
     install_node = (
         'NODE_MAJOR="$(node -v 2>/dev/null | sed -e "s/^v//" -e "s/\\..*//")"; '
         'if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 22 ]; then '
@@ -78,30 +49,25 @@ def setup_server(c, no_swap=False, tailscale=False):  # noqa: PLR0915
         "fi; node -v && npm -v"
     )
     ssh_run(c, install_node)
-
     print("=== Installing fail2ban ===")
     ssh_run(c, build_install_fail2ban_script())
-
     if not no_swap:
         print("=== Provisioning swap file ===")
         ssh_run(c, build_setup_swap_script(size_gb=1))
-
     print("=== Installing uv ===")
     ssh_run(c, "curl -LsSf https://astral.sh/uv/install.sh | sh")
-
     print("=== Cloning repo ===")
     ssh_run(c, f"test -d ~/dinary || git clone {REPO_URL} ~/dinary")
     ssh_run(c, "cd ~/dinary && git pull && source ~/.local/bin/env && uv sync --no-dev")
-
     print("=== Ensuring data/ directory (0700) ===")
     ssh_run(c, "mkdir -p ~/dinary/data && " + build_data_dir_permissions_script())
 
+
+def _setup_credentials(c, setup_host: str) -> None:
     print("=== Syncing .deploy/.env to server ===")
     sync_remote_env(c)
-
     print("=== Syncing .deploy/import_sources.json to server (if present) ===")
     sync_remote_import_sources(c)
-
     print("=== Uploading credentials ===")
     ssh_run(c, "mkdir -p ~/.config/gspread && chmod 700 ~/.config/gspread")
     c.run(
@@ -110,11 +76,8 @@ def setup_server(c, no_swap=False, tailscale=False):  # noqa: PLR0915
     )
     ssh_run(c, "chmod 600 ~/.config/gspread/service_account.json")
 
-    bh = bind_host(setup_tunnel)
-    print(f"=== Creating dinary service (bind {bh}) ===")
-    service = DINARY_SERVICE.format(host=bh)
-    create_service(c, "dinary", service)
 
+def _setup_tunnel(c, setup_tunnel: str, tailscale: bool) -> None:
     if setup_tunnel == "tailscale":
         setup_tailscale(c)
         if tailscale:
@@ -134,6 +97,37 @@ def setup_server(c, no_swap=False, tailscale=False):  # noqa: PLR0915
         if tailscale:
             msg = "--tailscale requires DINARY_TUNNEL=tailscale; current value is ``none``."
             raise RuntimeError(msg)
+
+
+@task(name="setup-server")
+def setup_server(c, no_swap=False, tailscale=False):
+    """One-time VM1 setup: install deps, clone repo, create services, upload creds.
+
+    To seed categories to the DB call `inv bootstrap-catalog --yes`.
+
+    Flags:
+        --no-swap          Skip swap provisioning (already allocated on re-run).
+        --tailscale        After joining the tailnet (requires
+            ``DINARY_TUNNEL=tailscale``), rebind ``sshd`` to the
+            Tailscale IP + loopback only, closing public TCP/22.
+            Off by default so a first-time operator is never locked out.
+            Break-glass if locked out: Oracle Cloud → VM Instance page →
+            Console connection → Launch Cloud Shell, then delete
+            ``/etc/ssh/sshd_config.d/10-tailscale-only.conf`` and
+            ``systemctl reload ssh``.
+    """
+    setup_host = host()
+    setup_tunnel = tunnel()
+
+    _setup_system_packages(c, no_swap)
+    _setup_credentials(c, setup_host)
+
+    bh = bind_host(setup_tunnel)
+    print(f"=== Creating dinary service (bind {bh}) ===")
+    service = DINARY_SERVICE.format(host=bh)
+    create_service(c, "dinary", service)
+
+    _setup_tunnel(c, setup_tunnel, tailscale)
 
     print("=== Done! Checking health... ===")
     ssh_run(c, "sleep 15 && curl -s http://localhost:8000/api/health")

@@ -1,8 +1,8 @@
-"""Tests for receipt-pipeline healthcheck functions in tasks/server.py."""
+"""Tests for receipt-pipeline healthcheck functions in tasks/healthcheck.py."""
 
 import allure
 
-from tasks.server import _healthcheck_receipt_fetch, _healthcheck_receipt_llm
+from tasks.healthcheck import _healthcheck_receipt_fetch, _healthcheck_receipt_llm
 
 
 @allure.epic("Tasks")

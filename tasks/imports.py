@@ -312,7 +312,7 @@ def _render_2d3d_locally(raw: bytes, *, as_csv: bool) -> None:
 
 
 @task(name="import-report-2d-3d")
-def import_report_2d_3d(  # noqa: PLR0913
+def import_report_2d_3d(
     c,
     detail=False,
     csv=False,  # noqa: A002

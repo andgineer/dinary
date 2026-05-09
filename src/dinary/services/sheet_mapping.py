@@ -122,7 +122,58 @@ def _normalize_cell(raw: str) -> str:
     return stripped
 
 
-def parse_rows(  # noqa: C901, PLR0912
+def _resolve_category(
+    cell: str,
+    cat_id_by_name: dict[str, int],
+    sheet_row: int,
+) -> int | None:
+    norm = _normalize_cell(cell)
+    if norm == WILDCARD:
+        return None
+    if norm not in cat_id_by_name:
+        hint = _case_insensitive_match_hint(norm, cat_id_by_name.keys())
+        raise MapTabError(
+            f"map tab row {sheet_row}: category {norm!r} is not a known "
+            f"categories.name (case-sensitive){hint}",
+        )
+    return cat_id_by_name[norm]
+
+
+def _resolve_event(
+    cell: str,
+    event_id_by_name: dict[str, int],
+    sheet_row: int,
+) -> int | None:
+    norm = _normalize_cell(cell)
+    if norm == WILDCARD:
+        return None
+    if norm not in event_id_by_name:
+        hint = _case_insensitive_match_hint(norm, event_id_by_name.keys())
+        raise MapTabError(
+            f"map tab row {sheet_row}: event {norm!r} is not a known "
+            f"events.name (case-sensitive){hint}",
+        )
+    return event_id_by_name[norm]
+
+
+def _resolve_tags(
+    cell: str,
+    tag_id_by_name: dict[str, int],
+    sheet_row: int,
+) -> list[int]:
+    tag_ids: list[int] = []
+    for tag_name in _parse_tags_cell(cell):
+        if tag_name not in tag_id_by_name:
+            hint = _case_insensitive_match_hint(tag_name, tag_id_by_name.keys())
+            raise MapTabError(
+                f"map tab row {sheet_row}: tag {tag_name!r} is not a known "
+                f"tags.name (case-sensitive){hint}",
+            )
+        tag_ids.append(tag_id_by_name[tag_name])
+    return tag_ids
+
+
+def parse_rows(
     raw_rows: list[list[str]],
     *,
     cat_id_by_name: dict[str, int],
@@ -137,83 +188,17 @@ def parse_rows(  # noqa: C901, PLR0912
     unknown names.
     """
     parsed: list[MapRow] = []
-    # ``raw_rows`` is ``ws.get_all_values()[1:]`` (header stripped by
-    # the caller), so ``raw_rows[0]`` is sheet row 2. ``sheet_row``
-    # numbers errors the way the operator sees them in Google Sheets.
     for sheet_row, row in enumerate(raw_rows, start=2):
         cells = list(row) + [""] * max(0, 5 - len(row))
-        category_cell = cells[0].strip()
-        event_cell = cells[1].strip()
-        tags_cell = cells[2]
-        sheet_category_raw = cells[3]
-        sheet_group_raw = cells[4]
-
-        if not any(
-            [
-                category_cell,
-                event_cell,
-                tags_cell.strip(),
-                sheet_category_raw.strip(),
-                sheet_group_raw.strip(),
-            ],
-        ):
+        if not any(c.strip() for c in cells[:5]):
             continue
 
-        category_norm = _normalize_cell(category_cell)
-        event_norm = _normalize_cell(event_cell)
+        category_id = _resolve_category(cells[0], cat_id_by_name, sheet_row)
+        event_id = _resolve_event(cells[1], event_id_by_name, sheet_row)
+        tag_ids = _resolve_tags(cells[2], tag_id_by_name, sheet_row)
+        sheet_category = _normalize_cell(cells[3])
+        sheet_group = _normalize_cell(cells[4])
 
-        category_id: int | None = None
-        if category_norm != WILDCARD:
-            if category_norm not in cat_id_by_name:
-                hint = _case_insensitive_match_hint(
-                    category_norm,
-                    cat_id_by_name.keys(),
-                )
-                msg = (
-                    f"map tab row {sheet_row}: category {category_norm!r} is not a known "
-                    f"categories.name (case-sensitive){hint}"
-                )
-                raise MapTabError(msg)
-            category_id = cat_id_by_name[category_norm]
-
-        event_id: int | None = None
-        if event_norm != WILDCARD:
-            if event_norm not in event_id_by_name:
-                hint = _case_insensitive_match_hint(
-                    event_norm,
-                    event_id_by_name.keys(),
-                )
-                msg = (
-                    f"map tab row {sheet_row}: event {event_norm!r} is not a known "
-                    f"events.name (case-sensitive){hint}"
-                )
-                raise MapTabError(msg)
-            event_id = event_id_by_name[event_norm]
-
-        tag_names = _parse_tags_cell(tags_cell)
-        tag_ids: list[int] = []
-        for tag_name in tag_names:
-            if tag_name not in tag_id_by_name:
-                hint = _case_insensitive_match_hint(tag_name, tag_id_by_name.keys())
-                msg = (
-                    f"map tab row {sheet_row}: tag {tag_name!r} is not a known "
-                    f"tags.name (case-sensitive){hint}"
-                )
-                raise MapTabError(msg)
-            tag_ids.append(tag_id_by_name[tag_name])
-
-        # D / E follow the same wildcard-vs-literal convention as A / B:
-        # either ``*`` or an empty cell means "don't decide here, defer
-        # to a later row". An all-literal-explicit-clear case ("keep
-        # the column blank") is not expressible in the sheet; the
-        # default fallback (empty string for ``sheet_group``) is what
-        # operators get when no row assigns a value.
-        sheet_category = _normalize_cell(sheet_category_raw)
-        sheet_group = _normalize_cell(sheet_group_raw)
-
-        # All-wildcard rows contribute nothing to either output column
-        # and just burn a ``row_order``. Skip them so reload diagnostics
-        # and the row count reflect meaningful rules only.
         if (
             category_id is None
             and event_id is None

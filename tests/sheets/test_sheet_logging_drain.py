@@ -180,17 +180,19 @@ class TestDrainPendingPoisonsNullClientExpenseId:
             )
             ledger_repo.insert_expense(
                 con,
-                client_expense_id=None,
-                expense_datetime=datetime(2026, 4, 14, 10),
-                amount=12.0,
-                amount_original=1500.0,
-                currency_original="RSD",
-                category_id=1,
-                event_id=None,
-                comment="lunch",
-                sheet_category=None,
-                sheet_group=None,
-                tag_ids=[],
+                ledger_repo.ExpensePayload(
+                    client_expense_id=None,
+                    expense_datetime=datetime(2026, 4, 14, 10),
+                    amount=12.0,
+                    amount_original=1500.0,
+                    currency_original="RSD",
+                    category_id=1,
+                    event_id=None,
+                    comment="lunch",
+                    sheet_category=None,
+                    sheet_group=None,
+                    tag_ids=[],
+                ),
                 enqueue_logging=False,
             )
             expense_pk = con.execute(

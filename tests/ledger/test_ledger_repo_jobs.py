@@ -22,14 +22,16 @@ class TestLoggingQueue:
         try:
             ledger_repo.insert_expense(
                 con,
-                client_expense_id="job1",
-                expense_datetime=datetime(2026, 1, 1, 12),
-                amount=1.0,
-                amount_original=1.0,
-                currency_original="EUR",
-                category_id=1,
-                comment="",
-                tag_ids=[],
+                ledger_repo.ExpensePayload(
+                    client_expense_id="job1",
+                    expense_datetime=datetime(2026, 1, 1, 12),
+                    amount=1.0,
+                    amount_original=1.0,
+                    currency_original="EUR",
+                    category_id=1,
+                    comment="",
+                    tag_ids=[],
+                ),
                 enqueue_logging=True,
             )
             pk_row = con.execute(

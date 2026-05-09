@@ -277,17 +277,19 @@ class TestRebuildConfigFromSheets:
             kafe_id = int(row[0])
             ledger_repo.insert_expense(
                 con,
-                client_expense_id=None,
-                expense_datetime=datetime(2024, 6, 1, 12, 0),
-                amount=100.0,
-                amount_original=100.0,
-                currency_original=settings.app_currency,
-                category_id=kafe_id,
-                event_id=None,
-                comment="legacy row",
-                sheet_category=None,
-                sheet_group=None,
-                tag_ids=[],
+                ledger_repo.ExpensePayload(
+                    client_expense_id=None,
+                    expense_datetime=datetime(2024, 6, 1, 12, 0),
+                    amount=100.0,
+                    amount_original=100.0,
+                    currency_original=settings.app_currency,
+                    category_id=kafe_id,
+                    event_id=None,
+                    comment="legacy row",
+                    sheet_category=None,
+                    sheet_group=None,
+                    tag_ids=[],
+                ),
                 enqueue_logging=False,
             )
         finally:
