@@ -1,0 +1,40 @@
+// Flush the offline receipt URL queue to the server.
+// Silently retains items on network failure so they are retried on the
+// next online event or retry timer tick.  Duplicate responses (200/409)
+// are treated as success and removed from the local queue.
+
+import { postReceipt } from "../api/receipts.js";
+import { useReceiptQueueStore } from "../stores/receiptQueue.js";
+
+let _inFlight = false;
+
+export async function flushReceiptQueue() {
+  if (_inFlight) return;
+  _inFlight = true;
+  const queue = useReceiptQueueStore();
+  queue.lastFlushError = null;
+  await queue.refresh();
+  try {
+    for (const item of [...queue.items]) {
+      try {
+        await postReceipt({ client_receipt_id: item.client_receipt_id, url: item.url });
+        await queue.remove(item.id);
+      } catch (err) {
+        // 409 conflict — receipt already registered with a different URL; discard locally.
+        if (err?.status === 409) {
+          await queue.remove(item.id);
+          continue;
+        }
+        // Transient error — keep item, stop this sweep.
+        queue.lastFlushError = err;
+        break;
+      }
+    }
+  } finally {
+    _inFlight = false;
+  }
+}
+
+export function _resetForTest() {
+  _inFlight = false;
+}

@@ -13,8 +13,18 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from dinary import __version__
-from dinary.api import admin_catalog, catalog, currencies, expenses, qr
+from dinary.api import (
+    admin_catalog,
+    admin_llm,
+    catalog,
+    currencies,
+    expenses,
+    qr,
+    receipt_review,
+    receipts,
+)
 from dinary.background.rate_prefetch_task import rate_prefetch_task
+from dinary.background.receipt_classification_task import receipt_classification_task
 from dinary.background.sheet_logging_task import sheet_logging_task, warm_sheet_mapping
 from dinary.config import settings
 from dinary.services import ledger_repo
@@ -55,15 +65,22 @@ async def _lifespan(_app: FastAPI):
     await warm_sheet_mapping()
     sheet_logging_bg = asyncio.create_task(sheet_logging_task(), name="sheet-logging-task")
     rate_prefetch_bg = asyncio.create_task(rate_prefetch_task(), name="rate-prefetch-task")
+    receipt_classification_bg = asyncio.create_task(
+        receipt_classification_task(),
+        name="receipt-classification-task",
+    )
     try:
         yield
     finally:
         sheet_logging_bg.cancel()
         rate_prefetch_bg.cancel()
+        receipt_classification_bg.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await sheet_logging_bg
         with contextlib.suppress(asyncio.CancelledError):
             await rate_prefetch_bg
+        with contextlib.suppress(asyncio.CancelledError):
+            await receipt_classification_bg
 
 
 def create_app() -> FastAPI:
@@ -80,6 +97,9 @@ def create_app() -> FastAPI:
     app.include_router(catalog.router)
     app.include_router(admin_catalog.router)
     app.include_router(currencies.router)
+    app.include_router(receipts.router)
+    app.include_router(receipt_review.router)
+    app.include_router(admin_llm.router)
 
     @app.get("/api/health")
     def health() -> dict:

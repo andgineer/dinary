@@ -1,6 +1,8 @@
 # Receipt Pipeline — Implementation Plan
 
 > Design: see "Classification Layer" and "Receipt Scanning" sections in [`architecture.md`](./architecture.md).
+> Receipt fetching API research: [`receipt-fetching.md`](./receipt-fetching.md).
+> Free LLM provider evaluation: [`llm-providers.md`](./llm-providers.md).
 
 ## Scope
 
@@ -78,7 +80,7 @@ Tested the most challenging receipt (19 items: dairy × 10, KG produce, KG deli 
 
 ## 1. DB Migration
 
-- [ ] Create `src/dinary/migrations/0002_receipt_pipeline.sql`
+- [ ] Create `src/dinary/migrations/0004_receipt_pipeline.sql`
   - New tables: `stores`, `receipts`, `receipt_items`, `classification_rules`, `receipt_classification_jobs`, `llm_providers`, `llm_call_log`
   - Alter `expenses`: add `receipt_id`, `store_id`, `confidence_level`
 - [ ] Unit tests: migration applies cleanly on a fresh DB and on an existing Phase-1 DB
@@ -257,11 +259,16 @@ Single unified feed that powers the PWA review screen:
 
 ## 11. PWA Changes
 
-- [ ] Receipt scan sends `POST /api/receipts` (not `POST /api/expenses`)
-- [ ] Offline IndexedDB queue for receipt URLs (separate queue from manual expenses)
+- [x] Receipt scan sends `POST /api/receipts` (not `POST /api/expenses`)
+- [x] Offline IndexedDB queue for receipt URLs (separate queue from manual expenses)
+
+### Next Phase (deferred)
+
 - [ ] Review screen: single infinite-scroll feed from `GET /api/receipts/review/feed`. Doubtful items first (visually highlighted), then all others. Visual separator between the two blocks. Badge on nav icon = `doubtful_rules` count; hidden when zero.
 - [ ] Correction UX: tap item → pick category → `PATCH /api/expenses/{id}/category`. No confirmation modal — batch update is silent. Screen refreshes, badge decrements if item was doubtful.
 - [ ] LLM status screen in settings: provider list with usage bars, add/edit/test provider, enable/disable
+
+> Backend APIs for review/correction (`GET /api/receipts/review/feed`, `GET /api/receipts/review/counts`, `PATCH /api/expenses/{id}/category`) are already implemented and tested. Frontend integration is the only remaining work.
 
 ---
 

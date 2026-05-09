@@ -1,0 +1,17 @@
+DROP INDEX IF EXISTS llm_call_log_provider_id;
+DROP INDEX IF EXISTS receipts_store_id;
+DROP INDEX IF EXISTS receipt_items_name_norm;
+DROP INDEX IF EXISTS receipt_items_expense_id;
+DROP INDEX IF EXISTS receipt_items_receipt_id;
+DROP TABLE IF EXISTS llm_call_log;
+DROP TABLE IF EXISTS llm_providers;
+DROP TABLE IF EXISTS receipt_classification_jobs;
+DROP INDEX IF EXISTS classification_rules_null_item;
+DROP INDEX IF EXISTS classification_rules_store_item;
+DROP TABLE IF EXISTS classification_rules;
+DROP TABLE IF EXISTS receipt_items;
+DROP TABLE IF EXISTS receipts;
+DROP TABLE IF EXISTS stores;
+ALTER TABLE expenses DROP COLUMN IF EXISTS confidence_level;
+ALTER TABLE expenses DROP COLUMN IF EXISTS store_id;
+ALTER TABLE expenses DROP COLUMN IF EXISTS receipt_id;

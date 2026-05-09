@@ -1,0 +1,74 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { setActivePinia, createPinia } from "pinia";
+import {
+  useReceiptQueueStore,
+  _resetForTest,
+} from "../src/stores/receiptQueue.js";
+
+async function resetDb() {
+  await _resetForTest();
+  await new Promise((resolve) => {
+    const del = indexedDB.deleteDatabase("dinary-receipts");
+    del.onsuccess = del.onerror = del.onblocked = () => resolve();
+    setTimeout(resolve, 200);
+  });
+}
+
+beforeEach(async () => {
+  setActivePinia(createPinia());
+  await resetDb();
+});
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await resetDb();
+});
+
+describe("receipt queue store: enqueue / list / remove", () => {
+  it("enqueue persists item with a generated client_receipt_id and exposes it via items", async () => {
+    const store = useReceiptQueueStore();
+    await store.enqueue("https://suf.purs.gov.rs/v/?vl=AAAA");
+    expect(store.items).toHaveLength(1);
+    expect(store.items[0].url).toBe("https://suf.purs.gov.rs/v/?vl=AAAA");
+    expect(store.items[0].client_receipt_id).toBeTypeOf("string");
+    expect(store.items[0].client_receipt_id.length).toBeGreaterThan(0);
+    expect(store.items[0].queued_at).toBeTypeOf("number");
+  });
+
+  it("multiple enqueues accumulate; remove deletes by id", async () => {
+    const store = useReceiptQueueStore();
+    await store.enqueue("https://example.com/r1");
+    await store.enqueue("https://example.com/r2");
+    await store.enqueue("https://example.com/r3");
+    expect(await store.count()).toBe(3);
+
+    const target = store.items[1];
+    await store.remove(target.id);
+    expect(store.items).toHaveLength(2);
+    expect(store.items.map((i) => i.url)).not.toContain("https://example.com/r2");
+  });
+
+  it("each enqueued item gets a unique client_receipt_id", async () => {
+    const store = useReceiptQueueStore();
+    await store.enqueue("https://example.com/r1");
+    await store.enqueue("https://example.com/r2");
+    const ids = store.items.map((i) => i.client_receipt_id);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("refresh re-reads items from IndexedDB", async () => {
+    const store = useReceiptQueueStore();
+    await store.enqueue("https://example.com/r");
+    store.items = [];
+    await store.refresh();
+    expect(store.items).toHaveLength(1);
+  });
+
+  it("count returns the number of pending items", async () => {
+    const store = useReceiptQueueStore();
+    expect(await store.count()).toBe(0);
+    await store.enqueue("https://example.com/r1");
+    await store.enqueue("https://example.com/r2");
+    expect(await store.count()).toBe(2);
+  });
+});

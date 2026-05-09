@@ -10,9 +10,11 @@ import AddEventModal from "./modals/AddEventModal.vue";
 import AddTagModal from "./modals/AddTagModal.vue";
 import { useCatalogStore } from "./stores/catalog.js";
 import { useQueueStore } from "./stores/queue.js";
+import { useReceiptQueueStore } from "./stores/receiptQueue.js";
 import { useToastStore } from "./stores/toast.js";
 import { isFiscalReceiptUrl, parseReceiptUrl } from "./composables/receipt.js";
 import { flushQueue } from "./composables/flushQueue.js";
+import { flushReceiptQueue } from "./composables/flushReceiptQueue.js";
 
 const APP_VERSION =
   typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
@@ -21,6 +23,7 @@ const isDev = import.meta.env.VITE_DEV_MODE === "true";
 
 const catalog = useCatalogStore();
 const queue = useQueueStore();
+const receiptQueue = useReceiptQueueStore();
 const toast = useToastStore();
 
 const isOnline = ref(
@@ -40,6 +43,7 @@ const headerVersionLabel = computed(() => `v${APP_VERSION}`);
 function onOnline() {
   isOnline.value = true;
   void flushQueue();
+  void flushReceiptQueue();
 }
 
 function onOffline() {
@@ -48,16 +52,19 @@ function onOffline() {
 
 async function init() {
   await queue.refresh();
-  if (isOnline.value && queue.items.length > 0) {
-    void flushQueue();
+  await receiptQueue.refresh();
+  if (isOnline.value) {
+    if (queue.items.length > 0) void flushQueue();
+    if (receiptQueue.items.length > 0) void flushReceiptQueue();
   }
 }
 
 let _retryTimerId = null;
 function startRetryTimer() {
   _retryTimerId = setInterval(() => {
-    if (isOnline.value && queue.items.length > 0) {
-      void flushQueue();
+    if (isOnline.value) {
+      if (queue.items.length > 0) void flushQueue();
+      if (receiptQueue.items.length > 0) void flushReceiptQueue();
     }
   }, 30_000);
 }
@@ -112,6 +119,11 @@ function onScan(text) {
     toast.show(`Not a fiscal QR: ${preview}`, "error");
     return;
   }
+  // Queue the raw URL for server-side classification regardless of
+  // whether the client-side parse (amount/date autofill) succeeds.
+  receiptQueue.enqueue(text);
+  if (isOnline.value) void flushReceiptQueue();
+
   try {
     const parsed = parseReceiptUrl(text);
     toast.show(`Receipt: ${parsed.amount} RSD, ${parsed.date}`, "success");

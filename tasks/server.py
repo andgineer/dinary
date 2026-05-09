@@ -188,6 +188,39 @@ def _healthcheck_replica_page_count() -> None:
     print(f"OK: replica page_count matches primary ({primary_pages})")
 
 
+def _healthcheck_receipt_llm(results: dict[str, str]) -> bool:
+    """Print LLM provider health lines. Returns True if any failure was found."""
+    switch = results.get("llm_switch", "").strip()
+    exhausted = results.get("llm_exhausted", "").strip()
+    count = results.get("llm_switch_count", "0").strip()
+
+    if count != "0":
+        print(f"OK: LLM provider switches since last start: {count}")
+
+    failed = False
+    if switch:
+        print(f"FAIL: LLM provider switched — {switch}", file=sys.stderr)
+        failed = True
+    if exhausted:
+        print(f"FAIL: All LLM providers exhausted — {exhausted}", file=sys.stderr)
+        failed = True
+    return failed
+
+
+def _healthcheck_receipt_fetch(results: dict[str, str]) -> bool:
+    """Print receipt-fetch health lines. Returns True if any failure was found."""
+    fallback = results.get("receipt_fallback", "").strip()
+    count = results.get("receipt_fallback_count", "0").strip()
+
+    if count != "0":
+        print(f"OK: /specifications fallback uses since last start: {count}")
+
+    if fallback:
+        print(f"FAIL: /specifications fallback used — {fallback}", file=sys.stderr)
+        return True
+    return False
+
+
 @task(name="healthcheck")
 def healthcheck(c, remote=False):  # noqa: ARG001
     """Check the health of the dinary server: systemd services, background tasks, and DB state.
@@ -223,6 +256,26 @@ def healthcheck(c, remote=False):  # noqa: ARG001
         c,
         remote,
         rate=f"SELECT count(*) FROM exchange_rates WHERE date = '{yesterday}'",  # noqa: S608
+        llm_switch=(
+            "SELECT COALESCE((SELECT value FROM app_metadata"
+            " WHERE key = 'llm_provider_switch_last'), '')"
+        ),
+        llm_exhausted=(
+            "SELECT COALESCE((SELECT value FROM app_metadata"
+            " WHERE key = 'llm_all_exhausted_last'), '')"
+        ),
+        llm_switch_count=(
+            "SELECT COALESCE((SELECT value FROM app_metadata"
+            " WHERE key = 'llm_provider_switch_count'), '0')"
+        ),
+        receipt_fallback=(
+            "SELECT COALESCE((SELECT value FROM app_metadata"
+            " WHERE key = 'receipt_fetch_fallback_last'), '')"
+        ),
+        receipt_fallback_count=(
+            "SELECT COALESCE((SELECT value FROM app_metadata"
+            " WHERE key = 'receipt_fetch_fallback_count'), '0')"
+        ),
         sheet=(
             "SELECT COALESCE("
             "(SELECT e.id || '|' || COALESCE(slj.status, '')"
@@ -259,3 +312,7 @@ def healthcheck(c, remote=False):  # noqa: ARG001
         _healthcheck_sheet_log(results)
 
     _healthcheck_last_expense_info(results)
+    llm_failed = _healthcheck_receipt_llm(results)
+    fetch_failed = _healthcheck_receipt_fetch(results)
+    if llm_failed or fetch_failed:
+        sys.exit(1)

@@ -362,6 +362,16 @@ class Settings(BaseSettings):
     # hosts; set to 0 to skip the warm-up entirely.
     warm_sheet_mapping_timeout_sec: float = 10.0
 
+    # LLM provider for receipt classification (DINARY_LLM_* env vars).
+    # Used by ``inv classify-receipt`` and the classification drain.
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = "gemini-2.5-flash"
+
+    # Receipt classification drain interval. Default 300s (one receipt per 5 min)
+    # keeps usage within Gemini free-tier 20 RPM. Set lower on paid tiers.
+    receipt_drain_interval_sec: float = 300.0
+
     host: str = "0.0.0.0"  # noqa: S104
     port: int = 8000
     log_level: str = "info"

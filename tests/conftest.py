@@ -81,6 +81,19 @@ def _disable_drain_loop(monkeypatch):
     overriding this setting inside their own body.
     """
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0)
+    monkeypatch.setattr(settings, "receipt_drain_interval_sec", 0)
+
+
+@pytest.fixture(autouse=True)
+def _disable_llm_seed(monkeypatch):
+    """Prevent init_db from auto-seeding llm_providers from .deploy/.env in tests.
+
+    Production seeding is intentional; test DBs should start empty so
+    tests that assert on llm_providers state are not surprised by the
+    operator's real credentials.
+    """
+    monkeypatch.setattr(settings, "llm_base_url", "")
+    monkeypatch.setattr(settings, "llm_api_key", "")
 
 
 @pytest.fixture(autouse=True)

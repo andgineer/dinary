@@ -38,6 +38,7 @@ from .imports import (
     verify_income_equivalence,
     verify_income_equivalence_all,
 )
+from .receipt import classify_receipt, reclassify_receipts
 from .reports import report_expenses, report_income, sql_query
 from .server import healthcheck, logs, restart_server, ssh, ssh_replica, status
 from .setup import setup_server
@@ -45,6 +46,8 @@ from .setup import setup_server
 __all__ = [
     "backup_status",
     "bootstrap_catalog",
+    "classify_receipt",
+    "reclassify_receipts",
     "build_static",
     "deploy",
     "dev",
