@@ -41,7 +41,7 @@ from dinary.config import (
     read_import_sources,
     settings,
 )
-from dinary.imports.seed import (
+from dinary.imports.seed_derivation import (
     VACATION_ENVELOPES,
     canonical_category_for_source,
     event_name_for_source,

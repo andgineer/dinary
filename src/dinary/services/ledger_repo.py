@@ -9,10 +9,8 @@ anchor before any caller takes a connection.
 
 import contextlib
 import dataclasses
-import json
 import logging
 import sqlite3
-import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -378,162 +376,6 @@ def close_connection() -> None:
     to release here. The function is kept so fixtures have a stable
     hook if a connection-pool-style cache is ever introduced.
     """
-
-
-# ---------------------------------------------------------------------------
-# Catalog queries
-# ---------------------------------------------------------------------------
-
-
-def list_categories(con: sqlite3.Connection) -> list[CategoryListRow]:
-    """Return active categories with active group info, ordered by group sort then name."""
-    return fetchall_as(CategoryListRow, con, load_sql("list_categories.sql"))
-
-
-def get_catalog_version(con: sqlite3.Connection) -> int:
-    row = con.execute(
-        "SELECT value FROM app_metadata WHERE key = 'catalog_version'",
-    ).fetchone()
-    if row is None:
-        msg = "app_metadata 'catalog_version' key is missing"
-        raise RuntimeError(msg)
-    return int(row[0])
-
-
-def set_catalog_version(con: sqlite3.Connection, value: int) -> None:
-    """Public write for ``app_metadata.catalog_version``.
-
-    Only two callers are expected: ``seed_config._bump_catalog_version``
-    (the ``inv import-catalog`` path) and ``catalog_writer._commit_with_bump``
-    (the admin-API path). Every other module is expected to go through
-    one of those.
-    """
-    con.execute(
-        "UPDATE app_metadata SET value = ? WHERE key = 'catalog_version'",
-        [str(value)],
-    )
-
-
-def get_category_name(con: sqlite3.Connection, category_id: int) -> str | None:
-    row = con.execute(
-        "SELECT name FROM categories WHERE id = ?",
-        [category_id],
-    ).fetchone()
-    return str(row[0]) if row else None
-
-
-# ---------------------------------------------------------------------------
-# Sheet mapping resolution (import path)
-# ---------------------------------------------------------------------------
-
-
-def resolve_mapping(
-    con: sqlite3.Connection,
-    category: str,
-    group: str,
-) -> MappingRow | None:
-    return fetchone_as(MappingRow, con, load_sql("resolve_mapping.sql"), [category, group])
-
-
-def resolve_mapping_for_year(
-    con: sqlite3.Connection,
-    category: str,
-    group: str,
-    year: int,
-) -> MappingRow | None:
-    return fetchone_as(
-        MappingRow,
-        con,
-        load_sql("resolve_mapping_for_year.sql"),
-        [category, group, year],
-    )
-
-
-def get_mapping_tag_ids(
-    con: sqlite3.Connection,
-    mapping_id: int,
-) -> list[int]:
-    rows = con.execute(
-        "SELECT tag_id FROM import_mapping_tags WHERE mapping_id = ? ORDER BY tag_id",
-        [mapping_id],
-    ).fetchall()
-    return [int(r[0]) for r in rows]
-
-
-# ---------------------------------------------------------------------------
-# Logging projection (3D -> 2D for sheet logging)
-# ---------------------------------------------------------------------------
-
-
-_PROJECTION_WILDCARD = "*"
-
-
-def logging_projection(
-    con: sqlite3.Connection,
-    *,
-    category_id: int,
-    event_id: int | None,
-    tag_ids: list[int] | set[int] | tuple[int, ...],
-) -> tuple[str, str] | None:
-    """Resolve ``(category_id, event_id, tag set)`` to ``(sheet_category, sheet_group)``.
-
-    Sources from ``sheet_mapping`` (owned by the ``map`` worksheet tab
-    and ``sheet_mapping.py``). Semantics: scan rows in ``row_order``
-    ASC, keep only rows whose ``category_id`` / ``event_id`` / required
-    tag set is compatible with the expense, and per output column pick
-    the first non-``'*'`` value we see. ``NULL`` on ``category_id`` /
-    ``event_id`` is a wildcard (matches anything including no event);
-    ``'*'`` on ``sheet_category`` / ``sheet_group`` means "don't
-    decide here".
-
-    Fallbacks are applied per column independently: if the resolver
-    did not pick a ``sheet_category`` we fall back to the category's
-    canonical name; if it did not pick a ``sheet_group`` we fall back
-    to the empty string. This keeps any partial resolution ("tag
-    rewrote only the envelope column") instead of discarding both
-    columns when one side stays wildcard.
-
-    Returns ``None`` only when ``category_id`` itself is not in the
-    catalog — that is the one condition the caller cannot recover
-    from and must translate into a "poison this job" signal.
-
-    NOTE: ``sheet_mapping.resolve_projection`` implements the same
-    "first non-``*`` wins per column" rule over pure ``MapRow``
-    objects; the two helpers intentionally stay separate so this
-    function can run directly against the DB without materializing
-    every row. Any change to the matching rule must be mirrored in
-    both places.
-    """
-    expense_tag_set = {int(t) for t in tag_ids}
-    category_fallback = get_category_name(con, category_id)
-    if category_fallback is None:
-        return None
-    candidates = fetchall_as(
-        LoggingProjectionCandidateRow,
-        con,
-        load_sql("logging_projection.sql"),
-        [category_id],
-    )
-
-    resolved_category: str | None = None
-    resolved_group: str | None = None
-    for cand in candidates:
-        if cand.event_id is not None and cand.event_id != event_id:
-            continue
-        required_tags = {int(t) for t in json.loads(cand.tag_ids_json)}
-        if not required_tags.issubset(expense_tag_set):
-            continue
-        if resolved_category is None and cand.sheet_category != _PROJECTION_WILDCARD:
-            resolved_category = cand.sheet_category
-        if resolved_group is None and cand.sheet_group != _PROJECTION_WILDCARD:
-            resolved_group = cand.sheet_group
-        if resolved_category is not None and resolved_group is not None:
-            break
-
-    return (
-        resolved_category if resolved_category is not None else category_fallback,
-        resolved_group if resolved_group is not None else "",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -967,165 +809,32 @@ def get_expense_by_id(con: sqlite3.Connection, expense_id: int) -> ExpenseRow | 
     )
 
 
-# ---------------------------------------------------------------------------
-# sheet_logging_jobs queue helpers (integer PK based)
-# ---------------------------------------------------------------------------
-
-
-def list_logging_jobs(
-    con: sqlite3.Connection,
-    *,
-    now: datetime | None = None,
-    stale_before: datetime | None = None,
-) -> list[int]:
-    """Return expense_ids the drain should attempt this pass.
-
-    That is: rows in ``pending`` plus rows in ``in_progress`` whose
-    claim is older than ``stale_before`` (orphaned claims from a
-    previous worker that crashed mid-drain). Fresh ``in_progress``
-    rows are excluded because ``claim_logging_job`` would just reject
-    them — listing them here would burn one BEGIN/COMMIT round-trip
-    per row per drain iteration for no reason. Poisoned rows are
-    always excluded.
-    """
-    if now is None:
-        now = datetime.now()
-    if stale_before is None:
-        stale_before = now - default_claim_stale_timeout()
-    rows = con.execute(
-        "SELECT expense_id FROM sheet_logging_jobs"
-        " WHERE status = 'pending'"
-        "    OR (status = 'in_progress' AND claimed_at < ?)"
-        " ORDER BY expense_id",
-        [stale_before],
-    ).fetchall()
-    return [int(r[0]) for r in rows]
-
-
-def count_logging_jobs(con: sqlite3.Connection) -> int:
-    row = con.execute("SELECT count(*) FROM sheet_logging_jobs").fetchone()
-    return int(row[0]) if row else 0
-
-
-def claim_logging_job(
-    con: sqlite3.Connection,
-    expense_id: int,
-    *,
-    claim_token: str | None = None,
-    now: datetime | None = None,
-    stale_before: datetime | None = None,
-) -> str | None:
-    """Atomically claim a queue row. Returns the claim_token on success, None otherwise."""
-    if claim_token is None:
-        claim_token = uuid.uuid4().hex
-    if now is None:
-        now = datetime.now()
-    if stale_before is None:
-        stale_before = now - default_claim_stale_timeout()
-
-    # ``BEGIN IMMEDIATE`` serializes multiple drain workers on the
-    # SQLite write lock from the start of the txn, so the race
-    # between SELECT and UPDATE can't be won by two workers at once.
-    # A contending worker either waits up to ``busy_timeout`` or
-    # surfaces as ``OperationalError`` ("database is locked"), which
-    # we treat as "another worker won".
-    try:
-        con.execute("BEGIN IMMEDIATE")
-    except sqlite3.OperationalError:
-        logger.debug("BEGIN IMMEDIATE lost the write-lock race claiming %s", expense_id)
-        return None
-    try:
-        row = con.execute(
-            "SELECT status, claim_token, claimed_at FROM sheet_logging_jobs WHERE expense_id = ?",
-            [expense_id],
-        ).fetchone()
-        if row is None:
-            con.execute("COMMIT")
-            return None
-        status, _existing_token, claimed_at = row
-
-        is_pending = status == "pending"
-        is_stale = status == "in_progress" and claimed_at is not None and claimed_at < stale_before
-        if not (is_pending or is_stale):
-            con.execute("COMMIT")
-            return None
-
-        con.execute(
-            "UPDATE sheet_logging_jobs SET status = 'in_progress',"
-            " claim_token = ?, claimed_at = ? WHERE expense_id = ?",
-            [claim_token, now, expense_id],
-        )
-        con.execute("COMMIT")
-        return claim_token
-    except sqlite3.OperationalError:
-        best_effort_rollback(con, context=f"claim_logging_job({expense_id}) lock conflict")
-        logger.debug("Lock conflict claiming %s; another worker won", expense_id)
-        return None
-    except Exception:
-        best_effort_rollback(con, context=f"claim_logging_job({expense_id}) generic error")
-        raise
-
-
-def release_logging_claim(
-    con: sqlite3.Connection,
-    expense_id: int,
-    claim_token: str,
-) -> bool:
-    rows = con.execute(
-        "UPDATE sheet_logging_jobs SET status = 'pending', claim_token = NULL, claimed_at = NULL"
-        " WHERE expense_id = ? AND claim_token = ? RETURNING expense_id",
-        [expense_id, claim_token],
-    ).fetchall()
-    return len(rows) > 0
-
-
-def poison_logging_job(
-    con: sqlite3.Connection,
-    expense_id: int,
-    error: str,
-) -> None:
-    """Mark a queue row as poisoned with an error reason."""
-    con.execute(
-        "UPDATE sheet_logging_jobs SET status = 'poisoned', last_error = ? WHERE expense_id = ?",
-        [error, expense_id],
-    )
-
-
-def _delete_logging_job(
-    con: sqlite3.Connection,
-    expense_id: int,
-    *,
-    claim_token: str | None,
-) -> bool:
-    if claim_token is None:
-        rows = con.execute(
-            "DELETE FROM sheet_logging_jobs WHERE expense_id = ? RETURNING expense_id",
-            [expense_id],
-        ).fetchall()
-    else:
-        rows = con.execute(
-            "DELETE FROM sheet_logging_jobs WHERE expense_id = ? AND claim_token = ?"
-            " RETURNING expense_id",
-            [expense_id, claim_token],
-        ).fetchall()
-    return len(rows) > 0
-
-
-def clear_logging_job(
-    con: sqlite3.Connection,
-    expense_id: int,
-    claim_token: str,
-) -> bool:
-    return _delete_logging_job(con, expense_id, claim_token=claim_token)
-
-
-def force_clear_logging_job(con: sqlite3.Connection, expense_id: int) -> bool:
-    return _delete_logging_job(con, expense_id, claim_token=None)
-
-
 def get_month_expenses(
     con: sqlite3.Connection,
     year: int,
     month: int,
 ) -> list[ExpenseRow]:
     return fetchall_as(ExpenseRow, con, load_sql("get_month_expenses.sql"), [year, month])
+
+
+# Re-export catalog + logging-job symbols for backward compatibility.
+from dinary.services.catalog_repo import (  # noqa: E402, F401
+    get_catalog_version,
+    get_category_name,
+    get_mapping_tag_ids,
+    list_categories,
+    logging_projection,
+    resolve_mapping,
+    resolve_mapping_for_year,
+    set_catalog_version,
+)
+from dinary.services.logging_jobs_repo import (  # noqa: E402, F401
+    _delete_logging_job,
+    claim_logging_job,
+    clear_logging_job,
+    count_logging_jobs,
+    force_clear_logging_job,
+    list_logging_jobs,
+    poison_logging_job,
+    release_logging_claim,
+)
