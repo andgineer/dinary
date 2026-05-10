@@ -22,12 +22,12 @@ afterEach(() => {
 });
 
 describe("ManageList", () => {
-  it("renders Active and Inactive sections with section headers", () => {
+  it("renders Active and Inactive section dividers", () => {
     const wrapper = mount(ManageList, {
       props: { kind: "group", active: ACTIVE, inactive: INACTIVE },
     });
-    expect(wrapper.text()).toContain("Active");
-    expect(wrapper.text()).toContain("Inactive");
+    expect(wrapper.find('[aria-label="Active"]').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="Inactive"]').exists()).toBe(true);
   });
 
   it("active rows show Hide; Delete only when removable", () => {

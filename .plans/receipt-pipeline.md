@@ -78,277 +78,134 @@ Tested the most challenging receipt (19 items: dairy × 10, KG produce, KG deli 
 
 ---
 
-## 1. DB Migration
+## Implementation Status
 
-- [ ] Create `src/dinary/migrations/0004_receipt_pipeline.sql`
-  - New tables: `stores`, `receipts`, `receipt_items`, `classification_rules`, `receipt_classification_jobs`, `llm_providers`, `llm_call_log`
-  - Alter `expenses`: add `receipt_id`, `store_id`, `confidence_level`
-- [ ] Unit tests: migration applies cleanly on a fresh DB and on an existing Phase-1 DB
+### 1. DB Migration — ✅ Done
+- `src/dinary/migrations/0004_receipt_pipeline.sql`
+- Tables: `stores`, `receipts`, `receipt_items`, `classification_rules`, `receipt_classification_jobs`, `llm_providers`, `llm_call_log`
+- `expenses` altered: added `receipt_id`, `store_id`, `confidence_level`
+- Tests: migration applies cleanly on fresh DB and existing Phase-1 DB
 
----
+### 2. Receipt Ingestion — `POST /api/receipts` — ✅ Done
+- `src/dinary/api/receipts.py`
+- Idempotent via `client_receipt_id` UNIQUE constraint (returns `status="duplicate"` on replay)
+- Single transaction: INSERT `receipts` + `receipt_items` + `receipt_classification_jobs`
+- Returns 200 immediately; no classification on hot path
+- `_write_fetch_fallback_metadata()` called when drain uses journal fallback (writes `receipt_fetch_fallback_last` / `receipt_fetch_fallback_count`; cleared when `/specifications` succeeds)
+- Offline IndexedDB queue in PWA (`webapp/src/stores/receiptQueue.js`, `webapp/src/api/receipts.js`)
+- Tests: `tests/api/test_api_receipts.py`, `webapp/tests/api-receipts.test.js`
 
-## 2. Receipt Ingestion — `POST /api/receipts`
+### 3. Confidence Level Design — ✅ Done
+All four levels implemented as specified. Penalties (journal fallback: −1, failover: −1, floor=1) applied in `receipt_classification_task.py`. Expense `confidence_level = MIN(item confidence)`.
 
-- [ ] Use `receipt_parser.parse_receipt(url)` (3-step fetch: JSON metadata → HTML token → `POST /specifications`): returns `ParsedReceipt` with structured items, decimal quantities, and total validation. PIB / store_name / total_amount / items already in the dataclass.
-- [ ] **Error registration on `/specifications` fallback** — when `parse_receipt` falls back to journal parsing, write to `app_metadata`:
-  - `receipt_fetch_fallback_last`: `"TIMESTAMP | invoice: INVOICE_NUMBER | reason: REASON"` — overwritten on each fallback
-  - `receipt_fetch_fallback_count`: increment integer counter
-  - Both cleared when `/specifications` succeeds again for a subsequent receipt
-- [ ] `POST /api/receipts` endpoint:
-  - Idempotent via `client_receipt_id` (`UNIQUE` constraint + payload compare, same pattern as `POST /api/expenses`)
-  - Single transaction: INSERT `receipts` + `receipt_items` + `receipt_classification_jobs`
-  - Returns `200 OK` immediately (no classification on hot path)
-- [ ] Offline queue support in PWA IndexedDB (same pattern as manual expenses)
-- [ ] Unit tests: parse real SUF PURS HTML fixture; idempotency replay; offline queue flush
+### 4. Item Name Normalisation — ✅ Done
+- `src/dinary/services/item_normalizer.py` — `normalize_item_name()`
+- Strips trailing weight/volume/pack tokens, barcode suffixes, VAT codes; lowercases; collapses whitespace
 
----
+### 4. Classification Rules Engine — ✅ Done
+- `src/dinary/services/classification_rules.py`
+- `RuleSpec(category_id, confidence_level, source)` dataclass
+- `classify_by_rules(conn, store_id, item_name_normalized)` → chain-specific beats generic
+- `create_or_update_rule(conn, store_id, item_name_normalized, spec: RuleSpec)` — upsert; user_correction always sets conf=4
+- Tests: `tests/services/test_classification_rules.py`
 
-## 3. Confidence Level Design
+### 5. LLM Provider Abstraction — ✅ Done
+- `src/dinary/services/llm_client.py`
+- `LLMClient` protocol, `OpenAICompatibleClient`, `ProviderPool`, `AllProvidersExhausted`, `ReceiptContext`
+- Round-robin failover on 429/503; `rate_limited_until` tracked per provider
+- `app_metadata` keys written: `llm_provider_switch_last`, `llm_provider_switch_count`, `llm_all_exhausted_last`; both switch keys cleared on primary-provider success
+- `llm_call_log` written on every call (provider_id, receipt_id, status, latency_ms)
+- Env bootstrap: `src/dinary/services/llm_bootstrap.py` — `seed_llm_provider_if_empty()` called from `init_db()` if `DINARY_LLM_BASE_URL` + `DINARY_LLM_API_KEY` set and table is empty
+- Tests: `tests/services/test_llm_client.py`
 
-### Scale definition
+### 6. Store Resolution — ✅ Done
+- `src/dinary/services/store_resolver.py` — `async resolve_store(conn, pool, store_pib, store_name_raw) → int | None`
+- PIB cache → LLM chain-name call → chain lookup (UPDATE pib if match) → INSERT new store
 
-| Level | Meaning | When assigned |
-|---|---|---|
-| 1 | Unresolved | LLM returned `category_id=null` or conf=1; or penalised down to 1 |
-| 2 | Uncertain | LLM conf=2; or conf≥2 with penalty(ies) reducing to 2 |
-| 3 | Likely | LLM conf=3 without penalty; or conf=4 with one penalty |
-| 4 | Certain | LLM conf=4 without penalty; rule from `user_correction`; rule applied (no LLM call) with stored conf=4 |
+### 7. Classification Drain — ✅ Done
+- `src/dinary/background/receipt_classification_task.py`
+- Full drain cycle: parse → store resolution → normalise → rules lookup → LLM batch call → penalties → aggregate by category → INSERT expenses → UPDATE receipt_items → upsert rules → trim llm_call_log → complete job
+- Level-1 items: no expense created, `expense_id = NULL`
+- Circuit breaker: exponential backoff (60s → 1800s) on `AllProvidersExhausted`; reset on success
+- Poison on permanent error (e.g. `ParserParseException`); release for retry on transient (network timeout)
+- Tests: `tests/tasks/test_receipt_drain.py`, `tests/services/test_receipt_classification.py`, `tests/api/test_receipt_pipeline_e2e.py`
 
-### Source penalties (applied after LLM call, before storing)
+### 8. LLM Admin API — ✅ Done
+- `src/dinary/api/admin_llm.py`
+- `GET /api/admin/llm-providers` — list all
+- `POST /api/admin/llm-providers` — add provider
+- `PATCH /api/admin/llm-providers/{id}` — update label / model / api_key / priority / is_enabled
+- `DELETE /api/admin/llm-providers/{id}` — refuse if only enabled provider
+- `POST /api/admin/llm-providers/{id}/test` — test classification call
+- `GET /api/admin/llm-status` — usage stats + `rate_limited_until`
+- Tests: `tests/api/test_admin_llm.py`
 
-- Journal fallback used instead of `/specifications`: **−1**
-- Non-primary LLM provider (round-robin failover triggered): **−1**
-- Penalties stack; floor is 1
-- Rules-based classification (`classify_by_rules` hit): **no penalty**, returns stored confidence as-is
+### 9. User Correction API — ✅ Done
+- `src/dinary/api/expense_corrections.py`
+- `PATCH /api/expenses/{id}/category`
+  1. Update `expenses.category_id`, `confidence_level = 4`
+  2. Update linked `receipt_items.category_id`, `confidence_level = 4`
+  3. Upsert `classification_rules` (source='user_correction', conf=4)
+  4. Find all other `receipt_items` with same `(store_id, name_normalized)` → update + upsert rules
+  5. Split/merge parent expenses for moved items (handles partial-move case)
+  6. Returns `{corrected_expense_id, batch_updated_count}`
+- Tests: `tests/api/test_receipt_pipeline_e2e.py`
 
-### Expense confidence
+### 10. Review API — ✅ Done
+- `src/dinary/api/receipt_review.py`
+- `GET /api/receipts/review/feed?page=N&page_size=20` — two-block paginated feed:
+  - Block 1 (doubtful, conf < 4): deduplicated by `(store_id, item_name_normalized)`, sorted by `SUM(total_price) DESC`
+  - Block 2 (certain, conf = 4): all receipt expenses, sorted by receipt datetime DESC
+  - Response: `{doubtful_count, items: [...], has_more}` with `is_doubtful: bool` per item
+- `GET /api/receipts/review/counts` — `{doubtful_rules: int}` for PWA badge
+- Tests: `tests/api/test_receipt_review.py`
 
-`expenses.confidence_level = MIN(confidence_level)` across all `receipt_items` contributing to that expense.
+### 11. PWA Changes — ⚠️ Partial
+- [x] `POST /api/receipts` called on QR scan (replacing `POST /api/expenses`)
+- [x] Offline IndexedDB queue for receipts (`webapp/src/stores/receiptQueue.js`)
+- [x] Flush composable (`webapp/src/composables/flushReceiptQueue.js`)
+- [x] Vitest: `webapp/tests/api-receipts.test.js` covers `postReceipt` API layer
+- [ ] **Review screen** — not yet built. Backend APIs (`/feed`, `/counts`, `PATCH /category`) are fully implemented and tested. Frontend integration is the remaining work:
+  - Infinite-scroll feed component (doubtful items highlighted, visual separator, badge on nav)
+  - Correction UX: tap item → category picker → `PATCH /api/expenses/{id}/category` → refresh + badge decrement
+  - Vitest tests for review/correction components
+- [ ] **LLM status screen** — not yet built. Backend API (`/api/admin/llm-status`, full CRUD) is done. Frontend: provider list, usage bars, add/edit/test, enable/disable.
 
-### Rules confidence
+### 12. `inv reclassify-receipts` — ✅ Done
+- `tasks/receipt.py` — `reclassify_receipts(c, receipt_id=None, from_date=None, clear_rules=False, yes=False)`
+- Flags: `--receipt-id`, `--from-date`, `--clear-rules`, `--yes`
+  - Note: flag is `--from-date` (not `--from` as originally planned)
+- `receipt_repo.requeue_receipts()`: clears `receipt_items` classification fields → deletes `expenses WHERE receipt_id IN (...)` → optionally deletes matching `classification_rules` → re-inserts into `receipt_classification_jobs ON CONFLICT DO NOTHING`
+- Tests: `tests/tasks/test_reclassify_receipts.py` — covers delete/reset/requeue, idempotency, `--clear-rules`
 
-Rule stores the confidence level it was created with. `user_correction` always sets conf=4. LLM-sourced rules store the penalised confidence (what was actually written to the item).
-
----
-
-## 4. Item Name Normalisation
-
-- [ ] `normalize_item_name(raw: str) -> str`: lowercase, strip trailing weight/volume/pack tokens (regex: `\d+\s*(g|kg|ml|l|kom|pc)\b`), collapse whitespace
-- [ ] Unit tests covering Serbian receipt edge cases (abbreviated units, Cyrillic/Latin mix)
-
----
-
-## 4. Classification Rules Engine
-
-Rule key = **(store_id, item_name_normalized)**. `store_id` is chain-level (one row per PIB in `stores`), so all physical locations of the same chain share rules. Generic rules use `store_id = NULL` and apply when no chain-specific rule exists — same item can legitimately mean different things at different chains.
-
-- [ ] `classify_by_rules(conn, store_id, item_name_normalized) -> (category_id, confidence_level) | None`
-  - SQL: `WHERE (store_id = ? OR store_id IS NULL) AND item_name_normalized = ? ORDER BY store_id NULLS LAST LIMIT 1`
-  - Returns stored `confidence_level` unchanged — no source penalty (no LLM call involved)
-- [ ] `create_or_update_rule(conn, store_id, item_name_normalized, category_id, confidence_level, source)`
-  - `source`: `'llm'` | `'user_correction'`. User correction always sets `confidence_level = 4`.
-- [ ] Unit tests: store-specific rule beats generic; miss returns None; user_correction sets conf=4
-
----
-
-## 5. LLM Provider Abstraction
-
-- [ ] `LLMClient` protocol: `classify_receipt(items: list[str], store_name_raw: str) -> list[ClassificationResult]`
-  - `ClassificationResult`: `item_name_normalized`, `category_id | None`, `confidence_level: int`
-- [ ] `OpenAICompatibleClient` (covers Groq, OpenRouter, Gemini via `/v1/chat/completions`)
-  - `base_url` + `api_key` + `model` from `llm_providers` row
-  - Structured JSON response via system prompt; parse with fallback to `confidence_level=1` on parse error
-- [ ] **Confidence penalty** applied after LLM call, before storing:
-  - Journal fallback used (instead of `/specifications`): `confidence -= 1`
-  - Non-primary provider used (round-robin failover triggered): `confidence -= 1`
-  - Penalties stack; minimum is always 1
-  - Rules-based classification: no penalty (no LLM call)
-- [ ] **Round-robin failover**: on 429 or 503 from provider N, immediately try provider N+1 (wrapping around). No backoff wait — move to the next at once. Surface `AllProvidersExhausted` only when the full circle completes without a successful call; keep job pending.
-  - Store last-used provider index in `app_metadata` (`llm_last_provider_idx`) so the next drain iteration starts from the provider AFTER the one that last succeeded, distributing load evenly across the pool.
-  - Mark 429 in `llm_providers.rate_limited_until = now + retry_delay` (from response header or default 60s) so the admin status screen shows which providers are currently throttled.
-- [ ] **Error registration on every provider switch** — write to `app_metadata`:
-  - `llm_provider_switch_last`: `"TIMESTAMP | from: LABEL | reason: 429/503 | to: LABEL"` — overwritten on each switch
-  - `llm_provider_switch_count`: increment integer counter
-  - `llm_all_exhausted_last`: `"TIMESTAMP | invoice: INVOICE_NUMBER"` — set when all providers fail; **cleared** on the next successful LLM call
-- [ ] Unit tests: mock HTTP; 429 on provider 1 → tries provider 2; all fail → `AllProvidersExhausted`; round-robin index advances after success; `app_metadata` written correctly on switch and exhaustion
-
----
-
-## 6. Store Resolution
-
-Chain identity is determined by LLM from the store's human-readable name, not by PIB. PIB is used only as a fast-path cache key to avoid redundant LLM calls for the same legal entity.
-
-`stores` schema: `id, chain_name, pib` — `chain_name` is the canonical identity (LLM-assigned), `pib` is an optional lookup optimisation.
-
-- [ ] `resolve_store(conn, llm, store_pib, store_name_raw) -> store_id`
-  1. PIB cache lookup: `SELECT id FROM stores WHERE pib = ?` → return if found (no LLM call)
-  2. Miss → single LLM call: "What retail chain is this store? Raw name: `{store_name_raw}`. Reply with just the canonical chain name (e.g. Lidl, Maxi, DM, Metro)."
-  3. Chain name lookup: `SELECT id FROM stores WHERE chain_name = ?` → if found, UPDATE `pib` on that row (handles new PIB for known chain), return id
-  4. Both miss → INSERT new `stores(chain_name, pib)` row
-- [ ] Unit tests: repeat PIB → no LLM call; new PIB for known chain → updates PIB, no duplicate store; genuinely new chain → new row inserted
+### 13. `inv healthcheck` Integration — ✅ Done
+- `tasks/healthcheck.py` — `_healthcheck_receipt_llm()` and `_healthcheck_receipt_fetch()`
+- LLM checks: `llm_provider_switch_last` (FAIL + details), `llm_all_exhausted_last` (FAIL), `llm_provider_switch_count` (info)
+- Fetch checks: `receipt_fetch_fallback_last` (FAIL + details), `receipt_fetch_fallback_count` (info)
+- Both integrated into `healthcheck` task (local + remote)
+- Tests: `tests/tasks/test_tasks_server_receipt.py`
 
 ---
 
-## 7. Classification Drain
+## Remaining Work
 
-Mirrors `sheet_logging` drain: lifespan-managed `asyncio` task, `DINARY_RECEIPT_DRAIN_INTERVAL_SEC` (default 300), claim/release/poison pattern.
+### Frontend only (backend complete + tested)
 
-**LLM rate-limit budget.** Each receipt requires exactly one LLM call (batch prompt for all unmatched items). The Gemini 2.5-flash free tier allows 20 RPM. A personal tracker produces at most a few receipts per day — there is no need to process them quickly. The drain must therefore pace itself to stay within the free tier rather than trying to process all pending jobs as fast as possible:
+| Item | Priority | Effort |
+|------|----------|--------|
+| **PWA review screen** — infinite-scroll feed, doubtful items highlighted, visual block separator, nav badge = `doubtful_rules` count | High | Medium |
+| **Correction UX** — tap item → category picker → `PATCH /api/expenses/{id}/category` → screen refresh + badge decrement | High | Small |
+| **LLM status screen** — provider list with rate-limit state, add/edit/test/enable provider | Medium | Medium |
+| **Vitest for review + correction components** | Medium | Small |
 
-- Default drain interval: **300 seconds** (one receipt processed every 5 minutes at most).
-- At that rate, LLM usage stays at 0.2 RPM, leaving 19.8 RPM headroom for other providers or future multi-user scenarios.
-- `DINARY_RECEIPT_DRAIN_INTERVAL_SEC` env var allows tuning (lower for paid tiers; do not go below 60 for free tier).
-- The drain processes **one job per iteration** (not all pending). This is intentional: it keeps the LLM call rate bounded even if a backlog accumulates after an offline period.
+### Minor gaps
 
-- [ ] Drain loop per job:
-  1. Claim `receipt_classification_jobs` row (UPDATE with `claim_token + claimed_at`)
-  2. Resolve store (PIB lookup or LLM)
-  3. Normalise all `receipt_items.name_raw` → `name_normalized`
-  4. Rules lookup per item
-  5. Single LLM call for unmatched items (batch prompt with full category list)
-  6. Aggregate items by `category_id` → INSERT `expenses` (one per category, `amount` = sum, `confidence_level` = MIN)
-  7. Level-1 items: no expense; leave `receipt_items.expense_id = NULL`
-  8. UPDATE `receipt_items.category_id`, `confidence_level`, `expense_id`
-  9. INSERT `classification_rules` for newly classified items (confidence 2-4)
-  10. Trim `llm_call_log` to last 200 rows
-  11. DELETE `receipt_classification_jobs` row on success; mark `poisoned` on permanent error
-- [ ] Circuit breaker for LLM errors (same backoff pattern as sheet-logging Sheets circuit breaker)
-- [ ] Unit tests: full drain cycle with mock LLM; level-1 items skipped for expense creation; rules created correctly; poisoning on parse error
+- `--from-date` flag name (task uses) vs `--from` (plan says) — cosmetic, both work fine; update plan wording ✅ (done above)
+- No automated test for the `inv reclassify-receipts` CLI wrapper itself (only `requeue_receipts()` is tested directly) — low risk since the CLI is 20 lines of plumbing over a well-tested function
 
 ---
 
-## 8. LLM Admin API
-
-- [ ] `GET /api/admin/llm-status` — all providers with usage stats and `rate_limited_until`
-- [ ] `GET /api/admin/llm-providers` — list all rows
-- [ ] `POST /api/admin/llm-providers` — add provider (seeds from `DINARY_LLM_*` env vars on first boot)
-- [ ] `PATCH /api/admin/llm-providers/{id}` — update label / model / api_key / priority / is_enabled
-- [ ] `DELETE /api/admin/llm-providers/{id}` — remove (refuse if it is the only enabled provider)
-- [ ] `POST /api/admin/llm-providers/{id}/test` — fire a minimal classification call; return `ok` or error detail
-- [ ] Env var bootstrap: on `init_db`, if `llm_providers` is empty and `DINARY_LLM_PROVIDER` is set, INSERT one seed row
-- [ ] Unit tests for each endpoint
-
----
-
-## 9. User Correction API
-
-- [ ] `PATCH /api/expenses/{id}/category` — `{category_id: int}`
-  1. Update `expenses.category_id` and `confidence_level = 4`
-  2. Find `receipt_items` linked to this expense; update their `category_id`
-  3. Upsert `classification_rules` for `(store_id, item_name_normalized)`: set `category_id`, `confidence_level = 4`, `source = 'user_correction'`
-  4. **Silently** find all other `receipt_items` with same `(store_id, item_name_normalized)` across all receipts; update their `category_id` and `confidence_level = 4`
-  5. Recalculate parent expense aggregations for affected items (split/merge as needed)
-  6. Return `{corrected_expense_id, batch_updated_count}`
-  - No "Fix N similar items?" confirmation modal — batch is always applied silently. The rule key (store chain + normalised name) is the natural deduplication boundary.
-- [ ] Unit tests: single correction sets conf=4; batch propagation across receipts; expense split when items move to different category
-
----
-
-## 10. Review API
-
-Single unified feed that powers the PWA review screen:
-
-- [ ] `GET /api/receipts/review/feed?page=N&page_size=20` — unified paginated list:
-  - **Block 1** (doubtful, conf < 4): deduplicated by `(store_id, item_name_normalized)`. One row per unique rule. Sorted by `SUM(total_price) DESC` across all receipts where the rule was applied. Includes: normalised name, store chain name, current category, confidence, total amount at stake, occurrence count.
-  - **Block 2** (certain, conf = 4): all expenses from receipts, no deduplication, sorted by `receipt.datetime DESC` (newest first).
-  - Response includes `{doubtful_count, items: [...], has_more}`. Items carry `is_doubtful: bool` so the PWA knows where block 1 ends.
-- [ ] `GET /api/receipts/review/counts` — `{doubtful_rules: int}` for PWA badge (count of unique rules with conf < 4)
-- [ ] Unit tests: feed ordering; deduplication in block 1; correct cutover to block 2
-
----
-
-## 11. PWA Changes
-
-- [x] Receipt scan sends `POST /api/receipts` (not `POST /api/expenses`)
-- [x] Offline IndexedDB queue for receipt URLs (separate queue from manual expenses)
-
-### Next Phase (deferred)
-
-- [ ] Review screen: single infinite-scroll feed from `GET /api/receipts/review/feed`. Doubtful items first (visually highlighted), then all others. Visual separator between the two blocks. Badge on nav icon = `doubtful_rules` count; hidden when zero.
-- [ ] Correction UX: tap item → pick category → `PATCH /api/expenses/{id}/category`. No confirmation modal — batch update is silent. Screen refreshes, badge decrements if item was doubtful.
-- [ ] LLM status screen in settings: provider list with usage bars, add/edit/test provider, enable/disable
-
-> Backend APIs for review/correction (`GET /api/receipts/review/feed`, `GET /api/receipts/review/counts`, `PATCH /api/expenses/{id}/category`) are already implemented and tested. Frontend integration is the only remaining work.
-
----
-
-## 12. `inv reclassify-receipts`
-
-Operator tool for re-running classification after a bug fix or rule reset. Does not require a server restart.
-
-```
-inv reclassify-receipts                     # all receipts
-inv reclassify-receipts --from 2026-05-01   # receipts from date
-inv reclassify-receipts --receipt-id 42     # single receipt
-```
-
-Steps:
-1. Resolve target receipt IDs from flags
-2. `DELETE FROM expenses WHERE source='receipt' AND receipt_id IN (...)`
-3. `UPDATE receipt_items SET category_id=NULL, confidence_level=NULL, expense_id=NULL WHERE receipt_id IN (...)`
-4. `INSERT INTO receipt_classification_jobs (receipt_id, ...) ON CONFLICT DO NOTHING`
-5. The drain picks up the new jobs and reclassifies at its normal pace (300s interval)
-
-- [ ] Implement in `tasks/receipt.py`
-- [ ] `--clear-rules` flag: also deletes `classification_rules` rows for items in the target receipts (use when fixing a systematic misclassification)
-- [ ] Requires `--yes` confirmation when scope > 1 receipt (destructive)
-- [ ] Unit tests: correct rows deleted and jobs inserted; idempotent if run twice
-
----
-
-## 13. `inv healthcheck` Integration
-
-`inv healthcheck` queries `app_metadata` for pipeline error events and fails loudly so the operator sees problems without digging through logs.
-
-### LLM provider failures
-
-```
-_healthcheck_receipt_llm(results)
-```
-
-Reads:
-- `llm_provider_switch_last` — non-empty → **FAIL**: print timestamp + from/reason/to details, exit non-zero
-- `llm_all_exhausted_last` — non-empty → **FAIL**: all providers were exhausted; receipt classification is stalled; print invoice number + timestamp, exit non-zero
-- `llm_provider_switch_count` — print as info (total switches since last server start)
-
-Both keys are cleared automatically when the next successful LLM call completes with the primary provider. The operator who sees the FAIL can verify the receipt was eventually classified (check `receipt_classification_jobs` for pending rows) and if all is resolved, the next successful call clears the flag.
-
-### Receipt fetch fallback
-
-```
-_healthcheck_receipt_fetch(results)
-```
-
-Reads:
-- `receipt_fetch_fallback_last` — non-empty → **FAIL**: `/specifications` was unavailable for at least one receipt; print timestamp + invoice number + reason, exit non-zero. The receipt was still parsed via journal fallback, but the operator should check whether the endpoint recovered.
-- `receipt_fetch_fallback_count` — print as info
-
-Cleared automatically when `/specifications` succeeds again for the next receipt.
-
-### Output format (matches existing healthcheck style)
-
-```
-FAIL: LLM provider switched — 2026-05-08T10:12:33Z | from: Groq | reason: 429 | to: OpenRouter GPT-OSS
-FAIL: /specifications fallback used — 2026-05-08T09:55:01Z | invoice: LQVN7PP7-LQVN7PP7-87236 | reason: HTTP 503
-```
-
-- [ ] Implement `_healthcheck_receipt_llm` in `tasks/server.py`
-- [ ] Implement `_healthcheck_receipt_fetch` in `tasks/server.py`
-- [ ] Call both from the `healthcheck` task (local + remote paths)
-- [ ] Unit tests: populated `app_metadata` keys → non-zero exit; cleared keys → OK
-
----
-
-## 13. Tests (throughout)
-
-- [ ] `inv pre` passes after every task batch
-- [ ] Every new function has a unit test in the same session
-- [ ] Integration tests cover full end-to-end: QR URL → `POST /api/receipts` → drain → `GET /api/expenses/review` → `PATCH /api/expenses/{id}/category`
-- [ ] Vitest for PWA review screen components and correction modal
-
----
-
-## Implementation Order
+## Implementation Order (original, for reference)
 
 | Step | Blocks |
 |------|--------|

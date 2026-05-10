@@ -337,9 +337,8 @@ onBeforeUnmount(() => {
   right: 0;
   bottom: 0;
   background: var(--surface);
-  border-top: 1px solid var(--surface-2);
-  padding: 0.6rem 1rem;
-  padding-bottom: calc(0.6rem + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  padding: 8px 12px calc(12px + env(safe-area-inset-bottom, 0px));
   z-index: 15;
   box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25);
 }
@@ -347,7 +346,7 @@ onBeforeUnmount(() => {
 .action-bar-inner {
   display: flex;
   align-items: stretch;
-  gap: 0.6rem;
+  gap: 8px;
   max-width: 480px;
   margin: 0 auto;
 }
@@ -358,21 +357,22 @@ onBeforeUnmount(() => {
 }
 
 .action-qr {
-  flex: 0 0 auto;
-  padding-inline: 1.05rem;
-  min-width: 3.5rem;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow:
-    0 0 0 1px rgba(233, 69, 96, 0.25),
-    0 4px 14px rgba(233, 69, 96, 0.35);
+  background: var(--danger, #e94560);
+  border-radius: 12px;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
 }
 
 .action-qr:hover {
-  box-shadow:
-    0 0 0 1px rgba(233, 69, 96, 0.5),
-    0 6px 18px rgba(233, 69, 96, 0.5);
+  filter: brightness(1.1);
 }
 
 .action-qr.is-scanning {
@@ -381,5 +381,18 @@ onBeforeUnmount(() => {
 
 .action-save {
   flex: 1;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--accent);
+  border-radius: 12px;
+  border: none;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 1rem;
 }
 </style>

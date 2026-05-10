@@ -12,6 +12,7 @@
   --surface-2: #0f3460;
   --accent: #e94560;
   --accent-hover: #d63851;
+  --danger: #e94560;
   --text: #eee;
   --text-muted: #94a3b8;
   --success: #22c55e;
@@ -19,6 +20,15 @@
   --error: #ef4444;
   --radius: 12px;
   --font: system-ui, -apple-system, sans-serif;
+
+  /* Design system v0.8 tokens */
+  --field:         rgba(255, 255, 255, 0.04);
+  --field-deep:    rgba(0, 0, 0, 0.18);
+  --border:        rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --muted:         #94a3b8;
+  --muted-2:       #64748b;
+  --font-num:      "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
 * {

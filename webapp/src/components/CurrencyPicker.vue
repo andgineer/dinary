@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { useCurrencyStore } from "../stores/currency.js";
 import { useToastStore } from "../stores/toast.js";
 import { WORLD_CURRENCIES } from "../data/world-currencies.js";
+import IconBtn from "./IconBtn.vue";
 
 const props = defineProps({
   modelValue: { type: String, default: "" },
@@ -114,13 +115,13 @@ watch(
       >
         <span class="currency-code">{{ code }}</span>
       </button>
-      <button
-        type="button"
-        class="btn-inline currency-manage"
+      <IconBtn
+        :icon="manageMode ? 'x' : 'cog'"
+        tone="muted"
+        :label="manageMode ? 'Close' : 'Manage currencies'"
+        class="currency-manage"
         @click="toggleManage"
-      >
-        {{ manageMode ? "Close" : "Manage" }}
-      </button>
+      />
     </div>
 
     <div v-if="manageMode" class="currency-manage-panel">

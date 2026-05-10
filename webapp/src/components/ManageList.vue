@@ -1,5 +1,6 @@
 <script setup>
-import { Pencil, EyeOff, Eye, Trash2 } from "lucide-vue-next";
+import { Eye, EyeOff, Pencil, Trash2 } from "lucide-vue-next";
+
 const props = defineProps({
   kind: {
     type: String,
@@ -18,9 +19,6 @@ const props = defineProps({
     type: Function,
     default: (item) => item.name ?? "",
   },
-  // Parent passes the id of the row currently being mutated so all
-  // buttons disable in lockstep, matching the legacy "for (const s of
-  // siblings) s.disabled = true" behaviour.
   pendingId: {
     type: [Number, String, null],
     default: null,
@@ -55,8 +53,12 @@ function rowClass(primary) {
 
 <template>
   <div class="inactive-list" data-testid="manage-list">
-    <div class="inactive-section">Active</div>
-    <div v-if="active.length === 0" class="inactive-empty">— no active —</div>
+    <!-- Active section -->
+    <div class="state-divider state-divider--active" aria-label="Active">
+      <Eye :size="12" aria-hidden="true" />
+      <div class="state-divider-line" />
+    </div>
+    <div v-if="active.length === 0" class="inactive-empty">— none —</div>
     <div
       v-for="item in active"
       :key="`active-${item.id}`"
@@ -93,8 +95,12 @@ function rowClass(primary) {
       </button>
     </div>
 
-    <div class="inactive-section">Inactive</div>
-    <div v-if="inactive.length === 0" class="inactive-empty">— no inactive —</div>
+    <!-- Inactive section -->
+    <div class="state-divider state-divider--inactive" aria-label="Inactive">
+      <EyeOff :size="12" aria-hidden="true" />
+      <div class="state-divider-line state-divider-line--dashed" />
+    </div>
+    <div v-if="inactive.length === 0" class="inactive-empty">— none —</div>
     <div
       v-for="item in inactive"
       :key="`inactive-${item.id}`"
@@ -128,9 +134,9 @@ function rowClass(primary) {
 .inactive-list {
   margin-top: 0.4rem;
   padding: 0.4rem 0.6rem;
-  background: var(--bg);
+  background: var(--field-deep, rgba(0, 0, 0, 0.18));
   border-radius: 8px;
-  border: 1px dashed var(--surface-2);
+  border: 1px dashed var(--border, rgba(255, 255, 255, 0.08));
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
@@ -145,7 +151,7 @@ function rowClass(primary) {
 }
 
 .inactive-name {
-  color: var(--text-muted);
+  color: var(--muted, #94a3b8);
   text-decoration: line-through;
   flex: 1;
   min-width: 0;
@@ -157,21 +163,42 @@ function rowClass(primary) {
   text-decoration: none;
 }
 
-.inactive-section {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
+.state-divider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 0.2rem;
+  color: var(--muted-2, #64748b);
 }
 
-.inactive-section:first-child {
+.state-divider:first-child {
   margin-top: 0;
 }
 
+.state-divider--active {
+  color: var(--accent);
+}
+
+.state-divider-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, var(--border-strong, rgba(255,255,255,0.12)), transparent);
+}
+
+.state-divider--active .state-divider-line {
+  background: linear-gradient(to right, var(--accent), transparent);
+  opacity: 0.4;
+}
+
+.state-divider-line--dashed {
+  background: none;
+  border-top: 1px dashed var(--border-strong, rgba(255, 255, 255, 0.12));
+}
+
 .inactive-empty {
-  color: var(--text-muted);
+  color: var(--muted, #94a3b8);
   font-style: italic;
+  font-size: 0.75rem;
 }
 
 .inactive-hide,

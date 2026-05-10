@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Dinary — Design System</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --surface: #16213e;
+    --surface-2: #0f3460;
+    --accent: #5b8def;
+    --danger: #e94560;
+    --field: rgba(255,255,255,0.04);
+    --field-deep: rgba(0,0,0,0.18);
+    --border: rgba(255,255,255,0.08);
+    --border-strong: rgba(255,255,255,0.12);
+    --fg: #eef0f6;
+    --label: #94a3b8;
+    --muted: #94a3b8;
+    --muted-2: #64748b;
+    --font: 'Inter', -apple-system, system-ui, sans-serif;
+    --font-num: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #0a0a14; color: var(--fg); font-family: var(--font); }
+  body { padding: 56px 32px 80px; max-width: 980px; margin: 0 auto; line-height: 1.55; }
+  h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.5px; margin: 0 0 4px; }
+  h1 + .sub { color: var(--muted); margin-bottom: 48px; font-size: 15px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.3px; margin: 56px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 14px; font-weight: 600; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); margin: 28px 0 12px; }
+  p, li { font-size: 14.5px; color: #d6d8e0; }
+  code { font-family: var(--font-num); font-size: 12.5px; background: var(--field); padding: 2px 6px; border-radius: 4px; color: #cad6ff; }
+  pre { background: var(--field-deep); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow: auto; font-family: var(--font-num); font-size: 12.5px; }
+  pre code { background: transparent; padding: 0; }
+  .swatch { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .sw { background: var(--field); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+  .sw .dot { width: 100%; height: 64px; border-radius: 8px; margin-bottom: 10px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06); }
+  .sw .name { font-weight: 600; font-size: 13px; }
+  .sw .hex { font-family: var(--font-num); font-size: 11.5px; color: var(--muted); }
+  .icons { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .ico { background: var(--field); border: 1px solid var(--border); border-radius: 10px; aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 10px; }
+  .ico .name { font-size: 11px; color: var(--muted); font-family: var(--font-num); }
+  .ico svg { color: var(--fg); }
+  .rule { background: var(--field); border-left: 3px solid var(--accent); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 10px 0; }
+  .rule b { color: var(--fg); }
+  .rule.bad { border-left-color: var(--danger); }
+  .rule.bad::before { content: "✗  "; color: var(--danger); font-weight: 700; }
+  .rule.good::before { content: "✓  "; color: #22c55e; font-weight: 700; }
+  .demo { background: var(--bg); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-top: 12px; }
+  .field-shell { background: var(--field); border: 1px solid var(--border); border-radius: 10px; height: 42px; display: flex; align-items: center; padding: 0 12px; gap: 8px; color: var(--fg); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 600; letter-spacing: 0.4px; }
+  .chip { padding: 5px 11px; border-radius: 999px; background: var(--field); border: 1px solid var(--border); color: var(--fg); font-size: 13px; }
+  .iconbtn { width: 26px; height: 26px; border-radius: 7px; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
+  .connector { position: relative; height: 14px; margin: 4px 0 4px 18px; }
+  .connector::before { content: ""; position: absolute; top: 0; left: 0; width: 1px; height: 100%; background: var(--border-strong); }
+  .connector::after { content: ""; position: absolute; bottom: 0; left: 0; width: 16px; height: 1px; background: var(--border-strong); }
+  .state { display: flex; align-items: center; gap: 8px; color: var(--muted-2); padding: 4px 4px 6px; }
+  .state .glyph { width: 22px; height: 22px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; }
+  .state.active .glyph { background: color-mix(in oklab, var(--accent) 16%, transparent); color: var(--accent); }
+  .state.active .line { flex: 1; height: 1px; background: linear-gradient(to right, color-mix(in oklab, var(--accent) 35%, transparent), transparent); }
+  .state.inactive .glyph { background: rgba(255,255,255,0.04); color: var(--muted-2); }
+  .state.inactive .line { flex: 1; height: 1px; background: repeating-linear-gradient(to right, rgba(255,255,255,0.16) 0 4px, transparent 4px 8px); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; letter-spacing: 0.5px; text-transform: uppercase; }
+  td code { font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Dinary Design System</h1>
+<div class="sub">v0.7.x · Mobile-first PWA · Dark theme · Icon-driven, low-text density</div>
+
+<h2>Tokens</h2>
+<p>Add these to <code>webapp/src/assets/base.css</code> on top of the existing <code>:root</code>. Existing tokens are kept; we extend the palette with surfaces, borders, label colors, and a numeric font.</p>
+
+<h3>Colors</h3>
+<div class="swatch">
+  <div class="sw"><div class="dot" style="background:#1a1a2e"></div><div class="name">--bg</div><div class="hex">#1a1a2e</div></div>
+  <div class="sw"><div class="dot" style="background:#16213e"></div><div class="name">--surface</div><div class="hex">#16213e</div></div>
+  <div class="sw"><div class="dot" style="background:#0f3460"></div><div class="name">--surface-2</div><div class="hex">#0f3460</div></div>
+  <div class="sw"><div class="dot" style="background:#5b8def"></div><div class="name">--accent</div><div class="hex">#5b8def</div></div>
+  <div class="sw"><div class="dot" style="background:#e94560"></div><div class="name">--danger / scan</div><div class="hex">#e94560</div></div>
+  <div class="sw"><div class="dot" style="background:#eef0f6"></div><div class="name">--fg</div><div class="hex">#eef0f6</div></div>
+  <div class="sw"><div class="dot" style="background:#94a3b8"></div><div class="name">--muted</div><div class="hex">#94a3b8</div></div>
+  <div class="sw"><div class="dot" style="background:#64748b"></div><div class="name">--muted-2</div><div class="hex">#64748b</div></div>
+</div>
+
+<h3>Surfaces & borders (semi-transparent on --bg)</h3>
+<table>
+  <tr><th>Token</th><th>Value</th><th>Use</th></tr>
+  <tr><td><code>--field</code></td><td><code>rgba(255,255,255,0.04)</code></td><td>Default input/select/textarea fill</td></tr>
+  <tr><td><code>--field-deep</code></td><td><code>rgba(0,0,0,0.18)</code></td><td>Recessed surfaces (manage panels, dropdown bodies)</td></tr>
+  <tr><td><code>--border</code></td><td><code>rgba(255,255,255,0.08)</code></td><td>Default 1px field/card border</td></tr>
+  <tr><td><code>--border-strong</code></td><td><code>rgba(255,255,255,0.12)</code></td><td>Hierarchy connectors, dashed manage borders</td></tr>
+</table>
+
+<h3>Type</h3>
+<table>
+  <tr><th>Token</th><th>Stack</th><th>Use</th></tr>
+  <tr><td><code>--font</code></td><td>Inter, system-ui</td><td>All UI text</td></tr>
+  <tr><td><code>--font-num</code></td><td>JetBrains Mono</td><td>Amounts, dates, ranges, ISO codes</td></tr>
+</table>
+
+<h3>Radii & spacing</h3>
+<ul>
+  <li>Field/select: <code>border-radius: 10px</code> · height <code>42px</code> · padding <code>0 12px</code></li>
+  <li>Hero amount: <code>height: 64px</code> · font 32/500, <code>--font-num</code></li>
+  <li>Icon button: <code>26 × 26</code>, radius <code>7</code></li>
+  <li>Pill (currency): radius 999, padding <code>4px 10px</code>, fontsize 12/600</li>
+  <li>Section gap: <code>18px</code> comfortable, <code>14px</code> compact</li>
+</ul>
+
+<h2>Iconography</h2>
+<p>10×10 to 16×16 stroked SVGs at <code>strokeWidth: 1.3–1.6</code>. Use <code>currentColor</code> so icon tone follows context (default <code>--muted</code>, accent on hover/active).</p>
+<div class="icons">
+  <div class="ico"><svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><div class="name">plus</div></div>
+  <div class="ico"><svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M8 10.4a2.4 2.4 0 100-4.8 2.4 2.4 0 000 4.8z" stroke="currentColor" stroke-width="1.3"/><path d="M13.2 9.5l1.1.7-1.4 2.4-1.3-.4a4.7 4.7 0 01-1 .6l-.2 1.4h-2.8l-.2-1.4a4.7 4.7 0 01-1-.6l-1.3.4L3.7 10.2l1.1-.7a4.7 4.7 0 010-1.2L3.7 7.6l1.4-2.4 1.3.4a4.7 4.7 0 011-.6l.2-1.4h2.8l.2 1.4c.36.16.7.36 1 .6l1.3-.4 1.4 2.4-1.1.7c.04.4.04.8 0 1.2z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg><div class="name">cog</div></div>
+  <div class="ico"><svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L6 12l-3 1 1-3 7.5-7.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg><div class="name">edit</div></div>
+  <div class="ico"><svg width="18" height="18" viewBox="0 0 18 16" fill="none"><path d="M1.5 8s2.7-5 7.5-5 7.5 5 7.5 5-2.7 5-7.5 5S1.5 8 1.5 8z" stroke="currentColor" stroke-width="1.3"/><circle cx="9" cy="8" r="2.2" stroke="currentColor" stroke-width="1.3"/></svg><div class="name">eye</div></div>
+  <div class="ico"><svg width="18" height="18" viewBox="0 0 18 16" fill="none"><path d="M3 3l12 10M5 5.5C3 7 1.5 8 1.5 8s2.7 5 7.5 5c1.4 0 2.6-.4 3.6-1M8.4 4c.2 0 .4 0 .6 0 4.8 0 7.5 5 7.5 5-.4.7-1.1 1.6-2 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><div class="name">eye-off</div></div>
+  <div class="ico"><svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><div class="name">x</div></div>
+  <div class="ico"><svg width="18" height="18" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.2" stroke="currentColor" stroke-width="1.4"/><path d="M10.2 10.2L13 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><div class="name">search</div></div>
+  <div class="ico"><svg width="18" height="18" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><div class="name">cal</div></div>
+  <div class="ico"><svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M3 7V4a1 1 0 011-1h3M17 7V4a1 1 0 00-1-1h-3M3 13v3a1 1 0 001 1h3M17 13v3a1 1 0 01-1 1h-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><rect x="6.5" y="6.5" width="7" height="7" rx="0.6" stroke="currentColor" stroke-width="1.4"/></svg><div class="name">scan</div></div>
+  <div class="ico"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 3h10l2 2v10a1 1 0 01-1 1H3a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M5 3v4h7V3M5 16v-5h8v5" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><div class="name">save</div></div>
+  <div class="ico"><svg width="18" height="18" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5l3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><div class="name">caret</div></div>
+  <div class="ico"><svg width="18" height="18" viewBox="0 0 14 14" fill="none"><path d="M2 7.5L5.5 11l7-8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><div class="name">check</div></div>
+</div>
+
+<h2>Components</h2>
+
+<h3>Field shell</h3>
+<div class="demo"><div class="field-shell"><span style="color:var(--muted)">cal</span><span>08. 05. 2026</span><span style="margin-left:auto;color:var(--muted)">▾</span></div></div>
+<p>Single shell for input, select, textarea. <code>1px</code> border, <code>10px</code> radius, focus ring <code>0 0 0 3px accent/18%</code>.</p>
+
+<h3>Currency pill</h3>
+<div class="demo"><span class="pill">RSD</span></div>
+
+<h3>Tag chip</h3>
+<div class="demo" style="display:flex;gap:6px;flex-wrap:wrap"><span class="chip">собака</span><span class="chip">Аня</span><span class="chip">Лариса</span></div>
+
+<h3>Parent → child connector (group → category)</h3>
+<div class="demo">
+  <div class="field-shell"><span>Еда</span><span style="margin-left:auto;color:var(--muted)">▾</span></div>
+  <div class="connector"></div>
+  <div style="padding-left:30px"><div class="field-shell"><span>еда</span><span style="margin-left:auto;color:var(--muted)">▾</span></div></div>
+</div>
+
+<h3>State dividers (replaces "Active" / "Inactive" labels)</h3>
+<div class="demo">
+  <div class="state active"><span class="glyph"><svg width="12" height="12" viewBox="0 0 18 16" fill="none"><path d="M1.5 8s2.7-5 7.5-5 7.5 5 7.5 5-2.7 5-7.5 5S1.5 8 1.5 8z" stroke="currentColor" stroke-width="1.3"/><circle cx="9" cy="8" r="2.2" stroke="currentColor" stroke-width="1.3"/></svg></span><span class="line"></span></div>
+  <div class="state inactive"><span class="glyph"><svg width="12" height="12" viewBox="0 0 18 16" fill="none"><path d="M3 3l12 10M5 5.5C3 7 1.5 8 1.5 8s2.7 5 7.5 5c1.4 0 2.6-.4 3.6-1M8.4 4c.2 0 .4 0 .6 0 4.8 0 7.5 5 7.5 5-.4.7-1.1 1.6-2 2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span><span class="line"></span></div>
+</div>
+
+<h3>Icon button (3 tones)</h3>
+<table>
+  <tr><th>Tone</th><th>Color</th><th>Bg (active)</th><th>Use</th></tr>
+  <tr><td><code>accent</code></td><td><code>--accent</code></td><td>accent / 14%</td><td>+ New, primary action</td></tr>
+  <tr><td><code>muted</code></td><td><code>--muted</code></td><td>muted / 14%</td><td>cog (manage), edit, eye-off</td></tr>
+  <tr><td><code>danger</code></td><td><code>--danger</code></td><td>danger / 14%</td><td>destructive (rare; QR scan uses solid bg)</td></tr>
+</table>
+
+<h2>Layout rules</h2>
+
+<div class="rule good"><b>Drop labels</b> when a field is recoverable from its content: amount + currency pill, date with cal icon, dropdown with selected value, tags row with <code>#</code> glyph, comment with placeholder.</div>
+
+<div class="rule good"><b>Use the connector</b> for any parent → child relationship (group → category, account → sub-account, project → task). Indent <code>30px</code>, vertical line at <code>x=18</code>, L-elbow at the bottom.</div>
+
+<div class="rule good"><b>Replace state words with icon dividers.</b> eye + solid line = active; eye-off + dashed line = inactive. Same recipe for any active/inactive, on/off, published/draft pair.</div>
+
+<div class="rule good"><b>Collapse trailing actions when a picker opens</b> (animate <code>max-width</code> to 0, opacity 0). <b>Keep them visible in manage mode</b> so the ✕ stays reachable.</div>
+
+<div class="rule good"><b>Use <code>--font-num</code></b> for any value the user reads as a number/code: amounts, dates, ISO currency, date ranges, IDs.</div>
+
+<div class="rule bad"><b>Don't add labels back</b> just because a screen feels empty — the field IS the label. If meaning isn't obvious, swap in a glyph (cal, #, search).</div>
+
+<div class="rule bad"><b>Don't use text buttons</b> for + New / Manage / Close / Edit / Hide. Always icons.</div>
+
+<div class="rule bad"><b>Don't use solid bright accent</b> as a section background — accent is reserved for primary action (Save), the currency pill, and selected/focus rings.</div>
+
+<h2>Density</h2>
+<p>Two density modes are exposed via Tweaks:</p>
+<table>
+  <tr><th>Token</th><th>Compact</th><th>Comfortable</th></tr>
+  <tr><td>Section gap</td><td>14px</td><td>18px</td></tr>
+  <tr><td>Form padding</td><td>12 14 96</td><td>16 16 100</td></tr>
+  <tr><td>Manage row pad</td><td>4 6</td><td>6 6</td></tr>
+</table>
+
+<h2>What's the same as v0.7.0</h2>
+<p>The dark navy palette, blue Save / red Scan split, header brand + version, Russian content, multi-currency model. Nothing about the data model changes.</p>
+
+<h2>What changes</h2>
+<ul>
+  <li><b>Labels removed</b> on Amount, Date, Currency, Group, Category, Event, Tags, Comment.</li>
+  <li><b>Group + Category</b> become one indented unit with a connector instead of two stacked sections.</li>
+  <li><b>+ New / Manage / Close</b> become icon buttons (plus / cog / x).</li>
+  <li><b>Active / Inactive</b> word labels become eye / eye-off icon dividers with solid/dashed rules.</li>
+  <li><b>Picker vs Manage</b> are now distinct: clicking the field opens a simple selectable list; clicking the cog opens the edit/visibility manage list. Trailing actions collapse for the picker, stay visible for manage.</li>
+  <li><b>Hero amount</b> moves from labeled field to a 64px hero with the currency pill clickable inline.</li>
+</ul>
+
+</body>
+</html>

@@ -50,10 +50,6 @@ beforeEach(async () => {
   setActivePinia(pinia);
   await resetQueueDb();
   vi.spyOn(flushQueueModule, "flushQueue").mockResolvedValue();
-  // Stub fetch so catalog.load()'s conditional GET resolves cleanly.
-  // Currency endpoints get a happy default; individual tests below
-  // override the currency store directly when they need a specific
-  // saved-list / preferred code.
   globalThis.fetch = vi.fn(async (url) => {
     const u = String(url);
     if (u.startsWith("/api/currencies")) {
@@ -83,32 +79,48 @@ function mountForm() {
   });
 }
 
+// Helper: get the catalog trigger for a given kind
+function getCatalogTrigger(wrapper, kind) {
+  return wrapper.find(`[data-testid="catalog-trigger-${kind}"]`);
+}
+
+// Helper: open picker for a kind and click an option matching text
+async function selectOption(wrapper, kind, text) {
+  await getCatalogTrigger(wrapper, kind).trigger("click");
+  const opts = wrapper.findAll(".catalog-picker-option");
+  const opt = opts.find((o) => o.text().includes(text));
+  if (!opt) throw new Error(`Option "${text}" not found in ${kind} picker`);
+  await opt.trigger("click");
+}
+
 describe("ExpenseForm: defaults and selectors", () => {
   it("auto-selects the еда group + еда category on first paint", async () => {
     seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
-    expect(wrapper.find("#group").element.value).toBe("1");
-    expect(wrapper.find("#category").element.value).toBe("10");
+    expect(getCatalogTrigger(wrapper, "group").text()).toContain("еда");
+    expect(getCatalogTrigger(wrapper, "category").text()).toContain("еда");
   });
 
   it("clears category when group changes to one that does not contain it", async () => {
     seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
-    await wrapper.find("#group").setValue("2");
+    await selectOption(wrapper, "group", "транспорт");
     await flushPromises();
-    expect(wrapper.find("#category").element.value).toBe("");
+    expect(getCatalogTrigger(wrapper, "category").text()).toContain("— select —");
   });
 
   it("populates category options for the selected group", async () => {
     seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
-    const opts = wrapper.findAll("#category option").map((o) => o.element.value);
-    expect(opts).toContain("10");
-    expect(opts).toContain("11");
-    expect(opts).not.toContain("12");
+    // Open category picker (еда group already selected by default)
+    await getCatalogTrigger(wrapper, "category").trigger("click");
+    const opts = wrapper.findAll(".catalog-picker-option").map((o) => o.text().trim());
+    expect(opts).toContain("еда");
+    expect(opts).toContain("кафе");
+    expect(opts).not.toContain("такси");
   });
 });
 
@@ -145,9 +157,6 @@ describe("ExpenseForm: save flow", () => {
     seedCatalog();
     const queue = useQueueStore();
     const currency = useCurrencyStore();
-    // Make the GET /api/currencies stub return EUR alongside RSD
-    // and lock lastUsed to EUR so preferredCode() picks it once
-    // init() merges the server snapshot.
     globalThis.fetch = vi.fn(async (url) => {
       const u = String(url);
       if (u.startsWith("/api/currencies")) {
@@ -177,9 +186,10 @@ describe("ExpenseForm: + New buttons", () => {
     seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
-    const buttons = wrapper.findAll("button.btn-inline").filter((b) => b.text() === "+ New");
-    expect(buttons.length).toBeGreaterThanOrEqual(4);
-    await buttons[0].trigger("click");
+    // New buttons are icon buttons with aria-label="New" (group, category, event) and "New tag"
+    const newBtns = wrapper.findAll('[aria-label="New"]');
+    expect(newBtns.length).toBeGreaterThanOrEqual(3);
+    await newBtns[0].trigger("click");
     const emits = wrapper.emitted("request-add");
     expect(emits).toBeTruthy();
     expect(emits[0][0].kind).toBe("group");
@@ -190,9 +200,9 @@ describe("ExpenseForm: + New buttons", () => {
     catalog.replaceSnapshot({ ...SAMPLE, category_groups: [] });
     const wrapper = mountForm();
     await flushPromises();
-    const newCategoryBtn = wrapper
-      .findAll("button.btn-inline")
-      .filter((b) => b.text() === "+ New")[1];
-    expect(newCategoryBtn.attributes("disabled")).toBeDefined();
+    // Category New button is the second [aria-label="New"] in the form
+    const newBtns = wrapper.findAll('[aria-label="New"]');
+    const categoryNewBtn = newBtns[1];
+    expect(categoryNewBtn.attributes("disabled")).toBeDefined();
   });
 });

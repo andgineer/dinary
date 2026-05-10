@@ -23,39 +23,58 @@ function mountField(props = {}) {
   });
 }
 
+function trigger(wrapper) {
+  return wrapper.find('[data-testid="catalog-trigger-group"]');
+}
+
 describe("CatalogSelectField — basics", () => {
-  it("renders the label and the dropdown options under id matching kind", () => {
+  it("renders the trigger button with accessible label", () => {
     const wrapper = mountField();
-    expect(wrapper.find("label").text()).toContain("Group");
-    expect(wrapper.find("select#group").exists()).toBe(true);
-    const opts = wrapper.findAll("select#group option").map((o) => o.text().trim());
-    expect(opts).toEqual(["— select —", "alpha", "beta"]);
+    expect(trigger(wrapper).attributes("aria-label")).toBe("Group");
   });
 
-  it("respects an explicit inputId override", () => {
-    const wrapper = mountField({ inputId: "my-id" });
-    expect(wrapper.find("select#my-id").exists()).toBe(true);
-    expect(wrapper.find("select#group").exists()).toBe(false);
+  it("shows placeholder when no value selected", () => {
+    const wrapper = mountField();
+    expect(trigger(wrapper).text()).toContain("— select —");
   });
 
-  it("disables the select and swaps the placeholder when selectDisabled", () => {
+  it("shows the selected option label when a value is set", () => {
+    const wrapper = mountField({ modelValue: "1" });
+    expect(trigger(wrapper).text()).toContain("alpha");
+  });
+
+  it("respects an explicit inputId override in testid", () => {
+    const wrapper = mount(CatalogSelectField, {
+      props: {
+        kind: "group",
+        label: "Group",
+        modelValue: "",
+        options: ACTIVE,
+        inactive: INACTIVE,
+        manageOpen: false,
+        pendingId: null,
+        inputId: "my-id",
+      },
+    });
+    expect(wrapper.find('[data-testid="catalog-trigger-my-id"]').exists()).toBe(true);
+  });
+
+  it("disables the trigger and swaps placeholder when selectDisabled", () => {
     const wrapper = mountField({
       selectDisabled: true,
       disabledPlaceholder: "— pick parent first —",
     });
-    const sel = wrapper.find("select");
-    expect(sel.attributes("disabled")).toBeDefined();
-    expect(sel.find("option").text().trim()).toBe("— pick parent first —");
+    expect(trigger(wrapper).attributes("disabled")).toBeDefined();
+    expect(trigger(wrapper).text()).toContain("— pick parent first —");
   });
 
-  it("disables the +New button and surfaces its title when addDisabled", () => {
+  it("disables +New button when addDisabled", () => {
     const wrapper = mountField({ addDisabled: true, addTitle: "needs a parent" });
-    const newBtn = wrapper.findAll("button").find((b) => b.text() === "+ New");
+    const newBtn = wrapper.find('[aria-label="New"]');
     expect(newBtn.attributes("disabled")).toBeDefined();
-    expect(newBtn.attributes("title")).toBe("needs a parent");
   });
 
-  it("shows the form-hint slot only when formHint is non-empty", () => {
+  it("shows the form-hint when formHint is non-empty", () => {
     const wrapper = mountField({ formHint: "Pick a group first" });
     expect(wrapper.find(".form-hint").text()).toBe("Pick a group first");
     const wrapper2 = mountField({ formHint: "" });
@@ -63,32 +82,55 @@ describe("CatalogSelectField — basics", () => {
   });
 });
 
-describe("CatalogSelectField — events", () => {
-  it("emits update:modelValue and select-change on <select> change", async () => {
+describe("CatalogSelectField — picker interaction", () => {
+  it("opens picker panel on trigger click and lists options", async () => {
     const wrapper = mountField();
-    await wrapper.find("select").setValue("2");
+    await trigger(wrapper).trigger("click");
+    const options = wrapper.findAll(".catalog-picker-option");
+    const texts = options.map((o) => o.text().trim());
+    expect(texts).toContain("alpha");
+    expect(texts).toContain("beta");
+  });
+
+  it("emits update:modelValue and select-change on option click", async () => {
+    const wrapper = mountField();
+    await trigger(wrapper).trigger("click");
+    const opts = wrapper.findAll(".catalog-picker-option");
+    await opts.find((o) => o.text().includes("beta")).trigger("click");
     expect(wrapper.emitted("update:modelValue")[0]).toEqual(["2"]);
     expect(wrapper.emitted("select-change")).toBeTruthy();
   });
 
-  it("emits 'add' on +New click and 'manage-toggle' on Manage click", async () => {
+  it("closes the picker after selecting an option", async () => {
     const wrapper = mountField();
-    const buttons = wrapper.findAll("button");
-    await buttons.find((b) => b.text() === "+ New").trigger("click");
-    await buttons.find((b) => b.text() === "Manage").trigger("click");
+    await trigger(wrapper).trigger("click");
+    expect(wrapper.find(".catalog-picker-panel").exists()).toBe(true);
+    await wrapper.findAll(".catalog-picker-option")[0].trigger("click");
+    expect(wrapper.find(".catalog-picker-panel").exists()).toBe(false);
+  });
+
+  it("shows check mark on the currently selected option", async () => {
+    const wrapper = mountField({ modelValue: "1" });
+    await trigger(wrapper).trigger("click");
+    const selected = wrapper.find(".catalog-picker-option.is-selected");
+    expect(selected.exists()).toBe(true);
+    expect(selected.text()).toContain("alpha");
+  });
+});
+
+describe("CatalogSelectField — icon button events", () => {
+  it("emits 'add' on New icon button click and 'manage-toggle' on Manage click", async () => {
+    const wrapper = mountField();
+    await wrapper.find('[aria-label="New"]').trigger("click");
+    await wrapper.find('[aria-label="Manage"]').trigger("click");
     expect(wrapper.emitted("add")).toBeTruthy();
     expect(wrapper.emitted("manage-toggle")).toBeTruthy();
   });
 
-  it("toggles the Manage button label between Manage / Close", () => {
-    const closed = mountField({ manageOpen: false });
+  it("shows Close label on cog button when manageOpen is true", () => {
     const open = mountField({ manageOpen: true });
-    const closedLabels = closed.findAll("button").map((b) => b.text());
-    const openLabels = open.findAll("button").map((b) => b.text());
-    expect(closedLabels).toContain("Manage");
-    expect(closedLabels).not.toContain("Close");
-    expect(openLabels).toContain("Close");
-    expect(openLabels).not.toContain("Manage");
+    expect(open.find('[aria-label="Close"]').exists()).toBe(true);
+    expect(open.find('[aria-label="Manage"]').exists()).toBe(false);
   });
 });
 
@@ -121,12 +163,14 @@ describe("CatalogSelectField — ManageList wiring", () => {
 });
 
 describe("CatalogSelectField — label formatters", () => {
-  it("uses optionLabelFn for the dropdown text", () => {
+  it("uses optionLabelFn for the picker option text", async () => {
     const wrapper = mountField({
       optionLabelFn: (item) => `[${item.name.toUpperCase()}]`,
     });
-    const opts = wrapper.findAll("option").map((o) => o.text().trim()).slice(1);
-    expect(opts).toEqual(["[ALPHA]", "[BETA]"]);
+    await trigger(wrapper).trigger("click");
+    const opts = wrapper.findAll(".catalog-picker-option").map((o) => o.text().trim());
+    expect(opts).toContain("[ALPHA]");
+    expect(opts).toContain("[BETA]");
   });
 
   it("uses manageLabelFn (not optionLabelFn) for ManageList rows", () => {
@@ -135,9 +179,6 @@ describe("CatalogSelectField — label formatters", () => {
       manageLabelFn: (item) => `${item.name}!`,
     });
     const list = wrapper.find('[data-testid="manage-list"]');
-    // active alpha → "alpha!"; <select> options stay on default name
     expect(list.text()).toContain("alpha!");
-    const dropdownOpts = wrapper.findAll("select option").map((o) => o.text().trim());
-    expect(dropdownOpts).toEqual(["— select —", "alpha", "beta"]);
   });
 });
