@@ -224,3 +224,21 @@ describe("ExpenseForm: + New buttons", () => {
     expect(categoryNewBtn.attributes("disabled")).toBeDefined();
   });
 });
+
+describe("ExpenseForm: receipt-parsed event is ignored", () => {
+  it("does not change amount or date when dinary:receipt-parsed is dispatched", async () => {
+    seedCatalog();
+    const wrapper = mountForm();
+    await flushPromises();
+
+    window.dispatchEvent(
+      new CustomEvent("dinary:receipt-parsed", {
+        detail: { amount: 999, date: "2099-01-01" },
+      }),
+    );
+    await flushPromises();
+
+    expect(wrapper.find("#amount").element.value).toBe("");
+    expect(wrapper.find("#date").element.value).toBe("");
+  });
+});

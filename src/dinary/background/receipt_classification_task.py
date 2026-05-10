@@ -14,6 +14,7 @@ Processes one job per interval:
 """
 
 import asyncio
+import contextlib
 import logging
 import sqlite3
 from collections import defaultdict
@@ -65,6 +66,14 @@ _llm_current_backoff_sec: float = 0.0
 _LLM_BACKOFF_INITIAL_SEC = 60.0
 _LLM_BACKOFF_MAX_SEC = 1800.0
 
+_wakeup_event: asyncio.Event | None = None
+
+
+def notify_new_receipt() -> None:
+    """Signal the drain loop that a new receipt is ready — wakes it immediately."""
+    if _wakeup_event is not None:
+        _wakeup_event.set()
+
 
 def _activate_llm_backoff() -> None:
     global _llm_backoff_until, _llm_current_backoff_sec  # noqa: PLW0603
@@ -83,16 +92,31 @@ def _reset_llm_backoff() -> None:
 
 
 async def receipt_classification_task() -> None:
+    global _wakeup_event  # noqa: PLW0603
+    _wakeup_event = asyncio.Event()
     interval = settings.receipt_drain_interval_sec
     if interval <= 0:
         return
     logger.info("Receipt classification drain started (interval=%.0fs)", interval)
+    loop = asyncio.get_running_loop()
+    # Pretend last drain happened one interval ago so the first receipt (or
+    # the first periodic tick) fires immediately — no forced startup delay.
+    last_drain_at = loop.time() - interval
     while True:
-        await asyncio.sleep(interval)
+        _wakeup_event.clear()
+        cooldown = max(0.0, last_drain_at + interval - loop.time())
+        if cooldown > 0:
+            # Still inside cooldown — wait it out unconditionally.
+            await asyncio.sleep(cooldown)
+        else:
+            # Cooldown expired — wake on next receipt or the periodic interval.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(_wakeup_event.wait(), timeout=interval)
         try:
             await _drain_one()
         except Exception:
             logger.exception("Receipt classification drain error")
+        last_drain_at = loop.time()
 
 
 async def _drain_one() -> None:

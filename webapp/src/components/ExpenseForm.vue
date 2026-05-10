@@ -199,30 +199,16 @@ function requestAdd(kind, options = {}) {
   emit("request-add", { kind, ...options });
 }
 
-function onReceiptParsed(ev) {
-  const detail = ev?.detail;
-  if (!detail) return;
-  if (typeof detail.amount === "number" && !Number.isNaN(detail.amount)) {
-    amount.value = String(detail.amount);
-  }
-  if (typeof detail.date === "string" && detail.date) {
-    date.value = detail.date;
-    applyAutoAttachEventForDate();
-  }
-}
-
 function onOnline() {
   void flushQueue();
 }
 
 onMounted(() => {
   void init();
-  window.addEventListener("dinary:receipt-parsed", onReceiptParsed);
   window.addEventListener("online", onOnline);
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("dinary:receipt-parsed", onReceiptParsed);
   window.removeEventListener("online", onOnline);
 });
 

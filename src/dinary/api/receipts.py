@@ -11,6 +11,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from dinary.background.receipt_classification_task import notify_new_receipt
 from dinary.services import ledger_repo
 from dinary.services.receipt_repo import (
     get_receipt_by_client_id,
@@ -33,7 +34,10 @@ class ReceiptResponse(BaseModel):
 
 @router.post("/api/receipts", response_model=ReceiptResponse)
 async def create_receipt(req: ReceiptRequest) -> ReceiptResponse:
-    return await asyncio.to_thread(_create_receipt_sync, req)
+    result = await asyncio.to_thread(_create_receipt_sync, req)
+    if result.status == "ok":
+        notify_new_receipt()
+    return result
 
 
 def _create_receipt_sync(req: ReceiptRequest) -> ReceiptResponse:

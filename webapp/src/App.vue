@@ -12,7 +12,7 @@ import { useCatalogStore } from "./stores/catalog.js";
 import { useQueueStore } from "./stores/queue.js";
 import { useReceiptQueueStore } from "./stores/receiptQueue.js";
 import { useToastStore } from "./stores/toast.js";
-import { isFiscalReceiptUrl, parseReceiptUrl } from "./composables/receipt.js";
+import { isFiscalReceiptUrl } from "./composables/receipt.js";
 import { flushQueue } from "./composables/flushQueue.js";
 import { flushReceiptQueue } from "./composables/flushReceiptQueue.js";
 
@@ -123,16 +123,7 @@ function onScan(text) {
   // whether the client-side parse (amount/date autofill) succeeds.
   receiptQueue.enqueue(text);
   if (isOnline.value) void flushReceiptQueue();
-
-  try {
-    const parsed = parseReceiptUrl(text);
-    toast.show(`Receipt: ${parsed.amount} RSD, ${parsed.date}`, "success");
-    window.dispatchEvent(
-      new CustomEvent("dinary:receipt-parsed", { detail: parsed }),
-    );
-  } catch {
-    toast.show("Could not read receipt", "error");
-  }
+  toast.show("Receipt queued", "success");
 }
 
 function onScanError(err) {

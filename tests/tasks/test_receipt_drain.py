@@ -16,6 +16,8 @@ from dinary.background.receipt_classification_task import (
     _activate_llm_backoff,
     _drain_one,
     _reset_llm_backoff,
+    notify_new_receipt,
+    receipt_classification_task,
 )
 from dinary.services.llm_client import AllProvidersExhausted
 
@@ -655,3 +657,89 @@ class TestProcessJobEdgeCases:
 
         assert exp_count == 0, "conf=1 items must not generate expenses"
         assert rule is None, "conf=1 items must not store a rule (plan step 9: confidence 2-4 only)"
+
+
+# ---------------------------------------------------------------------------
+# Main drain loop behaviour
+# ---------------------------------------------------------------------------
+
+
+@allure.epic("Background Tasks")
+@allure.feature("Receipt drain — main loop")
+class TestDrainLoop:
+    def test_drains_immediately_when_cooldown_expired_and_receipt_posted(self):
+        """Receipt posted after cooldown triggers an immediate drain."""
+        drained = []
+
+        async def mock_drain():
+            drained.append(1)
+
+        async def run():
+            with (
+                patch.object(drain_mod, "_drain_one", side_effect=mock_drain),
+                patch.object(drain_mod, "settings", MagicMock(receipt_drain_interval_sec=9999.0)),
+            ):
+                task = asyncio.create_task(receipt_classification_task())
+                await asyncio.sleep(0)  # let task reach the initial wait
+                notify_new_receipt()
+                for _ in range(10):
+                    await asyncio.sleep(0)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        asyncio.run(run())
+        assert drained, "receipt post after cooldown must trigger immediate drain"
+
+    def test_cooldown_prevents_second_drain_before_interval(self):
+        """A receipt posted right after a drain must not fire a second drain before the interval."""
+        drained = []
+
+        async def mock_drain():
+            drained.append(1)
+
+        async def run():
+            with (
+                patch.object(drain_mod, "_drain_one", side_effect=mock_drain),
+                patch.object(drain_mod, "settings", MagicMock(receipt_drain_interval_sec=9999.0)),
+            ):
+                task = asyncio.create_task(receipt_classification_task())
+                await asyncio.sleep(0)
+                notify_new_receipt()  # fire first drain
+                for _ in range(20):
+                    await asyncio.sleep(0)
+                assert len(drained) == 1, "first drain should have run"
+                notify_new_receipt()  # must NOT bypass the cooldown
+                for _ in range(20):
+                    await asyncio.sleep(0)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        asyncio.run(run())
+        assert len(drained) == 1, "notify during cooldown must not trigger a second drain"
+
+    def test_notify_new_receipt_sets_wakeup_event(self):
+        """notify_new_receipt sets the module-level event so the drain loop wakes immediately."""
+
+        async def run():
+            event = asyncio.Event()
+            drain_mod._wakeup_event = event
+            assert not event.is_set()
+            notify_new_receipt()
+            assert event.is_set()
+
+        asyncio.run(run())
+
+    def test_notify_new_receipt_is_noop_before_task_starts(self):
+        """notify_new_receipt does not raise if called before the drain task has started."""
+        original = drain_mod._wakeup_event
+        drain_mod._wakeup_event = None
+        try:
+            notify_new_receipt()  # must not raise
+        finally:
+            drain_mod._wakeup_event = original

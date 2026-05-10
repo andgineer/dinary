@@ -3,6 +3,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia } from "pinia";
 import App from "../src/App.vue";
 import * as catalogApi from "../src/api/catalog.js";
+import * as flushReceiptQueueModule from "../src/composables/flushReceiptQueue.js";
 import { _resetForTest } from "../src/stores/queue.js";
 
 async function resetQueueDb() {
@@ -93,5 +94,50 @@ describe("App shell", () => {
     await wrapper.find('[data-testid="queue-badge"]').trigger("click");
     await flushPromises();
     expect(wrapper.find(".modal").exists()).toBe(true);
+  });
+});
+
+describe("App onScan — receipt flow", () => {
+  it("queues receipt and shows 'Receipt queued' toast without prefilling the expense form", async () => {
+    vi.spyOn(flushReceiptQueueModule, "flushReceiptQueue").mockResolvedValue();
+
+    const { useReceiptQueueStore } = await import("../src/stores/receiptQueue.js");
+    const pinia = createPinia();
+    const wrapper = mount(App, { global: { plugins: [pinia] } });
+    await flushPromises();
+
+    const receiptStore = useReceiptQueueStore(pinia);
+    const enqueueSpy = vi.spyOn(receiptStore, "enqueue").mockResolvedValue();
+
+    const scanner = wrapper.findComponent({ name: "QrScanner" });
+    await scanner.vm.$emit("scan", "https://suf.purs.gov.rs/v/?vl=TESTRECEIPT");
+    await flushPromises();
+
+    expect(enqueueSpy).toHaveBeenCalledWith("https://suf.purs.gov.rs/v/?vl=TESTRECEIPT");
+    expect(wrapper.text()).toContain("Receipt queued");
+    // Expense form amount must remain empty — receipt data must NOT be prefilled.
+    expect(wrapper.find("#amount").element.value).toBe("");
+  });
+
+  it("does not dispatch dinary:receipt-parsed when scanning a valid receipt", async () => {
+    vi.spyOn(flushReceiptQueueModule, "flushReceiptQueue").mockResolvedValue();
+
+    const { useReceiptQueueStore } = await import("../src/stores/receiptQueue.js");
+    const pinia = createPinia();
+    const wrapper = mount(App, { global: { plugins: [pinia] } });
+    await flushPromises();
+
+    const receiptStore = useReceiptQueueStore(pinia);
+    vi.spyOn(receiptStore, "enqueue").mockResolvedValue();
+
+    const received = [];
+    window.addEventListener("dinary:receipt-parsed", (e) => received.push(e));
+
+    const scanner = wrapper.findComponent({ name: "QrScanner" });
+    await scanner.vm.$emit("scan", "https://suf.purs.gov.rs/v/?vl=TESTRECEIPT");
+    await flushPromises();
+
+    expect(received).toHaveLength(0);
+    window.removeEventListener("dinary:receipt-parsed", (e) => received.push(e));
   });
 });
