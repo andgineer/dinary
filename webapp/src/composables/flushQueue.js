@@ -42,6 +42,9 @@ export async function flushQueue() {
         if (typeof resp?.catalog_version === "number") {
           latestCatalogVersion = Math.max(latestCatalogVersion, resp.catalog_version);
         }
+        if (resp?.default_group_id != null || resp?.default_category_ids) {
+          catalog.applyExpenseDefaults(resp);
+        }
         await queue.remove(item.id);
       } catch (err) {
         if (err?.status === 409) {

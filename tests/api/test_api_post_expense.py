@@ -331,3 +331,111 @@ class TestPostExpenseSheetLogging:
             con.close()
         assert expected_pk_row is not None
         assert pks == [int(expected_pk_row[0])]
+
+
+def _insert_expense_direct(con, eid, cid, *, receipt_id=None, days_ago=0):
+    dt = f"datetime('now', '-{days_ago} days')"
+    receipt_col = "" if receipt_id is None else ", receipt_id"
+    receipt_val = "" if receipt_id is None else f", {receipt_id}"
+    con.execute(
+        f"INSERT INTO expenses (id, client_expense_id, datetime, amount,"  # noqa: S608
+        f" amount_original, currency_original, category_id{receipt_col})"
+        f" VALUES ({eid}, 'e{eid}', {dt}, 10.0, 10.0, 'RSD', {cid}{receipt_val})",
+    )
+
+
+@allure.epic("API")
+@allure.feature("Expenses (3D) — default_group_id / default_category_ids in response")
+class TestExpenseDefaults:
+    """POST /api/expenses returns usage-based defaults so the PWA can
+    pre-select the most-used group and category on next form open."""
+
+    def test_no_history_returns_null_defaults(self, client):
+        resp = client.post(
+            "/api/expenses",
+            json={
+                "client_expense_id": "d1",
+                "amount": 10.0,
+                "currency": "RSD",
+                "category_id": 1,
+                "date": "2026-04-15",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        # The just-saved expense is manual and recent — group 1 / category 1
+        # should now be the default.
+        assert data["default_group_id"] == 1
+        assert data["default_category_ids"]["1"] == 1
+
+    def test_most_used_manual_category_returned(self, client):
+        con = ledger_repo.get_connection()
+        try:
+            _insert_expense_direct(con, 10, 1)
+            _insert_expense_direct(con, 11, 1)
+            _insert_expense_direct(con, 12, 2)
+        finally:
+            con.close()
+        resp = client.post(
+            "/api/expenses",
+            json={
+                "client_expense_id": "d2",
+                "amount": 10.0,
+                "currency": "RSD",
+                "category_id": 1,
+                "date": "2026-04-15",
+            },
+        )
+        data = resp.json()
+        assert data["default_group_id"] == 1
+        assert data["default_category_ids"]["1"] == 1
+
+    def test_receipt_sourced_expenses_excluded(self, client):
+        con = ledger_repo.get_connection()
+        try:
+            con.execute(
+                "INSERT INTO receipts (id, client_receipt_id, url, store_name_raw,"
+                " store_pib_raw, total_amount, invoice_number)"
+                " VALUES (1, 'r1', 'http://x', '', '', 0, '')",
+            )
+            for i in range(10, 15):
+                _insert_expense_direct(con, i, 1, receipt_id=1)
+        finally:
+            con.close()
+        # Now post one manual expense with category 1 → it should win
+        resp = client.post(
+            "/api/expenses",
+            json={
+                "client_expense_id": "d3",
+                "amount": 10.0,
+                "currency": "RSD",
+                "category_id": 1,
+                "date": "2026-04-15",
+            },
+        )
+        data = resp.json()
+        # Only the manual one counts; receipt ones are excluded
+        assert data["default_group_id"] == 1
+        assert data["default_category_ids"]["1"] == 1
+
+    def test_old_expenses_excluded_from_defaults(self, client):
+        con = ledger_repo.get_connection()
+        try:
+            # Category 2 used heavily but 100 days ago (outside 3-month window)
+            for i in range(20, 26):
+                _insert_expense_direct(con, i, 2, days_ago=100)
+        finally:
+            con.close()
+        resp = client.post(
+            "/api/expenses",
+            json={
+                "client_expense_id": "d4",
+                "amount": 10.0,
+                "currency": "RSD",
+                "category_id": 1,
+                "date": "2026-04-15",
+            },
+        )
+        data = resp.json()
+        # Old category 2 expenses excluded; only the fresh manual save counts
+        assert data["default_category_ids"]["1"] == 1

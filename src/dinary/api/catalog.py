@@ -218,6 +218,46 @@ def _reference_counts(
     return dict(cat_refs), dict(event_refs), dict(tag_refs), group_child_counts
 
 
+_MANUAL_RECENCY = " AND e.receipt_id IS NULL AND e.datetime >= datetime('now', '-3 months')"
+
+# Pre-built SQL strings — built once at import time from the shared recency filter.
+_SQL_CAT_DEFAULTS = (
+    "SELECT c.group_id, e.category_id, COUNT(*) AS cnt FROM expenses e"  # noqa: S608
+    " JOIN categories c ON c.id = e.category_id"
+    " WHERE c.is_active = 1"
+    + _MANUAL_RECENCY
+    + " GROUP BY c.group_id, e.category_id ORDER BY c.group_id, cnt DESC"
+)
+_SQL_GROUP_DEFAULT = (
+    "SELECT c.group_id, COUNT(*) AS cnt FROM expenses e"  # noqa: S608
+    " JOIN categories c ON c.id = e.category_id"
+    " JOIN category_groups g ON g.id = c.group_id"
+    " WHERE g.is_active = 1" + _MANUAL_RECENCY + " GROUP BY c.group_id ORDER BY cnt DESC LIMIT 1"
+)
+
+
+def _most_used_category_per_group(con: sqlite3.Connection) -> dict[int, int]:
+    """Return {group_id: category_id} for the most-used active category per group.
+
+    Counts only manually entered expenses (receipt_id IS NULL) from the last
+    3 months. Groups with no qualifying history are absent from the result.
+    """
+    rows = con.execute(_SQL_CAT_DEFAULTS).fetchall()  # noqa: S608
+    result: dict[int, int] = {}
+    for group_id, cat_id, _ in rows:
+        result.setdefault(int(group_id), int(cat_id))
+    return result
+
+
+def _most_used_group(con: sqlite3.Connection) -> int | None:
+    """Return the group_id used most in manual expenses over the last 3 months.
+
+    Returns ``None`` when there are no qualifying expenses.
+    """
+    row = con.execute(_SQL_GROUP_DEFAULT).fetchone()  # noqa: S608
+    return int(row[0]) if row else None
+
+
 def build_catalog_snapshot(con: sqlite3.Connection) -> dict:
     """Shared by GET /api/catalog and the admin POST/PATCH responses.
 

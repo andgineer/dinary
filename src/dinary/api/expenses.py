@@ -31,6 +31,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from dinary.api.catalog import _most_used_category_per_group, _most_used_group
 from dinary.config import settings
 from dinary.services import ledger_repo, sheet_mapping
 from dinary.services.exchange_rates import get_rate
@@ -59,6 +60,8 @@ class ExpenseResponse(BaseModel):
     amount_original: Decimal
     currency_original: str
     catalog_version: int
+    default_group_id: int | None = None
+    default_category_ids: dict[str, int] = Field(default_factory=dict)
 
 
 @router.post("/api/expenses", response_model=ExpenseResponse)
@@ -186,6 +189,8 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
             raise HTTPException(status_code=409, detail=detail)
 
         catalog_version = ledger_repo.get_catalog_version(con)
+        default_group_id = _most_used_group(con)
+        category_defaults = _most_used_category_per_group(con)
     finally:
         con.close()
 
@@ -196,6 +201,8 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
         amount_original=req.amount,
         currency_original=currency,
         catalog_version=catalog_version,
+        default_group_id=default_group_id,
+        default_category_ids={str(k): v for k, v in category_defaults.items()},
     )
 
 

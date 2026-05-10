@@ -5,6 +5,7 @@ import * as catalogApi from "../api/catalog.js";
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EVENT_WINDOW_DAYS = 30;
 const SNAPSHOT_CACHE_KEY = "dinary:catalog:v1";
+const DEFAULTS_CACHE_KEY = "dinary:defaults:v1";
 
 function isActive(item) {
   // Lenient: treat missing is_active as active so older cached snapshots
@@ -44,6 +45,15 @@ function stripAdminEnvelope(snapshot) {
   };
 }
 
+function readStoredDefaults() {
+  try {
+    const raw = localStorage.getItem(DEFAULTS_CACHE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 function readCachedSnapshot() {
   try {
     const raw = localStorage.getItem(SNAPSHOT_CACHE_KEY);
@@ -67,6 +77,7 @@ function writeCachedSnapshot(snapshot) {
 export const useCatalogStore = defineStore("catalog", () => {
   const snapshot = ref(readCachedSnapshot());
   const lastError = ref(null);
+  const _defaults = ref(readStoredDefaults());
 
   function applySnapshot(rawSnapshot) {
     if (!rawSnapshot) return;
@@ -145,6 +156,26 @@ export const useCatalogStore = defineStore("catalog", () => {
   function findGroupByName(name) {
     if (!snapshot.value) return null;
     return snapshot.value.category_groups.find((g) => namesEqual(g.name, name)) ?? null;
+  }
+
+  function defaultCategoryForGroup(groupId) {
+    return _defaults.value?.default_category_ids?.[String(groupId)] ?? null;
+  }
+
+  const defaultGroupId = computed(() => _defaults.value?.default_group_id ?? null);
+
+  function applyExpenseDefaults({ default_group_id, default_category_ids }) {
+    if (default_group_id == null && !default_category_ids) return;
+    const d = {
+      default_group_id: default_group_id ?? null,
+      default_category_ids: default_category_ids ?? {},
+    };
+    _defaults.value = d;
+    try {
+      localStorage.setItem(DEFAULTS_CACHE_KEY, JSON.stringify(d));
+    } catch {
+      // quota / private mode — harmless
+    }
   }
 
   function events(anchor = new Date(), { includeInactive = false } = {}) {
@@ -273,6 +304,9 @@ export const useCatalogStore = defineStore("catalog", () => {
     findCategoryById,
     findCategoryByName,
     findGroupByName,
+    defaultCategoryForGroup,
+    defaultGroupId,
+    applyExpenseDefaults,
     events,
     inactiveEventsInWindow,
     autoAttachEventsOn,

@@ -204,3 +204,46 @@ describe("catalog store: admin actions", () => {
     await expect(store.add("nope", {})).rejects.toThrow(/Unknown kind/);
   });
 });
+
+describe("catalog store: applyExpenseDefaults / defaultGroupId / defaultCategoryForGroup", () => {
+  it("returns null for both before any defaults are applied", () => {
+    const store = useCatalogStore();
+    expect(store.defaultGroupId).toBeNull();
+    expect(store.defaultCategoryForGroup(1)).toBeNull();
+  });
+
+  it("applyExpenseDefaults sets defaultGroupId and defaultCategoryForGroup", () => {
+    const store = useCatalogStore();
+    store.applyExpenseDefaults({ default_group_id: 1, default_category_ids: { "1": 10, "2": 12 } });
+    expect(store.defaultGroupId).toBe(1);
+    expect(store.defaultCategoryForGroup(1)).toBe(10);
+    expect(store.defaultCategoryForGroup(2)).toBe(12);
+    expect(store.defaultCategoryForGroup(99)).toBeNull();
+  });
+
+  it("persists defaults to localStorage under dinary:defaults:v1", () => {
+    const store = useCatalogStore();
+    store.applyExpenseDefaults({ default_group_id: 2, default_category_ids: { "2": 12 } });
+    const cached = JSON.parse(localStorage.getItem("dinary:defaults:v1"));
+    expect(cached.default_group_id).toBe(2);
+    expect(cached.default_category_ids["2"]).toBe(12);
+  });
+
+  it("reads defaults from localStorage on store init", () => {
+    localStorage.setItem(
+      "dinary:defaults:v1",
+      JSON.stringify({ default_group_id: 5, default_category_ids: { "5": 99 } }),
+    );
+    const store = useCatalogStore();
+    expect(store.defaultGroupId).toBe(5);
+    expect(store.defaultCategoryForGroup(5)).toBe(99);
+  });
+
+  it("defaults are independent of the catalog snapshot", () => {
+    const store = useCatalogStore();
+    store.replaceSnapshot(SAMPLE);
+    expect(store.defaultGroupId).toBeNull();
+    store.applyExpenseDefaults({ default_group_id: 1, default_category_ids: { "1": 10 } });
+    expect(store.defaultGroupId).toBe(1);
+  });
+});

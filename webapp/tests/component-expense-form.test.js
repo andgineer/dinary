@@ -48,6 +48,7 @@ let pinia;
 beforeEach(async () => {
   pinia = createPinia();
   setActivePinia(pinia);
+  localStorage.clear();
   await resetQueueDb();
   vi.spyOn(flushQueueModule, "flushQueue").mockResolvedValue();
   globalThis.fetch = vi.fn(async (url) => {
@@ -68,9 +69,15 @@ afterEach(async () => {
   await resetQueueDb();
 });
 
-function seedCatalog() {
+function seedCatalog({ defaults = true } = {}) {
   const catalog = useCatalogStore();
   catalog.replaceSnapshot(SAMPLE);
+  if (defaults) {
+    catalog.applyExpenseDefaults({
+      default_group_id: 1,
+      default_category_ids: { "1": 10, "2": 12 },
+    });
+  }
 }
 
 function mountForm() {
@@ -94,7 +101,7 @@ async function selectOption(wrapper, kind, text) {
 }
 
 describe("ExpenseForm: defaults and selectors", () => {
-  it("auto-selects the еда group + еда category on first paint", async () => {
+  it("auto-selects group and category from default_group_id / default_category_id on first paint", async () => {
     seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
@@ -102,13 +109,23 @@ describe("ExpenseForm: defaults and selectors", () => {
     expect(getCatalogTrigger(wrapper, "category").text()).toContain("еда");
   });
 
-  it("clears category when group changes to one that does not contain it", async () => {
+  it("leaves group and category empty when no defaults have been applied", async () => {
+    seedCatalog({ defaults: false });
+    const wrapper = mountForm();
+    await flushPromises();
+    expect(getCatalogTrigger(wrapper, "group").text()).toContain("— select —");
+    // category is disabled (no group selected) so it shows the disabled placeholder
+    expect(getCatalogTrigger(wrapper, "category").text()).toContain("— select group first —");
+  });
+
+  it("auto-selects the default category when group changes", async () => {
     seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
     await selectOption(wrapper, "group", "транспорт");
     await flushPromises();
-    expect(getCatalogTrigger(wrapper, "category").text()).toContain("— select —");
+    // транспорт has default_category_id: 12 (такси)
+    expect(getCatalogTrigger(wrapper, "category").text()).toContain("такси");
   });
 
   it("populates category options for the selected group", async () => {
@@ -198,6 +215,7 @@ describe("ExpenseForm: + New buttons", () => {
   it("disables + New on the category row until a group is chosen", async () => {
     const catalog = useCatalogStore();
     catalog.replaceSnapshot({ ...SAMPLE, category_groups: [] });
+    // No defaults → no group pre-selected
     const wrapper = mountForm();
     await flushPromises();
     // Category New button is the second [aria-label="New"] in the form

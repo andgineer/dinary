@@ -33,9 +33,6 @@ const {
 const selectedCurrency = ref("");
 const currencyPickerOpen = ref(false);
 
-const DEFAULT_GROUP_NAME = "еда";
-const DEFAULT_CATEGORY_NAME = "еда";
-
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -69,13 +66,12 @@ const allInactiveTags = computed(() => catalog.inactiveTags);
 const eventLabel = (e) => `${e.name} (${e.date_from}..${e.date_to})`;
 
 function applyDefaultGroupAndCategory() {
-  const group = catalog.findGroupByName(DEFAULT_GROUP_NAME);
-  if (!group) return;
-  if (!activeGroups.value.some((g) => g.id === group.id)) return;
-  groupId.value = String(group.id);
-  const cat = catalog.findCategoryByName(DEFAULT_CATEGORY_NAME, { groupId: group.id });
-  if (cat && catalog.categories(group.id).some((c) => c.id === cat.id)) {
-    categoryId.value = String(cat.id);
+  const gid = catalog.defaultGroupId;
+  if (!gid || !activeGroups.value.some((g) => g.id === gid)) return;
+  groupId.value = String(gid);
+  const defaultCatId = catalog.defaultCategoryForGroup(gid);
+  if (defaultCatId && activeCategories.value.some((c) => c.id === defaultCatId)) {
+    categoryId.value = String(defaultCatId);
   }
 }
 
@@ -99,11 +95,11 @@ watch(groupId, (gid) => {
     categoryId.value = "";
     return;
   }
-  if (categoryId.value) {
-    const cat = catalog.findCategoryById(categoryId.value);
-    if (!cat || cat.group_id !== Number(gid)) {
-      categoryId.value = "";
-    }
+  const defaultCatId = catalog.defaultCategoryForGroup(gid);
+  if (defaultCatId && catalog.categories(gid).some((c) => c.id === defaultCatId)) {
+    categoryId.value = String(defaultCatId);
+  } else {
+    categoryId.value = "";
   }
 });
 
