@@ -8,7 +8,7 @@ from .backups_replica import replica_reset_trust, replica_resync, restore_replic
 from .backups_restore import restore_from_yadisk
 from .backups_status import backup_status
 from .backups_yandex import setup_yadisk
-from .build_docs import ALLOWED_DOC_LANGUAGES, docs_task_factory
+from .build_docs import ALLOWED_DOC_LANGUAGES, build_docs, docs_task_factory
 from .constants import ALLOWED_VERSION_TYPES
 from .db import migrate, restore_primary, verify_db
 from .deploy import (
@@ -49,6 +49,7 @@ __all__ = [
     "bootstrap_catalog",
     "classify_receipt",
     "reclassify_receipts",
+    "build_docs",
     "build_static",
     "deploy",
     "dev",
