@@ -8,7 +8,8 @@ from .backups_replica import replica_reset_trust, replica_resync, restore_replic
 from .backups_restore import restore_from_yadisk
 from .backups_status import backup_status
 from .backups_yandex import setup_yadisk
-from .constants import ALLOWED_DOC_LANGUAGES, ALLOWED_VERSION_TYPES
+from .build_docs import ALLOWED_DOC_LANGUAGES, docs_task_factory
+from .constants import ALLOWED_VERSION_TYPES
 from .db import migrate, restore_primary, verify_db
 from .deploy import (
     bootstrap_catalog,
@@ -18,7 +19,6 @@ from .deploy import (
 from .dev import (
     build_static,
     dev,
-    docs_task_factory,
     pre,
     reqs,
     test,

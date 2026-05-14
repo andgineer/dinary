@@ -16,5 +16,6 @@ Dinary server — бэкенд на FastAPI, который:
 2. Разверните сервер:
       - [Oracle Cloud Free Tier](deploy-oracle.md) — $0/месяц навсегда
       - [Свой компьютер](deploy-selfhost.md) — $0 (Tailscale Funnel или Cloudflare Tunnel)
-3. Настройте HTTPS-доступ — см. инструкции по деплою выше.
+3. Первоначально загружается [Классификатор](taxonomy.md) который вы далее можете корректировать
+4. Настройте HTTPS-доступ — см. инструкции по деплою выше.
 4. [Установите PWA](pwa-install.md) на телефон.

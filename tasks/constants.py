@@ -9,23 +9,6 @@ from dinary.tools.backup_snapshots import (
 )
 from dinary.tools.report_helpers import extract_format_flags, extract_year_month
 
-
-def get_allowed_doc_languages():
-    build_docs_file_name = "scripts/build-docs.sh"
-    try:
-        with open(build_docs_file_name) as f:
-            for line in f:
-                if "LANGUAGES=" in line:
-                    value = line.split("=", 1)[1].strip()
-                    value = value.strip('"').strip("'")
-                    langs = value.split()
-                    return [lang.strip() for lang in langs]
-    except FileNotFoundError:
-        print(f"No {build_docs_file_name} file found")
-    return ["en", "bg", "de", "es", "fr", "ru"]
-
-
-ALLOWED_DOC_LANGUAGES = get_allowed_doc_languages()
 ALLOWED_VERSION_TYPES = ["release", "bug", "feature"]
 
 REPO_URL = "https://github.com/andgineer/dinary.git"
@@ -200,7 +183,6 @@ _REMOTE_DB_PATH = "/home/ubuntu/dinary/data/dinary.db"
 
 # Re-export so consumers of this module get the full set in one import.
 __all__ = [
-    "ALLOWED_DOC_LANGUAGES",
     "ALLOWED_VERSION_TYPES",
     "BACKUP_FILENAME_PREFIX",
     "BACKUP_FILENAME_SUFFIX",
@@ -234,5 +216,4 @@ __all__ = [
     "_REMOTE_DB_PATH",
     "extract_format_flags",
     "extract_year_month",
-    "get_allowed_doc_languages",
 ]

@@ -122,9 +122,7 @@ inv setup-replica
 
 This installs `unattended-upgrades`, allocates a 1 GB swap file,
 creates `/var/lib/litestream/` with the right ownership so the SFTP
-receiver can drop WAL segments into it, and locks public SSH (see
-the [Cloud security notes](../../.plans/cloud-security.md) for the
-rationale). The task is idempotent — re-running it after a
+receiver can drop WAL segments into it, and locks public SSH. The task is idempotent — re-running it after a
 `Persistent=true` reboot or a Tailscale IP rotation converges
 cleanly.
 

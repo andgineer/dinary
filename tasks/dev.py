@@ -39,18 +39,6 @@ def reqs(c):
     c.run("uv lock --upgrade")
 
 
-def docs_task_factory(language: str):
-    @task
-    def docs(c):
-        """Docs preview for the language specified."""
-        c.run("open -a 'Google Chrome' http://127.0.0.1:8000/dinary/")
-        c.run(f"scripts/build-docs.sh --copy-assets {language}")
-        c.run("mkdocs serve -f docs/_mkdocs.yml")
-
-    docs.__doc__ = f"Preview {language} docs locally (builds and serves with mkdocs)."
-    return docs
-
-
 @task
 def uv(c):
     """Install or upgrade uv."""
