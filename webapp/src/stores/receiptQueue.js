@@ -117,6 +117,14 @@ export async function _resetForTest() {
   resetDb();
 }
 
+async function urlToReceiptId(url) {
+  const data = new TextEncoder().encode(url);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export const useReceiptQueueStore = defineStore("receiptQueue", () => {
   const items = ref([]);
   const lastFlushError = ref(null);
@@ -130,10 +138,11 @@ export const useReceiptQueueStore = defineStore("receiptQueue", () => {
   }
 
   async function enqueue(url) {
-    const clientReceiptId =
-      typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `crid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const existing = await withDb(async (db) =>
+      runTx(db, "readonly", (store) => reqToPromise(store.getAll())),
+    );
+    if (existing.some((item) => item.url === url)) return;
+    const clientReceiptId = await urlToReceiptId(url);
     await withDb(async (db) =>
       runTx(db, "readwrite", (store) =>
         store.add({ client_receipt_id: clientReceiptId, url, queued_at: Date.now() }),

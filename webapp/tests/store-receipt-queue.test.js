@@ -48,12 +48,29 @@ describe("receipt queue store: enqueue / list / remove", () => {
     expect(store.items.map((i) => i.url)).not.toContain("https://example.com/r2");
   });
 
-  it("each enqueued item gets a unique client_receipt_id", async () => {
+  it("different URLs produce different client_receipt_ids", async () => {
     const store = useReceiptQueueStore();
     await store.enqueue("https://example.com/r1");
     await store.enqueue("https://example.com/r2");
     const ids = store.items.map((i) => i.client_receipt_id);
     expect(new Set(ids).size).toBe(2);
+  });
+
+  it("same URL produces the same client_receipt_id (stable hash)", async () => {
+    const store = useReceiptQueueStore();
+    await store.enqueue("https://suf.purs.gov.rs/v/?vl=AAAA");
+    const id1 = store.items[0].client_receipt_id;
+    // remove and re-enqueue to get a fresh entry for comparison
+    await store.remove(store.items[0].id);
+    await store.enqueue("https://suf.purs.gov.rs/v/?vl=AAAA");
+    expect(store.items[0].client_receipt_id).toBe(id1);
+  });
+
+  it("enqueuing the same URL twice only adds one entry", async () => {
+    const store = useReceiptQueueStore();
+    await store.enqueue("https://suf.purs.gov.rs/v/?vl=DUPLICATE");
+    await store.enqueue("https://suf.purs.gov.rs/v/?vl=DUPLICATE");
+    expect(store.items).toHaveLength(1);
   });
 
   it("refresh re-reads items from IndexedDB", async () => {

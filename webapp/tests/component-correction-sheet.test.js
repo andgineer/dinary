@@ -22,13 +22,25 @@ const CATALOG = {
 
 const DOUBTFUL_ITEM = {
   id: 42,
+  is_doubtful: true,
   name: "Chocolate",
   store: "Lidl",
   total: 250,
   currency: "RSD",
   count: 2,
-  current_category_id: 10,
+  category_id: 10,
   suggested_category_id: 11,
+};
+
+const CERTAIN_ITEM = {
+  id: 5,
+  is_doubtful: false,
+  name: "mleko",
+  store: "Maxi",
+  total: 200,
+  currency: "RSD",
+  count: 1,
+  category_id: 10,
 };
 
 const TELEPORT_STUB = { props: ["to", "disabled"], template: "<div><slot /></div>" };
@@ -93,7 +105,7 @@ describe("CorrectionSheet", () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     useCatalogStore(pinia).replaceSnapshot(CATALOG);
-    const wrapper = mountSheet(pinia, { item: { ...DOUBTFUL_ITEM, current_category_id: null } });
+    const wrapper = mountSheet(pinia, { item: { ...DOUBTFUL_ITEM, category_id: null } });
     await flushPromises();
     expect(wrapper.find(".footer-text").exists()).toBe(false);
     await wrapper.findAll(".cat-btn")[0].trigger("click");
@@ -128,6 +140,84 @@ describe("CorrectionSheet", () => {
     await flushPromises();
     await wrapper.find('[aria-label="Close"]').trigger("click");
     expect(wrapper.emitted("close")).toBeTruthy();
+    wrapper.unmount();
+  });
+});
+
+describe("CorrectionSheet — scope selector", () => {
+  it("scope selector is hidden for doubtful items", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const wrapper = mountSheet(pinia, { item: DOUBTFUL_ITEM });
+    await flushPromises();
+    expect(wrapper.find('[data-testid="scope-selector"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("scope selector is visible for certain items", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const wrapper = mountSheet(pinia, { item: CERTAIN_ITEM });
+    await flushPromises();
+    expect(wrapper.find('[data-testid="scope-selector"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("passes scope=all for doubtful items regardless of selector state", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const review = useReviewStore(pinia);
+    const correctSpy = vi.spyOn(review, "correct").mockResolvedValue();
+    const wrapper = mountSheet(pinia, { item: DOUBTFUL_ITEM });
+    await flushPromises();
+    await wrapper.findAll(".cat-btn")[0].trigger("click");
+    await wrapper.find(".confirm-btn").trigger("click");
+    await flushPromises();
+    expect(correctSpy).toHaveBeenCalledWith(DOUBTFUL_ITEM, expect.any(Number), "all");
+    wrapper.unmount();
+  });
+
+  it("passes selected scope for certain items", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const review = useReviewStore(pinia);
+    const correctSpy = vi.spyOn(review, "correct").mockResolvedValue();
+    const wrapper = mountSheet(pinia, { item: CERTAIN_ITEM });
+    await flushPromises();
+    // Select "All history" radio
+    const radios = wrapper.findAll('input[type="radio"]');
+    const allHistoryRadio = radios.find((r) => r.element.value === "all");
+    await allHistoryRadio.setValue("all");
+    await wrapper.findAll(".cat-btn")[0].trigger("click");
+    await wrapper.find(".confirm-btn").trigger("click");
+    await flushPromises();
+    expect(correctSpy).toHaveBeenCalledWith(CERTAIN_ITEM, expect.any(Number), "all");
+    wrapper.unmount();
+  });
+
+  it("resets scope to 'single' when sheet is reopened", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const wrapper = mount(CorrectionSheet, {
+      props: { open: true, item: CERTAIN_ITEM },
+      global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB } },
+    });
+    await flushPromises();
+    // Change scope away from default
+    const radios = wrapper.findAll('input[type="radio"]');
+    const allHistoryRadio = radios.find((r) => r.element.value === "all");
+    await allHistoryRadio.setValue("all");
+    // Close and reopen
+    await wrapper.setProps({ open: false });
+    await wrapper.setProps({ open: true });
+    await flushPromises();
+    const singleRadio = wrapper.findAll('input[type="radio"]').find((r) => r.element.value === "single");
+    expect(singleRadio.element.checked).toBe(true);
     wrapper.unmount();
   });
 });

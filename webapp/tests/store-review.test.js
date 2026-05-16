@@ -36,10 +36,10 @@ describe("review store: correct()", () => {
 
     await store.correct(store.items[0], 2);
 
-    expect(spy).toHaveBeenCalledWith(42, 2);
+    expect(spy).toHaveBeenCalledWith(42, 2, "all");
   });
 
-  it("filters the item by item.id after a successful correction", async () => {
+  it("converts corrected doubtful item to certain and places it after remaining doubtful items", async () => {
     vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
       corrected_expense_id: 42,
       batch_updated_count: 0,
@@ -55,8 +55,12 @@ describe("review store: correct()", () => {
 
     await store.correct(store.items[0], 2);
 
-    expect(store.items).toHaveLength(1);
+    expect(store.items).toHaveLength(2);
     expect(store.items[0].id).toBe(8);
+    expect(store.items[0].is_doubtful).toBe(true);
+    expect(store.items[1].id).toBe(7);
+    expect(store.items[1].is_doubtful).toBe(false);
+    expect(store.items[1].category_id).toBe(2);
   });
 
   it("uses item.id directly for certain items (expense_id equals id)", async () => {
@@ -71,7 +75,7 @@ describe("review store: correct()", () => {
 
     await store.correct(store.items[0], 2);
 
-    expect(spy).toHaveBeenCalledWith(100, 2);
+    expect(spy).toHaveBeenCalledWith(100, 2, "all");
   });
 
   it("keeps certain items in the list after correction and updates their category", async () => {
@@ -91,7 +95,7 @@ describe("review store: correct()", () => {
     expect(store.items[0].category_name).toBe("snacks");
   });
 
-  it("removes doubtful items from the list after correction", async () => {
+  it("moves corrected doubtful item into certain section and decrements doubtfulCount", async () => {
     vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
       corrected_expense_id: 42,
       batch_updated_count: 0,
@@ -104,7 +108,9 @@ describe("review store: correct()", () => {
 
     await store.correct(store.items[0], 2);
 
-    expect(store.items).toHaveLength(0);
+    expect(store.items).toHaveLength(1);
+    expect(store.items[0].id).toBe(7);
+    expect(store.items[0].is_doubtful).toBe(false);
     expect(store.doubtfulCount).toBe(0);
   });
 
@@ -123,6 +129,20 @@ describe("review store: correct()", () => {
 
     expect(store.doubtfulCount).toBe(3);
   });
+
+  it("forwards chosen scope to API for certain items", async () => {
+    const spy = vi
+      .spyOn(expenseCorrections, "correctCategory")
+      .mockResolvedValueOnce({ corrected_expense_id: 100, batch_updated_count: 0 });
+
+    seedCatalog();
+    const store = useReviewStore();
+    store.items = [{ id: 100, expense_id: 100, is_doubtful: false, store: "Lidl", total: 200 }];
+
+    await store.correct(store.items[0], 2, "month");
+
+    expect(spy).toHaveBeenCalledWith(100, 2, "month");
+  });
 });
 
 describe("review store: loadNextPage()", () => {
@@ -138,5 +158,21 @@ describe("review store: loadNextPage()", () => {
 
     expect(store.items).toHaveLength(1);
     expect(store.hasMore).toBe(false);
+  });
+
+  it("deduplicates incoming items by id to prevent double-display after local correction", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValueOnce({
+      items: [{ id: 42, is_doubtful: false, name: "hleb" }],
+      doubtful_count: 0,
+      has_more: false,
+    });
+
+    const store = useReviewStore();
+    // Simulate a locally-converted certain item already in the list (same id=42)
+    store.items = [{ id: 42, is_doubtful: false, name: "hleb" }];
+
+    await store.loadNextPage();
+
+    expect(store.items).toHaveLength(1);
   });
 });

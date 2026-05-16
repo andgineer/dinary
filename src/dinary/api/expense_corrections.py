@@ -3,7 +3,8 @@
 import asyncio
 import sqlite3
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -14,8 +15,16 @@ from dinary.services.classification_rules import RuleSpec, create_or_update_rule
 router = APIRouter()
 
 
+class CorrectionScope(StrEnum):
+    single = "single"
+    month = "month"
+    year = "year"
+    all = "all"
+
+
 class CategoryCorrectionRequest(BaseModel):
     category_id: int
+    scope: CorrectionScope = CorrectionScope.all
 
 
 class CategoryCorrectionResponse(BaseModel):
@@ -29,6 +38,50 @@ async def correct_expense_category(
     req: CategoryCorrectionRequest,
 ) -> CategoryCorrectionResponse:
     return await asyncio.to_thread(_correct_category_sync, expense_id, req)
+
+
+def _query_other_items(
+    con: sqlite3.Connection,
+    name_norm: str,
+    store_id: int | None,
+    expense_id: int,
+    since: str | None,
+) -> list:
+    if since is not None:
+        return con.execute(
+            """
+            SELECT ri.id, ri.receipt_id, ri.expense_id, ri.total_price
+              FROM receipt_items ri
+              JOIN receipts rec ON rec.id = ri.receipt_id
+             WHERE ri.name_normalized = ?
+               AND rec.store_id IS ?
+               AND ri.expense_id != ?
+               AND ri.expense_id IS NOT NULL
+               AND rec.created_at >= ?
+            """,
+            [name_norm, store_id, expense_id, since],
+        ).fetchall()
+    return con.execute(
+        """
+        SELECT ri.id, ri.receipt_id, ri.expense_id, ri.total_price
+          FROM receipt_items ri
+          JOIN receipts rec ON rec.id = ri.receipt_id
+         WHERE ri.name_normalized = ?
+           AND rec.store_id IS ?
+           AND ri.expense_id != ?
+           AND ri.expense_id IS NOT NULL
+        """,
+        [name_norm, store_id, expense_id],
+    ).fetchall()
+
+
+def _since_for_scope(scope: CorrectionScope) -> str | None:
+    now = datetime.now(UTC)
+    if scope == CorrectionScope.month:
+        return (now - timedelta(days=30)).isoformat()
+    if scope == CorrectionScope.year:
+        return datetime(now.year, 1, 1, tzinfo=UTC).isoformat()
+    return None
 
 
 def _correct_category_sync(
@@ -79,22 +132,15 @@ def _correct_category_sync(
                         [req.category_id, item_id],
                     )
 
+            since = _since_for_scope(req.scope)
             items_by_expense: defaultdict[int, list[tuple[int, int, float]]] = defaultdict(list)
             for name_norm in set(item_names):
                 _upsert_rule_in_tx(con, store_id, name_norm, req.category_id)
 
-                other_items = con.execute(
-                    """
-                    SELECT ri.id, ri.receipt_id, ri.expense_id, ri.total_price
-                      FROM receipt_items ri
-                      JOIN receipts rec ON rec.id = ri.receipt_id
-                     WHERE ri.name_normalized = ?
-                       AND rec.store_id IS ?
-                       AND ri.expense_id != ?
-                       AND ri.expense_id IS NOT NULL
-                    """,
-                    [name_norm, store_id, expense_id],
-                ).fetchall()
+                if req.scope == CorrectionScope.single:
+                    continue
+
+                other_items = _query_other_items(con, name_norm, store_id, expense_id, since)
                 for other_item_id, other_receipt_id, old_exp_id, total_price in other_items:
                     con.execute(
                         "UPDATE receipt_items"

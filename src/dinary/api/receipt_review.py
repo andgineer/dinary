@@ -1,9 +1,9 @@
 """Receipt review API.
 
 GET /api/receipts/review/feed?page=N&page_size=20
-    Block 1: doubtful (conf < 4), deduplicated by (store_id, item_name_normalized),
-             sorted by total amount at stake DESC.
-    Block 2: certain (conf = 4), all expenses from receipts, sorted by receipt datetime DESC.
+    Unified list of classification_rules sorted by:
+      1. Doubtful first (confidence_level < 4), by amount at stake DESC
+      2. Certain rules (confidence_level >= 4), by last receipt date DESC
 
 GET /api/receipts/review/counts
     {doubtful_rules: int} — count of unique rules with conf < 4, for PWA badge.
@@ -19,103 +19,102 @@ from dinary.services import ledger_repo
 router = APIRouter()
 
 
-def _build_feed(conn: sqlite3.Connection, page: int, page_size: int) -> dict[str, Any]:
-    conn.row_factory = sqlite3.Row
-    offset = (page - 1) * page_size
-
-    doubtful = conn.execute(
+def _count_doubtful(conn: sqlite3.Connection) -> int:
+    return conn.execute(
         """
-        SELECT
-            cr.id              AS rule_id,
-            cr.item_name_normalized,
-            s.chain_name       AS store_chain,
-            cr.category_id,
-            c.name             AS category_name,
-            cr.confidence_level,
-            SUM(ri.total_price)      AS amount_at_stake,
-            COUNT(ri.id)             AS occurrence_count,
-            MAX(ri.expense_id)       AS expense_id,
-            MAX(e.currency_original) AS currency
-          FROM classification_rules cr
-          JOIN categories c ON c.id = cr.category_id
-          LEFT JOIN stores s ON s.id = cr.store_id
-          JOIN receipt_items ri ON ri.name_normalized = cr.item_name_normalized
-          JOIN receipts rec2 ON rec2.id = ri.receipt_id
-             AND (cr.store_id IS NULL OR rec2.store_id = cr.store_id)
-          LEFT JOIN expenses e ON e.id = ri.expense_id
-         WHERE cr.confidence_level < 4
-         GROUP BY cr.id
-         ORDER BY amount_at_stake DESC
+        SELECT COUNT(*) FROM (
+            SELECT cr.id
+              FROM classification_rules cr
+              JOIN receipt_items ri ON ri.name_normalized = cr.item_name_normalized
+              JOIN receipts rec ON rec.id = ri.receipt_id
+                 AND (cr.store_id IS NULL OR rec.store_id = cr.store_id)
+             WHERE cr.confidence_level < 4
+             GROUP BY cr.id
+        )
         """,
-    ).fetchall()
+    ).fetchone()[0]
 
-    doubtful_rows = [
+
+def _count_total(conn: sqlite3.Connection) -> int:
+    return conn.execute(
+        """
+        SELECT COUNT(*) FROM (
+            SELECT cr.id
+              FROM classification_rules cr
+              JOIN receipt_items ri ON ri.name_normalized = cr.item_name_normalized
+              JOIN receipts rec ON rec.id = ri.receipt_id
+                 AND (cr.store_id IS NULL OR rec.store_id = cr.store_id)
+             GROUP BY cr.id
+        )
+        """,
+    ).fetchone()[0]
+
+
+def _query_rules(conn: sqlite3.Connection, limit: int, offset: int) -> list[dict]:
+    rows = conn.execute(
+        """
+        WITH rule_stats AS (
+            SELECT
+                cr.id,
+                cr.item_name_normalized,
+                cr.category_id,
+                cr.confidence_level,
+                s.chain_name                AS store_chain,
+                c.name                      AS category_name,
+                SUM(ri.total_price)         AS amount_at_stake,
+                COUNT(ri.id)                AS occurrence_count,
+                MAX(ri.expense_id)          AS expense_id,
+                MAX(e.currency_original)    AS currency,
+                MAX(rec.created_at)         AS last_receipt_date
+              FROM classification_rules cr
+              JOIN categories c   ON c.id = cr.category_id
+              LEFT JOIN stores s  ON s.id = cr.store_id
+              JOIN receipt_items ri ON ri.name_normalized = cr.item_name_normalized
+              JOIN receipts rec   ON rec.id = ri.receipt_id
+                   AND (cr.store_id IS NULL OR rec.store_id = cr.store_id)
+              LEFT JOIN expenses e ON e.id = ri.expense_id
+             GROUP BY cr.id
+        )
+        SELECT *
+          FROM rule_stats
+         ORDER BY
+             (confidence_level < 4) DESC,
+             CASE WHEN confidence_level < 4 THEN amount_at_stake ELSE 0 END DESC,
+             CASE WHEN confidence_level >= 4 THEN last_receipt_date ELSE '' END DESC
+         LIMIT ? OFFSET ?
+        """,
+        [limit, offset],
+    ).fetchall()
+    return [
         {
-            "is_doubtful": True,
-            "id": int(r["rule_id"]),
-            "name": str(r["item_name_normalized"]),
+            "is_doubtful": bool(r["confidence_level"] < 4),
+            "id": int(r["id"]),
+            "name": str(r["item_name_normalized"]) if r["item_name_normalized"] else None,
             "store": str(r["store_chain"]) if r["store_chain"] else None,
             "total": float(r["amount_at_stake"] or 0),
             "count": int(r["occurrence_count"]),
             "currency": str(r["currency"]) if r["currency"] else None,
             "confidence_level": int(r["confidence_level"]),
-            "current_category_id": int(r["category_id"]),
+            "category_id": int(r["category_id"]),
             "category_name": str(r["category_name"]),
             "expense_id": int(r["expense_id"]) if r["expense_id"] is not None else None,
+            "datetime": str(r["last_receipt_date"]) if r["last_receipt_date"] else None,
         }
-        for r in doubtful
+        for r in rows
     ]
 
-    certain = conn.execute(
-        """
-        SELECT
-            e.id            AS expense_id,
-            e.amount_original,
-            e.currency_original,
-            c.name          AS category_name,
-            e.category_id,
-            e.confidence_level,
-            rec.created_at  AS receipt_datetime,
-            s.chain_name    AS store_chain,
-            (SELECT ri.name_normalized
-               FROM receipt_items ri
-              WHERE ri.expense_id = e.id
-              LIMIT 1)      AS item_name
-          FROM expenses e
-          JOIN categories c ON c.id = e.category_id
-          JOIN receipts rec ON rec.id = e.receipt_id
-          LEFT JOIN stores s ON s.id = e.store_id
-         WHERE e.receipt_id IS NOT NULL
-           AND e.confidence_level = 4
-         ORDER BY rec.created_at DESC
-        """,
-    ).fetchall()
 
-    certain_rows = [
-        {
-            "is_doubtful": False,
-            "id": int(r["expense_id"]),
-            "name": str(r["item_name"]) if r["item_name"] else None,
-            "store": str(r["store_chain"]) if r["store_chain"] else None,
-            "total": float(r["amount_original"]),
-            "currency": str(r["currency_original"]),
-            "datetime": str(r["receipt_datetime"]) if r["receipt_datetime"] else None,
-            "category_name": str(r["category_name"]),
-            "category_id": int(r["category_id"]),
-            "confidence_level": int(r["confidence_level"])
-            if r["confidence_level"] is not None
-            else None,
-        }
-        for r in certain
-    ]
+def _build_feed(conn: sqlite3.Connection, page: int, page_size: int) -> dict[str, Any]:
+    conn.row_factory = sqlite3.Row
+    offset = (page - 1) * page_size
 
-    all_items = doubtful_rows + certain_rows
-    total = len(all_items)
-    page_items = all_items[offset : offset + page_size]
+    d_total = _count_doubtful(conn)
+    total = _count_total(conn)
+    rows = _query_rules(conn, page_size, offset) if total > 0 else []
 
     return {
-        "doubtful_count": len(doubtful_rows),
-        "items": page_items,
+        "doubtful_count": d_total,
+        "items": rows,
         "has_more": offset + page_size < total,
     }
 

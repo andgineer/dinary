@@ -29,11 +29,13 @@ export const useReviewStore = defineStore("review", () => {
     try {
       const nextPage = page.value + 1;
       const data = await getReviewFeed({ page: nextPage, pageSize: 20 });
-      items.value = [...items.value, ...data.items];
+      const existingIds = new Set(items.value.map((i) => i.id));
+      const incoming = (data.items ?? []).filter((i) => !existingIds.has(i.id));
+      items.value = [...items.value, ...incoming];
       doubtfulCount.value = data.doubtful_count ?? doubtfulCount.value;
       hasMore.value = data.has_more ?? false;
       page.value = nextPage;
-      totalLoaded.value += data.items.length;
+      totalLoaded.value += incoming.length;
     } catch (err) {
       const toast = useToastStore();
       toast.show(err?.message || "Failed to load review feed", "error");
@@ -42,19 +44,32 @@ export const useReviewStore = defineStore("review", () => {
     }
   }
 
-  async function correct(item, categoryId) {
+  async function correct(item, categoryId, scope = "all") {
     const toast = useToastStore();
     const catalog = useCatalogStore();
     try {
       const expenseId = item.expense_id ?? item.id;
-      const result = await correctCategory(expenseId, categoryId);
+      const result = await correctCategory(expenseId, categoryId, scope);
       const count = result?.count ?? item.count ?? 1;
       const cat = catalog.findCategoryById(categoryId);
       const catName = cat?.name ?? "";
       if (item.is_doubtful) {
-        items.value = items.value.filter((i) => i.id !== item.id);
+        const filtered = items.value.filter((i) => i.id !== item.id);
+        let insertAt = filtered.length;
+        for (let i = 0; i < filtered.length; i++) {
+          if (!filtered[i].is_doubtful) {
+            insertAt = i;
+            break;
+          }
+        }
+        filtered.splice(insertAt, 0, {
+          ...item,
+          is_doubtful: false,
+          category_id: categoryId,
+          category_name: catName,
+        });
+        items.value = filtered;
         doubtfulCount.value = Math.max(0, doubtfulCount.value - 1);
-        totalLoaded.value = Math.max(0, totalLoaded.value - 1);
       } else {
         const idx = items.value.findIndex((i) => i.id === item.id);
         if (idx !== -1) {

@@ -1,8 +1,9 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted } from "vue";
 import { useReviewStore } from "../stores/review.js";
-import ExpenseRow from "../components/ExpenseRow.vue";
+import RuleRow from "../components/RuleRow.vue";
 import CorrectionSheet from "../components/CorrectionSheet.vue";
+import { ref } from "vue";
 
 const reviewStore = useReviewStore();
 
@@ -10,8 +11,6 @@ const correctionItem = ref(null);
 const correctionOpen = ref(false);
 const sentinel = ref(null);
 let observer = null;
-
-const doubtfulItems = computed(() => reviewStore.items.filter((i) => i.is_doubtful));
 
 function openCorrection(item) {
   correctionItem.value = item;
@@ -21,13 +20,6 @@ function openCorrection(item) {
 function closeCorrection() {
   correctionOpen.value = false;
   correctionItem.value = null;
-}
-
-function isFirstCertain(index) {
-  return (
-    !reviewStore.items[index].is_doubtful &&
-    (index === 0 || reviewStore.items[index - 1].is_doubtful)
-  );
 }
 
 function setupObserver() {
@@ -58,7 +50,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="review-view" data-testid="review-view">
     <div
-      v-if="reviewStore.doubtfulCount > 0 || doubtfulItems.length > 0"
+      v-if="reviewStore.doubtfulCount > 0"
       class="section-header section-header--warning"
     >
       <span class="section-label">NEEDS REVIEW</span>
@@ -66,11 +58,8 @@ onBeforeUnmount(() => {
       <span class="section-sort">by impact</span>
     </div>
 
-    <template v-for="(item, index) in reviewStore.items" :key="item.id">
-      <div v-if="isFirstCertain(index)" class="section-divider">
-        <span class="divider-text">ALL EXPENSES</span>
-      </div>
-      <ExpenseRow :item="item" @tap="openCorrection(item)" />
+    <template v-for="item in reviewStore.items" :key="item.id">
+      <RuleRow :item="item" @tap="openCorrection(item)" />
     </template>
 
     <div
@@ -141,30 +130,6 @@ onBeforeUnmount(() => {
   margin-left: auto;
   font-size: 0.7rem;
   color: var(--muted);
-}
-
-.section-divider {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin: 1rem 0 0.5rem;
-}
-
-.section-divider::before,
-.section-divider::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-
-.divider-text {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--muted);
-  white-space: nowrap;
 }
 
 .empty-state {

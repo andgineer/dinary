@@ -10,7 +10,7 @@ defineEmits(["tap"]);
 
 const catalog = useCatalogStore();
 
-const categoryId = computed(() => props.item.current_category_id ?? props.item.category_id);
+const categoryId = computed(() => props.item.category_id);
 const currentCategory = computed(() => catalog.findCategoryById(categoryId.value));
 const currentGroup = computed(() => {
   const cat = currentCategory.value;
@@ -48,8 +48,8 @@ function formatAmount(total) {
 
 <template>
   <div
-    class="expense-row"
-    :class="{ 'expense-row--doubtful': item.is_doubtful }"
+    class="rule-row"
+    :class="{ 'rule-row--doubtful': item.is_doubtful }"
     role="button"
     tabindex="0"
     :data-testid="item.is_doubtful ? 'doubtful-row' : 'certain-row'"
@@ -91,7 +91,7 @@ function formatAmount(total) {
 </template>
 
 <style scoped>
-.expense-row {
+.rule-row {
   background: var(--field);
   border-radius: 10px;
   border: 1px solid var(--border);
@@ -101,12 +101,13 @@ function formatAmount(total) {
   transition: opacity 0.15s;
 }
 
-.expense-row--doubtful {
-  border-left: 3px solid var(--warning);
+.rule-row--doubtful {
+  border-left: 4px solid var(--warning);
   border-radius: 0 10px 10px 0;
+  background: rgba(245, 158, 11, 0.07);
 }
 
-.expense-row:active {
+.rule-row:active {
   opacity: 0.85;
 }
 
@@ -129,7 +130,7 @@ function formatAmount(total) {
   margin-right: 0.5rem;
 }
 
-.expense-row--doubtful .row-name {
+.rule-row--doubtful .row-name {
   font-weight: 700;
 }
 

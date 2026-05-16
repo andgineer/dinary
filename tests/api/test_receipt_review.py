@@ -1,5 +1,7 @@
 """Receipt review API tests."""
 
+from datetime import UTC, datetime, timedelta
+
 import allure
 import pytest
 
@@ -31,16 +33,26 @@ def _seed_review_data(conn):
     )
 
 
-def _seed_certain_expense(conn):
+def _seed_certain_rule(conn):
     conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
     conn.execute(
         "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
         " VALUES (1, 'r1', 'https://x', 1)"
     )
     conn.execute(
+        "INSERT INTO classification_rules"
+        " (store_id, item_name_normalized, category_id, confidence_level, source)"
+        " VALUES (1, 'mleko', 1, 4, 'llm')"
+    )
+    conn.execute(
         "INSERT INTO expenses (id, datetime, amount, amount_original, currency_original,"
         "                      category_id, confidence_level, receipt_id, store_id)"
         " VALUES (10, '2026-05-01T10:00:00', 200.0, 200.0, 'RSD', 1, 4, 1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO receipt_items"
+        " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
+        " VALUES (1, 1, 'mleko raw', 'mleko', 200.0, 1, 200.0, 10)"
     )
 
 
@@ -74,7 +86,7 @@ class TestReviewFeed:
         assert d["count"] == 1
         assert d["currency"] == "RSD"
         assert d["confidence_level"] == 3
-        assert d["current_category_id"] == 1
+        assert d["category_id"] == 1
         assert d["expense_id"] == 42
         assert "id" in d
 
@@ -86,14 +98,72 @@ class TestReviewFeed:
         resp = client.get("/api/receipts/review/feed?page_size=101")
         assert resp.status_code == 422
 
+    def test_two_block_pagination_uses_sql_limit_not_memory_slice(self, client, db):  # noqa: ARG002
+        """Page 2 must return a different rule than page 1 with page_size=1."""
+        conn = ledger_repo.get_connection()
+        try:
+            conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+            conn.execute(
+                "INSERT INTO receipts (id, client_receipt_id, url, store_id, created_at)"
+                " VALUES (1, 'r1', 'https://x', 1, '2026-05-02T10:00:00')"
+            )
+            conn.execute(
+                "INSERT INTO receipts (id, client_receipt_id, url, store_id, created_at)"
+                " VALUES (2, 'r2', 'https://y', 1, '2026-05-01T10:00:00')"
+            )
+            conn.execute(
+                "INSERT INTO classification_rules"
+                " (id, store_id, item_name_normalized, category_id, confidence_level, source)"
+                " VALUES (10, 1, 'item_a', 1, 4, 'llm')"
+            )
+            conn.execute(
+                "INSERT INTO classification_rules"
+                " (id, store_id, item_name_normalized, category_id, confidence_level, source)"
+                " VALUES (11, 1, 'item_b', 1, 4, 'llm')"
+            )
+            conn.execute(
+                "INSERT INTO expenses"
+                " (id, datetime, amount, amount_original, currency_original,"
+                "  category_id, confidence_level, receipt_id, store_id)"
+                " VALUES (10, '2026-05-02T10:00:00', 100.0, 100.0, 'RSD', 1, 4, 1, 1)"
+            )
+            conn.execute(
+                "INSERT INTO expenses"
+                " (id, datetime, amount, amount_original, currency_original,"
+                "  category_id, confidence_level, receipt_id, store_id)"
+                " VALUES (11, '2026-05-01T10:00:00', 200.0, 200.0, 'RSD', 1, 4, 2, 1)"
+            )
+            conn.execute(
+                "INSERT INTO receipt_items"
+                " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
+                " VALUES (10, 1, 'item_a raw', 'item_a', 100.0, 1, 100.0, 10)"
+            )
+            conn.execute(
+                "INSERT INTO receipt_items"
+                " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
+                " VALUES (11, 2, 'item_b raw', 'item_b', 200.0, 1, 200.0, 11)"
+            )
+        finally:
+            conn.close()
+
+        p1 = client.get("/api/receipts/review/feed?page=1&page_size=1").json()
+        p2 = client.get("/api/receipts/review/feed?page=2&page_size=1").json()
+
+        assert len(p1["items"]) == 1
+        assert p1["has_more"] is True
+        assert len(p2["items"]) == 1
+        assert p2["has_more"] is False
+        # Pages must contain different rules
+        assert p1["items"][0]["id"] != p2["items"][0]["id"]
+
 
 @allure.epic("API")
 @allure.feature("Receipt Review")
-class TestReviewFeedBlock2:
-    def test_certain_expense_in_block2(self, client, db):  # noqa: ARG002
+class TestReviewFeedCertainRules:
+    def test_certain_rule_in_feed(self, client, db):  # noqa: ARG002
         conn = ledger_repo.get_connection()
         try:
-            _seed_certain_expense(conn)
+            _seed_certain_rule(conn)
         finally:
             conn.close()
 
@@ -106,28 +176,25 @@ class TestReviewFeedBlock2:
         assert c["currency"] == "RSD"
         assert c["store"] == "Lidl"
         assert c["confidence_level"] == 4
+        assert c["name"] == "mleko"
+        assert c["count"] == 1
         assert "id" in c
         assert "datetime" in c
 
-    def test_block2_not_included_in_doubtful_count(self, client, db):  # noqa: ARG002
+    def test_certain_rule_not_included_in_doubtful_count(self, client, db):  # noqa: ARG002
         conn = ledger_repo.get_connection()
         try:
-            _seed_certain_expense(conn)
+            _seed_certain_rule(conn)
         finally:
             conn.close()
 
         resp = client.get("/api/receipts/review/feed")
         assert resp.json()["doubtful_count"] == 0
 
-    def test_certain_item_includes_name_from_receipt_items(self, client, db):  # noqa: ARG002
+    def test_rule_name_comes_from_classification_rules(self, client, db):  # noqa: ARG002
         conn = ledger_repo.get_connection()
         try:
-            _seed_certain_expense(conn)
-            conn.execute(
-                "INSERT INTO receipt_items"
-                " (receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
-                " VALUES (1, 'mleko raw', 'mleko', 200.0, 1, 200.0, 10)"
-            )
+            _seed_certain_rule(conn)
         finally:
             conn.close()
 
@@ -136,17 +203,40 @@ class TestReviewFeedBlock2:
         assert len(certain) == 1
         assert certain[0]["name"] == "mleko"
 
-    def test_certain_item_name_is_null_when_no_receipt_items(self, client, db):  # noqa: ARG002
+    def test_doubtful_rule_appears_as_doubtful(self, client, db):  # noqa: ARG002
+        """A low-confidence rule with a matching receipt_item appears as doubtful."""
         conn = ledger_repo.get_connection()
         try:
-            _seed_certain_expense(conn)
+            conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+            conn.execute(
+                "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
+                " VALUES (1, 'r1', 'https://x', 1)"
+            )
+            conn.execute(
+                "INSERT INTO classification_rules"
+                " (store_id, item_name_normalized, category_id, confidence_level, source)"
+                " VALUES (1, 'jogurt', 1, 3, 'llm')"
+            )
+            conn.execute(
+                "INSERT INTO expenses"
+                " (id, datetime, amount, amount_original, currency_original,"
+                "  category_id, confidence_level, receipt_id, store_id)"
+                " VALUES (11, '2026-05-01T10:00:00', 150.0, 150.0, 'RSD', 1, 3, 1, 1)"
+            )
+            conn.execute(
+                "INSERT INTO receipt_items"
+                " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
+                " VALUES (1, 1, 'jogurt raw', 'jogurt', 150.0, 1, 150.0, 11)"
+            )
         finally:
             conn.close()
 
         resp = client.get("/api/receipts/review/feed")
-        certain = [i for i in resp.json()["items"] if not i["is_doubtful"]]
-        assert len(certain) == 1
-        assert certain[0]["name"] is None
+        data = resp.json()
+        doubtful = [i for i in data["items"] if i["is_doubtful"]]
+        assert len(doubtful) == 1
+        assert doubtful[0]["total"] == 150.0
+        assert doubtful[0]["confidence_level"] == 3
 
 
 @allure.epic("API")
@@ -648,3 +738,155 @@ class TestExpenseSplitMerge:
             assert extra == 1
         finally:
             conn.close()
+
+
+@allure.epic("API")
+@allure.feature("Receipt Review")
+class TestScopedCorrections:
+    def _seed(self, conn, expense_date: str, expense_id: int = 1):
+        conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+        conn.execute(
+            f"INSERT INTO receipts (id, client_receipt_id, url, store_id, created_at)"
+            f" VALUES (1, 'r1', 'https://x', 1, '{expense_date}')"
+        )
+        conn.execute(
+            "INSERT INTO receipt_items"
+            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
+            "  category_id, confidence_level)"
+            " VALUES (1, 1, 'hleb raw', 'hleb', 120.0, 1, 120.0, 1, 3)"
+        )
+        conn.execute(
+            f"INSERT INTO expenses (id, datetime, amount, amount_original, currency_original,"
+            f"                      category_id, confidence_level, receipt_id, store_id)"
+            f" VALUES ({expense_id}, '{expense_date}', 120.0, 120.0, 'RSD', 1, 3, 1, 1)"
+        )
+        conn.execute(f"UPDATE receipt_items SET expense_id = {expense_id} WHERE id = 1")
+
+    def _seed_other_expense(self, conn, expense_date: str, receipt_id: int, expense_id: int):
+        conn.execute(
+            f"INSERT INTO receipts (id, client_receipt_id, url, store_id, created_at)"
+            f" VALUES ({receipt_id}, 'r{receipt_id}', 'https://z{receipt_id}', 1, '{expense_date}')"
+        )
+        conn.execute(
+            f"INSERT INTO expenses (id, datetime, amount, amount_original, currency_original,"
+            f"                      category_id, confidence_level, receipt_id, store_id)"
+            f" VALUES ({expense_id}, '{expense_date}', 80.0, 80.0, 'RSD', 1, 3, {receipt_id}, 1)"
+        )
+        conn.execute(
+            f"INSERT INTO receipt_items"
+            f" (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
+            f"  category_id, confidence_level)"
+            f" VALUES ({expense_id}, {receipt_id}, 'hleb raw', 'hleb', 80.0, 1, 80.0, 1, 3)"
+        )
+        conn.execute(f"UPDATE receipt_items SET expense_id = {expense_id} WHERE id = {expense_id}")
+
+    def test_scope_single_skips_batch(self, client, db):  # noqa: ARG002
+        conn = ledger_repo.get_connection()
+        try:
+            self._seed(conn, "2026-05-01T10:00:00", expense_id=1)
+            self._seed_other_expense(conn, "2026-05-01T10:00:00", receipt_id=2, expense_id=2)
+        finally:
+            conn.close()
+
+        resp = client.patch("/api/expenses/1/category", json={"category_id": 2, "scope": "single"})
+        assert resp.status_code == 200
+        assert resp.json()["batch_updated_count"] == 0
+
+        conn = ledger_repo.get_connection()
+        try:
+            exp2 = conn.execute("SELECT category_id FROM expenses WHERE id = 2").fetchone()
+        finally:
+            conn.close()
+
+        assert exp2[0] == 1, "other expense must not be updated with scope=single"
+
+    def test_scope_single_still_upserts_rule(self, client, db):  # noqa: ARG002
+        conn = ledger_repo.get_connection()
+        try:
+            self._seed(conn, "2026-05-01T10:00:00", expense_id=1)
+        finally:
+            conn.close()
+
+        client.patch("/api/expenses/1/category", json={"category_id": 2, "scope": "single"})
+
+        conn = ledger_repo.get_connection()
+        try:
+            rule = conn.execute(
+                "SELECT category_id FROM classification_rules WHERE item_name_normalized = 'hleb'"
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert rule is not None
+        assert rule[0] == 2
+
+    def test_scope_all_updates_all_history(self, client, db):  # noqa: ARG002
+        old_date = "2020-01-01T10:00:00"
+        conn = ledger_repo.get_connection()
+        try:
+            self._seed(conn, "2026-05-01T10:00:00", expense_id=1)
+            self._seed_other_expense(conn, old_date, receipt_id=2, expense_id=2)
+        finally:
+            conn.close()
+
+        resp = client.patch("/api/expenses/1/category", json={"category_id": 2, "scope": "all"})
+        assert resp.status_code == 200
+        assert resp.json()["batch_updated_count"] == 1
+
+        conn = ledger_repo.get_connection()
+        try:
+            exp2 = conn.execute("SELECT category_id FROM expenses WHERE id = 2").fetchone()
+        finally:
+            conn.close()
+
+        assert exp2[0] == 2
+
+    def test_scope_month_only_updates_recent_expenses(self, client, db):  # noqa: ARG002
+        recent_date = (datetime.now(UTC) - timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%S")
+        old_date = (datetime.now(UTC) - timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%S")
+        conn = ledger_repo.get_connection()
+        try:
+            self._seed(conn, recent_date, expense_id=1)
+            self._seed_other_expense(conn, recent_date, receipt_id=2, expense_id=2)
+            self._seed_other_expense(conn, old_date, receipt_id=3, expense_id=3)
+        finally:
+            conn.close()
+
+        resp = client.patch("/api/expenses/1/category", json={"category_id": 2, "scope": "month"})
+        assert resp.status_code == 200
+        assert resp.json()["batch_updated_count"] == 1
+
+        conn = ledger_repo.get_connection()
+        try:
+            exp2 = conn.execute("SELECT category_id FROM expenses WHERE id = 2").fetchone()
+            exp3 = conn.execute("SELECT category_id FROM expenses WHERE id = 3").fetchone()
+        finally:
+            conn.close()
+
+        assert exp2[0] == 2, "recent expense must be batch-updated"
+        assert exp3[0] == 1, "old expense outside 30-day window must not be updated"
+
+    def test_scope_year_only_updates_this_year(self, client, db):  # noqa: ARG002
+        this_year_date = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%S")
+        last_year_date = f"{datetime.now(UTC).year - 1}-06-15T10:00:00"
+        conn = ledger_repo.get_connection()
+        try:
+            self._seed(conn, this_year_date, expense_id=1)
+            self._seed_other_expense(conn, this_year_date, receipt_id=2, expense_id=2)
+            self._seed_other_expense(conn, last_year_date, receipt_id=3, expense_id=3)
+        finally:
+            conn.close()
+
+        resp = client.patch("/api/expenses/1/category", json={"category_id": 2, "scope": "year"})
+        assert resp.status_code == 200
+        assert resp.json()["batch_updated_count"] == 1
+
+        conn = ledger_repo.get_connection()
+        try:
+            exp2 = conn.execute("SELECT category_id FROM expenses WHERE id = 2").fetchone()
+            exp3 = conn.execute("SELECT category_id FROM expenses WHERE id = 3").fetchone()
+        finally:
+            conn.close()
+
+        assert exp2[0] == 2, "this-year expense must be batch-updated"
+        assert exp3[0] == 1, "last-year expense must not be updated"

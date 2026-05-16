@@ -14,14 +14,23 @@ const catalog = useCatalogStore();
 const reviewStore = useReviewStore();
 
 const selectedCategoryId = ref(null);
+const selectedScope = ref("single");
 const submitting = ref(false);
+
+const SCOPE_OPTIONS = [
+  { value: "single", label: "Last expense" },
+  { value: "month", label: "Last month" },
+  { value: "year", label: "This year" },
+  { value: "all", label: "All history" },
+];
 
 watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
-      const raw = props.item?.current_category_id ?? props.item?.category_id;
+      const raw = props.item?.category_id;
       selectedCategoryId.value = raw != null ? Number(raw) : null;
+      selectedScope.value = "single";
       submitting.value = false;
     }
   },
@@ -47,7 +56,7 @@ const footerText = computed(() => {
   if (!selectedCategory.value) return null;
   const count = props.item?.count ?? 1;
   const groupName = selectedGroup.value?.name ?? "";
-  const noun = count === 1 ? "expense" : "expenses";
+  const noun = count === 1 ? "occurrence" : "occurrences";
   return `Updates ${count} ${noun} · sets ${groupName} › ${selectedCategory.value.name}`;
 });
 
@@ -67,7 +76,8 @@ async function confirm() {
   if (!selectedCategoryId.value || !props.item) return;
   submitting.value = true;
   try {
-    await reviewStore.correct(props.item, selectedCategoryId.value);
+    const scope = props.item?.is_doubtful ? "all" : selectedScope.value;
+    await reviewStore.correct(props.item, selectedCategoryId.value, scope);
     emit("close");
   } finally {
     submitting.value = false;
@@ -109,6 +119,23 @@ async function confirm() {
       </div>
 
       <div class="sheet-body">
+        <div v-if="!item?.is_doubtful" class="scope-selector" data-testid="scope-selector">
+          <div class="scope-label">Apply change to:</div>
+          <label
+            v-for="opt in SCOPE_OPTIONS"
+            :key="opt.value"
+            class="scope-option"
+          >
+            <input
+              type="radio"
+              :value="opt.value"
+              v-model="selectedScope"
+              class="scope-radio"
+            />
+            {{ opt.label }}
+          </label>
+        </div>
+
         <div
           v-for="{ group, categories } in allGroupsWithCategories"
           :key="group.id"
@@ -267,6 +294,35 @@ async function confirm() {
   flex: 1;
   overflow-y: auto;
   padding: 0.5rem 1rem;
+}
+
+.scope-selector {
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.scope-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+.scope-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  padding: 0.25rem 0;
+  cursor: pointer;
+}
+
+.scope-radio {
+  accent-color: var(--accent);
 }
 
 .group-section {

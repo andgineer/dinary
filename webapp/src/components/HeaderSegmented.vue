@@ -1,5 +1,5 @@
 <script setup>
-import { Plus, Receipt, Plug } from "lucide-vue-next";
+import { Plus, ListChecks, Plug } from "lucide-vue-next";
 
 defineProps({
   tab: { type: String, default: "add" },
@@ -33,7 +33,7 @@ defineEmits(["update:tab"]);
       data-testid="seg-review"
       @click="$emit('update:tab', 'review')"
     >
-      <Receipt :size="16" aria-hidden="true" />
+      <ListChecks :size="16" aria-hidden="true" />
       <span
         v-if="doubtfulCount > 0"
         class="seg-badge"
