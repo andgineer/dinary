@@ -13,9 +13,9 @@
 | src/dinary/api/expenses.py                             |      102 |        4 |     96% |159, 307-309 |
 | src/dinary/api/qr.py                                   |       17 |        6 |     65% |     26-32 |
 | src/dinary/api/receipt\_review.py                      |       28 |        0 |    100% |           |
-| src/dinary/api/receipts.py                             |       40 |        9 |     78% |     57-65 |
+| src/dinary/api/receipts.py                             |       44 |        9 |     80% |     61-69 |
 | src/dinary/background/rate\_prefetch\_task.py          |       56 |        2 |     96% |   86, 117 |
-| src/dinary/background/receipt\_classification\_task.py |      227 |       47 |     79% |89-95, 119-124, 128-130, 134-138, 142-146, 150-154, 197-199, 225, 257, 266-274, 345, 385-387, 424-426, 444-446, 476-478 |
+| src/dinary/background/receipt\_classification\_task.py |      241 |       42 |     83% |117-118, 143-148, 152-154, 158-162, 166-170, 174-178, 221-223, 249, 281, 290-298, 369, 409-411, 448-450, 468-470, 500-502 |
 | src/dinary/background/sheet\_logging\_task.py          |       53 |        7 |     87% |     44-57 |
 | src/dinary/config.py                                   |      152 |       19 |     88% |37, 47, 110-112, 143, 149, 205-209, 211-215, 218-223, 226-230, 293-295 |
 | src/dinary/imports/expense\_import.py                  |      418 |      132 |     68% |260, 265-266, 280, 282, 284, 311-329, 359, 363, 379-385, 389-397, 408, 410, 427, 429, 434, 455, 460-461, 485, 516-520, 533-537, 539-542, 694-695, 743-745, 748-750, 832-843, 912-955, 968, 978, 1001-1037, 1095, 1109, 1112, 1117, 1127, 1185-1191, 1196-1208, 1247-1251, 1253-1257, 1315-1324 |
@@ -59,7 +59,7 @@
 | src/dinary/tools/backup\_snapshots.py                  |       79 |        7 |     91% |157, 213-218 |
 | src/dinary/tools/report\_helpers.py                    |       30 |       10 |     67% |     44-53 |
 | src/dinary/tools/sql.py                                |       71 |        3 |     96% |86, 176, 183 |
-| **TOTAL**                                              | **5442** | **1086** | **80%** |           |
+| **TOTAL**                                              | **5460** | **1081** | **80%** |           |
 
 
 ## Setup coverage badge
