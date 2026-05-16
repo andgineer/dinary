@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import logging
 import sqlite3
+import uuid
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
@@ -31,6 +32,7 @@ from dinary.services.classification_rules import (
     create_or_update_rule,
 )
 from dinary.services.item_normalizer import normalize_item_name
+from dinary.services.ledger_repo import enqueue_for_logging
 from dinary.services.llm_client import (
     AllProvidersExhausted,
     ClassificationResult,
@@ -424,13 +426,23 @@ def _persist_classification_results(
             conn.execute(
                 """
                 INSERT INTO expenses
-                       (datetime, amount, amount_original, currency_original,
+                       (client_expense_id, datetime, amount, amount_original, currency_original,
                         category_id, confidence_level, receipt_id, store_id)
-                VALUES (?, ?, ?, 'RSD', ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 'RSD', ?, ?, ?, ?)
                 """,
-                [receipt_dt, total, total, cat_id, min_conf, job.receipt_id, store_id],
+                [
+                    str(uuid.uuid4()),
+                    receipt_dt,
+                    total,
+                    total,
+                    cat_id,
+                    min_conf,
+                    job.receipt_id,
+                    store_id,
+                ],
             )
             expense_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+            enqueue_for_logging(conn, expense_id)
             for item, conf in cat_items:
                 norm = normalize_item_name(item.name_raw)
                 update_receipt_item(

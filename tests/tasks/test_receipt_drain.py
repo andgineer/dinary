@@ -660,6 +660,201 @@ class TestProcessJobEdgeCases:
 
 
 # ---------------------------------------------------------------------------
+# Sheet logging integration
+# ---------------------------------------------------------------------------
+
+
+@allure.epic("Background Tasks")
+@allure.feature("Receipt drain — sheet logging")
+class TestReceiptSheetLogging:
+    """Expenses created by the receipt drain must carry a UUID and be enqueued
+    for sheet logging so the drain loop can append them to Google Sheets."""
+
+    def test_expense_has_client_expense_id(self, drain_db):  # noqa: ARG002
+        """Each receipt expense gets a non-null UUID client_expense_id."""
+        from dinary.background.receipt_classification_task import _process_job
+        from dinary.services.llm_client import ClassificationResult
+        from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
+        from dinary.services.receipt_repo import ReceiptJobRow
+
+        parsed = ParsedReceipt(
+            store_name="",
+            store_pib="",
+            total_amount=100.0,
+            invoice_number="INV-LOG-1",
+            items=[
+                ReceiptItem(
+                    name_raw="HLEB",
+                    unit_price=100.0,
+                    quantity=1.0,
+                    total_price=100.0,
+                    tax_label="E",
+                )
+            ],
+            items_total=100.0,
+            total_ok=True,
+            used_journal_fallback=False,
+        )
+        pool = MagicMock()
+        pool.get_chain_name = AsyncMock(return_value="")
+        pool.classify_receipt = AsyncMock(
+            return_value=([ClassificationResult("hleb", category_id=1, confidence_level=3)], False)
+        )
+
+        conn = ledger_repo.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('log-r1', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+        finally:
+            conn.close()
+
+        job = ReceiptJobRow(
+            receipt_id=receipt_id,
+            url="https://x",
+            store_name_raw="",
+            store_pib_raw="",
+            invoice_number="INV-LOG-1",
+            parsed_at=None,
+            used_journal_fallback=False,
+            claim_token="tok",
+        )
+
+        with (
+            patch(
+                "dinary.background.receipt_classification_task.parse_receipt",
+                return_value=parsed,
+            ),
+            patch(
+                "dinary.background.receipt_classification_task.ProviderPool",
+                return_value=pool,
+            ),
+        ):
+            asyncio.run(_process_job(job))
+
+        conn = ledger_repo.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT client_expense_id FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert row is not None
+        assert row[0] is not None, "receipt expense must have a client_expense_id"
+        assert len(row[0]) == 36, "client_expense_id must be a UUID (36 chars with hyphens)"
+
+    def test_expense_enqueued_for_sheet_logging(self, drain_db):  # noqa: ARG002
+        """Each receipt expense is inserted into sheet_logging_jobs as pending."""
+        from dinary.background.receipt_classification_task import _process_job
+        from dinary.services.llm_client import ClassificationResult
+        from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
+        from dinary.services.receipt_repo import ReceiptJobRow
+
+        parsed = ParsedReceipt(
+            store_name="",
+            store_pib="",
+            total_amount=200.0,
+            invoice_number="INV-LOG-2",
+            items=[
+                ReceiptItem(
+                    name_raw="MLEKO",
+                    unit_price=100.0,
+                    quantity=1.0,
+                    total_price=100.0,
+                    tax_label="E",
+                ),
+                ReceiptItem(
+                    name_raw="SIR", unit_price=100.0, quantity=1.0, total_price=100.0, tax_label="E"
+                ),
+            ],
+            items_total=200.0,
+            total_ok=True,
+            used_journal_fallback=False,
+        )
+        pool = MagicMock()
+        pool.get_chain_name = AsyncMock(return_value="")
+        # Two items → two different categories → two expenses
+        pool.classify_receipt = AsyncMock(
+            return_value=(
+                [
+                    ClassificationResult("mleko", category_id=1, confidence_level=3),
+                    ClassificationResult("sir", category_id=1, confidence_level=3),
+                ],
+                False,
+            )
+        )
+
+        conn = ledger_repo.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('log-r2', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+        finally:
+            conn.close()
+
+        job = ReceiptJobRow(
+            receipt_id=receipt_id,
+            url="https://x",
+            store_name_raw="",
+            store_pib_raw="",
+            invoice_number="INV-LOG-2",
+            parsed_at=None,
+            used_journal_fallback=False,
+            claim_token="tok",
+        )
+
+        with (
+            patch(
+                "dinary.background.receipt_classification_task.parse_receipt",
+                return_value=parsed,
+            ),
+            patch(
+                "dinary.background.receipt_classification_task.ProviderPool",
+                return_value=pool,
+            ),
+        ):
+            asyncio.run(_process_job(job))
+
+        conn = ledger_repo.get_connection()
+        try:
+            exp_ids = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT id FROM expenses WHERE receipt_id = ?", [receipt_id]
+                ).fetchall()
+            ]
+            queued = (
+                [
+                    r[0]
+                    for r in conn.execute(
+                        "SELECT expense_id FROM sheet_logging_jobs WHERE expense_id IN ({})".format(
+                            ",".join("?" * len(exp_ids))
+                        ),
+                        exp_ids,
+                    ).fetchall()
+                ]
+                if exp_ids
+                else []
+            )
+        finally:
+            conn.close()
+
+        assert len(exp_ids) == 1, "two items in same category → one aggregated expense"
+        assert set(queued) == set(exp_ids), "every receipt expense must be queued for sheet logging"
+
+
+# ---------------------------------------------------------------------------
 # Main drain loop behaviour
 # ---------------------------------------------------------------------------
 

@@ -607,6 +607,21 @@ def _try_insert_expense_row(
         return None, True
 
 
+def enqueue_for_logging(con: sqlite3.Connection, expense_id: int) -> None:
+    """Enqueue an expense for sheet logging.
+
+    All expense-creating paths (PWA API, receipt pipeline, future sources)
+    call this after committing the expense row.  Correction paths that only
+    UPDATE existing expenses must NOT call this — the original sheet entry
+    stays authoritative.
+    """
+    con.execute(
+        "INSERT INTO sheet_logging_jobs (expense_id, status)"
+        " VALUES (?, 'pending') ON CONFLICT (expense_id) DO NOTHING",
+        [expense_id],
+    )
+
+
 def _commit_expense_row(
     con: sqlite3.Connection,
     expense_pk: int,
@@ -626,11 +641,7 @@ def _commit_expense_row(
             [expense_pk, tid],
         )
     if enqueue_logging:
-        con.execute(
-            "INSERT INTO sheet_logging_jobs (expense_id, status)"
-            " VALUES (?, 'pending') ON CONFLICT (expense_id) DO NOTHING",
-            [expense_pk],
-        )
+        enqueue_for_logging(con, expense_pk)
     try:
         con.execute("COMMIT")
         return True
