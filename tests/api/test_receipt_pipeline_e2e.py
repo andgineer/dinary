@@ -125,7 +125,7 @@ class TestReceiptPipelineE2E:
         data = resp.json()
         doubtful = [i for i in data["items"] if i["is_doubtful"]]
         assert len(doubtful) >= 1
-        assert doubtful[0]["item_name_normalized"] == "hleb beli"
+        assert doubtful[0]["name"] == "hleb beli"
 
     def test_category_correction_updates_expense(self, client, db):  # noqa: ARG002
         """PATCH /api/expenses/{id}/category sets conf=4 and creates a rule."""

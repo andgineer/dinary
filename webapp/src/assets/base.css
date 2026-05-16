@@ -206,23 +206,37 @@ label {
 
 .toast {
   position: fixed;
-  bottom: 1.5rem;
+  top: 5rem;
   left: 50%;
-  transform: translateX(-50%);
-  padding: 0.75rem 1.25rem;
-  border-radius: 8px;
-  font-size: 0.9rem;
+  transform: translateX(-50%) translateY(-12rem);
+  padding: 0.6rem 1.25rem 0.6rem 1rem;
+  border-radius: 999px;
+  font-size: 0.875rem;
   font-weight: 500;
   z-index: 100;
   opacity: 0;
-  transition: opacity 0.3s;
+  transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1),
+              opacity 0.2s ease;
   pointer-events: none;
   max-width: calc(100% - 2rem);
-  text-align: center;
+  white-space: nowrap;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25), 0 2px 6px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 .toast.show {
+  transform: translateX(-50%) translateY(0);
   opacity: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.toast-icon {
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
 }
 
 .toast.success {
@@ -238,6 +252,7 @@ label {
 .toast.info {
   background: var(--surface-2);
   color: var(--text);
+  border: 1px solid var(--border-strong);
 }
 
 /* Modal overlay primitive. Each modal component supplies its own

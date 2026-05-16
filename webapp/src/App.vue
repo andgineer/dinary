@@ -126,7 +126,11 @@ onBeforeUnmount(() => {
     }"
     role="status"
     aria-live="polite"
+    @click="toast.hide()"
   >
+    <span class="toast-icon" aria-hidden="true">{{
+      toast.type === 'success' ? '✓' : toast.type === 'error' ? '✕' : 'ℹ'
+    }}</span>
     {{ toast.message }}
   </div>
 </template>
