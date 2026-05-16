@@ -6,6 +6,7 @@
 import { postReceipt } from "../api/receipts.js";
 import { useReceiptQueueStore } from "../stores/receiptQueue.js";
 import { useToastStore } from "../stores/toast.js";
+import { parseReceiptUrl } from "./receipt.js";
 
 let _inFlight = false;
 
@@ -21,8 +22,13 @@ export async function flushReceiptQueue() {
       try {
         const body = await postReceipt({ client_receipt_id: item.client_receipt_id, url: item.url });
         await queue.remove(item.id);
-        if (body?.status === "duplicate") toast.show("Already saved", "info");
-        else toast.show("Receipt saved", "success");
+        let amountLabel = "";
+        try {
+          const { amount } = parseReceiptUrl(item.url);
+          amountLabel = ` · ${amount.toLocaleString()} RSD`;
+        } catch { /* URL may not be decodable */ }
+        if (body?.status === "duplicate") toast.show(`Receipt already recorded${amountLabel}`, "info");
+        else toast.show(`Receipt saved${amountLabel}`, "success");
       } catch (err) {
         // 409 conflict — receipt already registered with a different URL; discard locally.
         if (err?.status === 409) {

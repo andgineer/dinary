@@ -18,6 +18,7 @@ function mockOnLine(value) {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   setActivePinia(createPinia());
 });
 

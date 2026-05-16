@@ -135,6 +135,8 @@ function reset() {
 
 async function init() {
   if (!navigator.onLine) {
+    applyDefaultGroupAndCategory();
+    applyAutoAttachEventForDate();
     selectedCurrency.value = currency.preferredCode;
     return;
   }

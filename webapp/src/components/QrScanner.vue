@@ -1,5 +1,6 @@
 <script setup>
-import { onBeforeUnmount, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
+import { loadZbar } from "../composables/zbar.js";
 
 const emit = defineEmits(["scan", "error"]);
 defineExpose({ start, stop, isActive });
@@ -10,18 +11,6 @@ const active = ref(false);
 let _stream = null;
 let _animId = null;
 let _zbar = null;
-
-async function loadZbar() {
-  if (_zbar) return _zbar;
-  // Loaded from CDN at runtime so vite-plugin-pwa doesn't try to
-  // precache the wasm bundle. The scanner is opt-in (only loads when
-  // the user taps the QR button) so the lazy import is correct.
-  _zbar = await import(
-    /* @vite-ignore */
-    "https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.11.0/dist/inlined/index.mjs"
-  );
-  return _zbar;
-}
 
 async function applyZoomFocus() {
   const track = videoEl.value?.srcObject?.getVideoTracks?.()?.[0];
@@ -72,7 +61,7 @@ async function start() {
     throw err;
   }
   stop();
-  await loadZbar();
+  _zbar = await loadZbar();
   _stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
@@ -106,6 +95,7 @@ function isActive() {
   return active.value;
 }
 
+onMounted(() => { void loadZbar().catch(() => {}); });
 onBeforeUnmount(stop);
 </script>
 

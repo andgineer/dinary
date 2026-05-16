@@ -50,6 +50,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="review-view" data-testid="review-view">
+    <div v-if="!isOnline" class="offline-notice">
+      {{ reviewStore.items.length > 0 ? 'Offline — showing cached data' : 'Offline — no cached data' }}
+    </div>
+
     <div
       v-if="reviewStore.doubtfulCount > 0"
       class="section-header section-header--warning"
@@ -64,7 +68,7 @@ onBeforeUnmount(() => {
     </template>
 
     <div
-      v-if="!reviewStore.loading && reviewStore.items.length === 0 && !reviewStore.hasMore"
+      v-if="isOnline && !reviewStore.loading && reviewStore.items.length === 0 && !reviewStore.hasMore"
       class="empty-state"
     >
       <p class="empty-text">All caught up!</p>
@@ -101,6 +105,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  margin-top: 0.25rem;
   margin-bottom: 0.5rem;
   padding: 0 0.25rem;
 }
@@ -131,6 +136,13 @@ onBeforeUnmount(() => {
   margin-left: auto;
   font-size: 0.7rem;
   color: var(--muted);
+}
+
+.offline-notice {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+  padding: 0.5rem 0 0.25rem;
 }
 
 .empty-state {

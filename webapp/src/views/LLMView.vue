@@ -2,23 +2,35 @@
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useLlmStore } from "../stores/llm.js";
 import { useOnline } from "../composables/useOnline.js";
+import { useToastStore } from "../stores/toast.js";
 import HealthSummaryCard from "../components/HealthSummaryCard.vue";
 import ProviderCard from "../components/ProviderCard.vue";
 import ProviderSheet from "../components/ProviderSheet.vue";
 
 const llmStore = useLlmStore();
 const { isOnline } = useOnline();
+const toast = useToastStore();
 
 const sheetOpen = ref(false);
 const editingProvider = ref(null);
 let refreshTimer = null;
 
+function requireOnline() {
+  if (!isOnline.value) {
+    toast.show("Not available offline", "info");
+    return false;
+  }
+  return true;
+}
+
 function openAdd() {
+  if (!requireOnline()) return;
   editingProvider.value = null;
   sheetOpen.value = true;
 }
 
 function openEdit(provider) {
+  if (!requireOnline()) return;
   editingProvider.value = provider;
   sheetOpen.value = true;
 }
@@ -42,6 +54,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="llm-view" data-testid="llm-view">
+    <div v-if="!isOnline" class="offline-notice" data-testid="llm-offline-notice">
+      Offline — changes not available
+    </div>
+
     <HealthSummaryCard :health="llmStore.health" @add="openAdd" />
 
     <div class="pool-header">
@@ -60,10 +76,10 @@ onBeforeUnmount(() => {
       :is-first="idx === 0"
       :is-last="idx === llmStore.providers.length - 1"
       @edit="openEdit(provider)"
-      @toggle="llmStore.toggle(provider.id)"
-      @move-up="llmStore.move(provider.id, 'up')"
-      @move-down="llmStore.move(provider.id, 'down')"
-      @test="llmStore.test(provider.id)"
+      @toggle="isOnline ? llmStore.toggle(provider.id) : requireOnline()"
+      @move-up="isOnline ? llmStore.move(provider.id, 'up') : requireOnline()"
+      @move-down="isOnline ? llmStore.move(provider.id, 'down') : requireOnline()"
+      @test="isOnline ? llmStore.test(provider.id) : requireOnline()"
     />
 
     <div
@@ -83,6 +99,13 @@ onBeforeUnmount(() => {
   max-width: 480px;
   width: 100%;
   margin: 0 auto;
+}
+
+.offline-notice {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+  padding: 0.5rem 0 0.25rem;
 }
 
 .pool-header {

@@ -47,7 +47,7 @@ describe("flushReceiptQueue", () => {
     expect(queue.items).toHaveLength(0);
   });
 
-  it("shows 'Receipt saved' toast on ok and 'Already saved' toast on duplicate", async () => {
+  it("shows 'Receipt saved' toast on ok and 'Receipt already recorded' toast on duplicate", async () => {
     const queue = useReceiptQueueStore();
     await queue.enqueue("https://example.com/r1");
     await queue.enqueue("https://example.com/r2");
@@ -61,8 +61,8 @@ describe("flushReceiptQueue", () => {
 
     await flushReceiptQueue();
 
-    expect(showSpy).toHaveBeenCalledWith("Receipt saved", "success");
-    expect(showSpy).toHaveBeenCalledWith("Already saved", "info");
+    expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("Receipt saved"), "success");
+    expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("Receipt already recorded"), "info");
   });
 
   it("passes client_receipt_id and url to postReceipt", async () => {
