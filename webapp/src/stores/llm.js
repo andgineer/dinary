@@ -11,12 +11,9 @@ export const useLlmStore = defineStore("llm", () => {
   async function refresh() {
     loading.value = true;
     try {
-      const [provList, status] = await Promise.all([
-        llmApi.listProviders(),
-        llmApi.getStatus(),
-      ]);
-      providers.value = Array.isArray(provList) ? provList : (provList.providers ?? []);
-      health.value = status;
+      const status = await llmApi.getStatus();
+      providers.value = status.providers ?? [];
+      health.value = status.health ?? null;
     } catch (err) {
       useToastStore().show(err?.message || "Failed to load LLM providers", "error");
     } finally {

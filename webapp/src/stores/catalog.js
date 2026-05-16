@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import * as catalogApi from "../api/catalog.js";
+import { useToastStore } from "./toast.js";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EVENT_WINDOW_DAYS = 30;
@@ -99,6 +100,7 @@ export const useCatalogStore = defineStore("catalog", () => {
       return snapshot.value;
     } catch (e) {
       lastError.value = e;
+      useToastStore().show(e?.message || "Failed to load catalog", "error");
       return snapshot.value;
     }
   }

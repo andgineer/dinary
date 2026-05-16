@@ -20,7 +20,7 @@ watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
-      const raw = props.item?.current_category_id;
+      const raw = props.item?.current_category_id ?? props.item?.category_id;
       selectedCategoryId.value = raw != null ? Number(raw) : null;
       submitting.value = false;
     }
@@ -47,7 +47,8 @@ const footerText = computed(() => {
   if (!selectedCategory.value) return null;
   const count = props.item?.count ?? 1;
   const groupName = selectedGroup.value?.name ?? "";
-  return `Updates ${count} expenses · sets ${groupName} › ${selectedCategory.value.name}`;
+  const noun = count === 1 ? "expense" : "expenses";
+  return `Updates ${count} ${noun} · sets ${groupName} › ${selectedCategory.value.name}`;
 });
 
 function selectCategory(id) {
@@ -92,9 +93,11 @@ async function confirm() {
 
       <div class="sheet-header">
         <div class="sheet-eyebrow">CORRECT CATEGORY</div>
-        <div v-if="item" class="sheet-title">{{ item.name }}</div>
+        <div v-if="item" class="sheet-title">{{ item.name ?? item.store }}</div>
         <div v-if="item" class="sheet-meta">
-          {{ item.store }} · ×{{ item.count }} · {{ item.total?.toLocaleString("ru-RU") }} {{ item.currency }}
+          <template v-if="item.store">{{ item.store }}</template
+          ><template v-if="item.count"> · ×{{ item.count }}</template>
+          · {{ item.total?.toLocaleString("ru-RU") }} {{ item.currency }}
         </div>
         <button type="button" class="sheet-close" aria-label="Close" @click="emit('close')">
           <X :size="16" />

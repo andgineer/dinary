@@ -5,6 +5,7 @@
 
 import { postReceipt } from "../api/receipts.js";
 import { useReceiptQueueStore } from "../stores/receiptQueue.js";
+import { useToastStore } from "../stores/toast.js";
 
 let _inFlight = false;
 
@@ -27,6 +28,7 @@ export async function flushReceiptQueue() {
         }
         // Transient error — keep item, stop this sweep.
         queue.lastFlushError = err;
+        useToastStore().show(err?.message || "Receipt send failed", "error");
         break;
       }
     }

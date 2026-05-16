@@ -1,6 +1,5 @@
 import { apiRequest } from "./_request.js";
 
-export const listProviders = () => apiRequest("/api/admin/llm-providers");
 export const createProvider = (data) =>
   apiRequest("/api/admin/llm-providers", { method: "POST", body: data });
 export const updateProvider = (id, patch) =>

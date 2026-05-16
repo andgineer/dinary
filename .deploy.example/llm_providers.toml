@@ -1,0 +1,28 @@
+# LLM providers for receipt classification.
+# Copy this file to .deploy/llm_providers.toml and fill in your API keys.
+# Priority follows declaration order: first provider is tried first on rate-limit/error.
+# Changes take effect on next server start when llm_providers table is empty.
+# To update a live deployment use the admin UI (/llm screen).
+#
+# Free-tier options (all OpenAI-compatible):
+#   Groq:       https://console.groq.com/keys
+#   OpenRouter: https://openrouter.ai/keys
+#   Gemini:     https://aistudio.google.com/apikey
+
+[[providers]]
+label    = "Groq Llama-3.3-70b"
+base_url = "https://api.groq.com/openai/v1"
+api_key  = "<groq_key>"
+model    = "llama-3.3-70b-versatile"
+
+[[providers]]
+label    = "OpenRouter GPT-OSS-120b"
+base_url = "https://openrouter.ai/api/v1"
+api_key  = "<openrouter_key>"
+model    = "openai/gpt-oss-120b:free"
+
+[[providers]]
+label    = "Google Gemini 2.5 Flash"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key  = "<gemini_key>"
+model    = "gemini-2.5-flash"

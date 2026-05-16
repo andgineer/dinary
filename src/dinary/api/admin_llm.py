@@ -8,6 +8,7 @@ POST /api/admin/llm-providers/{id}/test — fire a minimal classification call
 GET  /api/admin/llm-status          — all providers with usage stats and rate_limited_until
 """
 
+import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -209,12 +210,17 @@ async def test_provider(provider_id: int) -> dict:
 @router.get("/api/admin/llm-status")
 def llm_status() -> dict:
     conn = ledger_repo.get_connection()
+    conn.row_factory = sqlite3.Row
     try:
-        providers = conn.execute(
+        rows = conn.execute(
             """
-            SELECT p.id, p.label, p.model, p.is_enabled, p.rate_limited_until,
-                   COUNT(l.id) AS total_calls,
-                   SUM(CASE WHEN l.status = 'ok' THEN 1 ELSE 0 END) AS ok_calls
+            SELECT p.id, p.label, p.base_url, p.model, p.priority,
+                   p.is_enabled, p.rate_limited_until, p.created_at,
+                   COUNT(l.id) AS used_today,
+                   SUM(CASE WHEN l.status = 'ok' THEN 1 ELSE 0 END) AS ok_calls,
+                   (SELECT status FROM llm_call_log
+                     WHERE provider_id = p.id
+                     ORDER BY id DESC LIMIT 1) AS last_status
               FROM llm_providers p
               LEFT JOIN llm_call_log l ON l.provider_id = p.id
              GROUP BY p.id
@@ -223,15 +229,19 @@ def llm_status() -> dict:
         ).fetchall()
         provider_list = [
             {
-                "id": int(r[0]),
-                "label": str(r[1]),
-                "model": str(r[2]),
-                "is_enabled": bool(r[3]),
-                "rate_limited_until": r[4],
-                "total_calls": int(r[5] or 0),
-                "ok_calls": int(r[6] or 0),
+                "id": int(r["id"]),
+                "label": str(r["label"]),
+                "base_url": str(r["base_url"]),
+                "model": str(r["model"]),
+                "priority": int(r["priority"]),
+                "is_enabled": bool(r["is_enabled"]),
+                "rate_limited_until": r["rate_limited_until"],
+                "created_at": r["created_at"],
+                "used_today": int(r["used_today"] or 0),
+                "ok_calls": int(r["ok_calls"] or 0),
+                "last_status": r["last_status"],
             }
-            for r in providers
+            for r in rows
         ]
 
         meta = {
@@ -242,6 +252,17 @@ def llm_status() -> dict:
                 "               'llm_provider_switch_count','llm_all_exhausted_last')",
             ).fetchall()
         }
-        return {"providers": provider_list, "meta": meta}
+
+        enabled = [p for p in provider_list if p["is_enabled"]]
+        total = len(enabled)
+        healthy = sum(1 for p in enabled if p["rate_limited_until"] is None)
+        health = {
+            "healthy": healthy,
+            "total": total,
+            "strategy": "failover" if total >= 2 else None,
+            "last_switch": meta.get("llm_provider_switch_last"),
+        }
+
+        return {"health": health, "providers": provider_list, "meta": meta}
     finally:
         conn.close()

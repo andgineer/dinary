@@ -15,19 +15,19 @@ def _seed_review_data(conn):
         "INSERT INTO receipts (id, client_receipt_id, url, store_id) VALUES (1, 'r1', 'https://x', 1)"
     )
     conn.execute(
-        "INSERT INTO receipt_items"
-        " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price)"
-        " VALUES (1, 1, 'hleb raw', 'hleb', 120.0, 1, 120.0)"
-    )
-    conn.execute(
         "INSERT INTO classification_rules"
         " (store_id, item_name_normalized, category_id, confidence_level, source)"
         " VALUES (1, 'hleb', 1, 3, 'llm')"
     )
     conn.execute(
-        "INSERT INTO expenses (datetime, amount, amount_original, currency_original, category_id,"
+        "INSERT INTO expenses (id, datetime, amount, amount_original, currency_original, category_id,"
         "                      confidence_level, receipt_id, store_id)"
-        " VALUES ('2026-05-01T10:00:00', 120.0, 120.0, 'RSD', 1, 3, 1, 1)"
+        " VALUES (42, '2026-05-01T10:00:00', 120.0, 120.0, 'RSD', 1, 3, 1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO receipt_items"
+        " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
+        " VALUES (1, 1, 'hleb raw', 'hleb', 120.0, 1, 120.0, 42)"
     )
 
 
@@ -38,9 +38,9 @@ def _seed_certain_expense(conn):
         " VALUES (1, 'r1', 'https://x', 1)"
     )
     conn.execute(
-        "INSERT INTO expenses (datetime, amount, amount_original, currency_original,"
+        "INSERT INTO expenses (id, datetime, amount, amount_original, currency_original,"
         "                      category_id, confidence_level, receipt_id, store_id)"
-        " VALUES ('2026-05-01T10:00:00', 200.0, 200.0, 'RSD', 1, 4, 1, 1)"
+        " VALUES (10, '2026-05-01T10:00:00', 200.0, 200.0, 'RSD', 1, 4, 1, 1)"
     )
 
 
@@ -67,8 +67,16 @@ class TestReviewFeed:
         assert len(data["items"]) >= 1
         doubtful = [i for i in data["items"] if i["is_doubtful"]]
         assert len(doubtful) == 1
-        assert doubtful[0]["item_name_normalized"] == "hleb"
-        assert doubtful[0]["confidence_level"] == 3
+        d = doubtful[0]
+        assert d["name"] == "hleb"
+        assert d["store"] == "Lidl"
+        assert d["total"] == 120.0
+        assert d["count"] == 1
+        assert d["currency"] == "RSD"
+        assert d["confidence_level"] == 3
+        assert d["current_category_id"] == 1
+        assert d["expense_id"] == 42
+        assert "id" in d
 
     def test_pagination(self, client, db):  # noqa: ARG002
         resp = client.get("/api/receipts/review/feed?page=1&page_size=5")
@@ -93,8 +101,13 @@ class TestReviewFeedBlock2:
         data = resp.json()
         certain = [i for i in data["items"] if not i["is_doubtful"]]
         assert len(certain) == 1
-        assert certain[0]["amount"] == 200.0
-        assert certain[0]["confidence_level"] == 4
+        c = certain[0]
+        assert c["total"] == 200.0
+        assert c["currency"] == "RSD"
+        assert c["store"] == "Lidl"
+        assert c["confidence_level"] == 4
+        assert "id" in c
+        assert "datetime" in c
 
     def test_block2_not_included_in_doubtful_count(self, client, db):  # noqa: ARG002
         conn = ledger_repo.get_connection()
@@ -105,6 +118,35 @@ class TestReviewFeedBlock2:
 
         resp = client.get("/api/receipts/review/feed")
         assert resp.json()["doubtful_count"] == 0
+
+    def test_certain_item_includes_name_from_receipt_items(self, client, db):  # noqa: ARG002
+        conn = ledger_repo.get_connection()
+        try:
+            _seed_certain_expense(conn)
+            conn.execute(
+                "INSERT INTO receipt_items"
+                " (receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
+                " VALUES (1, 'mleko raw', 'mleko', 200.0, 1, 200.0, 10)"
+            )
+        finally:
+            conn.close()
+
+        resp = client.get("/api/receipts/review/feed")
+        certain = [i for i in resp.json()["items"] if not i["is_doubtful"]]
+        assert len(certain) == 1
+        assert certain[0]["name"] == "mleko"
+
+    def test_certain_item_name_is_null_when_no_receipt_items(self, client, db):  # noqa: ARG002
+        conn = ledger_repo.get_connection()
+        try:
+            _seed_certain_expense(conn)
+        finally:
+            conn.close()
+
+        resp = client.get("/api/receipts/review/feed")
+        certain = [i for i in resp.json()["items"] if not i["is_doubtful"]]
+        assert len(certain) == 1
+        assert certain[0]["name"] is None
 
 
 @allure.epic("API")

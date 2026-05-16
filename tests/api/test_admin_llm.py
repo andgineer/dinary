@@ -90,8 +90,40 @@ class TestLLMStatus:
         data = resp.json()
         assert "providers" in data
         assert "meta" in data
+        assert "health" in data
+        h = data["health"]
+        assert "healthy" in h
+        assert "total" in h
+        assert "strategy" in h
+        assert "last_switch" in h
 
     def test_status_shows_providers(self, client, db):  # noqa: ARG002
         _add_provider(client)
         resp = client.get("/api/admin/llm-status")
         assert len(resp.json()["providers"]) == 1
+
+    def test_status_provider_fields(self, client, db):  # noqa: ARG002
+        _add_provider(client)
+        data = client.get("/api/admin/llm-status").json()
+        p = data["providers"][0]
+        assert "base_url" in p
+        assert "priority" in p
+        assert "used_today" in p
+        assert "last_status" in p
+        assert "api_key" not in p
+
+    def test_health_single_provider(self, client, db):  # noqa: ARG002
+        _add_provider(client)
+        data = client.get("/api/admin/llm-status").json()
+        h = data["health"]
+        assert h["total"] == 1
+        assert h["healthy"] == 1
+        assert h["strategy"] is None
+
+    def test_health_two_providers_strategy_failover(self, client, db):  # noqa: ARG002
+        _add_provider(client, label="P1")
+        _add_provider(client, label="P2")
+        data = client.get("/api/admin/llm-status").json()
+        h = data["health"]
+        assert h["total"] == 2
+        assert h["strategy"] == "failover"

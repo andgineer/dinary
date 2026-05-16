@@ -7,7 +7,11 @@ export async function apiRequest(path, { method = "GET", body } = {}) {
   const resp = await fetch(path, init);
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
-    const e = new Error(err.detail || `HTTP ${resp.status}`);
+    const detail = err.detail;
+    const message = Array.isArray(detail)
+      ? (detail[0]?.msg || `HTTP ${resp.status}`)
+      : (detail || `HTTP ${resp.status}`);
+    const e = new Error(message);
     e.status = resp.status;
     throw e;
   }

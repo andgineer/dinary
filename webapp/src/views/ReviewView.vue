@@ -1,13 +1,10 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useReviewStore } from "../stores/review.js";
-import { useToastStore } from "../stores/toast.js";
-import DoubtfulRow from "../components/DoubtfulRow.vue";
-import CertainRow from "../components/CertainRow.vue";
+import ExpenseRow from "../components/ExpenseRow.vue";
 import CorrectionSheet from "../components/CorrectionSheet.vue";
 
 const reviewStore = useReviewStore();
-const toast = useToastStore();
 
 const correctionItem = ref(null);
 const correctionOpen = ref(false);
@@ -15,7 +12,6 @@ const sentinel = ref(null);
 let observer = null;
 
 const doubtfulItems = computed(() => reviewStore.items.filter((i) => i.is_doubtful));
-const certainItems = computed(() => reviewStore.items.filter((i) => !i.is_doubtful));
 
 function openCorrection(item) {
   correctionItem.value = item;
@@ -27,8 +23,11 @@ function closeCorrection() {
   correctionItem.value = null;
 }
 
-function onCertainTap(item) {
-  toast.show(`Open ${item.store} — receipt detail`, "info");
+function isFirstCertain(index) {
+  return (
+    !reviewStore.items[index].is_doubtful &&
+    (index === 0 || reviewStore.items[index - 1].is_doubtful)
+  );
 }
 
 function setupObserver() {
@@ -60,32 +59,19 @@ onBeforeUnmount(() => {
   <div class="review-view" data-testid="review-view">
     <div
       v-if="reviewStore.doubtfulCount > 0 || doubtfulItems.length > 0"
-      class="section-block"
+      class="section-header section-header--warning"
     >
-      <div class="section-header section-header--warning">
-        <span class="section-label">NEEDS REVIEW</span>
-        <span class="section-badge">{{ reviewStore.doubtfulCount }}</span>
-        <span class="section-sort">by impact</span>
-      </div>
-      <DoubtfulRow
-        v-for="item in doubtfulItems"
-        :key="item.id"
-        :item="item"
-        @tap="openCorrection(item)"
-      />
+      <span class="section-label">NEEDS REVIEW</span>
+      <span class="section-badge">{{ reviewStore.doubtfulCount }}</span>
+      <span class="section-sort">by impact</span>
     </div>
 
-    <div v-if="certainItems.length > 0" class="section-block">
-      <div class="section-divider">
-        <span class="divider-text">RECENT RECEIPTS</span>
+    <template v-for="(item, index) in reviewStore.items" :key="item.id">
+      <div v-if="isFirstCertain(index)" class="section-divider">
+        <span class="divider-text">ALL EXPENSES</span>
       </div>
-      <CertainRow
-        v-for="item in certainItems"
-        :key="item.id"
-        :item="item"
-        @tap="onCertainTap(item)"
-      />
-    </div>
+      <ExpenseRow :item="item" @tap="openCorrection(item)" />
+    </template>
 
     <div
       v-if="!reviewStore.loading && reviewStore.items.length === 0 && !reviewStore.hasMore"
@@ -119,10 +105,6 @@ onBeforeUnmount(() => {
   max-width: 480px;
   width: 100%;
   margin: 0 auto;
-}
-
-.section-block {
-  margin-bottom: 0.75rem;
 }
 
 .section-header {

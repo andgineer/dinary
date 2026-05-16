@@ -46,13 +46,25 @@ export const useReviewStore = defineStore("review", () => {
     const toast = useToastStore();
     const catalog = useCatalogStore();
     try {
-      const result = await correctCategory(item.id, categoryId);
+      const expenseId = item.expense_id ?? item.id;
+      const result = await correctCategory(expenseId, categoryId);
       const count = result?.count ?? item.count ?? 1;
       const cat = catalog.findCategoryById(categoryId);
       const catName = cat?.name ?? "";
-      items.value = items.value.filter((i) => i.id !== item.id);
-      doubtfulCount.value = Math.max(0, doubtfulCount.value - 1);
-      totalLoaded.value = Math.max(0, totalLoaded.value - 1);
+      if (item.is_doubtful) {
+        items.value = items.value.filter((i) => i.id !== item.id);
+        doubtfulCount.value = Math.max(0, doubtfulCount.value - 1);
+        totalLoaded.value = Math.max(0, totalLoaded.value - 1);
+      } else {
+        const idx = items.value.findIndex((i) => i.id === item.id);
+        if (idx !== -1) {
+          items.value[idx] = {
+            ...items.value[idx],
+            category_id: categoryId,
+            category_name: catName,
+          };
+        }
+      }
       toast.show(`Updated ${count} expenses → ${catName} · rule saved`, "success");
     } catch (err) {
       toast.show(err?.message || "Correction failed", "error");
