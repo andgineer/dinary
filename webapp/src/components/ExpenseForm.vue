@@ -1,20 +1,22 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Calendar } from "lucide-vue-next";
+import { Calendar, Hash } from "lucide-vue-next";
 import TagPicker from "./TagPicker.vue";
 import ManageList from "./ManageList.vue";
 import CatalogSelectField from "./CatalogSelectField.vue";
 import CurrencyPicker from "./CurrencyPicker.vue";
 import IconBtn from "./IconBtn.vue";
 import EditModal from "../modals/EditModal.vue";
+import InlineCreateRow from "./InlineCreateRow.vue";
+import InlineCreateEvent from "./InlineCreateEvent.vue";
 import { useCatalogStore } from "../stores/catalog.js";
 import { useQueueStore } from "../stores/queue.js";
 import { useToastStore } from "../stores/toast.js";
 import { useCurrencyStore } from "../stores/currency.js";
 import { flushQueue } from "../composables/flushQueue.js";
 import { useCatalogManage } from "../composables/catalogManage.js";
+import { addResultMessage, validateTagName } from "../composables/addResult.js";
 
-const emit = defineEmits(["request-add"]);
 
 const catalog = useCatalogStore();
 const queue = useQueueStore();
@@ -47,6 +49,7 @@ const tagIds = ref([]);
 const userEventOverride = ref(false);
 const submitting = ref(false);
 const justSavedFlash = ref(false);
+const newing = ref(null); // 'group' | 'category' | 'tag' | 'event' | null
 
 const activeGroups = computed(() => catalog.groups);
 const activeCategories = computed(() =>
@@ -195,8 +198,27 @@ async function save() {
   }, 800);
 }
 
-function requestAdd(kind, options = {}) {
-  emit("request-add", { kind, ...options });
+function requestAdd(kind) {
+  newing.value = kind;
+}
+
+async function handleCreate(kind, value) {
+  try {
+    let body;
+    if (kind === "event") {
+      body = value;
+    } else if (kind === "category") {
+      body = { name: value, group_id: Number(groupId.value) };
+    } else {
+      body = { name: value };
+    }
+    const snap = await catalog.add(kind, body);
+    const msg = addResultMessage(kind, snap?.status);
+    if (msg) toast.show(msg, "info");
+    newing.value = null;
+  } catch (err) {
+    toast.show(err?.message || `Failed to add ${kind}`, "error");
+  }
 }
 
 function onOnline() {
@@ -270,6 +292,12 @@ defineExpose({ save, reset });
         @delete="runCatalogAction('group', $event, 'remove')"
         @edit="onEdit('group', $event)"
       />
+      <InlineCreateRow
+        v-if="newing === 'group'"
+        placeholder="New group name…"
+        @save="handleCreate('group', $event)"
+        @cancel="newing = null"
+      />
 
       <div class="category-connector">
         <div class="connector-line" />
@@ -288,12 +316,18 @@ defineExpose({ save, reset });
             :add-disabled="!groupId"
             :add-title="groupId ? 'New category' : 'Select a group first'"
             :form-hint="groupId ? '' : 'Select a group first'"
-            @add="requestAdd('category', { groupId: groupId ? Number(groupId) : null })"
+            @add="requestAdd('category')"
             @manage-toggle="toggleManage('category')"
             @deactivate="runCatalogAction('category', $event, 'deactivate')"
             @reactivate="runCatalogAction('category', $event, 'reactivate')"
             @delete="runCatalogAction('category', $event, 'remove')"
             @edit="onEdit('category', $event)"
+          />
+          <InlineCreateRow
+            v-if="newing === 'category'"
+            placeholder="New category name…"
+            @save="handleCreate('category', $event)"
+            @cancel="newing = null"
           />
         </div>
       </div>
@@ -317,18 +351,33 @@ defineExpose({ save, reset });
       @delete="runCatalogAction('event', $event, 'remove')"
       @edit="onEdit('event', $event)"
     />
+    <InlineCreateEvent
+      v-if="newing === 'event'"
+      @save="handleCreate('event', $event)"
+      @cancel="newing = null"
+    />
 
     <!-- Tags -->
     <div class="form-group tags-group">
       <div class="tags-header">
-        <IconBtn icon="plus" tone="accent" label="New tag" @click="requestAdd('tag')" />
-        <IconBtn
-          :icon="manageMode.tag ? 'x' : 'cog'"
-          tone="muted"
-          :label="manageMode.tag ? 'Close tags' : 'Manage tags'"
-          @click="toggleManage('tag')"
-        />
+        <Hash :size="15" class="hash-glyph" aria-hidden="true" />
+        <div class="tags-actions">
+          <IconBtn icon="plus" tone="accent" label="New tag" @click="requestAdd('tag')" />
+          <IconBtn
+            :icon="manageMode.tag ? 'x' : 'cog'"
+            tone="muted"
+            :label="manageMode.tag ? 'Close tags' : 'Manage tags'"
+            @click="toggleManage('tag')"
+          />
+        </div>
       </div>
+      <InlineCreateRow
+        v-if="newing === 'tag'"
+        placeholder="New tag name…"
+        :validate="validateTagName"
+        @save="handleCreate('tag', $event)"
+        @cancel="newing = null"
+      />
       <TagPicker
         v-model="tagIds"
         :tags="allActiveTags"
@@ -495,8 +544,21 @@ defineExpose({ save, reset });
 
 .tags-header {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   gap: 4px;
   margin-bottom: 4px;
+}
+
+.hash-glyph {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.tags-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
 }
 </style>

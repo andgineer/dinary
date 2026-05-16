@@ -1,6 +1,5 @@
 <script setup>
 import { computed } from "vue";
-import { Hash } from "lucide-vue-next";
 
 const props = defineProps({
   tags: {
@@ -42,7 +41,6 @@ const isEmpty = computed(() => props.tags.length === 0);
 <template>
   <div>
     <div v-if="!isEmpty" class="tags-list" data-testid="tag-picker">
-      <Hash :size="13" class="tags-hash" aria-hidden="true" />
       <label v-for="tag in tags" :key="tag.id" class="tag-chip">
         <input
           type="checkbox"
@@ -70,11 +68,6 @@ const isEmpty = computed(() => props.tags.length === 0);
   background: var(--field, rgba(255, 255, 255, 0.04));
   border-radius: 8px;
   border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
-}
-
-.tags-hash {
-  color: var(--muted-2, #64748b);
-  flex-shrink: 0;
 }
 
 .tag-chip {

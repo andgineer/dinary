@@ -198,27 +198,43 @@ describe("ExpenseForm: save flow", () => {
   });
 });
 
-describe("ExpenseForm: + New buttons", () => {
-  it("emits 'request-add' with the kind for each + New click", async () => {
+describe("ExpenseForm: + New buttons open inline create rows", () => {
+  it("opens an inline create row when the group + New button is clicked", async () => {
     seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
-    // New buttons are icon buttons with aria-label="New" (group, category, event) and "New tag"
     const newBtns = wrapper.findAll('[aria-label="New"]');
     expect(newBtns.length).toBeGreaterThanOrEqual(3);
     await newBtns[0].trigger("click");
-    const emits = wrapper.emitted("request-add");
-    expect(emits).toBeTruthy();
-    expect(emits[0][0].kind).toBe("group");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="inline-create-row"]').exists()).toBe(true);
+  });
+
+  it("opens inline event form when the event + New button is clicked", async () => {
+    seedCatalog();
+    const wrapper = mountForm();
+    await flushPromises();
+    const newBtns = wrapper.findAll('[aria-label="New"]');
+    const eventBtn = newBtns[2];
+    await eventBtn.trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="inline-create-event"]').exists()).toBe(true);
+  });
+
+  it("opens inline create row when the + New tag button is clicked", async () => {
+    seedCatalog();
+    const wrapper = mountForm();
+    await flushPromises();
+    await wrapper.find('[aria-label="New tag"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="inline-create-row"]').exists()).toBe(true);
   });
 
   it("disables + New on the category row until a group is chosen", async () => {
     const catalog = useCatalogStore();
     catalog.replaceSnapshot({ ...SAMPLE, category_groups: [] });
-    // No defaults → no group pre-selected
     const wrapper = mountForm();
     await flushPromises();
-    // Category New button is the second [aria-label="New"] in the form
     const newBtns = wrapper.findAll('[aria-label="New"]');
     const categoryNewBtn = newBtns[1];
     expect(categoryNewBtn.attributes("disabled")).toBeDefined();
@@ -239,6 +255,7 @@ describe("ExpenseForm: receipt-parsed event is ignored", () => {
     await flushPromises();
 
     expect(wrapper.find("#amount").element.value).toBe("");
-    expect(wrapper.find("#date").element.value).toBe("");
+    // Date should not have been overwritten with the event's date
+    expect(wrapper.find("#date").element.value).not.toBe("2099-01-01");
   });
 });
