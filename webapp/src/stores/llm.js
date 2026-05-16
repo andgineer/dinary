@@ -15,7 +15,9 @@ export const useLlmStore = defineStore("llm", () => {
       providers.value = status.providers ?? [];
       health.value = status.health ?? null;
     } catch (err) {
-      useToastStore().show(err?.message || "Failed to load LLM providers", "error");
+      if (navigator.onLine) {
+        useToastStore().show(err?.message || "Failed to load LLM providers", "error");
+      }
     } finally {
       loading.value = false;
     }

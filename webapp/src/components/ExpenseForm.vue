@@ -134,6 +134,10 @@ function reset() {
 }
 
 async function init() {
+  if (!navigator.onLine) {
+    selectedCurrency.value = currency.preferredCode;
+    return;
+  }
   await catalog.load();
   if (catalog.lastError) {
     toast.show(`Catalog: ${catalog.lastError.message}`, "error");

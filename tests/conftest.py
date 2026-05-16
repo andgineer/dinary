@@ -91,9 +91,11 @@ def _disable_llm_seed(monkeypatch):
     Production seeding is intentional; test DBs should start empty so
     tests that assert on llm_providers state are not surprised by the
     operator's real credentials.
+
+    Patches seed_llm_provider_if_empty directly so both the TOML file
+    path and the env-var fallback are blocked in one place.
     """
-    monkeypatch.setattr(settings, "llm_base_url", "")
-    monkeypatch.setattr(settings, "llm_api_key", "")
+    monkeypatch.setattr(ledger_repo, "seed_llm_provider_if_empty", lambda *_a, **_kw: None)
 
 
 @pytest.fixture(autouse=True)

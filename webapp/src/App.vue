@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onBeforeUnmount, ref } from "vue";
+import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import QueueModal from "./components/QueueModal.vue";
 import HeaderSegmented from "./components/HeaderSegmented.vue";
 import AddView from "./views/AddView.vue";
@@ -11,6 +11,7 @@ import { useToastStore } from "./stores/toast.js";
 import { useReviewStore } from "./stores/review.js";
 import { flushQueue } from "./composables/flushQueue.js";
 import { flushReceiptQueue } from "./composables/flushReceiptQueue.js";
+import { useOnline } from "./composables/useOnline.js";
 
 const APP_VERSION =
   typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
@@ -22,24 +23,19 @@ const receiptQueue = useReceiptQueueStore();
 const toast = useToastStore();
 const reviewStore = useReviewStore();
 
-const isOnline = ref(
-  typeof navigator !== "undefined" ? navigator.onLine : true,
-);
+const { isOnline } = useOnline();
 const tab = ref("add"); // 'add' | 'review' | 'llm'
 const queueModalOpen = ref(false);
 
 const queueCount = computed(() => queue.items.length + receiptQueue.items.length);
 const headerVersionLabel = computed(() => `v${APP_VERSION}`);
 
-function onOnline() {
-  isOnline.value = true;
-  void flushQueue();
-  void flushReceiptQueue();
-}
-
-function onOffline() {
-  isOnline.value = false;
-}
+watch(isOnline, (online) => {
+  if (online) {
+    void flushQueue();
+    void flushReceiptQueue();
+  }
+});
 
 async function init() {
   await queue.refresh();
@@ -69,15 +65,11 @@ function stopRetryTimer() {
 }
 
 onMounted(() => {
-  window.addEventListener("online", onOnline);
-  window.addEventListener("offline", onOffline);
   void init();
   startRetryTimer();
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("online", onOnline);
-  window.removeEventListener("offline", onOffline);
   stopRetryTimer();
 });
 </script>

@@ -37,8 +37,10 @@ export const useReviewStore = defineStore("review", () => {
       page.value = nextPage;
       totalLoaded.value += incoming.length;
     } catch (err) {
-      const toast = useToastStore();
-      toast.show(err?.message || "Failed to load review feed", "error");
+      if (navigator.onLine) {
+        const toast = useToastStore();
+        toast.show(err?.message || "Failed to load review feed", "error");
+      }
     } finally {
       loading.value = false;
     }

@@ -259,3 +259,62 @@ describe("ExpenseForm: receipt-parsed event is ignored", () => {
     expect(wrapper.find("#date").element.value).not.toBe("2099-01-01");
   });
 });
+
+describe("ExpenseForm: offline init", () => {
+  function mockOnLine(value) {
+    const ownBefore = Object.getOwnPropertyDescriptor(navigator, "onLine");
+    Object.defineProperty(navigator, "onLine", { configurable: true, get: () => value });
+    return () => {
+      if (ownBefore) {
+        Object.defineProperty(navigator, "onLine", ownBefore);
+      } else {
+        delete navigator.onLine;
+      }
+    };
+  }
+
+  it("skips catalog and currency fetches when offline", async () => {
+    const restore = mockOnLine(false);
+    try {
+      const fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy;
+      const wrapper = mountForm();
+      await flushPromises();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      wrapper.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("sets selectedCurrency from preferredCode when offline", async () => {
+    const restore = mockOnLine(false);
+    try {
+      localStorage.setItem("dinary.currency.lastUsed", "EUR");
+      const currency = useCurrencyStore();
+      currency.codes = ["EUR", "RSD"];
+      const wrapper = mountForm();
+      await flushPromises();
+      expect(wrapper.find('[data-testid="currency-pill"]').text()).toContain("EUR");
+      wrapper.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("shows no error toast when offline", async () => {
+    const restore = mockOnLine(false);
+    try {
+      const { useToastStore } = await import("../src/stores/toast.js");
+      const toast = useToastStore();
+      const showSpy = vi.spyOn(toast, "show");
+      const wrapper = mountForm();
+      await flushPromises();
+      const errorCalls = showSpy.mock.calls.filter(([, type]) => type === "error");
+      expect(errorCalls).toHaveLength(0);
+      wrapper.unmount();
+    } finally {
+      restore();
+    }
+  });
+});

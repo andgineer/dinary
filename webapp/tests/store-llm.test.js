@@ -3,6 +3,18 @@ import { setActivePinia, createPinia } from "pinia";
 import { useLlmStore } from "../src/stores/llm.js";
 import * as llmApi from "../src/api/adminLlm.js";
 
+function mockOnLine(value) {
+  const ownBefore = Object.getOwnPropertyDescriptor(navigator, "onLine");
+  Object.defineProperty(navigator, "onLine", { configurable: true, get: () => value });
+  return () => {
+    if (ownBefore) {
+      Object.defineProperty(navigator, "onLine", ownBefore);
+    } else {
+      delete navigator.onLine;
+    }
+  };
+}
+
 const SAMPLE_STATUS = {
   health: { healthy: 1, total: 1, strategy: null, last_switch: null },
   providers: [
@@ -29,6 +41,33 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe("llm store: refresh() offline", () => {
+  it("suppresses error toast when offline and API fails", async () => {
+    vi.spyOn(llmApi, "getStatus").mockRejectedValueOnce(new Error("Network error"));
+    const restore = mockOnLine(false);
+    try {
+      const store = useLlmStore();
+      const { useToastStore } = await import("../src/stores/toast.js");
+      const toast = useToastStore();
+      const showSpy = vi.spyOn(toast, "show");
+      await store.refresh();
+      expect(showSpy).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("shows error toast when online and API fails", async () => {
+    vi.spyOn(llmApi, "getStatus").mockRejectedValueOnce(new Error("LLM error"));
+    const store = useLlmStore();
+    const { useToastStore } = await import("../src/stores/toast.js");
+    const toast = useToastStore();
+    const showSpy = vi.spyOn(toast, "show");
+    await store.refresh();
+    expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("LLM error"), "error");
+  });
 });
 
 describe("llm store: refresh()", () => {

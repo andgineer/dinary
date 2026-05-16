@@ -1,11 +1,13 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useLlmStore } from "../stores/llm.js";
+import { useOnline } from "../composables/useOnline.js";
 import HealthSummaryCard from "../components/HealthSummaryCard.vue";
 import ProviderCard from "../components/ProviderCard.vue";
 import ProviderSheet from "../components/ProviderSheet.vue";
 
 const llmStore = useLlmStore();
+const { isOnline } = useOnline();
 
 const sheetOpen = ref(false);
 const editingProvider = ref(null);
@@ -27,8 +29,10 @@ function closeSheet() {
 }
 
 onMounted(async () => {
-  await llmStore.refresh();
-  refreshTimer = setInterval(() => llmStore.refresh(), 30_000);
+  if (isOnline.value) await llmStore.refresh();
+  refreshTimer = setInterval(() => {
+    if (isOnline.value) llmStore.refresh();
+  }, 30_000);
 });
 
 onBeforeUnmount(() => {

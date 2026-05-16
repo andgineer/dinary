@@ -5,6 +5,18 @@ import * as expenseCorrections from "../src/api/expenseCorrections.js";
 import * as reviewApi from "../src/api/review.js";
 import { useCatalogStore } from "../src/stores/catalog.js";
 
+function mockOnLine(value) {
+  const ownBefore = Object.getOwnPropertyDescriptor(navigator, "onLine");
+  Object.defineProperty(navigator, "onLine", { configurable: true, get: () => value });
+  return () => {
+    if (ownBefore) {
+      Object.defineProperty(navigator, "onLine", ownBefore);
+    } else {
+      delete navigator.onLine;
+    }
+  };
+}
+
 beforeEach(() => {
   setActivePinia(createPinia());
 });
@@ -142,6 +154,33 @@ describe("review store: correct()", () => {
     await store.correct(store.items[0], 2, "month");
 
     expect(spy).toHaveBeenCalledWith(100, 2, "month");
+  });
+});
+
+describe("review store: loadNextPage() offline", () => {
+  it("suppresses error toast when offline and API fails", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockRejectedValueOnce(new Error("Network error"));
+    const restore = mockOnLine(false);
+    try {
+      const store = useReviewStore();
+      const { useToastStore } = await import("../src/stores/toast.js");
+      const toast = useToastStore();
+      const showSpy = vi.spyOn(toast, "show");
+      await store.loadNextPage();
+      expect(showSpy).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("shows error toast when online and API fails", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockRejectedValueOnce(new Error("Server error"));
+    const store = useReviewStore();
+    const { useToastStore } = await import("../src/stores/toast.js");
+    const toast = useToastStore();
+    const showSpy = vi.spyOn(toast, "show");
+    await store.loadNextPage();
+    expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("Server error"), "error");
   });
 });
 

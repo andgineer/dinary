@@ -70,6 +70,57 @@ afterEach(() => {
   delete globalThis.IntersectionObserver;
 });
 
+function mockOnLine(value) {
+  const ownBefore = Object.getOwnPropertyDescriptor(navigator, "onLine");
+  Object.defineProperty(navigator, "onLine", { configurable: true, get: () => value });
+  return () => {
+    if (ownBefore) {
+      Object.defineProperty(navigator, "onLine", ownBefore);
+    } else {
+      delete navigator.onLine;
+    }
+  };
+}
+
+describe("ReviewView offline", () => {
+  it("does not call loadNextPage when offline on mount", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const restore = mockOnLine(false);
+    try {
+      const review = useReviewStore(pinia);
+      const spy = vi.spyOn(review, "loadNextPage").mockResolvedValue();
+      const wrapper = mountView(pinia);
+      await flushPromises();
+      expect(spy).not.toHaveBeenCalled();
+      wrapper.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not trigger loadNextPage from IntersectionObserver when offline", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const restore = mockOnLine(false);
+    try {
+      const review = useReviewStore(pinia);
+      const spy = vi.spyOn(review, "loadNextPage").mockResolvedValue();
+      const wrapper = mountView(pinia);
+      await flushPromises();
+
+      review.hasMore = true;
+      observerCallback?.([{ isIntersecting: true }]);
+      await flushPromises();
+
+      expect(spy).not.toHaveBeenCalled();
+      wrapper.unmount();
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe("ReviewView", () => {
   it("renders the view container", async () => {
     const pinia = createPinia();

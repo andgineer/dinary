@@ -1,11 +1,12 @@
 <script setup>
-import { onBeforeUnmount, onMounted } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useReviewStore } from "../stores/review.js";
+import { useOnline } from "../composables/useOnline.js";
 import RuleRow from "../components/RuleRow.vue";
 import CorrectionSheet from "../components/CorrectionSheet.vue";
-import { ref } from "vue";
 
 const reviewStore = useReviewStore();
+const { isOnline } = useOnline();
 
 const correctionItem = ref(null);
 const correctionOpen = ref(false);
@@ -26,7 +27,7 @@ function setupObserver() {
   if (!sentinel.value || typeof IntersectionObserver === "undefined") return;
   observer = new IntersectionObserver(
     (entries) => {
-      if (entries[0].isIntersecting && !reviewStore.loading && reviewStore.hasMore) {
+      if (entries[0].isIntersecting && !reviewStore.loading && reviewStore.hasMore && isOnline.value) {
         reviewStore.loadNextPage();
       }
     },
@@ -36,7 +37,7 @@ function setupObserver() {
 }
 
 onMounted(async () => {
-  if (reviewStore.items.length === 0) {
+  if (isOnline.value && reviewStore.items.length === 0) {
     await reviewStore.loadNextPage();
   }
   setupObserver();
