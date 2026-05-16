@@ -6,13 +6,13 @@
 |------------------------------------------------------- | -------: | -------: | ------: | --------: |
 | src/dinary/\_\_about\_\_.py                            |        1 |        0 |    100% |           |
 | src/dinary/api/admin\_catalog.py                       |      186 |       33 |     82% |197-198, 210-224, 263-264, 288-289, 307-308, 348-365, 377-378, 398-399, 420-421, 436-437, 477 |
-| src/dinary/api/admin\_llm.py                           |      122 |       30 |     75% |87-89, 111-112, 114-115, 120-121, 123-124, 135-137, 172-174, 185-206 |
+| src/dinary/api/admin\_llm.py                           |      128 |       30 |     77% |88-90, 112-113, 115-116, 121-122, 124-125, 136-138, 173-175, 186-207 |
 | src/dinary/api/catalog.py                              |       89 |        3 |     97% |   359-361 |
 | src/dinary/api/currencies.py                           |       41 |        0 |    100% |           |
 | src/dinary/api/expense\_corrections.py                 |       76 |        5 |     93% |111-113, 168-169 |
 | src/dinary/api/expenses.py                             |      102 |        4 |     96% |159, 307-309 |
 | src/dinary/api/qr.py                                   |       17 |        6 |     65% |     26-32 |
-| src/dinary/api/receipt\_review.py                      |       28 |        0 |    100% |           |
+| src/dinary/api/receipt\_review.py                      |       29 |        0 |    100% |           |
 | src/dinary/api/receipts.py                             |       44 |        9 |     80% |     61-69 |
 | src/dinary/background/rate\_prefetch\_task.py          |       56 |        2 |     96% |   86, 117 |
 | src/dinary/background/receipt\_classification\_task.py |      244 |       42 |     83% |119-120, 145-150, 154-156, 160-164, 168-172, 176-180, 223-225, 251, 283, 292-300, 371, 411-413, 460-462, 480-482, 512-514 |
@@ -39,7 +39,7 @@
 | src/dinary/services/exchange\_rates.py                 |       38 |        1 |     97% |        64 |
 | src/dinary/services/item\_normalizer.py                |       13 |        0 |    100% |           |
 | src/dinary/services/ledger\_repo.py                    |      200 |       22 |     89% |61-62, 292-301, 309-315, 503, 527, 578, 581, 600, 648-655, 674-680, 784, 828 |
-| src/dinary/services/llm\_bootstrap.py                  |       37 |       13 |     65% |34-37, 48-56 |
+| src/dinary/services/llm\_bootstrap.py                  |       61 |       13 |     79% |57-60, 90-98 |
 | src/dinary/services/llm\_client.py                     |      192 |       22 |     89% |165-167, 188-191, 242-243, 362-363, 383-386, 404, 408, 430, 432-435 |
 | src/dinary/services/logging\_jobs\_repo.py             |       63 |        9 |     86% |89-90, 106-112 |
 | src/dinary/services/nbp.py                             |       37 |        0 |    100% |           |
@@ -59,7 +59,7 @@
 | src/dinary/tools/backup\_snapshots.py                  |       79 |        7 |     91% |157, 213-218 |
 | src/dinary/tools/report\_helpers.py                    |       30 |       10 |     67% |     44-53 |
 | src/dinary/tools/sql.py                                |       71 |        3 |     96% |86, 176, 183 |
-| **TOTAL**                                              | **5465** | **1081** | **80%** |           |
+| **TOTAL**                                              | **5496** | **1081** | **80%** |           |
 
 
 ## Setup coverage badge
