@@ -9,10 +9,10 @@
 | src/dinary/api/admin\_llm.py                           |      128 |       30 |     77% |88-90, 112-113, 115-116, 121-122, 124-125, 136-138, 173-175, 186-207 |
 | src/dinary/api/catalog.py                              |       89 |        3 |     97% |   359-361 |
 | src/dinary/api/currencies.py                           |       41 |        0 |    100% |           |
-| src/dinary/api/expense\_corrections.py                 |       76 |        5 |     93% |111-113, 168-169 |
+| src/dinary/api/expense\_corrections.py                 |       97 |        5 |     95% |157-159, 214-215 |
 | src/dinary/api/expenses.py                             |      102 |        4 |     96% |159, 307-309 |
 | src/dinary/api/qr.py                                   |       17 |        6 |     65% |     26-32 |
-| src/dinary/api/receipt\_review.py                      |       29 |        0 |    100% |           |
+| src/dinary/api/receipt\_review.py                      |       32 |        0 |    100% |           |
 | src/dinary/api/receipts.py                             |       44 |        9 |     80% |     61-69 |
 | src/dinary/background/rate\_prefetch\_task.py          |       56 |        2 |     96% |   86, 117 |
 | src/dinary/background/receipt\_classification\_task.py |      244 |       42 |     83% |119-120, 145-150, 154-156, 160-164, 168-172, 176-180, 223-225, 251, 283, 292-300, 371, 411-413, 460-462, 480-482, 512-514 |
@@ -59,7 +59,7 @@
 | src/dinary/tools/backup\_snapshots.py                  |       79 |        7 |     91% |157, 213-218 |
 | src/dinary/tools/report\_helpers.py                    |       30 |       10 |     67% |     44-53 |
 | src/dinary/tools/sql.py                                |       71 |        3 |     96% |86, 176, 183 |
-| **TOTAL**                                              | **5496** | **1081** | **80%** |           |
+| **TOTAL**                                              | **5520** | **1081** | **80%** |           |
 
 
 ## Setup coverage badge
