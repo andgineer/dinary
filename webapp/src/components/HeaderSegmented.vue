@@ -1,5 +1,5 @@
 <script setup>
-import { Plus, ListChecks, Plug } from "lucide-vue-next";
+import { Plus, ListChecks, Cpu } from "lucide-vue-next";
 
 defineProps({
   tab: { type: String, default: "add" },
@@ -51,7 +51,7 @@ defineEmits(["update:tab"]);
       data-testid="seg-llm"
       @click="$emit('update:tab', 'llm')"
     >
-      <Plug :size="16" aria-hidden="true" />
+      <Cpu :size="16" aria-hidden="true" />
     </button>
   </div>
 </template>

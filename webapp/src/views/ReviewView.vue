@@ -2,11 +2,13 @@
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useReviewStore } from "../stores/review.js";
 import { useOnline } from "../composables/useOnline.js";
+import { useToastStore } from "../stores/toast.js";
 import RuleRow from "../components/RuleRow.vue";
 import CorrectionSheet from "../components/CorrectionSheet.vue";
 
 const reviewStore = useReviewStore();
 const { isOnline } = useOnline();
+const toast = useToastStore();
 
 const correctionItem = ref(null);
 const correctionOpen = ref(false);
@@ -14,6 +16,7 @@ const sentinel = ref(null);
 let observer = null;
 
 function openCorrection(item) {
+  if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
   correctionItem.value = item;
   correctionOpen.value = true;
 }

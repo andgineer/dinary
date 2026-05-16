@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from "vue";
-import { ChevronUp, ChevronDown, Beaker, Power } from "lucide-vue-next";
+import { ChevronUp, ChevronDown, Zap, Power } from "lucide-vue-next";
 import StatusDot from "./StatusDot.vue";
 
 const props = defineProps({
@@ -125,7 +125,7 @@ const latencyColor = computed(() => {
         aria-label="Test provider"
         @click.stop="emit('test')"
       >
-        <Beaker :size="15" />
+        <Zap :size="15" />
       </button>
       <button
         type="button"

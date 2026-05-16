@@ -24,13 +24,15 @@ export const useLlmStore = defineStore("llm", () => {
   }
 
   async function toggle(id) {
-    const prov = providers.value.find((p) => p.id === id);
-    if (!prov) return;
+    const idx = providers.value.findIndex((p) => p.id === id);
+    if (idx === -1) return;
+    const prev = providers.value[idx].is_enabled;
+    providers.value[idx] = { ...providers.value[idx], is_enabled: !prev };
     try {
-      const updated = await llmApi.updateProvider(id, { is_enabled: !prov.is_enabled });
-      const idx = providers.value.findIndex((p) => p.id === id);
-      if (idx !== -1) providers.value[idx] = { ...providers.value[idx], ...updated };
+      const updated = await llmApi.updateProvider(id, { is_enabled: !prev });
+      providers.value[idx] = { ...providers.value[idx], ...updated };
     } catch (err) {
+      providers.value[idx] = { ...providers.value[idx], is_enabled: prev };
       useToastStore().show(err?.message || "Toggle failed", "error");
     }
   }
