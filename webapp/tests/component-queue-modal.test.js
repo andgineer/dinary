@@ -3,14 +3,26 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 import QueueModal from "../src/components/QueueModal.vue";
 import { useQueueStore, _resetForTest } from "../src/stores/queue.js";
+import {
+  useReceiptQueueStore,
+  _resetForTest as resetReceiptQueueStore,
+} from "../src/stores/receiptQueue.js";
 
 async function resetQueueDb() {
   await _resetForTest();
-  await new Promise((resolve) => {
-    const del = indexedDB.deleteDatabase("dinary-v2");
-    del.onsuccess = del.onerror = del.onblocked = () => resolve();
-    setTimeout(resolve, 1000);
-  });
+  await resetReceiptQueueStore();
+  await Promise.all([
+    new Promise((resolve) => {
+      const del = indexedDB.deleteDatabase("dinary-v2");
+      del.onsuccess = del.onerror = del.onblocked = () => resolve();
+      setTimeout(resolve, 1000);
+    }),
+    new Promise((resolve) => {
+      const del = indexedDB.deleteDatabase("dinary-receipts");
+      del.onsuccess = del.onerror = del.onblocked = () => resolve();
+      setTimeout(resolve, 1000);
+    }),
+  ]);
 }
 
 let originalFetch;
@@ -40,7 +52,7 @@ describe("QueueModal", () => {
   it("renders an empty state when there are no queued items", async () => {
     const wrapper = mount(QueueModal, { props: { open: true } });
     await flushPromises();
-    expect(wrapper.text()).toContain("No queued expenses");
+    expect(wrapper.text()).toContain("Queue is empty");
   });
 
   it("renders one row per queued item", async () => {
@@ -60,6 +72,16 @@ describe("QueueModal", () => {
     expect(wrapper.text()).toContain("cafe");
     expect(wrapper.text()).toContain("lunch");
     expect(wrapper.text()).toContain("2026-05-04");
+  });
+
+  it("renders receipt queue items alongside expense items", async () => {
+    const receiptQueue = useReceiptQueueStore();
+    await receiptQueue.enqueue("https://suf.purs.gov.rs/v/?vl=TESTRECEIPT");
+    const wrapper = mount(QueueModal, { props: { open: true } });
+    await flushPromises();
+    expect(wrapper.findAll('[data-testid="queue-item"]')).toHaveLength(1);
+    expect(wrapper.text()).toContain("QR receipt");
+    expect(wrapper.text()).toContain("suf.purs.gov.rs");
   });
 
   it("emits 'close' when the header × is clicked", async () => {

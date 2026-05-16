@@ -8,6 +8,7 @@ import {
   useReceiptQueueStore,
   _resetForTest as resetReceiptQueueStore,
 } from "../src/stores/receiptQueue.js";
+import { useToastStore } from "../src/stores/toast.js";
 import * as receiptsApi from "../src/api/receipts.js";
 
 async function resetDb() {
@@ -44,6 +45,24 @@ describe("flushReceiptQueue", () => {
 
     expect(post).toHaveBeenCalledTimes(2);
     expect(queue.items).toHaveLength(0);
+  });
+
+  it("shows 'Receipt saved' toast on ok and 'Already saved' toast on duplicate", async () => {
+    const queue = useReceiptQueueStore();
+    await queue.enqueue("https://example.com/r1");
+    await queue.enqueue("https://example.com/r2");
+
+    vi.spyOn(receiptsApi, "postReceipt")
+      .mockResolvedValueOnce({ status: "ok" })
+      .mockResolvedValueOnce({ status: "duplicate" });
+
+    const toast = useToastStore();
+    const showSpy = vi.spyOn(toast, "show");
+
+    await flushReceiptQueue();
+
+    expect(showSpy).toHaveBeenCalledWith("Receipt saved", "success");
+    expect(showSpy).toHaveBeenCalledWith("Already saved", "info");
   });
 
   it("passes client_receipt_id and url to postReceipt", async () => {

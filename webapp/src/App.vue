@@ -28,7 +28,7 @@ const isOnline = ref(
 const tab = ref("add"); // 'add' | 'review' | 'llm'
 const queueModalOpen = ref(false);
 
-const queueCount = computed(() => queue.items.length);
+const queueCount = computed(() => queue.items.length + receiptQueue.items.length);
 const headerVersionLabel = computed(() => `v${APP_VERSION}`);
 
 function onOnline() {

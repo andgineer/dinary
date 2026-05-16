@@ -27,7 +27,8 @@ afterEach(async () => {
 describe("receipt queue store: enqueue / list / remove", () => {
   it("enqueue persists item with a generated client_receipt_id and exposes it via items", async () => {
     const store = useReceiptQueueStore();
-    await store.enqueue("https://suf.purs.gov.rs/v/?vl=AAAA");
+    const result = await store.enqueue("https://suf.purs.gov.rs/v/?vl=AAAA");
+    expect(result).toBe("queued");
     expect(store.items).toHaveLength(1);
     expect(store.items[0].url).toBe("https://suf.purs.gov.rs/v/?vl=AAAA");
     expect(store.items[0].client_receipt_id).toBeTypeOf("string");
@@ -66,10 +67,12 @@ describe("receipt queue store: enqueue / list / remove", () => {
     expect(store.items[0].client_receipt_id).toBe(id1);
   });
 
-  it("enqueuing the same URL twice only adds one entry", async () => {
+  it("enqueuing the same URL twice only adds one entry and second call returns false", async () => {
     const store = useReceiptQueueStore();
-    await store.enqueue("https://suf.purs.gov.rs/v/?vl=DUPLICATE");
-    await store.enqueue("https://suf.purs.gov.rs/v/?vl=DUPLICATE");
+    const first = await store.enqueue("https://suf.purs.gov.rs/v/?vl=DUPLICATE");
+    const second = await store.enqueue("https://suf.purs.gov.rs/v/?vl=DUPLICATE");
+    expect(first).toBe("queued");
+    expect(second).toBe("in-queue");
     expect(store.items).toHaveLength(1);
   });
 

@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { Copy, RefreshCw, X } from "lucide-vue-next";
 import { useQueueStore } from "../stores/queue.js";
+import { useReceiptQueueStore } from "../stores/receiptQueue.js";
 import { useToastStore } from "../stores/toast.js";
 
 const props = defineProps({
@@ -10,6 +11,7 @@ const props = defineProps({
 const emit = defineEmits(["close"]);
 
 const queue = useQueueStore();
+const receiptQueue = useReceiptQueueStore();
 const toast = useToastStore();
 
 const APP_VERSION =
@@ -38,6 +40,7 @@ watch(
   async (isOpen) => {
     if (!isOpen) return;
     await queue.refresh();
+    await receiptQueue.refresh();
     await refreshServerVersion();
   },
   { immediate: true },
@@ -97,14 +100,17 @@ function close() {
       <div v-if="queue.lastFlushError" class="queue-error">
         {{ queue.lastFlushError.message ?? String(queue.lastFlushError) }}
       </div>
+      <div v-if="receiptQueue.lastFlushError" class="queue-error">
+        {{ receiptQueue.lastFlushError.message ?? String(receiptQueue.lastFlushError) }}
+      </div>
 
-      <div v-if="queue.items.length === 0" class="queue-empty">
-        No queued expenses
+      <div v-if="queue.items.length === 0 && receiptQueue.items.length === 0" class="queue-empty">
+        Queue is empty
       </div>
       <div v-else>
         <div
           v-for="it in queue.items"
-          :key="it.id"
+          :key="`exp-${it.id}`"
           class="queue-item"
           data-testid="queue-item"
         >
@@ -114,7 +120,17 @@ function close() {
           <div v-if="it.comment" class="qi-comment">{{ it.comment }}</div>
           <div class="qi-meta">{{ it.date }}</div>
         </div>
+        <div
+          v-for="it in receiptQueue.items"
+          :key="`rec-${it.id}`"
+          class="queue-item"
+          data-testid="queue-item"
+        >
+          <span class="qi-receipt-label">QR receipt</span>
+          <div class="qi-meta qi-receipt-url">{{ it.url }}</div>
+        </div>
         <button
+          v-if="queue.items.length > 0"
           type="button"
           class="btn btn-secondary"
           @click="copyToClipboard"
@@ -182,6 +198,15 @@ function close() {
 .qi-meta {
   color: var(--text-muted);
   font-size: 0.8rem;
+}
+
+.qi-receipt-label {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.qi-receipt-url {
+  word-break: break-all;
 }
 
 .version-info {

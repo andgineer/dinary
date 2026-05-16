@@ -13,13 +13,16 @@ export async function flushReceiptQueue() {
   if (_inFlight) return;
   _inFlight = true;
   const queue = useReceiptQueueStore();
+  const toast = useToastStore();
   queue.lastFlushError = null;
   await queue.refresh();
   try {
     for (const item of [...queue.items]) {
       try {
-        await postReceipt({ client_receipt_id: item.client_receipt_id, url: item.url });
+        const body = await postReceipt({ client_receipt_id: item.client_receipt_id, url: item.url });
         await queue.remove(item.id);
+        if (body?.status === "duplicate") toast.show("Already saved", "info");
+        else toast.show("Receipt saved", "success");
       } catch (err) {
         // 409 conflict — receipt already registered with a different URL; discard locally.
         if (err?.status === 409) {
@@ -28,7 +31,7 @@ export async function flushReceiptQueue() {
         }
         // Transient error — keep item, stop this sweep.
         queue.lastFlushError = err;
-        useToastStore().show(err?.message || "Receipt send failed", "error");
+        toast.show(err?.message || "Receipt send failed", "error");
         break;
       }
     }

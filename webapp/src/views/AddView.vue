@@ -33,16 +33,24 @@ function toggleScanner() {
   });
 }
 
-function onScan(text) {
+async function onScan(text) {
   scannerActive.value = false;
   if (!isFiscalReceiptUrl(text)) {
     const preview = text.length > 80 ? text.slice(0, 80) + "…" : text;
     toast.show(`Not a fiscal QR: ${preview}`, "error");
     return;
   }
-  receiptQueue.enqueue(text);
+  const status = await receiptQueue.enqueue(text);
+  if (status === "in-queue") {
+    toast.show("Already queued", "info");
+    void flushReceiptQueue();
+    return;
+  }
+  if (!navigator.onLine) {
+    toast.show("Receipt queued", "info");
+    return;
+  }
   void flushReceiptQueue();
-  toast.show("Receipt queued", "success");
 }
 
 function onScanError(err) {
