@@ -5,15 +5,15 @@
 | Name                                                   |    Stmts |     Miss |   Cover |   Missing |
 |------------------------------------------------------- | -------: | -------: | ------: | --------: |
 | src/dinary/\_\_about\_\_.py                            |        1 |        0 |    100% |           |
-| src/dinary/api/admin\_catalog.py                       |      186 |       33 |     82% |197-198, 210-224, 263-264, 288-289, 307-308, 348-365, 377-378, 398-399, 420-421, 436-437, 477 |
-| src/dinary/api/admin\_llm.py                           |      130 |       30 |     77% |89-91, 113-114, 116-117, 122-123, 125-126, 137-139, 174-176, 187-208 |
+| src/dinary/api/admin\_catalog.py                       |      152 |       27 |     82% |198-199, 210-220, 255-256, 277-278, 293-294, 330-343, 354-355, 372-373, 391-392, 404-405, 443 |
+| src/dinary/api/admin\_llm.py                           |       98 |       18 |     82% |103-104, 106-107, 112-113, 115-116, 161-178 |
 | src/dinary/api/catalog.py                              |       90 |        3 |     97% |   360-362 |
-| src/dinary/api/currencies.py                           |       41 |        0 |    100% |           |
-| src/dinary/api/expense\_corrections.py                 |       97 |        5 |     95% |157-159, 214-215 |
-| src/dinary/api/expenses.py                             |      104 |        4 |     96% |166, 314-316 |
+| src/dinary/api/currencies.py                           |       34 |        0 |    100% |           |
+| src/dinary/api/expense\_corrections.py                 |       89 |        2 |     98% |   204-205 |
+| src/dinary/api/expenses.py                             |      102 |        4 |     96% |168, 312-314 |
 | src/dinary/api/qr.py                                   |       17 |        6 |     65% |     26-32 |
-| src/dinary/api/receipt\_review.py                      |       33 |        0 |    100% |           |
-| src/dinary/api/receipts.py                             |       44 |        9 |     80% |     61-69 |
+| src/dinary/api/receipt\_review.py                      |       27 |        0 |    100% |           |
+| src/dinary/api/receipts.py                             |       36 |        5 |     86% |     61-66 |
 | src/dinary/background/rate\_prefetch\_task.py          |       56 |        2 |     96% |   86, 117 |
 | src/dinary/background/receipt\_classification\_task.py |      244 |       42 |     83% |119-120, 145-150, 154-156, 160-164, 168-172, 176-180, 223-225, 251, 283, 292-300, 371, 411-413, 460-462, 480-482, 512-514 |
 | src/dinary/background/sheet\_logging\_task.py          |       53 |        7 |     87% |     44-57 |
@@ -54,13 +54,13 @@
 | src/dinary/services/sheets.py                          |      214 |       71 |     67% |87-96, 100, 137-146, 164-176, 210-211, 238, 292, 331, 447, 581-586, 596-599, 610-615, 651-691 |
 | src/dinary/services/sql\_loader.py                     |       31 |        0 |    100% |           |
 | src/dinary/services/sqlite\_types.py                   |       36 |        0 |    100% |           |
-| src/dinary/services/storage.py                         |       72 |        8 |     89% |46-47, 158-161, 169-175 |
+| src/dinary/services/storage.py                         |       87 |       11 |     87% |47-48, 159-162, 170-176, 222-224 |
 | src/dinary/services/store\_resolver.py                 |       18 |        0 |    100% |           |
 | src/dinary/tools/backup\_retention.py                  |       55 |       26 |     53% |26-34, 71-91, 95 |
 | src/dinary/tools/backup\_snapshots.py                  |       79 |        7 |     91% |157, 213-218 |
 | src/dinary/tools/report\_helpers.py                    |       30 |       10 |     67% |     44-53 |
 | src/dinary/tools/sql.py                                |       71 |        3 |     96% |86, 176, 183 |
-| **TOTAL**                                              | **5519** | **1099** | **80%** |           |
+| **TOTAL**                                              | **5437** | **1077** | **80%** |           |
 
 
 ## Setup coverage badge
