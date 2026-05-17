@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_b89151b672fa910f_seed_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-16 16:24 +0000
+            created at 2026-05-17 04:31 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -117,7 +117,7 @@
     <p class="run run2"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">    <span class="nam">iter_parsed_sheet_rows</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t">    <span class="nam">resolve_row_to_3d</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">services</span> <span class="key">import</span> <span class="nam">ledger_repo</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">services</span> <span class="key">import</span> <span class="nam">storage</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t"><span class="nam">logger</span> <span class="op">=</span> <span class="nam">logging</span><span class="op">.</span><span class="nam">getLogger</span><span class="op">(</span><span class="nam">__name__</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t41" href="#t41">41</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -351,7 +351,7 @@
     <p class="pln"><span class="n"><a id="t269" href="#t269">269</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t270" href="#t270">270</a></span><span class="t">    <span class="key">if</span> <span class="nam">stats</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t271" href="#t271">271</a></span><span class="t">        <span class="nam">stats</span> <span class="op">=</span> <span class="nam">CollectStats</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t272" href="#t272">272</a></span><span class="t">    <span class="nam">con</span> <span class="op">=</span> <span class="nam">ledger_repo</span><span class="op">.</span><span class="nam">get_connection</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t272" href="#t272">272</a></span><span class="t">    <span class="nam">con</span> <span class="op">=</span> <span class="nam">storage</span><span class="op">.</span><span class="nam">get_connection</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t273" href="#t273">273</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t274" href="#t274">274</a></span><span class="t">        <span class="nam">years_to_process</span> <span class="op">=</span> <span class="nam">years</span> <span class="key">if</span> <span class="nam">years</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">else</span> <span class="nam">_get_import_years</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t275" href="#t275">275</a></span><span class="t">        <span class="nam">all_details</span><span class="op">:</span> <span class="nam">list</span><span class="op">[</span><span class="nam">DetailRow</span><span class="op">]</span> <span class="op">=</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
@@ -614,8 +614,8 @@
     <p class="mis show_mis"><span class="n"><a id="t532" href="#t532">532</a></span><span class="t">    <span class="key">if</span> <span class="nam">as_csv</span> <span class="key">and</span> <span class="nam">as_json</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t533" href="#t533">533</a></span><span class="t">        <span class="nam">msg</span> <span class="op">=</span> <span class="str">"--csv and --json are mutually exclusive"</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t534" href="#t534">534</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="nam">msg</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t535" href="#t535">535</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">ledger_repo</span><span class="op">.</span><span class="nam">DB_PATH</span><span class="op">.</span><span class="nam">exists</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t536" href="#t536">536</a></span><span class="t">        <span class="nam">msg</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">DB not found at </span><span class="op">{</span><span class="nam">ledger_repo</span><span class="op">.</span><span class="nam">DB_PATH</span><span class="op">}</span><span class="fst">. Run `inv import-catalog` first.</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t535" href="#t535">535</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">storage</span><span class="op">.</span><span class="nam">DB_PATH</span><span class="op">.</span><span class="nam">exists</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t536" href="#t536">536</a></span><span class="t">        <span class="nam">msg</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">DB not found at </span><span class="op">{</span><span class="nam">storage</span><span class="op">.</span><span class="nam">DB_PATH</span><span class="op">}</span><span class="fst">. Run `inv import-catalog` first.</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t537" href="#t537">537</a></span><span class="t">        <span class="key">raise</span> <span class="nam">FileNotFoundError</span><span class="op">(</span><span class="nam">msg</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t538" href="#t538">538</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t539" href="#t539">539</a></span><span class="t">    <span class="nam">out</span> <span class="op">=</span> <span class="nam">stream</span> <span class="key">if</span> <span class="nam">stream</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">else</span> <span class="nam">sys</span><span class="op">.</span><span class="nam">stdout</span>&nbsp;</span><span class="r"></span></p>
@@ -699,7 +699,7 @@
             <a class="nav" href="z_b89151b672fa910f_seed_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-16 16:24 +0000
+            created at 2026-05-17 04:31 +0000
         </p>
     </div>
 </footer>

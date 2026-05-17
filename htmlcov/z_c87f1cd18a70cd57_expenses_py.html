@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_c87f1cd18a70cd57_income_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-16 16:24 +0000
+            created at 2026-05-17 04:31 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -92,7 +92,7 @@
     <p class="pln"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="str">stdout instead, which is what ``inv report-expenses --csv`` consumes</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t"><span class="str">to pipe the result into downstream tooling.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t"><span class="str">Strictly read-only. Opens a short-lived ``ledger_repo`` cursor, runs</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t"><span class="str">Strictly read-only. Opens a short-lived DB cursor, runs</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t"><span class="str">one aggregation SELECT, closes the cursor. Safe to run against live</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t"><span class="str">production data while the FastAPI service is serving HTTP &#8212; SQLite's</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t"><span class="str">WAL mode lets readers and the single writer coexist without blocking.</span>&nbsp;</span><span class="r"></span></p>
@@ -112,7 +112,7 @@
     <p class="run"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t"><span class="key">from</span> <span class="nam">rich</span><span class="op">.</span><span class="nam">table</span> <span class="key">import</span> <span class="nam">Table</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">config</span> <span class="key">import</span> <span class="nam">settings</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">services</span> <span class="key">import</span> <span class="nam">ledger_repo</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">services</span> <span class="key">import</span> <span class="nam">storage</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t"><span class="op">@</span><span class="nam">dataclasses</span><span class="op">.</span><span class="nam">dataclass</span><span class="op">(</span><span class="nam">frozen</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">slots</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -438,16 +438,16 @@
     <p class="run"><span class="n"><a id="t356" href="#t356">356</a></span><span class="t">    <span class="key">if</span> <span class="nam">as_csv</span> <span class="key">and</span> <span class="nam">as_json</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t357" href="#t357">357</a></span><span class="t">        <span class="nam">msg</span> <span class="op">=</span> <span class="str">"--csv and --json are mutually exclusive"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t358" href="#t358">358</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="nam">msg</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t359" href="#t359">359</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">ledger_repo</span><span class="op">.</span><span class="nam">DB_PATH</span><span class="op">.</span><span class="nam">exists</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t359" href="#t359">359</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">storage</span><span class="op">.</span><span class="nam">DB_PATH</span><span class="op">.</span><span class="nam">exists</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t360" href="#t360">360</a></span><span class="t">        <span class="nam">msg</span> <span class="op">=</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t361" href="#t361">361</a></span><span class="t">            <span class="fst">f"</span><span class="fst">DB not found at </span><span class="op">{</span><span class="nam">ledger_repo</span><span class="op">.</span><span class="nam">DB_PATH</span><span class="op">}</span><span class="fst">. Either point </span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t361" href="#t361">361</a></span><span class="t">            <span class="fst">f"</span><span class="fst">DB not found at </span><span class="op">{</span><span class="nam">storage</span><span class="op">.</span><span class="nam">DB_PATH</span><span class="op">}</span><span class="fst">. Either point </span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t362" href="#t362">362</a></span><span class="t">            <span class="str">"DINARY_DATA_PATH at an existing SQLite file, or use "</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t363" href="#t363">363</a></span><span class="t">            <span class="str">"`inv report-expenses --remote` to query the server."</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t364" href="#t364">364</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t365" href="#t365">365</a></span><span class="t">        <span class="nam">print</span><span class="op">(</span><span class="nam">msg</span><span class="op">,</span> <span class="nam">file</span><span class="op">=</span><span class="nam">sys</span><span class="op">.</span><span class="nam">stderr</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t366" href="#t366">366</a></span><span class="t">        <span class="key">return</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t367" href="#t367">367</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t368" href="#t368">368</a></span><span class="t">    <span class="nam">con</span> <span class="op">=</span> <span class="nam">ledger_repo</span><span class="op">.</span><span class="nam">get_connection</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t368" href="#t368">368</a></span><span class="t">    <span class="nam">con</span> <span class="op">=</span> <span class="nam">storage</span><span class="op">.</span><span class="nam">get_connection</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t369" href="#t369">369</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t370" href="#t370">370</a></span><span class="t">        <span class="nam">rows</span> <span class="op">=</span> <span class="nam">aggregate_expenses</span><span class="op">(</span><span class="nam">con</span><span class="op">,</span> <span class="nam">year</span><span class="op">=</span><span class="nam">year</span><span class="op">,</span> <span class="nam">month</span><span class="op">=</span><span class="nam">month</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t371" href="#t371">371</a></span><span class="t">    <span class="key">finally</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -509,7 +509,7 @@
             <a class="nav" href="z_c87f1cd18a70cd57_income_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-16 16:24 +0000
+            created at 2026-05-17 04:31 +0000
         </p>
     </div>
 </footer>

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for src/dinary/services/currency_repo.py: 85%</title>
+    <title>Coverage for src/dinary/services/currencies.py: 85%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -11,7 +11,7 @@
 <header>
     <div class="content">
         <h1>
-            <span class="text">Coverage for </span><b>src&#8201;/&#8201;dinary&#8201;/&#8201;services&#8201;/&#8201;currency_repo.py</b>:
+            <span class="text">Coverage for </span><b>src&#8201;/&#8201;dinary&#8201;/&#8201;services&#8201;/&#8201;currencies.py</b>:
             <span class="pc_cov">85%</span>
         </h1>
         <aside id="help_panel_wrapper">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_649185c7b8dec303_db_migrations_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-16 16:24 +0000
+            created at 2026-05-17 04:31 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -149,7 +149,7 @@
     <p class="run"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t"><span class="key">def</span> <span class="nam">seed_default_if_empty</span><span class="op">(</span><span class="nam">con</span><span class="op">:</span> <span class="nam">sqlite3</span><span class="op">.</span><span class="nam">Connection</span><span class="op">,</span> <span class="nam">default_code</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t68" href="#t68">68</a></span><span class="t">    <span class="str">"""Insert ``default_code`` if the table is empty.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t"><span class="str">    Called from ``ledger_repo.init_db`` so a fresh DB starts with the</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t"><span class="str">    Called from ``db.init_db`` so a fresh DB starts with the</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t"><span class="str">    operator's chosen ``app_currency`` already in the picker. No-op</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t"><span class="str">    once any row exists, so operators are free to add/remove</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t"><span class="str">    currencies later without the seed re-asserting itself on reboot.</span>&nbsp;</span><span class="r"></span></p>
@@ -171,7 +171,7 @@
             <a class="nav" href="z_649185c7b8dec303_db_migrations_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-16 16:24 +0000
+            created at 2026-05-17 04:31 +0000
         </p>
     </div>
 </footer>
