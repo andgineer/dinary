@@ -14,7 +14,6 @@ ALL_SQL_FILES = [
     "insert_expense.sql",
     "list_categories.sql",
     "logging_projection.sql",
-    "resolve_mapping.sql",
     "resolve_mapping_for_year.sql",
     "seed_load_categories.sql",
 ]
@@ -49,11 +48,11 @@ class TestLoadSql:
         assert "SELECT" in text.upper() or "INSERT" in text.upper()
 
     def test_caches_after_first_load(self):
-        load_sql("resolve_mapping.sql")
-        assert "resolve_mapping.sql" in _cache
+        load_sql("list_categories.sql")
+        assert "list_categories.sql" in _cache
 
-        _cache["resolve_mapping.sql"] = "-- cached"
-        assert load_sql("resolve_mapping.sql") == "-- cached"
+        _cache["list_categories.sql"] = "-- cached"
+        assert load_sql("list_categories.sql") == "-- cached"
 
     def test_missing_file_raises(self):
         with pytest.raises(Exception):

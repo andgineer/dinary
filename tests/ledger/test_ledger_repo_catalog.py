@@ -18,7 +18,6 @@ from dinary.services.catalog import (
     get_category_name,
     get_mapping_tag_ids,
     list_categories,
-    resolve_mapping,
     resolve_mapping_for_year,
     set_catalog_version,
 )
@@ -163,16 +162,6 @@ class TestListCategories:
 @allure.epic("Ledger repo")
 @allure.feature("Sheet mapping (3D)")
 class TestSheetMapping:
-    def test_resolve_year_zero_default(self, populated_catalog):
-        con = storage.get_connection()
-        try:
-            row = resolve_mapping(con, "еда", "собака")
-            assert row is not None
-            assert row.category_id == 1
-            assert row.event_id is None
-        finally:
-            con.close()
-
     def test_year_specific_overrides_default(self, populated_catalog):
         con = storage.get_connection()
         try:
@@ -189,13 +178,6 @@ class TestSheetMapping:
             row = resolve_mapping_for_year(con, "еда", "собака", 2024)
             assert row is not None
             assert row.category_id == 1
-        finally:
-            con.close()
-
-    def test_unknown_returns_none(self, populated_catalog):
-        con = storage.get_connection()
-        try:
-            assert resolve_mapping(con, "missing", "?") is None
         finally:
             con.close()
 

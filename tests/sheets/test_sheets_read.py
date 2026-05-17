@@ -1,13 +1,11 @@
 """Read-side tests for ``dinary.services.sheets``.
 
 Covers the lookup helpers (``find_category_row``, ``find_month_range``,
-``get_month_rate``, ``fetch_row_years``, ``_year_from_a_value``) and
-the multi-year matching pipeline that uses an aligned
-``years_by_row`` produced from a separate unformatted column-A read.
+``fetch_row_years``, ``_year_from_a_value``) and the multi-year matching
+pipeline that uses an aligned ``years_by_row`` produced from a separate
+unformatted column-A read.
 
-Append-side helpers (``append_to_amount_formula``, ``append_comment``)
-live in :file:`test_sheets_append.py`; new-row insertion lives in
-:file:`test_sheets_rows.py`.
+New-row insertion lives in :file:`test_sheets_rows.py`.
 """
 
 from unittest.mock import MagicMock
@@ -22,7 +20,6 @@ from dinary.services.sheets import (
     find_category_row,
     find_month_range,
     fmt_amount,
-    get_month_rate,
 )
 
 from _sheets_helpers import HEADER, SAMPLE_SHEET
@@ -151,23 +148,6 @@ class TestYearAwareMatching:
         )
         assert block_2027 == (2, 3)
         assert block_2026 == (5, 6)
-
-    def test_get_month_rate_picks_target_year(self):
-
-        rate_2027 = get_month_rate(
-            self.MULTIYEAR_SHEET,
-            4,
-            target_year=2027,
-            years_by_row=self.YEARS_BY_ROW,
-        )
-        rate_2026 = get_month_rate(
-            self.MULTIYEAR_SHEET,
-            4,
-            target_year=2026,
-            years_by_row=self.YEARS_BY_ROW,
-        )
-        assert rate_2027 == "117.00"
-        assert rate_2026 == "115.00"
 
     def test_year_from_a_value_handles_serial_and_iso(self):
 

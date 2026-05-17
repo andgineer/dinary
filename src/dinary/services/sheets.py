@@ -364,31 +364,6 @@ def find_category_row(
     return None
 
 
-def get_month_rate(
-    all_values: list[list[str]],
-    target_month: int,
-    *,
-    target_year: int | None = None,
-    years_by_row: list[int | None] | None = None,
-) -> str | None:
-    """Return the first non-empty EUR rate found for *target_month*.
-
-    With year-aware arguments, only rates from rows of the correct year
-    (or year-unknown rows) are considered.
-    """
-    _check_year_args_paired(target_year, years_by_row)
-    for i, row in enumerate(all_values[HEADER_ROWS:], start=HEADER_ROWS + 1):
-        if _cell(row, COL_MONTH) == str(target_month) and _row_year_matches(
-            i,
-            target_year,
-            years_by_row,
-        ):
-            rate_val = _cell(row, COL_RATE)
-            if rate_val and _is_numeric(rate_val):
-                return rate_val
-    return None
-
-
 def find_month_range(
     all_values: list[list[str]],
     month: int,
@@ -622,37 +597,6 @@ def extend_comment(existing: str, new_comment: str) -> str:
         return existing
     separator = "; " if existing else ""
     return f"{existing}{separator}{new_comment}"
-
-
-def append_to_amount_formula(ws: gspread.Worksheet, row: int, amount_app: float) -> None:
-    """Append +amount to the formula in column B (e.g. =460+373 → =460+373+1500).
-
-    Non-atomic, single-cell helper. Sheet logging uses
-    ``append_expense_atomic`` instead so the formula and the
-    idempotency marker are written together.
-    """
-    amount_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_APP)
-    raw = ws.acell(amount_addr, value_render_option=ValueRenderOption.formula).value
-    existing = str(raw) if raw is not None else ""
-    formula = extend_amount_formula(existing, amount_app)
-    ws.update(
-        range_name=amount_addr,
-        values=[[formula]],
-        value_input_option=ValueInputOption.user_entered,
-    )
-
-
-def append_comment(ws: gspread.Worksheet, row: int, row_data: list[str], comment: str) -> None:
-    """Append a comment to column F, semicolon-separated.
-
-    Non-atomic, single-cell helper. Sheet logging uses
-    ``append_expense_atomic`` instead so the comment, the formula, and
-    the idempotency marker are written together.
-    """
-    existing = _cell(row_data, COL_COMMENT)
-    new_value = extend_comment(existing, comment)
-    if new_value != existing:
-        ws.update_cell(row, COL_COMMENT, new_value)
 
 
 def _first_cell(batch_get_result: list[list[str]]) -> str:

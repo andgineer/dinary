@@ -61,14 +61,6 @@ def get_category_name(con: sqlite3.Connection, category_id: int) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def resolve_mapping(
-    con: sqlite3.Connection,
-    category: str,
-    group: str,
-) -> MappingRow | None:
-    return fetchone_as(MappingRow, con, load_sql("resolve_mapping.sql"), [category, group])
-
-
 def resolve_mapping_for_year(
     con: sqlite3.Connection,
     category: str,
