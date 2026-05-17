@@ -3,13 +3,16 @@ import { ref } from "vue";
 import { QrCode, X, Save } from "lucide-vue-next";
 import ExpenseForm from "../components/ExpenseForm.vue";
 import QrScanner from "../components/QrScanner.vue";
+import KeyboardSaveBar from "../components/KeyboardSaveBar.vue";
 import { useReceiptQueueStore } from "../stores/receiptQueue.js";
 import { useToastStore } from "../stores/toast.js";
 import { isFiscalReceiptUrl } from "../composables/receipt.js";
 import { flushReceiptQueue } from "../composables/flushReceiptQueue.js";
+import { useKeyboardVisible } from "../composables/useKeyboardVisible.js";
 
 const receiptQueue = useReceiptQueueStore();
 const toast = useToastStore();
+const { keyboardVisible, keyboardBottom } = useKeyboardVisible();
 
 const scanner = ref(null);
 const scannerActive = ref(false);
@@ -61,6 +64,7 @@ function onScanError(err) {
 
 <template>
   <QrScanner ref="scanner" @scan="onScan" @error="onScanError" />
+  <KeyboardSaveBar v-if="keyboardVisible" :bottom="keyboardBottom" @save="saveExpense" />
 
   <ExpenseForm ref="expenseForm" />
 
