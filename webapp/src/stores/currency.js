@@ -14,12 +14,16 @@
 // store is intentionally rate-free.
 
 import { defineStore } from "pinia";
+import { ref, computed } from "vue";
 
 import * as currenciesApi from "../api/currencies.js";
 
 const LAST_USED_LS_KEY = "dinary.currency.lastUsed";
+const DIRTY_KEY = "dinary:currency:dirty";
+const FETCHED_KEY = "dinary:currency:fetchedAt";
+const TTL_MS = 24 * 60 * 60 * 1000;
 
-function readLastUsedFromStorage() {
+function readLastUsed() {
   try {
     return localStorage.getItem(LAST_USED_LS_KEY) || null;
   } catch {
@@ -27,7 +31,7 @@ function readLastUsedFromStorage() {
   }
 }
 
-function writeLastUsedToStorage(code) {
+function writeLastUsed(code) {
   try {
     if (!code) {
       localStorage.removeItem(LAST_USED_LS_KEY);
@@ -39,66 +43,92 @@ function writeLastUsedToStorage(code) {
   }
 }
 
-export const useCurrencyStore = defineStore("currency", {
-  state: () => ({
-    codes: [],
-    defaultCode: "RSD",
-    lastUsed: readLastUsedFromStorage(),
-    lastListError: null,
-  }),
+export const useCurrencyStore = defineStore("currency", () => {
+  const codes = ref([]);
+  const defaultCode = ref("RSD");
+  const lastUsed = ref(readLastUsed());
+  const lastListError = ref(null);
+  const dirtyFlag = ref(localStorage.getItem(DIRTY_KEY) === "1");
+  const lastFetchedAt = ref(Number(localStorage.getItem(FETCHED_KEY)) || null);
 
-  getters: {
-    /**
-     * Currency code the picker should default to. Order:
-     *   1) Operator's last selection (persisted to localStorage).
-     *   2) Server-reported ``default_code`` (= app_currency env var).
-     *   3) Hard-coded ``"RSD"`` as a final fallback.
-     */
-    preferredCode(state) {
-      return (
-        (state.lastUsed && state.codes.includes(state.lastUsed) && state.lastUsed) ||
-        state.defaultCode ||
-        "RSD"
-      );
-    },
-  },
+  /**
+   * Currency code the picker should default to. Order:
+   *   1) Operator's last selection (persisted to localStorage).
+   *   2) Server-reported ``default_code`` (= app_currency env var).
+   *   3) Hard-coded ``"RSD"`` as a final fallback.
+   */
+  const preferredCode = computed(
+    () =>
+      (lastUsed.value && codes.value.includes(lastUsed.value) && lastUsed.value) ||
+      defaultCode.value ||
+      "RSD",
+  );
 
-  actions: {
-    async load() {
-      try {
-        const snap = await currenciesApi.fetchCurrencies();
-        this.codes = Array.isArray(snap?.codes) ? snap.codes.slice() : [];
-        this.defaultCode = snap?.default_code || "RSD";
-        this.lastListError = null;
-      } catch (err) {
-        this.lastListError = err;
-        throw err;
-      }
-    },
+  function markDirty() {
+    dirtyFlag.value = true;
+    localStorage.setItem(DIRTY_KEY, "1");
+  }
 
-    async addCurrency(code) {
-      const snap = await currenciesApi.addCurrency(code);
-      this.codes = Array.isArray(snap?.codes) ? snap.codes.slice() : [];
-      this.defaultCode = snap?.default_code || this.defaultCode;
-      return snap;
-    },
+  function _stampFresh() {
+    const now = Date.now();
+    lastFetchedAt.value = now;
+    localStorage.setItem(FETCHED_KEY, String(now));
+    dirtyFlag.value = false;
+    localStorage.removeItem(DIRTY_KEY);
+  }
 
-    async removeCurrency(code) {
-      const snap = await currenciesApi.deleteCurrency(code);
-      this.codes = Array.isArray(snap?.codes) ? snap.codes.slice() : [];
-      this.defaultCode = snap?.default_code || this.defaultCode;
-      // If the operator removed the last-used currency, fall back to
-      // the default so the form stays in a valid state.
-      if (this.lastUsed && !this.codes.includes(this.lastUsed)) {
-        this.setLastUsed(this.defaultCode);
-      }
-      return snap;
-    },
+  async function loadIfNeeded() {
+    const age = lastFetchedAt.value ? Date.now() - lastFetchedAt.value : Infinity;
+    if (!dirtyFlag.value && codes.value.length > 0 && lastFetchedAt.value && age <= TTL_MS) return;
+    try {
+      const snap = await currenciesApi.fetchCurrencies();
+      codes.value = Array.isArray(snap?.codes) ? snap.codes.slice() : [];
+      defaultCode.value = snap?.default_code || "RSD";
+      lastListError.value = null;
+      _stampFresh();
+    } catch (err) {
+      lastListError.value = err;
+      throw err;
+    }
+  }
 
-    setLastUsed(code) {
-      const upper = typeof code === "string" ? code.toUpperCase() : null;
-      this.lastUsed = upper;
-      writeLastUsedToStorage(upper);
-    },
-  },
+  async function addCurrency(code) {
+    const snap = await currenciesApi.addCurrency(code);
+    codes.value = Array.isArray(snap?.codes) ? snap.codes.slice() : [];
+    defaultCode.value = snap?.default_code || defaultCode.value;
+    _stampFresh();
+    return snap;
+  }
+
+  async function removeCurrency(code) {
+    const snap = await currenciesApi.deleteCurrency(code);
+    codes.value = Array.isArray(snap?.codes) ? snap.codes.slice() : [];
+    defaultCode.value = snap?.default_code || defaultCode.value;
+    _stampFresh();
+    if (lastUsed.value && !codes.value.includes(lastUsed.value)) {
+      setLastUsed(defaultCode.value);
+    }
+    return snap;
+  }
+
+  function setLastUsed(code) {
+    const upper = typeof code === "string" ? code.toUpperCase() : null;
+    lastUsed.value = upper;
+    writeLastUsed(upper);
+  }
+
+  return {
+    codes,
+    defaultCode,
+    lastUsed,
+    lastListError,
+    dirtyFlag,
+    lastFetchedAt,
+    preferredCode,
+    markDirty,
+    loadIfNeeded,
+    addCurrency,
+    removeCurrency,
+    setLastUsed,
+  };
 });

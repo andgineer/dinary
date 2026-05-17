@@ -8,7 +8,7 @@ import IconBtn from "./IconBtn.vue";
 const props = defineProps({
   modelValue: { type: String, default: "" },
 });
-const emit = defineEmits(["update:modelValue"]);
+const emit = defineEmits(["update:modelValue", "close"]);
 
 const currency = useCurrencyStore();
 const toast = useToastStore();
@@ -45,6 +45,7 @@ const filteredWorld = computed(() => {
 function onSelect(code) {
   value.value = code;
   currency.setLastUsed(code);
+  emit("close");
 }
 
 async function onAdd(code) {
@@ -54,7 +55,6 @@ async function onAdd(code) {
     await currency.addCurrency(code);
     search.value = "";
     onSelect(code);
-    toast.show(`${code} added`, "success");
   } catch (err) {
     toast.show(`Add failed: ${err?.message || err}`, "error");
   } finally {

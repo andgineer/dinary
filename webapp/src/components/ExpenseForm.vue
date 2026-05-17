@@ -147,7 +147,7 @@ async function init() {
   applyDefaultGroupAndCategory();
   applyAutoAttachEventForDate();
   try {
-    await currency.load();
+    await currency.loadIfNeeded();
   } catch (err) {
     toast.show(`Currencies: ${err?.message || err}`, "error");
   }
@@ -260,7 +260,7 @@ defineExpose({ save, reset });
           {{ selectedCurrency || "RSD" }}
         </button>
         <div v-if="currencyPickerOpen" class="currency-picker-wrap">
-          <CurrencyPicker v-model="selectedCurrency" />
+          <CurrencyPicker v-model="selectedCurrency" @close="currencyPickerOpen = false" />
         </div>
       </div>
 
