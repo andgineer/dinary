@@ -5,12 +5,12 @@
 | Name                                                   |    Stmts |     Miss |   Cover |   Missing |
 |------------------------------------------------------- | -------: | -------: | ------: | --------: |
 | src/dinary/\_\_about\_\_.py                            |        1 |        0 |    100% |           |
-| src/dinary/api/admin\_catalog.py                       |      152 |       27 |     82% |198-199, 210-220, 255-256, 277-278, 293-294, 330-343, 354-355, 372-373, 391-392, 404-405, 443 |
+| src/dinary/api/admin\_catalog.py                       |      156 |       27 |     83% |187-188, 199-209, 244-245, 266-267, 282-283, 319-332, 343-344, 361-362, 375-376, 388-389, 424 |
 | src/dinary/api/admin\_llm.py                           |       98 |       18 |     82% |103-104, 106-107, 112-113, 115-116, 161-178 |
-| src/dinary/api/catalog.py                              |       90 |        3 |     97% |   360-362 |
+| src/dinary/api/catalog.py                              |       90 |        3 |     97% |   322-324 |
 | src/dinary/api/currencies.py                           |       34 |        0 |    100% |           |
 | src/dinary/api/expense\_corrections.py                 |       89 |        2 |     98% |   204-205 |
-| src/dinary/api/expenses.py                             |      102 |        4 |     96% |168, 312-314 |
+| src/dinary/api/expenses.py                             |      102 |        4 |     96% |150, 294-296 |
 | src/dinary/api/qr.py                                   |       17 |        6 |     65% |     26-32 |
 | src/dinary/api/receipt\_review.py                      |       27 |        0 |    100% |           |
 | src/dinary/api/receipts.py                             |       36 |        5 |     86% |     61-66 |
@@ -18,12 +18,12 @@
 | src/dinary/background/receipt\_classification\_task.py |      244 |       42 |     83% |119-120, 145-150, 154-156, 160-164, 168-172, 176-180, 223-225, 251, 283, 292-300, 371, 411-413, 460-462, 480-482, 512-514 |
 | src/dinary/background/sheet\_logging\_task.py          |       53 |        7 |     87% |     44-57 |
 | src/dinary/config.py                                   |      152 |       19 |     88% |37, 47, 110-112, 143, 149, 205-209, 211-215, 218-223, 226-230, 293-295 |
-| src/dinary/imports/expense\_import.py                  |      420 |      132 |     69% |262, 267-268, 282, 284, 286, 313-331, 361, 365, 381-387, 391-399, 410, 412, 429, 431, 436, 457, 462-463, 487, 518-522, 535-539, 541-544, 696-697, 745-747, 750-752, 834-845, 914-957, 970, 980, 1003-1039, 1097, 1111, 1114, 1119, 1129, 1187-1193, 1198-1210, 1249-1253, 1255-1259, 1317-1326 |
+| src/dinary/imports/expense\_import.py                  |      421 |      132 |     69% |235, 240-241, 255, 257, 259, 286-304, 334, 338, 354-360, 364-372, 383, 385, 402, 404, 409, 430, 435-436, 460, 491-495, 508-512, 514-517, 669-670, 718-720, 723-725, 807-818, 887-930, 943, 953, 976-1012, 1070, 1084, 1087, 1092, 1102, 1160-1166, 1171-1183, 1222-1226, 1228-1232, 1290-1299 |
 | src/dinary/imports/income\_import.py                   |      139 |      139 |      0% |    12-318 |
 | src/dinary/imports/report\_2d\_3d.py                   |      199 |       42 |     79% |170, 226-235, 271, 493-494, 532-563, 567-606, 610 |
-| src/dinary/imports/seed.py                             |      204 |       49 |     76% |140-153, 215-221, 249, 305-306, 311-312, 315-316, 323, 373-377, 385-386, 388-389, 391-392, 394-398, 422-427, 472-476, 484-487, 509-511, 562-571, 629-630 |
+| src/dinary/imports/seed.py                             |      206 |       49 |     76% |142-155, 217-223, 251, 307-308, 313-314, 317-318, 325, 375-379, 387-388, 390-391, 393-394, 396-400, 424-429, 474-478, 486-489, 511-513, 564-573, 631-632 |
 | src/dinary/imports/seed\_derivation.py                 |      105 |       29 |     72% |252-258, 263, 266, 270-278, 296, 298, 305, 324, 331, 365, 367, 369, 371, 375, 395 |
-| src/dinary/imports/verify\_equivalence.py              |       92 |       92 |      0% |    20-211 |
+| src/dinary/imports/verify\_equivalence.py              |       93 |       93 |      0% |    20-208 |
 | src/dinary/imports/verify\_income.py                   |       37 |       37 |      0% |     9-107 |
 | src/dinary/main.py                                     |       81 |        8 |     90% |41-43, 112, 118, 124, 134, 144 |
 | src/dinary/reports/expenses.py                         |      122 |        5 |     96% |299, 301, 322-323, 420 |
@@ -31,12 +31,15 @@
 | src/dinary/reports/verify\_budget.py                   |       83 |        1 |     99% |       104 |
 | src/dinary/reports/verify\_income.py                   |       88 |        1 |     99% |        38 |
 | src/dinary/services/catalog.py                         |       44 |        0 |    100% |           |
-| src/dinary/services/catalog\_writer.py                 |      266 |       46 |     83% |175-176, 338-342, 496-498, 518-560, 569, 660, 671, 705, 748, 753, 770, 866, 898, 902-904, 911-913 |
-| src/dinary/services/catalog\_writer\_events.py         |      167 |       33 |     80% |117-119, 134, 144-149, 183, 185, 187, 189, 199, 215, 255-257, 293, 302, 316-318, 343, 382, 386-388, 395-397, 419, 432-434 |
+| src/dinary/services/catalog\_writer.py                 |       33 |        0 |    100% |           |
+| src/dinary/services/catalog\_writer\_categories.py     |       90 |       12 |     87% |48, 53, 67, 78, 184, 235, 239-241, 248-250 |
+| src/dinary/services/catalog\_writer\_errors.py         |       31 |        2 |     94% |     83-84 |
+| src/dinary/services/catalog\_writer\_events.py         |      209 |       34 |     84% |39, 247-249, 264, 274-279, 313, 315, 317, 319, 329, 345, 382-384, 418, 426, 439-441, 465, 501, 505-507, 514-516, 538, 551-553 |
+| src/dinary/services/catalog\_writer\_groups.py         |       76 |       31 |     59% |37-41, 108-110, 130-170, 179, 203 |
 | src/dinary/services/classification\_rules.py           |       21 |        0 |    100% |           |
 | src/dinary/services/currencies.py                      |       34 |        5 |     85% |21-22, 59-64 |
 | src/dinary/services/db\_migrations.py                  |       54 |        2 |     96% |    86, 89 |
-| src/dinary/services/exchange\_rates.py                 |       38 |        1 |     97% |        64 |
+| src/dinary/services/exchange\_rates.py                 |       38 |        1 |     97% |        39 |
 | src/dinary/services/expenses.py                        |      132 |       14 |     89% |126, 146, 149, 168, 201-208, 227-233, 319, 423, 465 |
 | src/dinary/services/item\_normalizer.py                |       13 |        0 |    100% |           |
 | src/dinary/services/llm\_bootstrap.py                  |       61 |       13 |     79% |57-60, 90-98 |
@@ -48,10 +51,12 @@
 | src/dinary/services/rate\_helpers.py                   |       27 |        0 |    100% |           |
 | src/dinary/services/receipt\_parser.py                 |      106 |       18 |     83% |66, 72, 81-87, 101, 108, 142-143, 147-148, 151, 172-174, 201-207 |
 | src/dinary/services/receipts.py                        |       76 |       10 |     87% |94-95, 120-122, 170-172, 233, 249 |
-| src/dinary/services/seed\_config.py                    |      139 |        7 |     95% |221-222, 512-514, 552-556 |
-| src/dinary/services/sheet\_logging.py                  |      226 |       41 |     82% |107-111, 125-132, 140, 206-207, 217, 222-224, 267-269, 293-294, 298-308, 385, 424-428, 439, 443, 473-474, 494-504 |
-| src/dinary/services/sheet\_mapping.py                  |      250 |       54 |     78% |259, 331-333, 360-361, 368-374, 424, 427-439, 453-454, 464-482, 559-566, 594-646, 674, 685-690 |
-| src/dinary/services/sheets.py                          |      214 |       71 |     67% |87-96, 100, 137-146, 164-176, 210-211, 238, 292, 331, 447, 581-586, 596-599, 610-615, 651-691 |
+| src/dinary/services/seed\_config.py                    |      139 |        7 |     95% |178-179, 469-471, 509-513 |
+| src/dinary/services/sheet\_logging.py                  |      228 |       41 |     82% |104-108, 122-129, 137, 203-204, 214, 219-221, 264-266, 290-291, 295-305, 382, 421-425, 436, 440, 470-471, 491-501 |
+| src/dinary/services/sheet\_mapping.py                  |      250 |       54 |     78% |239, 311-313, 340-341, 348-354, 404, 407-419, 433-434, 444-462, 539-546, 574-626, 654, 665-670 |
+| src/dinary/services/sheets.py                          |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
+| src/dinary/services/sheets\_client.py                  |       44 |       28 |     36% |26-35, 39, 54-63, 72-84 |
+| src/dinary/services/sheets\_write.py                   |       65 |       35 |     46% |114-119, 124-127, 131-136, 158-192 |
 | src/dinary/services/sql\_loader.py                     |       31 |        0 |    100% |           |
 | src/dinary/services/sqlite\_types.py                   |       36 |        0 |    100% |           |
 | src/dinary/services/storage.py                         |       87 |       11 |     87% |47-48, 159-162, 170-176, 222-224 |
@@ -60,7 +65,7 @@
 | src/dinary/tools/backup\_snapshots.py                  |       79 |        7 |     91% |157, 213-218 |
 | src/dinary/tools/report\_helpers.py                    |       30 |       10 |     67% |     44-53 |
 | src/dinary/tools/sql.py                                |       71 |        3 |     96% |86, 176, 183 |
-| **TOTAL**                                              | **5437** | **1077** | **80%** |           |
+| **TOTAL**                                              | **5452** | **1076** | **80%** |           |
 
 
 ## Setup coverage badge
