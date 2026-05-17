@@ -140,7 +140,7 @@ async function init() {
     selectedCurrency.value = currency.preferredCode;
     return;
   }
-  await catalog.load();
+  await catalog.loadIfNeeded();
   if (catalog.lastError) {
     toast.show(`Catalog: ${catalog.lastError.message}`, "error");
   }

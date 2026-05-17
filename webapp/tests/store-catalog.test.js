@@ -83,6 +83,27 @@ describe("catalog store: load + caching", () => {
     expect(spy).toHaveBeenCalledWith({ ifVersion: 1 });
   });
 
+  it("load() stamps catalogFetchedAt on 304", async () => {
+    vi.spyOn(catalogApi, "fetchCatalog").mockResolvedValueOnce(new catalogApi.NotModified());
+    localStorage.setItem("dinary:catalog:v1", JSON.stringify(SAMPLE));
+
+    const store = useCatalogStore();
+    expect(store.catalogFetchedAt).toBeNull();
+    await store.load();
+
+    expect(store.catalogFetchedAt).toBeGreaterThan(0);
+    expect(localStorage.getItem("dinary:catalog:fetchedAt")).toBeTruthy();
+  });
+
+  it("load() stamps catalogFetchedAt on new data", async () => {
+    vi.spyOn(catalogApi, "fetchCatalog").mockResolvedValueOnce({ ...SAMPLE });
+
+    const store = useCatalogStore();
+    await store.load();
+
+    expect(store.catalogFetchedAt).toBeGreaterThan(0);
+  });
+
   it("load() captures errors in lastError and keeps cached snapshot", async () => {
     localStorage.setItem("dinary:catalog:v1", JSON.stringify(SAMPLE));
     vi.spyOn(catalogApi, "fetchCatalog").mockRejectedValueOnce(new Error("boom"));
@@ -245,5 +266,61 @@ describe("catalog store: applyExpenseDefaults / defaultGroupId / defaultCategory
     expect(store.defaultGroupId).toBeNull();
     store.applyExpenseDefaults({ default_group_id: 1, default_category_ids: { "1": 10 } });
     expect(store.defaultGroupId).toBe(1);
+  });
+});
+
+describe("catalog store: loadIfNeeded TTL", () => {
+  it("skips fetch when snapshot is fresh (within TTL)", async () => {
+    const spy = vi.spyOn(catalogApi, "fetchCatalog");
+    localStorage.setItem("dinary:catalog:v1", JSON.stringify(SAMPLE));
+    localStorage.setItem("dinary:catalog:fetchedAt", String(Date.now()));
+
+    const store = useCatalogStore();
+    await store.loadIfNeeded();
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(store.catalogVersion).toBe(1);
+  });
+
+  it("fetches when TTL is expired", async () => {
+    const spy = vi.spyOn(catalogApi, "fetchCatalog").mockResolvedValueOnce({ ...SAMPLE, catalog_version: 2 });
+    localStorage.setItem("dinary:catalog:v1", JSON.stringify(SAMPLE));
+    localStorage.setItem("dinary:catalog:fetchedAt", String(Date.now() - 25 * 60 * 60 * 1000));
+
+    const store = useCatalogStore();
+    await store.loadIfNeeded();
+
+    expect(spy).toHaveBeenCalledOnce();
+    expect(store.catalogVersion).toBe(2);
+  });
+
+  it("fetches when no fetchedAt recorded (first run)", async () => {
+    const spy = vi.spyOn(catalogApi, "fetchCatalog").mockResolvedValueOnce({ ...SAMPLE });
+
+    const store = useCatalogStore();
+    await store.loadIfNeeded();
+
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
+  it("stamps fetchedAt after loadIfNeeded fetches", async () => {
+    vi.spyOn(catalogApi, "fetchCatalog").mockResolvedValueOnce({ ...SAMPLE });
+
+    const store = useCatalogStore();
+    await store.loadIfNeeded();
+
+    expect(store.catalogFetchedAt).toBeGreaterThan(0);
+  });
+});
+
+describe("catalog store: admin actions stamp catalogFetchedAt", () => {
+  it("add() stamps catalogFetchedAt via applySnapshot", async () => {
+    vi.spyOn(catalogApi, "adminAddGroup").mockResolvedValue({ ...SAMPLE, catalog_version: 3 });
+
+    const store = useCatalogStore();
+    expect(store.catalogFetchedAt).toBeNull();
+    await store.add("group", { name: "new" });
+
+    expect(store.catalogFetchedAt).toBeGreaterThan(0);
   });
 });

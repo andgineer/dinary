@@ -7,6 +7,8 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EVENT_WINDOW_DAYS = 30;
 const SNAPSHOT_CACHE_KEY = "dinary:catalog:v1";
 const DEFAULTS_CACHE_KEY = "dinary:defaults:v1";
+const FETCHED_KEY = "dinary:catalog:fetchedAt";
+const CATALOG_TTL_MS = MS_PER_DAY;
 
 function isActive(item) {
   // Lenient: treat missing is_active as active so older cached snapshots
@@ -79,11 +81,19 @@ export const useCatalogStore = defineStore("catalog", () => {
   const snapshot = ref(readCachedSnapshot());
   const lastError = ref(null);
   const _defaults = ref(readStoredDefaults());
+  const catalogFetchedAt = ref(Number(localStorage.getItem(FETCHED_KEY)) || null);
+
+  function _stampFresh() {
+    const now = Date.now();
+    catalogFetchedAt.value = now;
+    localStorage.setItem(FETCHED_KEY, String(now));
+  }
 
   function applySnapshot(rawSnapshot) {
     if (!rawSnapshot) return;
     snapshot.value = stripAdminEnvelope(rawSnapshot);
     writeCachedSnapshot(snapshot.value);
+    _stampFresh();
   }
 
   async function load() {
@@ -94,6 +104,7 @@ export const useCatalogStore = defineStore("catalog", () => {
         ifVersion: typeof cur?.catalog_version === "number" ? cur.catalog_version : undefined,
       });
       if (result instanceof catalogApi.NotModified) {
+        _stampFresh();
         return snapshot.value;
       }
       applySnapshot(result);
@@ -103,6 +114,12 @@ export const useCatalogStore = defineStore("catalog", () => {
       useToastStore().show(e?.message || "Failed to load catalog", "error");
       return snapshot.value;
     }
+  }
+
+  async function loadIfNeeded() {
+    const age = catalogFetchedAt.value ? Date.now() - catalogFetchedAt.value : Infinity;
+    if (snapshot.value && catalogFetchedAt.value && age <= CATALOG_TTL_MS) return snapshot.value;
+    return load();
   }
 
   function replaceSnapshot(rawSnapshot) {
@@ -312,7 +329,9 @@ export const useCatalogStore = defineStore("catalog", () => {
     events,
     inactiveEventsInWindow,
     autoAttachEventsOn,
+    catalogFetchedAt,
     load,
+    loadIfNeeded,
     replaceSnapshot,
     reactivate,
     deactivate,
