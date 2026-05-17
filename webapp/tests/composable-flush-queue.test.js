@@ -3,8 +3,6 @@ import { setActivePinia, createPinia } from "pinia";
 import { flushQueue, _resetForTest as resetFlush } from "../src/composables/flushQueue.js";
 import { useQueueStore, _resetForTest as resetQueueStore } from "../src/stores/queue.js";
 import { useCatalogStore } from "../src/stores/catalog.js";
-import { useLlmStore } from "../src/stores/llm.js";
-import { useReviewStore } from "../src/stores/review.js";
 import * as expensesApi from "../src/api/expenses.js";
 import * as catalogApi from "../src/api/catalog.js";
 
@@ -131,33 +129,15 @@ describe("flushQueue", () => {
     expect(post).toHaveBeenCalledTimes(1);
   });
 
-  it("calls markDirty on llm and review stores after successful expense flush", async () => {
+  it("does not call markDirty (only receipt sends invalidate llm/review)", async () => {
     const queue = useQueueStore();
     await queue.enqueue({ amount: 1, currency: "RSD", category_id: 10, date: "2026-05-04" });
 
     vi.spyOn(expensesApi, "postExpense").mockResolvedValue({ catalog_version: 1 });
-
-    const llmStore = useLlmStore();
-    const reviewStore = useReviewStore();
-    const llmSpy = vi.spyOn(llmStore, "markDirty");
-    const reviewSpy = vi.spyOn(reviewStore, "markDirty");
-
-    await flushQueue();
-
-    expect(llmSpy).toHaveBeenCalledTimes(1);
-    expect(reviewSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not call markDirty when flush fails", async () => {
-    const queue = useQueueStore();
-    await queue.enqueue({ amount: 1, currency: "RSD", category_id: 10, date: "2026-05-04" });
-
-    vi.spyOn(expensesApi, "postExpense").mockRejectedValue(new Error("network down"));
-
-    const llmStore = useLlmStore();
-    const reviewStore = useReviewStore();
-    const llmSpy = vi.spyOn(llmStore, "markDirty");
-    const reviewSpy = vi.spyOn(reviewStore, "markDirty");
+    const { useLlmStore } = await import("../src/stores/llm.js");
+    const { useReviewStore } = await import("../src/stores/review.js");
+    const llmSpy = vi.spyOn(useLlmStore(), "markDirty");
+    const reviewSpy = vi.spyOn(useReviewStore(), "markDirty");
 
     await flushQueue();
 
