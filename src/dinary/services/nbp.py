@@ -4,7 +4,7 @@ Bridges any pair through PLN: ``X/Y = (X/PLN) / (Y/PLN)``.
 Table A (32 majors): daily on Polish working days.
 Table B (116 less-common, incl. RSD/RUB): weekly on Wednesdays only.
 Date 404 → falls back to dateless endpoint (most recently published rate).
-See ``.plans/exchange-rates.md``.
+See ``specs/reference/exchange-rates.md``.
 """
 
 import logging

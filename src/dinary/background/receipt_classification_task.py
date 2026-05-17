@@ -1,16 +1,6 @@
 """Background task: drain receipt_classification_jobs queue.
 
-Processes one job per interval:
-1. Parse receipt URL (if not yet parsed) — transient failures release for retry.
-2. Resolve store (PIB cache or LLM chain-name call).
-3. Normalize item names.
-4. Rules lookup per item.
-5. Single LLM call for unmatched items.
-6. Apply confidence penalties (journal fallback: −1, failover: −1, min 1).
-7. Aggregate items by category → INSERT expenses (amount = sum, conf = MIN).
-8. Update receipt_items and create classification rules (conf ≥ 2 for resolved;
-   conf=1 cached for LLM-categorised but penalised-to-floor items).
-9. Trim llm_call_log to last 200 rows.
+See "Classification Layer" in specs/architecture/architecture.md.
 """
 
 import asyncio

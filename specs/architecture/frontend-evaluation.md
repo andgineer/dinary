@@ -4,7 +4,7 @@
 > The custom PWA is the production/mobile client in this repo. After the
 > vanilla-JS prototype reached its complexity ceiling, it was rewritten in
 > Vue 3 + Pinia under `webapp/` and is built into `_static/` by Vite +
-> `vite-plugin-pwa` (see [`vue-refactor.md`](vue-refactor.md)). FastAPI
+> `vite-plugin-pwa` (see [`vue-refactor.md`](../plans/vue-refactor-done.md)). FastAPI
 > serves the resulting assets from the same origin as the API. This file
 > keeps the original evaluation result, but now also documents the
 > currently shipped frontend surface.

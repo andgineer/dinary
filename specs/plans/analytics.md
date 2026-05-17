@@ -29,13 +29,13 @@ abstraction in `storage-migration.md` Phase 1) as their sole engine.
 This plan builds on top of the storage migration and does not
 repeat its content. Key cross-references:
 
-- Storage engine on the laptop: `.plans/storage-migration.md` §9.2
+- Storage engine on the laptop: `specs/plans/storage-migration-done.md` §9.2
   (zero-copy DuckDB-over-SQLite ATTACH).
 - Why DuckDB is the right query engine despite row-oriented storage:
-  `.plans/storage-migration.md` §9.1.
+  `specs/plans/storage-migration-done.md` §9.1.
 - Replica refresh workflow (`inv pull-replica`):
-  `.plans/storage-migration.md` §10 Phase 3.
-- Daily cloud snapshots on VM 2: `.plans/storage-migration.md` §10
+  `specs/plans/storage-migration-done.md` §10 Phase 3.
+- Daily cloud snapshots on VM 2: `specs/plans/storage-migration-done.md` §10
   Phase 3.5.
 
 The invariant this plan inherits: **analytics reads a read-only

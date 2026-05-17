@@ -44,7 +44,7 @@ reads, lists, or prunes snapshots.
   `pick_snapshot`, `backup_retention._make_pattern`) already read this
   constant, so there is no regex duplication elsewhere.
 - When the VM2 daily backup shell script is wired up (referenced by
-  `.plans/storage-migration.md:791` as `_build_backup_script`, builder
+  `specs/plans/storage-migration-done.md:791` as `_build_backup_script`, builder
   not yet in-tree — see "gap" note), it pipes through `gzip -9 -c`
   rather than `zstd -19`.
 

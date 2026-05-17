@@ -1,20 +1,6 @@
 """Catalog write infrastructure: canonical state hash and version bump.
 
-Every catalog mutation (groups, categories, events, tags) opens a
-``BEGIN IMMEDIATE`` transaction, snapshots ``_hash_state`` before and
-after, calls ``_commit_with_bump`` to finalise, and commits. The hash
-guarantees: observable structural changes bump ``catalog_version``; no-op
-rewrites do not. PWA clients observe the bump on the next
-``POST /api/expenses`` response and refresh the cached catalog.
-
-The four CRUD modules (``catalog_writer_groups``,
-``catalog_writer_categories``, ``catalog_writer_events``) all import
-the write primitives from here. Exception types and result dataclasses
-live in ``catalog_writer_errors``.
-
-The seed path (``imports.seed.rebuild_config_from_sheets``) also uses
-``hash_catalog_state`` to gate its own version bump, keeping the two
-write paths on a single definition of "observable catalog change".
+See specs/reference/catalog-api.md.
 """
 
 import hashlib

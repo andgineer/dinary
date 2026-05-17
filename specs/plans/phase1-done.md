@@ -14,9 +14,9 @@
 > `RSD`) and `settings.accounting_currency` (DB storage + reports,
 > default `EUR`); `expenses.amount` and `income.amount` are now both
 > in the accounting currency. For the current architecture see
-> [`.plans/architecture.md`](architecture.md), and for the Vue 3 + Pinia
+> [`specs/architecture/architecture.md`](../architecture/architecture.md), and for the Vue 3 + Pinia
 > PWA rewrite that replaces the original `static/` frontend see
-> [`.plans/vue-refactor.md`](vue-refactor.md). Treat everything below as
+> [`specs/plans/vue-refactor-done.md`](vue-refactor-done.md). Treat everything below as
 > historical reference.
 >
 > It still uses the pre-rename names
@@ -43,7 +43,7 @@
 > "row in `sheet_import_sources`", the current equivalent is an entry
 > in that JSON array; where it says "latest configured sheet year",
 > the current equivalent is `max(r.year for r in read_import_sources()
-> if r.year > 0)`. See [`.plans/architecture.md`](architecture.md)
+> if r.year > 0)`. See [`specs/architecture/architecture.md`](../architecture/architecture.md)
 > and the repo-root `imports/` directory for the live design.
 >
 > **Status note:** Phase 1 was reset from the originally-shipped 4D model (`category`, `beneficiary`, `event`, `sphere_of_life`) to the **3D model** (`category`, `event`, `tag_ids[]`) plus an export-only Google Sheets contract. The "Current state" section below captures the post-reset design as it stood when this document was frozen, but it still uses the original pre-rename terminology. Treat the entire file as historical reference, not as current documentation.
@@ -63,14 +63,14 @@ This is replay protection (retry of the same queued item, timeout retries, same 
 > Historical snapshot only: the sections below preserve the design as this
 > document described it at the time it was frozen, including obsolete command
 > names like `inv sync` / `sheet_sync_jobs`. Do not execute commands from this
-> section. For the runnable operator workflow use [`.plans/architecture.md`](architecture.md)
+> section. For the runnable operator workflow use [`specs/architecture/architecture.md`](../architecture/architecture.md)
 > and `tasks.py`.
 
 ### Dimensional model: 3D
 
 The implemented model has three orthogonal dimensions:
 
-1. `category` — what was bought (from the fixed taxonomy in [docs/src/ru/taxonomy.md](../docs/src/ru/taxonomy.md), authoritative source: [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py)).
+1. `category` — what was bought (from the fixed taxonomy in [docs/src/ru/taxonomy.md](../../docs/src/ru/taxonomy.md), authoritative source: [src/dinary/services/seed_config.py](../../src/dinary/services/seed_config.py)).
 2. `event` — bounded context (trips, camps, business trips, relocation). One event per expense (nullable). In Phase 1 only the historical sheet import originates `event_id`; the PWA stores `event_id=NULL`.
 3. `tag_ids[]` — flat many-to-many flags. Replaces both the former `beneficiary` and `sphere_of_life` axes. Phase-1 dictionary is fixed in `seed_config.PHASE1_TAGS` and hardcoded in the PWA.
 
@@ -90,14 +90,14 @@ The PWA contract is intentionally narrow: `expense_id` (UUID), `category_id`, op
 - All amounts are stored in **EUR** in `expenses.amount`.
 - `amount_original` + `currency_original` preserve the original value for audit.
 - Historical conversion uses the NBS (National Bank of Serbia) middle rate on the 1st of the expense month. The cache lives in `config.duckdb.exchange_rates`.
-- **Frankfurter fallback**: NBS has no RUB rates before Dec 2012. `get_rate` falls back to Frankfurter (ECB historical) for the missing currency, then bridges via NBS `EUR → RSD`. Implemented in [src/dinary/services/nbs.py](../src/dinary/services/nbs.py).
+- **Frankfurter fallback**: NBS has no RUB rates before Dec 2012. `get_rate` falls back to Frankfurter (ECB historical) for the missing currency, then bridges via NBS `EUR → RSD`. Implemented in [src/dinary/services/nbs.py](../../src/dinary/services/nbs.py).
 
 ### Historical data import (bootstrap-only)
 
 Historical data migration is **bootstrap-only and operator-driven**. The `import_sheet.py` codepath is reused exclusively by `inv import-budget`; the standalone `inv import-sheet` operator workflow has been retired.
 
 - `sheet_import_sources` (in `config.duckdb`) maps each year to its spreadsheet ID, worksheet name, and layout key.
-- `SheetLayout` (in [src/dinary/imports/expense_import.py](../src/dinary/imports/expense_import.py); the module was named `src/dinary/services/import_sheet.py` when this doc was written) describes column positions for each historical sheet generation (`default`, `rub`, `rub_fallback`, `rub_6col`, `rub_2016`, `rub_2014`, `rub_2012`).
+- `SheetLayout` (in [src/dinary/imports/expense_import.py](../../src/dinary/imports/expense_import.py); the module was named `src/dinary/services/import_sheet.py` when this doc was written) describes column positions for each historical sheet generation (`default`, `rub`, `rub_fallback`, `rub_6col`, `rub_2016`, `rub_2014`, `rub_2012`).
 - Bootstrap import resolves each legacy `(year, sheet_category, sheet_group)` row through `sheet_mapping` (exact-year row first, then year=0 fallback), pulls `category_id`, `event_id`, and the tag set from `sheet_mapping_tags`, generates a fresh UUID4 per row, and writes both `expenses` and `expense_tags`. Imported rows populate `sheet_category` / `sheet_group` together as audit provenance (with `sheet_group=''` when the legacy row had no envelope); runtime rows leave both NULL.
 - `inv import-verify-bootstrap --year=YYYY` validates that DB rows match the resolved 3D mapping for the bootstrap-imported set. The coordinated reset flow loops verification across every rebuilt year.
 
@@ -149,7 +149,7 @@ The destructive commands print loud warnings and do nothing without `--yes`. Run
 
 # Historical design intent (pre-3D-reset)
 
-The sections below preserve the original 5D / 4D Phase-1 design rationale for context. They contradict the current schema, mapping table, API contract, and sync model in many places. Where they disagree with [`.plans/architecture.md`](architecture.md) or with the code in [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py), the current code wins.
+The sections below preserve the original 5D / 4D Phase-1 design rationale for context. They contradict the current schema, mapping table, API contract, and sync model in many places. Where they disagree with [`specs/architecture/architecture.md`](../architecture/architecture.md) or with the code in [src/dinary/services/seed_config.py](../../src/dinary/services/seed_config.py), the current code wins.
 
 ## Target flow
 
@@ -184,14 +184,14 @@ This plan keeps Phase 1 focused on the **current manual-entry MVP** while prepar
 
 - Manual entry remains the only production write path.
 - QR flow still only extracts total + date.
-- **DuckDB uses the full 5-dimensional classification** from [architecture.md](architecture.md) (category, beneficiary, event, tags, store) from day one.
+- **DuckDB uses the full 5-dimensional classification** from [architecture.md](../architecture/architecture.md) (category, beneficiary, event, tags, store) from day one.
 - A **sheet-to-5D mapping table** translates the flat Google Sheet categories into the 5D model on ingestion.
 - **PWA is unchanged** -- it still sends `(category, group)` as in Phase 0. The server resolves these to 5D via the mapping table.
 - Google Sheets is maintained by a sync layer that projects 5D data back into the sheet's flat `(category, group)` format using the same mapping table in reverse.
 
 ### What Phase 1 does NOT include
 
-Historical data migration, receipt parsing, AI classification, native 5D UI -- see [architecture.md](architecture.md) for later phases. After cutover, DuckDB contains only new expenses; Google Sheets retains all historical data as-is.
+Historical data migration, receipt parsing, AI classification, native 5D UI -- see [architecture.md](../architecture/architecture.md) for later phases. After cutover, DuckDB contains only new expenses; Google Sheets retains all historical data as-is.
 
 ## Implementation
 
@@ -236,7 +236,7 @@ Add the persistence layer for:
 - `data/config.duckdb` -- 5D classification metadata and sheet mapping
 - `data/budget_YYYY.duckdb` -- yearly transactional data
 
-Phase 1 uses the **full 5-dimensional schema** from [architecture.md](architecture.md) from day one, not a simplified subset. This avoids a painful mid-life migration from flat to 5D.
+Phase 1 uses the **full 5-dimensional schema** from [architecture.md](../architecture/architecture.md) from day one, not a simplified subset. This avoids a painful mid-life migration from flat to 5D.
 
 #### In `config.duckdb`
 
@@ -460,7 +460,7 @@ Once reference entities have integer IDs, renaming or reassignment needs explici
 
 ### Step 3: Make `/api/expenses` idempotent through DuckDB
 
-In [src/dinary/api/expenses.py](../src/dinary/api/expenses.py):
+In [src/dinary/api/expenses.py](../../src/dinary/api/expenses.py):
 
 - require `expense_id: str = Field(min_length=1)`
 - keep `amount`, `category`, `group`, `comment`, `date` (PWA unchanged)
@@ -541,7 +541,7 @@ Phase 1 implementation must verify this explicitly before changing the response 
 
 In:
 
-- `static/js/offline-queue.js` *(historical — the legacy `static/` PWA was retired by [`vue-refactor.md`](vue-refactor.md))*
+- `static/js/offline-queue.js` *(historical — the legacy `static/` PWA was retired by [`vue-refactor.md`](vue-refactor-done.md))*
 - `static/js/app.js` *(historical)*
 - `static/js/api.js` *(historical)*
 
@@ -723,7 +723,7 @@ Update Phase 0 deployment/tasks to support Phase 1 runtime:
 - extend `inv setup-server` / `inv deploy` / `inv status --remote`. `inv deploy` must support a `--ref` parameter (git tag, branch, or commit) to deploy a specific version -- this is required for rollback (`inv deploy --ref phase0`)
 - add a task for running or replaying sheet sync
 - define backup handling for DuckDB files before deploys/migrations
-- set up periodic backup of `data/` to the operator's laptop (e.g. `rsync` or `scp` via an `inv backup` task). After cutover, `data/` is the sole source of truth for all new expenses -- disk failure without backup means data loss. See the Backup Strategy section in [architecture.md](architecture.md)
+- set up periodic backup of `data/` to the operator's laptop (e.g. `rsync` or `scp` via an `inv backup` task). After cutover, `data/` is the sole source of truth for all new expenses -- disk failure without backup means data loss. See the Backup Strategy section in [architecture.md](../architecture/architecture.md)
 
 For the first Phase 1 cut, to respect the iPhone/PWA latency constraint and the 1 GB server budget, the sync policy should be:
 
@@ -781,8 +781,8 @@ Run `inv test` and verify:
 
 Update:
 
-- [phase0.md](phase0.md)
-- [architecture.md](architecture.md)
+- [phase0.md](phase0-done.md)
+- [architecture.md](../architecture/architecture.md)
 
 to reflect:
 
@@ -797,6 +797,6 @@ Original plan: after cutover DuckDB holds only post-cutover expenses; everything
 
 **Actual outcome (2026-04):** historical data migration was pulled into Phase 1 scope. DuckDB now holds **all** expenses 2012–2026, reimported from their respective spreadsheets with zero-diff verification. See "Current state (post-implementation)" at the top of this document.
 
-**Income import (2026-04):** monthly income data for 2019–2026 imported from Google Sheets into `budget_YYYY.duckdb` with currency conversion (RUB/RSD → EUR) and zero-diff verification. See [income.md](income.md) for details.
+**Income import (2026-04):** monthly income data for 2019–2026 imported from Google Sheets into `budget_YYYY.duckdb` with currency conversion (RUB/RSD → EUR) and zero-diff verification. See [income.md](../reference/income.md) for details.
 
-Still out of scope: receipt parsing, AI classification, native 4D PWA UI -- see [architecture.md](architecture.md).
+Still out of scope: receipt parsing, AI classification, native 4D PWA UI -- see [architecture.md](../architecture/architecture.md).

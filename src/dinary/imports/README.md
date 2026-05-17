@@ -23,7 +23,7 @@ You need the bootstrap import path only if **all** of these are true:
    local, non-committed config file.
 
 Everyone else should stop reading and go to the main README +
-[`.plans/architecture.md`](../../../.plans/architecture.md).
+[`specs/architecture/architecture.md`](../../../specs/architecture/architecture.md).
 
 ## Where things live
 
@@ -40,7 +40,7 @@ Everyone else should stop reading and go to the main README +
 - [`bootstrap.md`](bootstrap.md) — full workflow: copying the template,
   editing it, running the `inv import-*` tasks, layout reference,
   verification.
-- [`income.md`](income.md) — income-specific details: source tabs,
+- [`income.md`](../../../specs/reference/income.md) — income-specific details: source tabs,
   currency transitions, verification semantics, and the current
   year-by-year mapping.
 

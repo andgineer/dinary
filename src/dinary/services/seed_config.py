@@ -3,7 +3,7 @@
 Authoritative source for the runtime catalog tables; when this disagrees with
 ``docs/src/ru/taxonomy.md``, the code wins. Import-mapping and 2D→3D derivation
 rules live in ``dinary.imports.seed`` (never the reverse dependency).
-See ``.plans/catalog-api.md`` for the FK-safe sync algorithm.
+See ``specs/reference/catalog-api.md`` for the FK-safe sync algorithm.
 """
 
 import dataclasses

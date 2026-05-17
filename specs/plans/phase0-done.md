@@ -7,8 +7,8 @@
 > into `_static/` by Vite + `vite-plugin-pwa` via `inv build-static`),
 > runtime configuration lives in `.deploy/.env`, and operator workflows are
 > centered on `tasks/` plus the single-file `data/dinary.db` design
-> documented in [architecture.md](architecture.md) and
-> [vue-refactor.md](vue-refactor.md). Keep this file as Phase 0 context, not
+> documented in [architecture.md](../architecture/architecture.md) and
+> [vue-refactor.md](vue-refactor-done.md). Keep this file as Phase 0 context, not
 > as current operational guidance.
 
 ## Current State
@@ -31,14 +31,14 @@
 
 ## Step 0: Frontend Tool Decision
 
-Before implementation, resolve the frontend tool choice. Applying the 7 must-have criteria from [architecture.md](architecture.md) to the non-disqualified candidates:
+Before implementation, resolve the frontend tool choice. Applying the 7 must-have criteria from [architecture.md](../architecture/architecture.md) to the non-disqualified candidates:
 
 - **Glide Apps** -- has offline mode and Google Sheets backend, but can't write to our custom sheet format (month blocks, running totals). Would need a separate "input" sheet + processing. Limited free tier.
 - **Retool** -- no offline support. Fails #1.
 - **Appsmith** -- no real offline support. Fails #1.
 - **PWA (custom)** -- passes all 7: no app store (#0), offline via Service Workers + IndexedDB (#1), works on Android + iOS browsers (#2), full API control (#3), free (#4), no vendor dependency (#5), Camera API for QR (#6).
 
-**Decision:** PWA. It is the only candidate that passes all must-haves. See `.plans/frontend-evaluation.md` for details.
+**Decision:** PWA. It is the only candidate that passes all must-haves. See `specs/architecture/frontend-evaluation.md` for details.
 
 ### Data reliability
 
@@ -244,7 +244,7 @@ Current approved structure:
 
 ## Repo Responsibility Summary
 
-- **dinary** (this repo): FastAPI backend, Google Sheets integration, QR page parser, API, PWA frontend (in `static/`), Docker for local dev, deployment config, dev docs in `.plans/`, user manual in `docs/`.
+- **dinary** (this repo): FastAPI backend, Google Sheets integration, QR page parser, API, PWA frontend (in `static/`), Docker for local dev, deployment config, dev docs in `specs/`, user manual in `docs/`.
 - **dinary** (`../dinary/`): Not used in Phase 0. Reserved for the future Rust desktop app (daemon + GUI, Phase 4+).
 
 ---

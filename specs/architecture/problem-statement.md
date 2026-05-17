@@ -7,7 +7,7 @@
 > in `webapp/` and ships from `_static/`, export-only Google Sheets logging,
 > and operator workflows in `tasks/`. For the current design and runtime
 > contracts, see [architecture.md](architecture.md); for the PWA refactor
-> see [vue-refactor.md](vue-refactor.md). Keep this file as product context
+> see [vue-refactor.md](../plans/vue-refactor-done.md). Keep this file as product context
 > and requirements history, not as a source of implementation truth.
 
 ## Current Status Snapshot

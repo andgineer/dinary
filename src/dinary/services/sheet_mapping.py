@@ -4,7 +4,7 @@ Tab columns: A=category, B=event, C=tags, D=Расходы, E=Конверт.
 Evaluation: first non-``*`` wins per column independently.
 Fallback: sheet_category→categories.name, sheet_group→"".
 DB tables are derived state; tab is source of truth. ``reload_now`` swaps atomically.
-See ``.plans/sheets.md``.
+See ``specs/reference/sheets.md``.
 """
 
 import json

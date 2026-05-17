@@ -3,7 +3,7 @@
 Resolves rows via import_mapping (year-scoped first, year=0 fallback), applies
 housing/DIY heuristics, unions events.auto_tags. Inserts with
 enqueue_logging=False (rows already in sheet) and client_expense_id=None.
-See ``.plans/sheets.md``.
+See ``specs/reference/sheets.md``.
 """
 
 import dataclasses

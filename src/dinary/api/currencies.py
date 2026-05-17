@@ -1,26 +1,4 @@
-"""Currency picker HTTP surface.
-
-The PWA owns its picker state: which currency codes the operator
-keeps as quick-pick chips, which one they last selected, and so on.
-**It does not need rates** — the server is the source of truth for
-exchange-rate conversion, which happens at write time inside
-``POST /api/expenses`` (the audit tuple ``(amount_original,
-currency_original)`` is stored verbatim and the NBS-anchored
-conversion to ``settings.accounting_currency`` is computed and
-written there). Therefore the PWA-facing surface is intentionally
-limited to the saved-codes CRUD; no rate endpoints exist.
-
-Endpoints
----------
-
-* ``GET    /api/currencies``                    -> saved currency codes
-* ``POST   /api/currencies``       {code: ABC}  -> add / idempotent
-* ``DELETE /api/currencies/{code}``             -> remove
-
-Authentication is currently inherited from the rest of the admin
-surface: deferred to the future auth pass; deployments are expected
-to put the service behind a private network / ACL.
-"""
+"""Currency picker HTTP surface. See specs/reference/currencies.md."""
 
 import logging
 import sqlite3

@@ -66,7 +66,7 @@ analytics we then want to run somewhere else anyway.
    writes through the network are a disqualifying inversion of that
    invariant.
 5. **Analytics stays on DuckDB.** The previous architecture decision
-   (`.plans/sql-vs-ibis-comparison.md`, `.plans/architecture.md`) concluded
+   (`specs/architecture/sql-vs-ibis-comparison.md`, `specs/architecture/architecture.md`) concluded
    DuckDB is the right OLAP engine for our workload — full PostgreSQL-style
    SQL, zero-copy integration with pandas/polars/Arrow, native ability to
    `ATTACH` SQLite files, and the richest LLM-SQL story. That conclusion
@@ -791,7 +791,7 @@ throws the temp file away.
 #### 3.5.a Primary: VM 2 daily snapshot to Yandex.Disk — IMPLEMENTED
 
 Shipped as `inv setup-replica` (bootstrap) + `inv backup-cloud-restore` (restore). See
-[`docs/src/en/operations.md`](../docs/src/en/operations.md#off-site-backup-yandexdisk-daily-gfs-retention)
+[`docs/src/en/operations.md`](../../docs/src/en/operations.md#off-site-backup-yandexdisk-daily-gfs-retention)
 ("Off-site backup: Yandex.Disk" and "Point-in-time restore from
 Yandex.Disk") for the operator-facing runbook. Key deviations from
 the original draft above:
@@ -881,7 +881,7 @@ not**:
   wires up the `ATTACH sqlite` laptop analytics path. `duckdb` should
   be re-added as a dev dep in the Phase 5 implementation PR together
   with the first piece of code that imports it.
-- Update `.plans/architecture.md`'s data-layer section to point to this
+- Update `specs/architecture/architecture.md`'s data-layer section to point to this
   plan as the historical record.
 
 ### Phase 5 — analytics uplift (separate plan)
@@ -889,7 +889,7 @@ not**:
 Out of scope for this migration, but unblocked by it: moving all
 `inv report-*` tasks + any future AI dashboards to run against the pulled
 SQLite replica through DuckDB `ATTACH`, eliminating the `/tmp`-snapshot
-path on the server entirely. A separate `.plans/` document will cover that
+path on the server entirely. A separate `specs/` document will cover that
 once this migration is green in prod for a few weeks.
 
 ## 11. Risks and mitigations

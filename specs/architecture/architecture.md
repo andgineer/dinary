@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status note:** Runtime uses a **3-dimensional classification model** (`category`, `event`, `tags[]`) against a **single `data/dinary.db` file**. The storage engine is **SQLite in WAL mode**, with a Litestream sidecar shipping LTX segments to an SFTP replica on VM 2 (see [`.plans/storage-migration.md`](./storage-migration.md)). The ledger + catalog repository lives in `dinary.services.ledger_repo`. Idempotency is expressed as a PWA-generated `client_expense_id` (UUID) with a DB-level `UNIQUE` constraint. The system separates two currencies: **app currency** (`settings.app_currency`, default `RSD`) is the PWA's display / input currency — the one the user types amounts in and the fallback for `POST /api/expenses` when `currency` is omitted; **accounting currency** (`settings.accounting_currency`, default `EUR`) is what every `expenses.amount` / `income.amount` row and every `inv report-*` total are denominated in. The server writes the audit tuple `(amount_original, currency_original)` verbatim and stores the NBS-anchored conversion to the accounting currency in `amount`. The `POST /api/expenses` response does not echo the server-side expense id back to the client. Catalog management is FK-safe: `inv import-catalog` toggles `is_active` instead of deleting catalog rows that ledger tables still reference. Google Sheets are **never the source of truth at runtime**: the SQLite ledger is. Historical sheet import is bootstrap-only and runs through the destructive `inv import-budget` path. Optional **sheet logging** (off by default; enabled via `DINARY_SHEET_LOGGING_SPREADSHEET`) appends each new expense to a separate spreadsheet so the operator can build pivot tables in Google Sheets alongside Dinary's analytics; its column B stays RSD-denominated regardless of the accounting currency. The authoritative source for concrete category/group/tag/event values is [src/dinary/services/seed_config.py](../src/dinary/services/seed_config.py); when this document disagrees with the seed code, the code wins.
+> **Status note:** Runtime uses a **3-dimensional classification model** (`category`, `event`, `tags[]`) against a **single `data/dinary.db` file**. The storage engine is **SQLite in WAL mode**, with a Litestream sidecar shipping LTX segments to an SFTP replica on VM 2 (see [`specs/plans/storage-migration-done.md`](../plans/storage-migration-done.md)). The ledger + catalog repository lives in `dinary.services.ledger_repo`. Idempotency is expressed as a PWA-generated `client_expense_id` (UUID) with a DB-level `UNIQUE` constraint. The system separates two currencies: **app currency** (`settings.app_currency`, default `RSD`) is the PWA's display / input currency — the one the user types amounts in and the fallback for `POST /api/expenses` when `currency` is omitted; **accounting currency** (`settings.accounting_currency`, default `EUR`) is what every `expenses.amount` / `income.amount` row and every `inv report-*` total are denominated in. The server writes the audit tuple `(amount_original, currency_original)` verbatim and stores the NBS-anchored conversion to the accounting currency in `amount`. The `POST /api/expenses` response does not echo the server-side expense id back to the client. Catalog management is FK-safe: `inv import-catalog` toggles `is_active` instead of deleting catalog rows that ledger tables still reference. Google Sheets are **never the source of truth at runtime**: the SQLite ledger is. Historical sheet import is bootstrap-only and runs through the destructive `inv import-budget` path. Optional **sheet logging** (off by default; enabled via `DINARY_SHEET_LOGGING_SPREADSHEET`) appends each new expense to a separate spreadsheet so the operator can build pivot tables in Google Sheets alongside Dinary's analytics; its column B stays RSD-denominated regardless of the accounting currency. The authoritative source for concrete category/group/tag/event values is [src/dinary/services/seed_config.py](../../src/dinary/services/seed_config.py); when this document disagrees with the seed code, the code wins.
 
 ### Overview
 
@@ -15,13 +15,13 @@ prioritizing clean data model and scriptability over UI polish.
 
 | Repository         | Language | Role                                                                                                                                                                       |
 |--------------------|---|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **dinary**  | Python (FastAPI + SQLite) | Backend — REST API, data storage, rule-based classification, dashboards, Google Sheets sync. Also: Vue 3 + Pinia PWA mobile frontend (source in `webapp/`, built into `_static/` by Vite + `vite-plugin-pwa`; see [`.plans/vue-refactor.md`](./vue-refactor.md)), user manuals (MkDocs in `docs/`), deployment configs. |
+| **dinary**  | Python (FastAPI + SQLite) | Backend — REST API, data storage, rule-based classification, dashboards, Google Sheets sync. Also: Vue 3 + Pinia PWA mobile frontend (source in `webapp/`, built into `_static/` by Vite + `vite-plugin-pwa`; see [`specs/plans/vue-refactor-done.md`](../plans/vue-refactor-done.md)), user manuals (MkDocs in `docs/`), deployment configs. |
 | **dinary** | Rust | Desktop app (macOS/Windows): daemon for background AI tasks via `claude -p`, and GUI for analysis parameters, interactive results view, and quick data entry (text/PDF receipt import). Communicates with dinary API. |
 
 #### Documentation convention
 
 - **`docs/`** in dinary is a **MkDocs site** with bilingual content (`docs/src/en/`, `docs/src/ru/`). All user-facing manuals (PWA install, deployment guides, Cloudflare setup) go here. Do not place standalone markdown files directly in `docs/` — they will break the MkDocs build.
-- **`.plans/`** is for development docs (architecture, phase plans, evaluation notes). These are not published to the MkDocs site.
+- **`specs/`** is for development docs (architecture, phase plans, evaluation notes). These are not published to the MkDocs site.
 
 ---
 
@@ -73,7 +73,7 @@ Rationale for the single-file model: the projected dataset (tens of years × ten
 
 ### Schema (3D)
 
-The authoritative SQL lives in [src/dinary/migrations/0001_initial_schema.sql](../src/dinary/migrations/0001_initial_schema.sql); the block below is a current snapshot. Migrations are applied by a thin SQLite backend for `yoyo-migrations` ([src/dinary/services/db_migrations.py](../src/dinary/services/db_migrations.py)) that pins `PRAGMA journal_mode=WAL` / `PRAGMA foreign_keys=ON` and wraps every migration in `BEGIN IMMEDIATE` so `busy_timeout` can take effect at the start of the txn instead of surfacing `SQLITE_BUSY` at COMMIT.
+The authoritative SQL lives in [src/dinary/migrations/0001_initial_schema.sql](../../src/dinary/migrations/0001_initial_schema.sql); the block below is a current snapshot. Migrations are applied by a thin SQLite backend for `yoyo-migrations` ([src/dinary/services/db_migrations.py](../../src/dinary/services/db_migrations.py)) that pins `PRAGMA journal_mode=WAL` / `PRAGMA foreign_keys=ON` and wraps every migration in `BEGIN IMMEDIATE` so `busy_timeout` can take effect at the start of the txn instead of surfacing `SQLITE_BUSY` at COMMIT.
 
 ```sql
 -- -------------------------------------------------------------------------
@@ -566,7 +566,7 @@ lives in `webapp/` and which builds into `_static/` via Vite +
 `vite-plugin-pwa`. FastAPI's `StaticFiles` mount serves `_static/` at `/`;
 there is no fallback — if the Vite build output is missing the PWA route
 is unmounted and only the API is reachable. Rollback is "redeploy the
-previous container image" (see [`.plans/vue-refactor.md`](./vue-refactor.md)
+previous container image" (see [`specs/plans/vue-refactor-done.md`](../plans/vue-refactor-done.md)
 "Rollback strategy"). The broader architecture remains thin-client
 friendly, but the current implementation is no longer tool-agnostic in
 practice: the custom PWA is the real runtime surface.
@@ -596,7 +596,7 @@ practice: the custom PWA is the real runtime surface.
 
 #### Frontend Tool Evaluation
 
-**Evaluation result**: .plans/frontend-evaluation.md
+**Evaluation result**: specs/architecture/frontend-evaluation.md
 
 **Initial candidate list:**
 
@@ -803,7 +803,7 @@ A single attempt makes 1–3 Sheets API calls (marker read, optional batch write
 
 Instead of retrying every queued row on every transient failure, `drain_pending` wraps each attempt in a global circuit breaker:
 
-- On a transient error (network timeout, 5xx, `ConnectionError`, non-4xx `gspread.APIError`) the breaker arms with an exponential backoff starting at 60s and capped at 30min (`_BACKOFF_INITIAL_SEC` / `_BACKOFF_MAX_SEC` in [src/dinary/services/sheet_logging.py](../src/dinary/services/sheet_logging.py)).
+- On a transient error (network timeout, 5xx, `ConnectionError`, non-4xx `gspread.APIError`) the breaker arms with an exponential backoff starting at 60s and capped at 30min (`_BACKOFF_INITIAL_SEC` / `_BACKOFF_MAX_SEC` in [src/dinary/services/sheet_logging.py](../../src/dinary/services/sheet_logging.py)).
 - Subsequent sweeps short-circuit until `_backoff_until` elapses.
 - A successful append resets the breaker to zero.
 
@@ -952,7 +952,7 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 **What it does:**
 - Accepts manual expenses (`POST /api/expenses`) and receipt QR URLs (`POST /api/receipts`) from the PWA (REST API).
 - Stores everything in SQLite (single `data/dinary.db` file, WAL mode).
-- Runs a Litestream sidecar that streams the WAL to a secondary Oracle Cloud VM over SFTP (see `.plans/storage-migration.md`).
+- Runs a Litestream sidecar that streams the WAL to a secondary Oracle Cloud VM over SFTP (see `specs/plans/storage-migration-done.md`).
 - **Background receipt classification**: PIB-based store lookup, `classification_rules` matching, external LLM API calls (DeepSeek / Gemini / Groq — lightweight HTTP, not in-process AI), expense aggregation by category. See "Classification Layer" above.
 - Serves operational and analytical dashboards (static HTML or SPA).
 - Syncs aggregated data to Google Sheets on schedule or on demand.
@@ -1041,7 +1041,7 @@ daemon lifecycle management) depends on the GUI framework choice and will be det
 ### Backup Strategy
 
 - The `data/dinary.db` file on the VPS (dinary) is the primary copy.
-- Continuous off-box replication: Litestream streams the WAL to a secondary Oracle Cloud VM (VM 2) over SFTP; see `.plans/storage-migration.md` for the ops runbook. Recovery is `litestream restore` on either the primary or the laptop.
+- Continuous off-box replication: Litestream streams the WAL to a secondary Oracle Cloud VM (VM 2) over SFTP; see `specs/plans/storage-migration-done.md` for the ops runbook. Recovery is `litestream restore` on either the primary or the laptop.
 - Cold backup on demand: `inv deploy` takes a `sqlite3 .backup` snapshot into `backups/pre-deploy-<ts>/` before shipping code; operators can also run `scp` / `rsync` of the same snapshot to the laptop.
 - Periodic Parquet export for maximum portability happens laptop-side via the DuckDB-over-SQLite reader (`ATTACH 'dinary.db' (TYPE sqlite); COPY ... TO 'expenses_2026.parquet' (FORMAT parquet)`).
 - Git for the codebase (scripts, config). Data files excluded from git, backed up separately.
@@ -1102,7 +1102,7 @@ No new database, no line-item parsing — just a mobile frontend that writes dir
 
 ### Phase 1: 3D ledger, idempotent ingestion, export-only Sheets (dinary) ✓ IMPLEMENTED
 
-Detailed plan: [phase1.md](phase1.md) (frozen; treat as context, not current documentation).
+Detailed plan: [phase1.md](../plans/phase1-done.md) (frozen; treat as context, not current documentation).
 
 - Single `data/dinary.db` file with the **3D classification schema** (`category`, `event`, `tags[]`) from day one. No per-year partitioning, no separate config DB. One migration stream at `src/dinary/migrations/0001_initial_schema.sql`.
 - Catalog tables carry `is_active`; `inv import-catalog` mutates them in place (FK-safe), never wipes them, so historical ledger FKs stay valid.
@@ -1116,7 +1116,7 @@ Detailed plan: [phase1.md](phase1.md) (frozen; treat as context, not current doc
 
 ### Phase 2: Receipt Pipeline
 
-Detailed plan: [`.plans/receipt-pipeline.md`](./receipt-pipeline.md).
+Detailed plan: [`specs/plans/receipt-pipeline.md`](../plans/receipt-pipeline.md).
 
 - Integrate `sr-invoice-parser` (Python, MIT) for fetching and parsing Serbian fiscal receipts from `suf.purs.gov.rs`.
 - New tables: `stores`, `receipts`, `receipt_items`, `classification_rules`, `receipt_classification_jobs`, `llm_providers`, `llm_call_log`.

@@ -1,8 +1,8 @@
 # Receipt Pipeline — Implementation Plan
 
-> Design: see "Classification Layer" and "Receipt Scanning" sections in [`architecture.md`](./architecture.md).
-> Receipt fetching API research: [`receipt-fetching.md`](./receipt-fetching.md).
-> Free LLM provider evaluation: [`llm-providers.md`](./llm-providers.md).
+> Design: see "Classification Layer" and "Receipt Scanning" sections in [`architecture.md`](../architecture/architecture.md).
+> Receipt fetching API research: [`receipt-fetching.md`](../reference/receipt-fetching.md).
+> Free LLM provider evaluation: [`llm-providers.md`](../reference/llm-providers.md).
 
 ## Scope
 

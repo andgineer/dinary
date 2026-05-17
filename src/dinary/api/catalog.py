@@ -2,7 +2,7 @@
 
 ETag is ``W/"catalog-v<N>"``. All rows including ``is_active=FALSE`` are
 returned. ``removable=true`` means a DELETE would hard-delete the row (no
-FK or ``auto_tags`` references). See ``.plans/catalog-api.md``.
+FK or ``auto_tags`` references). See ``specs/reference/catalog-api.md``.
 """
 
 import logging

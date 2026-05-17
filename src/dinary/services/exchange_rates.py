@@ -3,7 +3,7 @@
 Resolution: RSD pair → NBS direct → NBP via PLN.
            Non-RSD pair → NBS via RSD → NBP via PLN.
 Stored as ``1 source * rate = N target``; inverse written alongside.
-See ``.plans/exchange-rates.md``.
+See ``specs/reference/exchange-rates.md``.
 """
 
 import logging

@@ -4,7 +4,7 @@ Year-aware matching: column A stores a date serial; ``get_all_values()``
 returns the formatted display string without the year, so ``fetch_row_years()``
 reads column A unformatted separately. Pass ``(target_year, years_by_row)``
 together or omit both (falls back to month-only matching for tests/single-year callers).
-See ``.plans/sheets.md``.
+See ``specs/reference/sheets.md``.
 """
 
 import logging

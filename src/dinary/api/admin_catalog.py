@@ -3,7 +3,7 @@
 No authentication yet — deployments must sit behind a private network or ACL.
 Each write delegates to catalog_writer_* in one transaction and returns the
 full catalog snapshot so the PWA can refresh in one round-trip.
-See ``.plans/catalog-api.md``.
+See ``specs/reference/catalog-api.md``.
 """
 
 import logging

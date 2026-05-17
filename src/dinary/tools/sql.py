@@ -1,32 +1,4 @@
-"""Interactive SQL runner against ``data/dinary.db``.
-
-Invoked via ``inv sql`` (locally or over ``--remote``). By default
-the module opens the SQLite DB with a ``file:...?mode=ro`` URI so
-``UPDATE`` / ``DELETE`` / ``INSERT`` statements error out at the
-SQLite layer — so an operator peeking at prod cannot accidentally
-mutate the ledger by typoing a query. ``--write`` is the explicit
-opt-in for mutation (one-off fixups, ad-hoc cleanups) and is
-deliberately absent from the ``--remote`` path so the opt-in can
-never ride an SSH pipe into a snapshot that gets torn down on exit.
-Three output formats keep parity with ``inv report-*``:
-
-* default (``--``): rich table to stdout, one-line footer with row count
-* ``--csv``: CSV with header row, suitable for piping into ``wc`` /
-  ``csvkit`` / a spreadsheet
-* ``--json``: a single envelope ``{"columns": [...], "rows": [[...], ...],
-  "row_count": N}``. Non-primitive values (``Decimal``, ``date``,
-  ``datetime``) are stringified — callers that need typed JSON should
-  cast in SQL (``CAST(amount AS REAL)``).
-
-The ``--remote`` dispatch lives in ``tasks.py::sql_task`` and goes
-through the same ``_remote_snapshot_cmd`` wrapper as ``inv report-*``:
-a ``/tmp`` snapshot of the live DB is opened read-only on the server
-(via ``sqlite3 .backup``, not a raw file copy, to honour the WAL),
-the JSON envelope comes back over SSH, and the local process renders.
-Reading a snapshot rather than the live file avoids any interaction
-with the in-flight Litestream replication and keeps Cyrillic /
-box-drawing bytes intact across the wire.
-"""
+"""Interactive SQL runner against ``data/dinary.db``. See specs/reference/sql-tool.md."""
 
 import argparse
 import csv as _csv

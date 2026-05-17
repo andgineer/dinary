@@ -4,7 +4,7 @@
 > income import only. Everything cross-cutting (the single-file DuckDB
 > model, `settings.accounting_currency` storage semantics, the unified
 > `0001_initial_schema.sql` migration stream, FK-safe catalog sync,
-> etc.) is owned by [architecture.md](architecture.md) and must be
+> etc.) is owned by [architecture.md](../architecture/architecture.md) and must be
 > consulted first. If this file and `architecture.md` ever disagree,
 > `architecture.md` wins.
 
@@ -29,7 +29,7 @@ exactly one migration stream. `income.amount` is stored in the DB-wide
 accounting currency (default `"EUR"`), anchored in
 `app_metadata.accounting_currency` on first `init_db` and read back via
 `settings.accounting_currency` at runtime — see the "Accounting-currency
-anchor" subsection in `.plans/architecture.md` for the invariant and the
+anchor" subsection in `specs/architecture/architecture.md` for the invariant and the
 operator migration path. The column is dimensionless at the schema level
 because the accounting-currency choice is a deployment-wide constant, not
 a per-row attribute.
@@ -138,7 +138,7 @@ re-imported against the EUR accounting currency (the current default).
 It should be re-checked with `inv import-verify-income-all` after
 any re-import, and after any deliberate accounting-currency migration
 (`app_metadata.accounting_currency` is normally immutable — see the
-"Accounting-currency anchor" subsection in `.plans/architecture.md` —
+"Accounting-currency anchor" subsection in `specs/architecture/architecture.md` —
 but a planned change to the DB-wide unit would shift every stored row
 and invalidate the totals below).
 
