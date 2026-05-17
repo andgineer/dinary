@@ -78,8 +78,7 @@ different path. The two write paths are kept separate because
 inside the seed's outer ``BEGIN/COMMIT``. A future unification would
 require restructuring the seed to commit per entity; that refactor is
 out of scope here. Until then, both paths funnel version writes
-through ``ledger_repo.set_catalog_version`` so any future audit hook
-can intercept them uniformly.
+uniformly.
 """
 
 import hashlib
@@ -89,7 +88,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Literal
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.catalog import get_catalog_version, set_catalog_version
 from dinary.services.sheet_mapping import decode_auto_tags_value
 
 logger = logging.getLogger(__name__)
@@ -273,8 +273,8 @@ def _commit_with_bump(
     after_hash = _hash_state(con)
     bumped = False
     if before_hash != after_hash:
-        previous = ledger_repo.get_catalog_version(con)
-        ledger_repo.set_catalog_version(con, previous + 1)
+        previous = get_catalog_version(con)
+        set_catalog_version(con, previous + 1)
         bumped = True
     con.execute("COMMIT")
     logger.info(
@@ -494,7 +494,7 @@ def add_group(
         _commit_with_bump(con, before, context=f"add_group(name={name!r})")
         return AddResult(id=gid, status="created")
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="catalog_writer.add_group")
+        storage.best_effort_rollback(con, context="catalog_writer.add_group")
         raise
 
 
@@ -556,7 +556,7 @@ def edit_group(
             )
         _commit_with_bump(con, before, context=f"edit_group(id={group_id})")
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="catalog_writer.edit_group")
+        storage.best_effort_rollback(con, context="catalog_writer.edit_group")
         raise
 
 
@@ -645,7 +645,7 @@ def add_category(
         _commit_with_bump(con, before, context=f"add_category(name={name!r})")
         return AddResult(id=cid, status="created")
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="catalog_writer.add_category")
+        storage.best_effort_rollback(con, context="catalog_writer.add_category")
         raise
 
 
@@ -721,7 +721,7 @@ def edit_category(
             )
         _commit_with_bump(con, before, context=f"edit_category(id={category_id})")
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="catalog_writer.edit_category")
+        storage.best_effort_rollback(con, context="catalog_writer.edit_category")
         raise
 
 
@@ -871,7 +871,7 @@ def delete_group(
         _commit_with_bump(con, before, context=f"delete_group(id={group_id})")
         return DeleteResult(status="hard", usage_count=0)
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="catalog_writer.delete_group")
+        storage.best_effort_rollback(con, context="catalog_writer.delete_group")
         raise
 
 
@@ -909,7 +909,7 @@ def delete_category(
         _commit_with_bump(con, before, context=f"delete_category(soft id={category_id})")
         return DeleteResult(status="soft", usage_count=usage)
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="catalog_writer.delete_category")
+        storage.best_effort_rollback(con, context="catalog_writer.delete_category")
         raise
 
 

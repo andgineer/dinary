@@ -8,7 +8,7 @@ import allure
 import pytest
 
 from dinary.config import settings
-from dinary.services import db_migrations, ledger_repo
+from dinary.services import db_migrations, storage
 from dinary.services.llm_bootstrap import _providers_from_toml, seed_llm_provider_if_empty
 
 
@@ -29,8 +29,8 @@ def fresh_db(tmp_path, monkeypatch):
 
     dst = tmp_path / "dinary.db"
     shutil.copy(blank, dst)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", dst)
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
     return dst
 
 
@@ -67,7 +67,7 @@ class TestLLMProviderSeed:
         )
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             seed_llm_provider_if_empty(conn, providers_toml=toml)
             rows = conn.execute(
@@ -100,7 +100,7 @@ class TestLLMProviderSeed:
             encoding="utf-8",
         )
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             seed_llm_provider_if_empty(conn, providers_toml=toml)
             label = conn.execute("SELECT label FROM llm_providers").fetchone()[0]
@@ -115,7 +115,7 @@ class TestLLMProviderSeed:
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
         missing = tmp_path / "no_such_file.toml"
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             seed_llm_provider_if_empty(conn, providers_toml=missing)
             row = conn.execute(
@@ -134,7 +134,7 @@ class TestLLMProviderSeed:
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
         missing = tmp_path / "no_such_file.toml"
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             seed_llm_provider_if_empty(conn, providers_toml=missing)
             count = conn.execute("SELECT COUNT(*) FROM llm_providers").fetchone()[0]
@@ -157,7 +157,7 @@ class TestLLMProviderSeed:
         )
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             seed_llm_provider_if_empty(conn, providers_toml=toml)
             # Change file content and call again — should NOT insert more rows

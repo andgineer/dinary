@@ -6,6 +6,7 @@ import { useToastStore } from "../stores/toast.js";
 import HealthSummaryCard from "../components/HealthSummaryCard.vue";
 import ProviderCard from "../components/ProviderCard.vue";
 import ProviderSheet from "../components/ProviderSheet.vue";
+import IconBtn from "../components/IconBtn.vue";
 
 const llmStore = useLlmStore();
 const { isOnline } = useOnline();
@@ -41,9 +42,9 @@ function closeSheet() {
 }
 
 onMounted(async () => {
-  if (isOnline.value) await llmStore.refresh();
+  if (isOnline.value) await llmStore.loadIfNeeded();
   refreshTimer = setInterval(() => {
-    if (isOnline.value) llmStore.refresh();
+    if (isOnline.value && llmStore.dirtyFlag) llmStore.refresh();
   }, 30_000);
 });
 
@@ -63,6 +64,13 @@ onBeforeUnmount(() => {
     <div class="pool-header">
       <span class="pool-label">PROVIDER POOL</span>
       <span class="pool-sort">priority</span>
+      <IconBtn
+        icon="refresh"
+        tone="muted"
+        label="Refresh"
+        :disabled="!isOnline || llmStore.loading"
+        @click="llmStore.refresh()"
+      />
     </div>
 
     <div v-if="llmStore.loading && llmStore.providers.length === 0" class="loading-hint">
@@ -126,6 +134,8 @@ onBeforeUnmount(() => {
 .pool-sort {
   font-size: 0.7rem;
   color: var(--muted-2);
+  margin-right: auto;
+  margin-left: 0.5rem;
 }
 
 .loading-hint,

@@ -1,7 +1,7 @@
 <script setup>
 import {
   Plus, Settings, X, Pencil, Eye, EyeOff,
-  Save, Search, Calendar, QrCode, Check, Hash,
+  Save, Search, Calendar, QrCode, Check, Hash, RefreshCw,
 } from "lucide-vue-next";
 
 const ICONS = {
@@ -17,6 +17,7 @@ const ICONS = {
   scan: QrCode,
   check: Check,
   hash: Hash,
+  refresh: RefreshCw,
 };
 
 const props = defineProps({

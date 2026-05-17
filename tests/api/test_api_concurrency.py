@@ -17,7 +17,8 @@ import allure
 import httpx
 
 from dinary.main import create_app
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.expenses import lookup_existing_expense
 
 from _api_helpers import (  # noqa: F401  (autouse + helpers)
     _count_race_recoveries,
@@ -129,7 +130,7 @@ class TestPostExpenseConcurrency:
         assert statuses.count("ok") == 1, statuses
         assert statuses.count("duplicate") == n_requests - 1, statuses
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             count = con.execute(
                 "SELECT COUNT(*) FROM expenses WHERE client_expense_id = 'e_concurrent'",
@@ -224,7 +225,7 @@ class TestPostExpenseConcurrency:
         assert len(conflicts) == n_requests - 1, [r.status_code for r in responses]
         assert oks[0].json()["status"] == "ok"
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             row = con.execute(
                 "SELECT COUNT(*), MIN(amount), MAX(amount) FROM expenses"
@@ -282,7 +283,7 @@ class TestPostExpenseFailurePropagation:
             raise RuntimeError(msg)
 
         with (
-            patch.object(ledger_repo, "insert_expense", side_effect=boom),
+            patch("dinary.api.expenses.insert_expense", side_effect=boom),
             patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate),
         ):
             resp = client.post(
@@ -298,7 +299,7 @@ class TestPostExpenseFailurePropagation:
             )
         assert resp.status_code == 500
         # No ledger row: a legitimate retry must be allowed to succeed.
-        assert ledger_repo.lookup_existing_expense("e_boom") is None
+        assert lookup_existing_expense("e_boom") is None
 
     @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
     def test_unexpected_constraint_exception_propagates(
@@ -316,7 +317,7 @@ class TestPostExpenseFailurePropagation:
             msg = "simulated constraint"
             raise sqlite3.IntegrityError(msg)
 
-        with patch.object(ledger_repo, "insert_expense", side_effect=bad_insert):
+        with patch("dinary.api.expenses.insert_expense", side_effect=bad_insert):
             resp = client.post(
                 "/api/expenses",
                 json={

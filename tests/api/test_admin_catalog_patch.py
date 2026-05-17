@@ -16,7 +16,8 @@ from datetime import datetime
 
 import allure
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.expenses import ExpensePayload, insert_expense
 
 from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 
@@ -58,11 +59,11 @@ class TestAdminPatch:
             json={"name": "pinned", "group_id": 1},
         )
         cid = create.json()["new_id"]
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            ledger_repo.insert_expense(
+            insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="pin-cat-e2e",
                     expense_datetime=datetime(2026, 4, 20, 10, 0, 0),
                     amount=1.0,
@@ -121,7 +122,7 @@ class TestAdminPatch:
             json={"name": "newname"},
         )
         assert resp.status_code == 200, resp.text
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             row = con.execute(
                 "SELECT auto_tags FROM events WHERE id = ?",

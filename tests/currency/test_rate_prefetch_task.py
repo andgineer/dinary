@@ -70,7 +70,7 @@ class TestBeforePublicationHour:
                 "dinary.background.rate_prefetch_task.datetime",
             ) as mock_dt,
             patch(
-                "dinary.background.rate_prefetch_task.ledger_repo",
+                "dinary.background.rate_prefetch_task.storage",
             ) as mock_repo,
             patch(
                 "dinary.background.rate_prefetch_task.get_rate",
@@ -111,7 +111,7 @@ class TestWorkingDayFetch:
                 "dinary.background.rate_prefetch_task.datetime",
             ) as mock_dt,
             patch(
-                "dinary.background.rate_prefetch_task.ledger_repo",
+                "dinary.background.rate_prefetch_task.storage",
             ) as mock_repo,
             patch(
                 "dinary.background.rate_prefetch_task._get_db_rate",
@@ -164,7 +164,7 @@ class TestWeekendFetch:
                 "dinary.background.rate_prefetch_task.datetime",
             ) as mock_dt,
             patch(
-                "dinary.background.rate_prefetch_task.ledger_repo",
+                "dinary.background.rate_prefetch_task.storage",
             ) as mock_repo,
             patch(
                 "dinary.background.rate_prefetch_task._get_db_rate",
@@ -214,7 +214,7 @@ class TestAlreadyCached:
                 "dinary.background.rate_prefetch_task.datetime",
             ) as mock_dt,
             patch(
-                "dinary.background.rate_prefetch_task.ledger_repo",
+                "dinary.background.rate_prefetch_task.storage",
             ) as mock_repo,
             patch(
                 "dinary.background.rate_prefetch_task._get_db_rate",
@@ -259,7 +259,7 @@ class TestFetchError:
                 "dinary.background.rate_prefetch_task.datetime",
             ) as mock_dt,
             patch(
-                "dinary.background.rate_prefetch_task.ledger_repo",
+                "dinary.background.rate_prefetch_task.storage",
             ) as mock_repo,
             patch(
                 "dinary.background.rate_prefetch_task._get_db_rate",
@@ -307,7 +307,7 @@ class TestStaleFallback:
                 "dinary.background.rate_prefetch_task.datetime",
             ) as mock_dt,
             patch(
-                "dinary.background.rate_prefetch_task.ledger_repo",
+                "dinary.background.rate_prefetch_task.storage",
             ) as mock_repo,
             patch(
                 "dinary.background.rate_prefetch_task._get_db_rate",

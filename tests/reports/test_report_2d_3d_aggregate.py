@@ -18,7 +18,7 @@ from dinary.imports.report_2d_3d import (
     build_summary,
     collect_detail_rows,
 )
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 from _report_2d_3d_helpers import (  # noqa: F401  (autouse + helper)
     _seed_catalog,
@@ -217,7 +217,7 @@ class TestCollectDetailRows:
     def test_missing_resolution_context_skips_year(self, monkeypatch, blank_db):
         """No catalog seeded → build_resolution_context returns None and
         the year is skipped without consulting the iterator."""
-        shutil.copy(blank_db, ledger_repo.DB_PATH)
+        shutil.copy(blank_db, storage.DB_PATH)
 
         called = {"value": False}
 
@@ -272,7 +272,7 @@ class TestCollectDetailRows:
         # resolution context. Without this, build_resolution_context
         # would itself skip 2025 and we couldn't tell the two skip
         # paths apart.
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"

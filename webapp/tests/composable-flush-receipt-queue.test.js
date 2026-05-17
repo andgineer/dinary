@@ -9,6 +9,8 @@ import {
   _resetForTest as resetReceiptQueueStore,
 } from "../src/stores/receiptQueue.js";
 import { useToastStore } from "../src/stores/toast.js";
+import { useLlmStore } from "../src/stores/llm.js";
+import { useReviewStore } from "../src/stores/review.js";
 import * as receiptsApi from "../src/api/receipts.js";
 
 async function resetDb() {
@@ -21,6 +23,7 @@ async function resetDb() {
 }
 
 beforeEach(async () => {
+  localStorage.clear();
   setActivePinia(createPinia());
   resetFlush();
   await resetDb();
@@ -151,5 +154,39 @@ describe("flushReceiptQueue", () => {
     resetFlush();
     await flushReceiptQueue();
     expect(queue.lastFlushError).toBeNull();
+  });
+
+  it("calls markDirty on llm and review stores after successful receipt flush", async () => {
+    const queue = useReceiptQueueStore();
+    await queue.enqueue("https://example.com/r");
+
+    vi.spyOn(receiptsApi, "postReceipt").mockResolvedValue({ status: "ok" });
+
+    const llmStore = useLlmStore();
+    const reviewStore = useReviewStore();
+    const llmSpy = vi.spyOn(llmStore, "markDirty");
+    const reviewSpy = vi.spyOn(reviewStore, "markDirty");
+
+    await flushReceiptQueue();
+
+    expect(llmSpy).toHaveBeenCalledTimes(1);
+    expect(reviewSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call markDirty when all flushes fail", async () => {
+    const queue = useReceiptQueueStore();
+    await queue.enqueue("https://example.com/r");
+
+    vi.spyOn(receiptsApi, "postReceipt").mockRejectedValue(new Error("network down"));
+
+    const llmStore = useLlmStore();
+    const reviewStore = useReviewStore();
+    const llmSpy = vi.spyOn(llmStore, "markDirty");
+    const reviewSpy = vi.spyOn(reviewStore, "markDirty");
+
+    await flushReceiptQueue();
+
+    expect(llmSpy).not.toHaveBeenCalled();
+    expect(reviewSpy).not.toHaveBeenCalled();
   });
 });

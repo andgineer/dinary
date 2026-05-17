@@ -50,7 +50,8 @@ from collections import Counter
 from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.catalog import get_catalog_version
 from dinary.services.sheet_mapping import decode_auto_tags_value
 
 logger = logging.getLogger(__name__)
@@ -271,7 +272,7 @@ def build_catalog_snapshot(con: sqlite3.Connection) -> dict:
     PWA uses it to hide the ``Удалить`` button on still-referenced
     rows.
     """
-    version = ledger_repo.get_catalog_version(con)
+    version = get_catalog_version(con)
     cat_refs, event_refs, tag_refs, group_children = _reference_counts(con)
 
     group_rows = con.execute(
@@ -351,7 +352,7 @@ def get_catalog(
     if_none_match: str | None = Header(default=None),
 ) -> CatalogResponse | Response:
     try:
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             snapshot = build_catalog_snapshot(con)
         finally:

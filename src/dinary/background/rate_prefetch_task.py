@@ -23,7 +23,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from dinary.config import settings
-from dinary.services import ledger_repo
+from dinary.services import storage
 from dinary.services.exchange_rates import _get_db_rate, get_rate
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ def _get_rate_blocking(rate_date: date, source: str, target: str) -> Decimal:
     across thread boundaries (avoids CPython 3.14 access violations
     caused by passing a connection object between threads).
     """
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         return get_rate(con, rate_date, source, target)
     finally:
@@ -74,7 +74,7 @@ async def rate_prefetch_task() -> None:
                 await asyncio.sleep(_seconds_until_prefetch_hour())
                 continue
 
-            con = ledger_repo.get_connection()
+            con = storage.get_connection()
             try:
                 already_stored = _get_db_rate(con, today, source, target) is not None
             finally:
@@ -87,7 +87,7 @@ async def rate_prefetch_task() -> None:
 
             rate = await asyncio.to_thread(_get_rate_blocking, today, source, target)
 
-            con = ledger_repo.get_connection()
+            con = storage.get_connection()
             try:
                 stored_now = _get_db_rate(con, today, source, target) is not None
             finally:

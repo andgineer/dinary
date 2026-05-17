@@ -35,7 +35,7 @@ from dinary.imports.expense_import import (
     iter_parsed_sheet_rows,
     resolve_row_to_3d,
 )
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +269,7 @@ def collect_detail_rows(
     """
     if stats is None:
         stats = CollectStats()
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         years_to_process = years if years is not None else _get_import_years()
         all_details: list[DetailRow] = []
@@ -532,8 +532,8 @@ def generate_report(
     if as_csv and as_json:
         msg = "--csv and --json are mutually exclusive"
         raise ValueError(msg)
-    if not ledger_repo.DB_PATH.exists():
-        msg = f"DB not found at {ledger_repo.DB_PATH}. Run `inv import-catalog` first."
+    if not storage.DB_PATH.exists():
+        msg = f"DB not found at {storage.DB_PATH}. Run `inv import-catalog` first."
         raise FileNotFoundError(msg)
 
     out = stream if stream is not None else sys.stdout

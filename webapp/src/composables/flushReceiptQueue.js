@@ -6,6 +6,8 @@
 import { postReceipt } from "../api/receipts.js";
 import { useReceiptQueueStore } from "../stores/receiptQueue.js";
 import { useToastStore } from "../stores/toast.js";
+import { useLlmStore } from "../stores/llm.js";
+import { useReviewStore } from "../stores/review.js";
 import { parseReceiptUrl } from "./receipt.js";
 
 let _inFlight = false;
@@ -27,6 +29,8 @@ export async function flushReceiptQueue() {
           const { amount } = parseReceiptUrl(item.url);
           amountLabel = ` · ${amount.toLocaleString()} RSD`;
         } catch { /* URL may not be decodable */ }
+        useLlmStore().markDirty();
+        useReviewStore().markDirty();
         if (body?.status === "duplicate") toast.show(`Receipt already recorded${amountLabel}`, "info");
         else toast.show(`Receipt saved${amountLabel}`, "success");
       } catch (err) {

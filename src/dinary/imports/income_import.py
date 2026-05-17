@@ -18,7 +18,7 @@ from decimal import Decimal, InvalidOperation
 
 from dinary.config import IMPORT_SOURCES_DOC_HINT, ImportSourceRow, get_import_source, settings
 from dinary.imports.expense_import import MONTHS_IN_YEAR
-from dinary.services import ledger_repo
+from dinary.services import storage
 from dinary.services.exchange_rates import get_rate
 from dinary.services.sheets import get_sheet
 
@@ -154,7 +154,7 @@ def _prefetch_monthly_rates(
     currencies_to_fetch.discard(accounting_currency)
 
     rates: dict[int, dict[str, Decimal | None]] = {}
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         for month in range(1, MONTHS_IN_YEAR + 1):
             rate_date = date(year, month, 1)
@@ -291,7 +291,7 @@ def import_year_income(year: int) -> dict:
     layout = _resolve_layout(year, source)
     monthly_acc, rows_aggregated = aggregate_from_sheet(year, source, layout)
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         con.execute("BEGIN IMMEDIATE")
         try:
@@ -303,7 +303,7 @@ def import_year_income(year: int) -> dict:
                 )
             con.execute("COMMIT")
         except Exception:
-            ledger_repo.best_effort_rollback(con, context=f"import_year_income({year})")
+            storage.best_effort_rollback(con, context=f"import_year_income({year})")
             raise
     finally:
         con.close()

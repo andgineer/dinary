@@ -47,8 +47,10 @@ from dinary.imports.seed_derivation import (
     event_name_for_source,
     tags_for_source,
 )
-from dinary.services import ledger_repo, sheet_mapping
+from dinary.services import sheet_mapping, storage
+from dinary.services.catalog import get_mapping_tag_ids, resolve_mapping_for_year
 from dinary.services.exchange_rates import get_rate
+from dinary.services.expenses import ExpensePayload, insert_expense
 from dinary.services.seed_config import (
     BUSINESS_TRIP_EVENT_LAST_YEAR,
     BUSINESS_TRIP_EVENT_PREFIX,
@@ -311,7 +313,7 @@ def _prefetch_monthly_rates(
     accounting_currency = settings.accounting_currency.upper()
     own_con = con is None
     if own_con:
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
     try:
         rates: dict[int, dict[str, Decimal]] = {}
         for month in range(1, MONTHS_IN_YEAR + 1):
@@ -500,11 +502,11 @@ def _resolve_base_category(
 
     Returns None when no mapping can be derived for this source pair.
     """
-    mapping = ledger_repo.resolve_mapping_for_year(con, source_type, source_envelope, year)
+    mapping = resolve_mapping_for_year(con, source_type, source_envelope, year)
     if mapping is not None:
         category_id = mapping.category_id
         event_id = mapping.event_id
-        tag_ids = ledger_repo.get_mapping_tag_ids(con, mapping.id)
+        tag_ids = get_mapping_tag_ids(con, mapping.id)
         row = con.execute("SELECT name FROM categories WHERE id = ?", [category_id]).fetchone()
         canonical_default = row[0] if row else None
         return category_id, event_id, tag_ids, canonical_default
@@ -769,7 +771,7 @@ def resolve_row_to_3d(
     Combines ``_resolve_dimensions``, beneficiary tagging, and
     post-import fix simulation into one call for the 2D-to-3D report.
     """
-    mapping = ledger_repo.resolve_mapping_for_year(
+    mapping = resolve_mapping_for_year(
         con,
         sheet_category,
         sheet_group,
@@ -1238,9 +1240,9 @@ def import_year(year: int) -> dict:
     per row so a single bad row (FK miss, constraint violation) does
     not corrupt its siblings.
     """
-    ledger_repo.init_db()
+    storage.init_db()
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         ctx = build_resolution_context(con, year)
         if ctx is None:
@@ -1294,9 +1296,9 @@ def import_year(year: int) -> dict:
             months_seen.add(parsed.month)
             expense_dt = datetime(year, parsed.month, 1, 12, 0, 0)
             try:
-                ledger_repo.insert_expense(
+                insert_expense(
                     con,
-                    ledger_repo.ExpensePayload(
+                    ExpensePayload(
                         client_expense_id=None,
                         expense_datetime=expense_dt,
                         amount=parsed.amount_acc,

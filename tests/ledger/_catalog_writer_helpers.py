@@ -12,7 +12,7 @@ from datetime import datetime
 
 import pytest
 
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 _DT = datetime(2026, 4, 20, 10, 0, 0)
 
@@ -21,8 +21,8 @@ _DT = datetime(2026, 4, 20, 10, 0, 0)
 def fresh_db(tmp_path, monkeypatch, blank_db):
     dst = tmp_path / "dinary.db"
     shutil.copy(blank_db, dst)
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", dst)
 
 
 def _seed_minimal(con):

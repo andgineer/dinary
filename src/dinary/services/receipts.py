@@ -316,3 +316,11 @@ def requeue_receipts(
         """,  # noqa: S608
         receipt_ids,
     )
+
+
+def count_pending_classification_jobs(conn: sqlite3.Connection) -> int:
+    """Return the number of jobs with status 'pending' or 'in_progress'."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM receipt_classification_jobs"
+        " WHERE status IN ('pending', 'in_progress')",
+    ).fetchone()[0]

@@ -127,3 +127,36 @@ class TestLLMStatus:
         h = data["health"]
         assert h["total"] == 2
         assert h["strategy"] == "failover"
+
+    def test_status_includes_pending_receipts_zero_when_empty(self, client, db):  # noqa: ARG002
+        data = client.get("/api/admin/llm-status").json()
+        assert "pending_receipts" in data
+        assert data["pending_receipts"] == 0
+
+    def test_status_pending_receipts_counts_pending_and_in_progress_jobs(
+        self,
+        client,
+        db,  # noqa: ARG002
+    ):
+        from dinary.services import storage
+
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (id, client_receipt_id, url) VALUES (1, 'r1', 'https://x')"
+            )
+            conn.execute(
+                "INSERT INTO receipts (id, client_receipt_id, url) VALUES (2, 'r2', 'https://y')"
+            )
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, status) VALUES (1, 'pending')"
+            )
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, status)"
+                " VALUES (2, 'in_progress')"
+            )
+        finally:
+            conn.close()
+
+        data = client.get("/api/admin/llm-status").json()
+        assert data["pending_receipts"] == 2

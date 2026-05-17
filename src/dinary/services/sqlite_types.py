@@ -19,7 +19,7 @@ adapters and converters, so we register explicit ones.
 Register-once semantics: ``sqlite3.register_adapter`` /
 ``register_converter`` are process-global and idempotent. Re-importing
 this module is a no-op; callers should simply import it from any
-module that opens a sqlite3 connection (``ledger_repo``, ``tools.sql``,
+module that opens a sqlite3 connection (``db``, ``tools.sql``,
 ``tasks``).
 
 Caveat — ``PARSE_DECLTYPES`` only fires for **bare column references**.

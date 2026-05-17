@@ -22,7 +22,7 @@ from rich.console import Console
 from rich.table import Table
 
 from dinary.config import settings
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -240,16 +240,16 @@ def run(
     if as_csv and as_json:
         msg = "--csv and --json are mutually exclusive"
         raise ValueError(msg)
-    if not ledger_repo.DB_PATH.exists():
+    if not storage.DB_PATH.exists():
         msg = (
-            f"DB not found at {ledger_repo.DB_PATH}. Either point "
+            f"DB not found at {storage.DB_PATH}. Either point "
             "DINARY_DATA_PATH at an existing SQLite file, or use "
             "`inv report-income --remote` to query the server."
         )
         print(msg, file=sys.stderr)
         return 1
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         rows = aggregate_income(con)
     finally:

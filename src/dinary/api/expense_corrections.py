@@ -9,7 +9,7 @@ from enum import StrEnum
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from dinary.services import ledger_repo
+from dinary.services import storage
 from dinary.services.classification_rules import RuleSpec, create_or_update_rule
 
 router = APIRouter()
@@ -88,7 +88,7 @@ def _correct_category_sync(
     expense_id: int,
     req: CategoryCorrectionRequest,
 ) -> CategoryCorrectionResponse:
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         row = con.execute(
             "SELECT receipt_id, store_id FROM expenses WHERE id = ?",

@@ -55,6 +55,7 @@ let observerCallback = null;
 let observerInstance = null;
 
 beforeEach(() => {
+  localStorage.clear();
   const pinia = createPinia();
   setActivePinia(pinia);
 
@@ -67,6 +68,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  localStorage.clear();
   delete globalThis.IntersectionObserver;
 });
 
@@ -139,7 +141,7 @@ describe("ReviewView", () => {
     const catalog = useCatalogStore(pinia);
     catalog.replaceSnapshot(CATALOG);
     const review = useReviewStore(pinia);
-    vi.spyOn(review, "loadNextPage").mockImplementation(async () => {
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(async () => {
       review.items = FEED_PAGE_1.items;
       review.doubtfulCount = FEED_PAGE_1.doubtful_count;
       review.hasMore = FEED_PAGE_1.has_more;
@@ -172,23 +174,26 @@ describe("ReviewView", () => {
     setActivePinia(pinia);
     useCatalogStore(pinia).replaceSnapshot(CATALOG);
     const review = useReviewStore(pinia);
-    let callCount = 0;
-    vi.spyOn(review, "loadNextPage").mockImplementation(async () => {
-      callCount += 1;
+    let nextPageCalls = 0;
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(async () => {
       review.items = FEED_PAGE_1.items;
       review.doubtfulCount = FEED_PAGE_1.doubtful_count;
       review.hasMore = true;
-      review.page = callCount;
+      review.page = 1;
       review.totalLoaded = FEED_PAGE_1.items.length;
+    });
+    vi.spyOn(review, "loadNextPage").mockImplementation(async () => {
+      nextPageCalls += 1;
+      review.hasMore = true;
+      review.page += 1;
     });
     const wrapper = mountView(pinia);
     await flushPromises();
-    expect(callCount).toBe(1);
 
     review.loading = false;
     observerCallback?.([{ isIntersecting: true }]);
     await flushPromises();
-    expect(callCount).toBe(2);
+    expect(nextPageCalls).toBe(1);
     wrapper.unmount();
   });
 
@@ -197,22 +202,23 @@ describe("ReviewView", () => {
     setActivePinia(pinia);
     useCatalogStore(pinia).replaceSnapshot(CATALOG);
     const review = useReviewStore(pinia);
-    let callCount = 0;
-    vi.spyOn(review, "loadNextPage").mockImplementation(async () => {
-      callCount += 1;
+    let nextPageCalls = 0;
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(async () => {
       review.items = FEED_PAGE_1.items;
       review.hasMore = false;
       review.page = 1;
       review.totalLoaded = FEED_PAGE_1.items.length;
     });
+    vi.spyOn(review, "loadNextPage").mockImplementation(async () => {
+      nextPageCalls += 1;
+    });
     const wrapper = mountView(pinia);
     await flushPromises();
-    expect(callCount).toBe(1);
 
     review.loading = false;
     observerCallback?.([{ isIntersecting: true }]);
     await flushPromises();
-    expect(callCount).toBe(1);
+    expect(nextPageCalls).toBe(0);
     wrapper.unmount();
   });
 
@@ -222,7 +228,7 @@ describe("ReviewView", () => {
     const catalog = useCatalogStore(pinia);
     catalog.replaceSnapshot(CATALOG);
     const review = useReviewStore(pinia);
-    vi.spyOn(review, "loadNextPage").mockImplementation(async () => {
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(async () => {
       review.items = FEED_PAGE_1.items;
       review.doubtfulCount = FEED_PAGE_1.doubtful_count;
       review.hasMore = false;

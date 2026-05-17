@@ -28,7 +28,7 @@ from dinary.background.rate_prefetch_task import rate_prefetch_task
 from dinary.background.receipt_classification_task import receipt_classification_task
 from dinary.background.sheet_logging_task import sheet_logging_task, warm_sheet_mapping
 from dinary.config import settings
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _STATIC_DIR = _PROJECT_ROOT / "_static"
@@ -62,7 +62,7 @@ def _setup_logging() -> None:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    ledger_repo.init_db()
+    storage.init_db()
     await warm_sheet_mapping()
     sheet_logging_bg = asyncio.create_task(sheet_logging_task(), name="sheet-logging-task")
     rate_prefetch_bg = asyncio.create_task(rate_prefetch_task(), name="rate-prefetch-task")

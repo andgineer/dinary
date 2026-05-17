@@ -36,7 +36,8 @@ from dinary.imports.seed_derivation import (
     event_name_for_source,
     tags_for_source,
 )
-from dinary.services import catalog_writer, ledger_repo, sheet_mapping
+from dinary.services import catalog_writer, sheet_mapping, storage
+from dinary.services.catalog import get_catalog_version
 from dinary.services.seed_config import (
     HISTORICAL_YEAR_FROM,
     HISTORICAL_YEAR_TO,
@@ -474,7 +475,7 @@ def seed_from_sheet(
         )
         raise ValueError(msg)
 
-    ledger_repo.init_db()
+    storage.init_db()
 
     # Step 1: pull categories from each registered sheet. Pure HTTP
     # against Google Sheets; no DB lock held.
@@ -491,7 +492,7 @@ def seed_from_sheet(
     # empty ``import_mapping`` state: SQLite's WAL mode gives each
     # reader a snapshot at transaction-start, and the whole rebuild
     # is committed atomically.
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         con.execute("BEGIN IMMEDIATE")
         try:
@@ -506,7 +507,7 @@ def seed_from_sheet(
 
             con.execute("COMMIT")
         except Exception:
-            ledger_repo.best_effort_rollback(con, context="seed_from_sheet write")
+            storage.best_effort_rollback(con, context="seed_from_sheet write")
             raise
         logger.info("Seed complete: %s", summary)
 
@@ -549,13 +550,13 @@ def rebuild_config_from_sheets() -> dict:
     (value before the bump, never less than 1) and ``catalog_version``
     (the new value).
     """
-    ledger_repo.init_db()
+    storage.init_db()
 
     previous_version = 0
     try:
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            previous_version = ledger_repo.get_catalog_version(con)
+            previous_version = get_catalog_version(con)
         finally:
             con.close()
     except (sqlite3.Error, OSError, RuntimeError) as exc:
@@ -569,7 +570,7 @@ def rebuild_config_from_sheets() -> dict:
         )
         previous_version = 0
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         # Snapshot the catalog hash BEFORE ``seed_from_sheet`` mutates
         # the catalog tables. We use the same canonical state that
@@ -595,7 +596,7 @@ def rebuild_config_from_sheets() -> dict:
         """
         latest_year = _validate_latest_import_source()
         _validate_import_coverage(write_con, latest_year)
-        effective_previous = max(previous_version, ledger_repo.get_catalog_version(write_con))
+        effective_previous = max(previous_version, get_catalog_version(write_con))
         after_hash = catalog_writer.hash_catalog_state(write_con)
         if before_hash == after_hash:
             # No observable catalog change — skip the bump. The

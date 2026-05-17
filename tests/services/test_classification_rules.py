@@ -4,7 +4,7 @@ import allure
 import pytest
 
 from dinary.services.classification_rules import RuleSpec, classify_by_rules, create_or_update_rule
-from dinary.services import db_migrations, ledger_repo
+from dinary.services import db_migrations, storage
 
 
 @pytest.fixture
@@ -26,10 +26,10 @@ def conn(tmp_path, monkeypatch):
         db_migrations.migrate_db(blank_src)
 
     shutil.copy(blank_src, dst)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", dst)
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
 
-    c = ledger_repo.get_connection()
+    c = storage.get_connection()
     c.execute("INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'Food', 1)")
     c.execute("INSERT INTO categories (id, name, group_id) VALUES (1, 'Groceries', 1)")
     c.execute("INSERT INTO categories (id, name, group_id) VALUES (2, 'Drinks', 1)")

@@ -23,7 +23,9 @@ from datetime import date
 import allure
 import pytest
 
-from dinary.services import catalog_writer, ledger_repo
+from dinary.services import catalog_writer, storage
+from dinary.services.catalog import get_catalog_version
+from dinary.services.expenses import ExpensePayload, insert_expense
 
 from _catalog_writer_helpers import _DT, _seed_minimal, fresh_db  # noqa: F401
 
@@ -32,11 +34,11 @@ from _catalog_writer_helpers import _DT, _seed_minimal, fresh_db  # noqa: F401
 @allure.feature("Version bump invariants")
 class TestVersionBump:
     def test_add_group_bumps_version(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            v0 = ledger_repo.get_catalog_version(con)
+            v0 = get_catalog_version(con)
             result = catalog_writer.add_group(con, name="new")
-            v1 = ledger_repo.get_catalog_version(con)
+            v1 = get_catalog_version(con)
         finally:
             con.close()
         assert v1 == v0 + 1
@@ -44,16 +46,16 @@ class TestVersionBump:
         assert result.id > 0
 
     def test_idempotent_add_of_existing_active_group_is_noop(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             _seed_minimal(con)
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
                 " VALUES (2, 'already_here', 2, TRUE)",
             )
-            v1 = ledger_repo.get_catalog_version(con)
+            v1 = get_catalog_version(con)
             result = catalog_writer.add_group(con, name="already_here")
-            v2 = ledger_repo.get_catalog_version(con)
+            v2 = get_catalog_version(con)
         finally:
             con.close()
         assert v2 == v1
@@ -61,15 +63,15 @@ class TestVersionBump:
         assert result.id == 2
 
     def test_reactivate_inactive_group_bumps(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
                 " VALUES (1, 'retired', 1, FALSE)",
             )
-            v0 = ledger_repo.get_catalog_version(con)
+            v0 = get_catalog_version(con)
             result = catalog_writer.add_group(con, name="retired")
-            v1 = ledger_repo.get_catalog_version(con)
+            v1 = get_catalog_version(con)
             row = con.execute(
                 "SELECT is_active FROM category_groups WHERE id = ?",
                 [result.id],
@@ -86,7 +88,7 @@ class TestVersionBump:
 @allure.feature("Reactivate preserves optional columns")
 class TestReactivatePreserves:
     def test_add_category_reactivate_preserves_sheet_columns(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -112,7 +114,7 @@ class TestReactivatePreserves:
         assert row[2] == "custom_group"
 
     def test_add_event_reactivate_preserves_dates_and_auto_attach(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO events"
@@ -149,12 +151,12 @@ class TestIntegrityRules:
         allowed (soft-retire). This mirrors the ``DELETE`` endpoint's
         soft-delete behaviour so PATCH and DELETE don't disagree on
         the same end-state; see ``edit_category`` docstring."""
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             _seed_minimal(con)
-            ledger_repo.insert_expense(
+            insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="pin-cat",
                     expense_datetime=_DT,
                     amount=1.0,
@@ -178,7 +180,7 @@ class TestIntegrityRules:
         assert bool(row[0]) is False
 
     def test_cannot_rename_into_existing_name(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             _seed_minimal(con)
             con.execute(
@@ -191,7 +193,7 @@ class TestIntegrityRules:
             con.close()
 
     def test_event_date_from_must_be_le_date_to(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             with pytest.raises(catalog_writer.CatalogWriteError):
                 catalog_writer.add_event(
@@ -217,7 +219,7 @@ class TestIntegrityRules:
         hits the add-or-reactivate path or the dedicated edit endpoint.
         Stored fields stay frozen on reactivate (see docstring) — the
         caller must use ``edit_event`` to actually change them."""
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO events"
@@ -246,17 +248,17 @@ class TestIntegrityRules:
         different group must 409, not silently move the row. The
         operator has to use edit_category(group_id=...) for an
         intentional relocation."""
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             _seed_minimal(con)
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
                 " VALUES (2, 'g2', 2, TRUE)",
             )
-            v0 = ledger_repo.get_catalog_version(con)
+            v0 = get_catalog_version(con)
             with pytest.raises(catalog_writer.CatalogConflictError):
                 catalog_writer.add_category(con, name="food", group_id=2)
-            v1 = ledger_repo.get_catalog_version(con)
+            v1 = get_catalog_version(con)
             row = con.execute(
                 "SELECT group_id, is_active FROM categories WHERE id = 1",
             ).fetchone()
@@ -270,7 +272,7 @@ class TestIntegrityRules:
         """An *inactive* match in a different group is legitimately
         reactivated and moved — the row wasn't serving any user-visible
         purpose, and the add action's group_id is authoritative."""
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             _seed_minimal(con)
             con.execute(
@@ -280,9 +282,9 @@ class TestIntegrityRules:
             con.execute(
                 "UPDATE categories SET is_active = FALSE WHERE id = 1",
             )
-            v0 = ledger_repo.get_catalog_version(con)
+            v0 = get_catalog_version(con)
             result = catalog_writer.add_category(con, name="food", group_id=2)
-            v1 = ledger_repo.get_catalog_version(con)
+            v1 = get_catalog_version(con)
             row = con.execute(
                 "SELECT group_id, is_active FROM categories WHERE id = 1",
             ).fetchone()

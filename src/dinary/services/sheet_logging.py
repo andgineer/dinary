@@ -19,8 +19,18 @@ from decimal import Decimal
 import gspread
 
 from dinary.config import settings, spreadsheet_id_from_setting
-from dinary.services import ledger_repo, sheet_mapping
+from dinary.services import sheet_mapping, storage
+from dinary.services.catalog import logging_projection
 from dinary.services.exchange_rates import get_rate
+from dinary.services.expenses import ExpenseRow, get_expense_by_id, get_expense_tags
+from dinary.services.logging_jobs import (
+    claim_logging_job,
+    clear_logging_job,
+    force_clear_logging_job,
+    list_logging_jobs,
+    poison_logging_job,
+    release_logging_claim,
+)
 from dinary.services.sheets import (
     append_expense_atomic,
     ensure_category_row,
@@ -145,7 +155,7 @@ def _reset_backoff() -> None:
 
 def _derive_app_currency_amount_for_sheet(
     con,
-    expense: ledger_repo.ExpenseRow,
+    expense: ExpenseRow,
     app_currency_rate: Decimal | None,
     expense_date: date,
 ) -> float | None:
@@ -183,7 +193,7 @@ def _derive_app_currency_amount_for_sheet(
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _ResolvedJob:
-    expense: ledger_repo.ExpenseRow
+    expense: ExpenseRow
     claim_token: str
     marker_key: str
     sheet_category: str
@@ -192,7 +202,7 @@ class _ResolvedJob:
 
 def _release_claim_best_effort(con, expense_pk: int, claim_token: str) -> None:
     try:
-        ledger_repo.release_logging_claim(con, expense_pk, claim_token)
+        release_logging_claim(con, expense_pk, claim_token)
     except Exception:
         logger.exception("Failed to release claim for pk=%d", expense_pk)
 
@@ -202,15 +212,15 @@ def _claim_and_resolve(
     expense_pk: int,
 ) -> _ResolvedJob | DrainResult:
     """Claim the job and resolve the sheet target; handles orphan/poison internally."""
-    claim_token = ledger_repo.claim_logging_job(con, expense_pk)
+    claim_token = claim_logging_job(con, expense_pk)
     if claim_token is None:
         return DrainResult.FAILED
 
     try:
-        expense = ledger_repo.get_expense_by_id(con, expense_pk)
+        expense = get_expense_by_id(con, expense_pk)
         if expense is None:
             logger.warning("Queue row for missing expense pk=%d; clearing", expense_pk)
-            ledger_repo.clear_logging_job(con, expense_pk, claim_token)
+            clear_logging_job(con, expense_pk, claim_token)
             return DrainResult.NOOP_ORPHAN
 
         if expense.client_expense_id is None:
@@ -219,15 +229,15 @@ def _claim_and_resolve(
                 "poisoning (runtime rows must carry a UUID)",
                 expense_pk,
             )
-            ledger_repo.poison_logging_job(
+            poison_logging_job(
                 con,
                 expense_pk,
                 f"Runtime expense pk={expense_pk} has no client_expense_id",
             )
             return DrainResult.POISONED
 
-        tag_ids = ledger_repo.get_expense_tags(con, expense_pk)
-        projection = ledger_repo.logging_projection(
+        tag_ids = get_expense_tags(con, expense_pk)
+        projection = logging_projection(
             con,
             category_id=expense.category_id,
             event_id=expense.event_id,
@@ -239,7 +249,7 @@ def _claim_and_resolve(
                 expense.category_id,
                 expense_pk,
             )
-            ledger_repo.poison_logging_job(
+            poison_logging_job(
                 con,
                 expense_pk,
                 f"No sheet_mapping fallback possible for category_id={expense.category_id}",
@@ -265,7 +275,7 @@ def _drain_one_job(
     spreadsheet_id: str,
 ) -> DrainResult:
     """Atomically claim, append, and clear one queue row."""
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         resolved = _claim_and_resolve(con, expense_pk)
         if isinstance(resolved, DrainResult):
@@ -312,9 +322,9 @@ def _drain_one_job(
                     rate=rate_str,
                 ),
             )
-            cleared = ledger_repo.clear_logging_job(con, expense_pk, resolved.claim_token)
+            cleared = clear_logging_job(con, expense_pk, resolved.claim_token)
             if not cleared:
-                deleted = ledger_repo.force_clear_logging_job(con, expense_pk)
+                deleted = force_clear_logging_job(con, expense_pk)
                 if deleted:
                     logger.error(
                         "Append succeeded for pk=%d but claim stolen; force-deleted",
@@ -411,9 +421,9 @@ def _append_row_to_sheet(
 
 
 def _poison_failing_job(expense_pk: int, exc: Exception) -> None:
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
-        ledger_repo.poison_logging_job(con, expense_pk, f"{type(exc).__name__}: {exc}")
+        poison_logging_job(con, expense_pk, f"{type(exc).__name__}: {exc}")
     finally:
         con.close()
 
@@ -453,9 +463,9 @@ def drain_pending() -> dict:
         "poisoned": 0,
     }
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
-        expense_pks = ledger_repo.list_logging_jobs(con)
+        expense_pks = list_logging_jobs(con)
     finally:
         con.close()
 

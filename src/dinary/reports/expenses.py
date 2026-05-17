@@ -10,7 +10,7 @@ Output is a ``rich`` table by default; ``--csv`` emits plain CSV to
 stdout instead, which is what ``inv report-expenses --csv`` consumes
 to pipe the result into downstream tooling.
 
-Strictly read-only. Opens a short-lived ``ledger_repo`` cursor, runs
+Strictly read-only. Opens a short-lived DB cursor, runs
 one aggregation SELECT, closes the cursor. Safe to run against live
 production data while the FastAPI service is serving HTTP — SQLite's
 WAL mode lets readers and the single writer coexist without blocking.
@@ -30,7 +30,7 @@ from rich.console import Console
 from rich.table import Table
 
 from dinary.config import settings
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -356,16 +356,16 @@ def run(
     if as_csv and as_json:
         msg = "--csv and --json are mutually exclusive"
         raise ValueError(msg)
-    if not ledger_repo.DB_PATH.exists():
+    if not storage.DB_PATH.exists():
         msg = (
-            f"DB not found at {ledger_repo.DB_PATH}. Either point "
+            f"DB not found at {storage.DB_PATH}. Either point "
             "DINARY_DATA_PATH at an existing SQLite file, or use "
             "`inv report-expenses --remote` to query the server."
         )
         print(msg, file=sys.stderr)
         return 1
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         rows = aggregate_expenses(con, year=year, month=month)
     finally:

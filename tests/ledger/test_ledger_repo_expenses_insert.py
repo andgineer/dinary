@@ -12,7 +12,9 @@ from datetime import datetime
 import allure
 import pytest
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.expenses import ExpensePayload, insert_expense
+from dinary.services.logging_jobs import list_logging_jobs
 
 from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
     data_dir,
@@ -25,11 +27,11 @@ from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
 @allure.feature("Insert expense (client_expense_id)")
 class TestInsertExpense:
     def test_insert_then_duplicate(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            r1 = ledger_repo.insert_expense(
+            r1 = insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="x1",
                     expense_datetime=datetime(2026, 5, 5, 12),
                     amount=10.0,
@@ -44,9 +46,9 @@ class TestInsertExpense:
                 ),
                 enqueue_logging=False,
             )
-            r2 = ledger_repo.insert_expense(
+            r2 = insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="x1",
                     expense_datetime=datetime(2026, 5, 5, 12),
                     amount=10.0,
@@ -67,11 +69,11 @@ class TestInsertExpense:
             con.close()
 
     def test_conflict_on_changed_amount(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            ledger_repo.insert_expense(
+            insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="x2",
                     expense_datetime=datetime(2026, 5, 5, 12),
                     amount=10.0,
@@ -83,9 +85,9 @@ class TestInsertExpense:
                 ),
                 enqueue_logging=False,
             )
-            r = ledger_repo.insert_expense(
+            r = insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="x2",
                     expense_datetime=datetime(2026, 5, 5, 12),
                     amount=99.0,
@@ -102,12 +104,12 @@ class TestInsertExpense:
             con.close()
 
     def test_invalid_category_raises(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             with pytest.raises(ValueError, match="category_id"):
-                ledger_repo.insert_expense(
+                insert_expense(
                     con,
-                    ledger_repo.ExpensePayload(
+                    ExpensePayload(
                         client_expense_id="x3",
                         expense_datetime=datetime(2026, 5, 5, 12),
                         amount=1.0,
@@ -122,12 +124,12 @@ class TestInsertExpense:
             con.close()
 
     def test_invalid_provenance_pair_raises(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             with pytest.raises(ValueError, match="sheet_category"):
-                ledger_repo.insert_expense(
+                insert_expense(
                     con,
-                    ledger_repo.ExpensePayload(
+                    ExpensePayload(
                         client_expense_id="x4",
                         expense_datetime=datetime(2026, 5, 5, 12),
                         amount=1.0,
@@ -144,11 +146,11 @@ class TestInsertExpense:
             con.close()
 
     def test_enqueue_logging_creates_pending_row(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            ledger_repo.insert_expense(
+            insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="x5",
                     expense_datetime=datetime(2026, 5, 5, 12),
                     amount=1.0,
@@ -160,7 +162,7 @@ class TestInsertExpense:
                 ),
                 enqueue_logging=True,
             )
-            jobs = ledger_repo.list_logging_jobs(con)
+            jobs = list_logging_jobs(con)
         finally:
             con.close()
         # Integer expense PKs in the queue.
@@ -169,11 +171,11 @@ class TestInsertExpense:
 
     def test_null_client_id_allows_multiple(self, populated_catalog):
         """Bootstrap rows use ``client_expense_id=None`` and must coexist."""
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            r1 = ledger_repo.insert_expense(
+            r1 = insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id=None,
                     expense_datetime=datetime(2026, 1, 1, 12),
                     amount=1.0,
@@ -187,9 +189,9 @@ class TestInsertExpense:
                 ),
                 enqueue_logging=False,
             )
-            r2 = ledger_repo.insert_expense(
+            r2 = insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id=None,
                     expense_datetime=datetime(2026, 1, 2, 12),
                     amount=2.0,
@@ -213,7 +215,7 @@ class TestInsertExpense:
     def test_unique_client_id_raises_constraint(self, populated_catalog):
         """Direct SQL violation — the wrapper catches and returns
         duplicate/conflict, but the DB enforces UNIQUE regardless."""
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO expenses (client_expense_id, datetime, amount,"

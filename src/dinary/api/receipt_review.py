@@ -14,7 +14,8 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.receipts import count_pending_classification_jobs
 
 router = APIRouter()
 
@@ -116,6 +117,7 @@ def _build_feed(conn: sqlite3.Connection, page: int, page_size: int) -> dict[str
         "doubtful_count": d_total,
         "items": rows,
         "has_more": offset + page_size < total,
+        "pending_receipts": count_pending_classification_jobs(conn),
     }
 
 
@@ -124,7 +126,7 @@ def review_feed(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ) -> dict:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         return _build_feed(conn, page, page_size)
     finally:
@@ -133,7 +135,7 @@ def review_feed(
 
 @router.get("/api/receipts/review/counts")
 def review_counts() -> dict:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         count = conn.execute(
             """
@@ -145,6 +147,9 @@ def review_counts() -> dict:
              WHERE cr.confidence_level < 4
             """,
         ).fetchone()[0]
-        return {"doubtful_rules": int(count)}
+        return {
+            "doubtful_rules": int(count),
+            "pending_receipts": count_pending_classification_jobs(conn),
+        }
     finally:
         conn.close()

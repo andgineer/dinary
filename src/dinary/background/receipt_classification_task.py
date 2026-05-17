@@ -25,14 +25,14 @@ import httpx
 from sr_invoice_parser.exceptions import ParserParseException, ParserRequestException
 
 from dinary.config import settings
-from dinary.services import ledger_repo
+from dinary.services import storage
 from dinary.services.classification_rules import (
     RuleSpec,
     classify_by_rules,
     create_or_update_rule,
 )
+from dinary.services.expenses import enqueue_for_logging
 from dinary.services.item_normalizer import normalize_item_name
-from dinary.services.ledger_repo import enqueue_for_logging
 from dinary.services.llm_client import (
     AllProvidersExhausted,
     ClassificationResult,
@@ -40,7 +40,7 @@ from dinary.services.llm_client import (
     ReceiptContext,
 )
 from dinary.services.receipt_parser import ParsedReceipt, parse_receipt
-from dinary.services.receipt_repo import (
+from dinary.services.receipts import (
     ItemClassification,
     ReceiptItemRow,
     ReceiptJobRow,
@@ -157,7 +157,7 @@ async def _drain_one() -> None:
 
 
 def _claim_job() -> ReceiptJobRow | None:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         return claim_next_job(conn)
     finally:
@@ -165,7 +165,7 @@ def _claim_job() -> ReceiptJobRow | None:
 
 
 def _release(receipt_id: int, claim_token: str) -> None:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         release_job(conn, receipt_id, claim_token)
     finally:
@@ -173,7 +173,7 @@ def _release(receipt_id: int, claim_token: str) -> None:
 
 
 def _poison(receipt_id: int, error: str) -> None:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         poison_job(conn, receipt_id, error)
     finally:
@@ -190,7 +190,7 @@ async def _process_job(job: ReceiptJobRow) -> None:
 
     store_id = await _ensure_store(job, pool)
 
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         items = get_receipt_items(conn, job.receipt_id)
 
@@ -233,7 +233,7 @@ async def _process_job(job: ReceiptJobRow) -> None:
 
 
 def _save_parsed(receipt_id: int, parsed: ParsedReceipt) -> None:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         # Receipt rows committed first; metadata only written on success so a
         # failed save never leaves stale healthcheck state.
@@ -273,7 +273,7 @@ async def _ensure_store(job: ReceiptJobRow, pool: ProviderPool) -> int | None:
     if not job.store_name_raw and not job.store_pib_raw:
         return None
 
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         existing = conn.execute(
             "SELECT store_id FROM receipts WHERE id = ?",

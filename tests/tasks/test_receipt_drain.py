@@ -11,7 +11,7 @@ import allure
 import pytest
 
 import dinary.background.receipt_classification_task as drain_mod
-from dinary.services import db_migrations, ledger_repo
+from dinary.services import db_migrations, storage
 from dinary.background.receipt_classification_task import (
     _activate_llm_backoff,
     _drain_one,
@@ -175,8 +175,8 @@ def drain_db(tmp_path, monkeypatch):
         db_migrations.migrate_db(blank)
     dst = tmp_path / "dinary.db"
     shutil.copy(blank, dst)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", dst)
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
     yield dst
 
 
@@ -207,9 +207,9 @@ class TestProcessJobEdgeCases:
         import logging
 
         from dinary.background.receipt_classification_task import _process_job
-        from dinary.services.receipt_repo import ReceiptJobRow
+        from dinary.services.receipts import ReceiptJobRow
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
             conn.execute(
@@ -240,7 +240,7 @@ class TestProcessJobEdgeCases:
 
         assert any("no items" in r.message.lower() for r in caplog.records)
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             remaining = conn.execute(
                 "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?",
@@ -262,7 +262,7 @@ class TestProcessJobEdgeCases:
         from dinary.background.receipt_classification_task import _process_job
         from dinary.services.llm_client import ClassificationResult
         from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-        from dinary.services.receipt_repo import ReceiptJobRow
+        from dinary.services.receipts import ReceiptJobRow
 
         parsed = ParsedReceipt(
             store_name="Lidl",
@@ -295,7 +295,7 @@ class TestProcessJobEdgeCases:
             )
         )
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
             conn.execute("INSERT INTO stores (chain_name, pib) VALUES ('Lidl', '100')")
@@ -332,7 +332,7 @@ class TestProcessJobEdgeCases:
         ):
             asyncio.run(_process_job(job))
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp = conn.execute(
                 "SELECT confidence_level FROM expenses WHERE receipt_id = ?", [receipt_id]
@@ -350,7 +350,7 @@ class TestProcessJobEdgeCases:
         from dinary.background.receipt_classification_task import _process_job
         from dinary.services.llm_client import ClassificationResult
         from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-        from dinary.services.receipt_repo import ReceiptJobRow
+        from dinary.services.receipts import ReceiptJobRow
 
         parsed = ParsedReceipt(
             store_name="",
@@ -380,7 +380,7 @@ class TestProcessJobEdgeCases:
         )
 
         fixed_created_at = "2026-01-15 08:30:00"
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
             conn.execute(
@@ -418,7 +418,7 @@ class TestProcessJobEdgeCases:
         ):
             asyncio.run(_process_job(job))
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp = conn.execute(
                 "SELECT datetime FROM expenses WHERE receipt_id = ?", [receipt_id]
@@ -434,7 +434,7 @@ class TestProcessJobEdgeCases:
         from dinary.background.receipt_classification_task import _save_parsed
         from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             conn.execute(
                 "INSERT INTO receipts (client_receipt_id, url) VALUES ('fb-r1', 'https://x')"
@@ -466,7 +466,7 @@ class TestProcessJobEdgeCases:
         )
         _save_parsed(receipt_id, parsed)
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             last = conn.execute(
                 "SELECT value FROM app_metadata WHERE key = 'receipt_fetch_fallback_last'"
@@ -489,7 +489,7 @@ class TestProcessJobEdgeCases:
         from dinary.background.receipt_classification_task import _process_job
         from dinary.services.llm_client import ClassificationResult
         from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-        from dinary.services.receipt_repo import ReceiptJobRow
+        from dinary.services.receipts import ReceiptJobRow
 
         purchase_dt = "2026-01-10T09:15:00+01:00"
         parsed = ParsedReceipt(
@@ -520,7 +520,7 @@ class TestProcessJobEdgeCases:
             )
         )
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
             conn.execute(
@@ -557,7 +557,7 @@ class TestProcessJobEdgeCases:
         ):
             asyncio.run(_process_job(job))
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp_dt = conn.execute(
                 "SELECT datetime FROM expenses WHERE receipt_id = ?", [receipt_id]
@@ -576,7 +576,7 @@ class TestProcessJobEdgeCases:
         from dinary.background.receipt_classification_task import _process_job
         from dinary.services.llm_client import ClassificationResult
         from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-        from dinary.services.receipt_repo import ReceiptJobRow
+        from dinary.services.receipts import ReceiptJobRow
 
         parsed = ParsedReceipt(
             store_name="Lidl",
@@ -610,7 +610,7 @@ class TestProcessJobEdgeCases:
             )
         )
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
             conn.execute("INSERT INTO stores (chain_name, pib) VALUES ('Lidl', '100')")
@@ -643,7 +643,7 @@ class TestProcessJobEdgeCases:
         ):
             asyncio.run(_process_job(job))
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp_count = conn.execute(
                 "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
@@ -675,7 +675,7 @@ class TestReceiptSheetLogging:
         from dinary.background.receipt_classification_task import _process_job
         from dinary.services.llm_client import ClassificationResult
         from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-        from dinary.services.receipt_repo import ReceiptJobRow
+        from dinary.services.receipts import ReceiptJobRow
 
         parsed = ParsedReceipt(
             store_name="",
@@ -701,7 +701,7 @@ class TestReceiptSheetLogging:
             return_value=([ClassificationResult("hleb", category_id=1, confidence_level=3)], False)
         )
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
             conn.execute(
@@ -737,7 +737,7 @@ class TestReceiptSheetLogging:
         ):
             asyncio.run(_process_job(job))
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             row = conn.execute(
                 "SELECT client_expense_id FROM expenses WHERE receipt_id = ?", [receipt_id]
@@ -754,7 +754,7 @@ class TestReceiptSheetLogging:
         from dinary.background.receipt_classification_task import _process_job
         from dinary.services.llm_client import ClassificationResult
         from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-        from dinary.services.receipt_repo import ReceiptJobRow
+        from dinary.services.receipts import ReceiptJobRow
 
         parsed = ParsedReceipt(
             store_name="",
@@ -790,7 +790,7 @@ class TestReceiptSheetLogging:
             )
         )
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
             conn.execute(
@@ -826,7 +826,7 @@ class TestReceiptSheetLogging:
         ):
             asyncio.run(_process_job(job))
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp_ids = [
                 r[0]

@@ -1,4 +1,4 @@
-"""LLM provider seeding — moved from ledger_repo to break the urlparse dependency."""
+"""LLM provider seeding."""
 
 import contextlib
 import logging

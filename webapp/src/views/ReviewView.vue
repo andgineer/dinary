@@ -5,6 +5,7 @@ import { useOnline } from "../composables/useOnline.js";
 import { useToastStore } from "../stores/toast.js";
 import RuleRow from "../components/RuleRow.vue";
 import CorrectionSheet from "../components/CorrectionSheet.vue";
+import IconBtn from "../components/IconBtn.vue";
 
 const reviewStore = useReviewStore();
 const { isOnline } = useOnline();
@@ -26,6 +27,12 @@ function closeCorrection() {
   correctionItem.value = null;
 }
 
+async function forceRefresh() {
+  if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
+  reviewStore.reset();
+  await reviewStore.loadNextPage();
+}
+
 function setupObserver() {
   if (!sentinel.value || typeof IntersectionObserver === "undefined") return;
   observer = new IntersectionObserver(
@@ -40,9 +47,7 @@ function setupObserver() {
 }
 
 onMounted(async () => {
-  if (isOnline.value && reviewStore.items.length === 0) {
-    await reviewStore.loadNextPage();
-  }
+  if (isOnline.value) await reviewStore.loadIfNeeded();
   setupObserver();
 });
 
@@ -57,13 +62,25 @@ onBeforeUnmount(() => {
       {{ reviewStore.items.length > 0 ? 'Offline — showing cached data' : 'Offline — no cached data' }}
     </div>
 
-    <div
-      v-if="reviewStore.doubtfulCount > 0"
-      class="section-header section-header--warning"
-    >
-      <span class="section-label">NEEDS REVIEW</span>
-      <span class="section-badge">{{ reviewStore.doubtfulCount }}</span>
-      <span class="section-sort">by impact</span>
+    <div class="review-header">
+      <div
+        v-if="reviewStore.doubtfulCount > 0"
+        class="section-header section-header--warning"
+      >
+        <span class="section-label">NEEDS REVIEW</span>
+        <span class="section-badge">{{ reviewStore.doubtfulCount }}</span>
+        <span class="section-sort">by impact</span>
+      </div>
+      <div v-else class="section-header">
+        <span class="section-label">RULES</span>
+      </div>
+      <IconBtn
+        icon="refresh"
+        tone="muted"
+        label="Refresh"
+        :disabled="!isOnline || reviewStore.loading"
+        @click="forceRefresh()"
+      />
     </div>
 
     <template v-for="item in reviewStore.items" :key="item.id">
@@ -104,13 +121,20 @@ onBeforeUnmount(() => {
   margin: 0 auto;
 }
 
+.review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
 .section-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-top: 0.25rem;
-  margin-bottom: 0.5rem;
   padding: 0 0.25rem;
+  flex: 1;
 }
 
 .section-label {

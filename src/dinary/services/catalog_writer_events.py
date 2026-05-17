@@ -8,7 +8,7 @@ import json
 import sqlite3
 from datetime import date
 
-from dinary.services import ledger_repo
+from dinary.services import storage
 from dinary.services.catalog_writer import (
     AddResult,
     AddStatus,
@@ -115,7 +115,7 @@ def add_event(
         _commit_with_bump(con, before, context=f"add_event(name={name!r})")
         return AddResult(id=eid, status="created")
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="catalog_writer.add_event")
+        storage.best_effort_rollback(con, context="catalog_writer.add_event")
         raise
 
 
@@ -202,7 +202,7 @@ def edit_event(
             )
         _commit_with_bump(con, before, context=f"edit_event(id={event_id})")
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="catalog_writer.edit_event")
+        storage.best_effort_rollback(con, context="catalog_writer.edit_event")
         raise
 
 
@@ -253,7 +253,7 @@ def add_tag(con: sqlite3.Connection, *, name: str) -> AddResult:
         _commit_with_bump(con, before, context=f"add_tag(name={name!r})")
         return AddResult(id=tid, status="created")
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="catalog_writer.add_tag")
+        storage.best_effort_rollback(con, context="catalog_writer.add_tag")
         raise
 
 
@@ -314,7 +314,7 @@ def edit_tag(
             )
         _commit_with_bump(con, before, context=f"edit_tag(id={tag_id})")
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="catalog_writer.edit_tag")
+        storage.best_effort_rollback(con, context="catalog_writer.edit_tag")
         raise
 
 
@@ -393,7 +393,7 @@ def delete_event(
         _commit_with_bump(con, before, context=f"delete_event(soft id={event_id})")
         return DeleteResult(status="soft", usage_count=usage)
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="catalog_writer.delete_event")
+        storage.best_effort_rollback(con, context="catalog_writer.delete_event")
         raise
 
 
@@ -430,5 +430,5 @@ def delete_tag(
         _commit_with_bump(con, before, context=f"delete_tag(soft id={tag_id})")
         return DeleteResult(status="soft", usage_count=usage)
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="catalog_writer.delete_tag")
+        storage.best_effort_rollback(con, context="catalog_writer.delete_tag")
         raise

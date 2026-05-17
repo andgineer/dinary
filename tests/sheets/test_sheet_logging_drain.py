@@ -18,7 +18,9 @@ import allure
 
 import shutil
 
-from dinary.services import ledger_repo, sheet_logging
+from dinary.services import storage, sheet_logging
+from dinary.services.logging_jobs import list_logging_jobs
+from dinary.services.expenses import ExpensePayload, insert_expense
 
 from _sheet_logging_helpers import (  # noqa: F401  (autouse + fixtures)
     _reset_backoff,
@@ -67,9 +69,9 @@ class TestDrainPending:
         call_kwargs = mock_append.call_args.kwargs
         assert call_kwargs.get("marker_key") == "exp1-client-key"
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.list_logging_jobs(con) == []
+            assert list_logging_jobs(con) == []
         finally:
             con.close()
 
@@ -99,7 +101,7 @@ class TestDrainPendingPoisonsUnresolvedCategory:
         _sheet,
         setup,
     ):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute("DELETE FROM sheet_mapping_tags")
             con.execute("DELETE FROM sheet_mapping")
@@ -107,15 +109,15 @@ class TestDrainPendingPoisonsUnresolvedCategory:
             con.close()
 
         expense_pk = setup
-        with patch.object(ledger_repo, "get_category_name", return_value=None):
+        with patch("dinary.services.sheet_logging.logging_projection", return_value=None):
             result = sheet_logging.drain_pending()
 
         assert result["poisoned"] == 1
         assert result["appended"] == 0
         assert result["failed"] == 0
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.list_logging_jobs(con) == []
+            assert list_logging_jobs(con) == []
             # The queue row is still on disk but in status='poisoned',
             # which is why ``list_logging_jobs`` (pending + stale
             # in_progress) doesn't surface it. The expense ledger row
@@ -161,7 +163,7 @@ class TestDrainPendingPoisonsNullClientExpenseId:
         _sheet,
         blank_db,
     ):
-        shutil.copy(blank_db, ledger_repo.DB_PATH)
+        shutil.copy(blank_db, storage.DB_PATH)
 
         # Seed minimal catalog + a single expense with
         # client_expense_id = NULL, then force a queue row for it so we
@@ -169,7 +171,7 @@ class TestDrainPendingPoisonsNullClientExpenseId:
         # ``insert_expense(enqueue_logging=True)`` for this leg because
         # the public path refuses to let NULL + enqueue coexist on a
         # runtime call — which is exactly the invariant we're testing.
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -178,9 +180,9 @@ class TestDrainPendingPoisonsNullClientExpenseId:
             con.execute(
                 "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'еда', 1, TRUE)",
             )
-            ledger_repo.insert_expense(
+            insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id=None,
                     expense_datetime=datetime(2026, 4, 14, 10),
                     amount=12.0,
@@ -212,9 +214,9 @@ class TestDrainPendingPoisonsNullClientExpenseId:
         assert result["failed"] == 0
         mock_append.assert_not_called()
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.list_logging_jobs(con) == []
+            assert list_logging_jobs(con) == []
             row = con.execute(
                 "SELECT status, last_error FROM sheet_logging_jobs WHERE expense_id = ?",
                 [expense_pk],
@@ -246,7 +248,7 @@ class TestDrainPendingCategoryFallback:
         mock_sheet,
         setup,
     ):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute("DELETE FROM sheet_mapping_tags")
             con.execute("DELETE FROM sheet_mapping")
@@ -301,7 +303,7 @@ class TestDrainPendingCounters:
         mock_sheet.return_value.sheet1 = ws
         mock_ecr.return_value = (3, values)
 
-        with patch.object(ledger_repo, "clear_logging_job", return_value=False):
+        with patch("dinary.services.sheet_logging.clear_logging_job", return_value=False):
             result = sheet_logging.drain_pending()
 
         assert result["appended"] == 0

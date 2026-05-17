@@ -21,7 +21,9 @@ from unittest.mock import MagicMock, patch
 import allure
 
 from dinary.config import settings
-from dinary.services import ledger_repo, sheet_logging
+from dinary.services import storage, sheet_logging
+from dinary.services.logging_jobs import claim_logging_job, list_logging_jobs
+from dinary.services.expenses import ExpensePayload, insert_expense
 
 from _sheet_logging_helpers import (  # noqa: F401  (autouse + fixtures)
     _reset_backoff,
@@ -63,9 +65,9 @@ class TestIdempotencyMarker:
         assert result["failed"] == 0
         assert result["recovered_with_duplicate"] == 0
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.list_logging_jobs(con) == []
+            assert list_logging_jobs(con) == []
         finally:
             con.close()
 
@@ -112,9 +114,9 @@ class TestClaimLoggingJobLockConflict:
         # as ``OperationalError("database is locked")`` immediately.
         # This is the exact runtime shape two drain workers hit when
         # they race on the same queue row.
-        holder = ledger_repo.get_connection()
+        holder = storage.get_connection()
         loser = sqlite3.connect(
-            str(ledger_repo.DB_PATH),
+            str(storage.DB_PATH),
             isolation_level=None,
             detect_types=sqlite3.PARSE_DECLTYPES,
             check_same_thread=False,
@@ -122,7 +124,7 @@ class TestClaimLoggingJobLockConflict:
         )
         try:
             holder.execute("BEGIN IMMEDIATE")
-            token = ledger_repo.claim_logging_job(loser, expense_pk)
+            token = claim_logging_job(loser, expense_pk)
             assert token is None
             holder.execute("COMMIT")
         finally:
@@ -139,12 +141,12 @@ class TestDrainRateLimit:
     ``inter_row_delay_sec``."""
 
     def _insert_additional_expenses(self, n: int) -> None:
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             for i in range(n):
-                ledger_repo.insert_expense(
+                insert_expense(
                     con,
-                    ledger_repo.ExpensePayload(
+                    ExpensePayload(
                         client_expense_id=f"extra-{i:03d}",
                         expense_datetime=datetime(2026, 6, 1 + i % 25, 10),
                         amount=10.0,

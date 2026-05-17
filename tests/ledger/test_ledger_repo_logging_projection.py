@@ -1,4 +1,4 @@
-"""Tests for ``ledger_repo.logging_projection``.
+"""Tests for ``db.logging_projection``.
 
 The drain worker calls this helper to decide where each expense
 lands on the logging sheet. The contract pins:
@@ -24,7 +24,8 @@ lifecycle, ``catalog_version``, ``list_categories``, sheet-mapping
 import allure
 import pytest
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.catalog import logging_projection
 
 from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
     data_dir,
@@ -47,7 +48,7 @@ class TestLoggingProjection:
         row_order=3: category=еда (catch-all), Расходы=``CatA``,
                      Конверт=``*``
         """
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'g', 1)",
@@ -79,11 +80,11 @@ class TestLoggingProjection:
             con.close()
 
     def test_event_row_wins_конверт(self, logging_setup):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             # No tags: row_order=1 skipped; row_order=2 matches on event_id
             # and fills Конверт=WithEvt; row_order=3 supplies Расходы=CatA.
-            result = ledger_repo.logging_projection(
+            result = logging_projection(
                 con,
                 category_id=1,
                 event_id=1,
@@ -94,11 +95,11 @@ class TestLoggingProjection:
             con.close()
 
     def test_tag_row_wins_конверт(self, logging_setup):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             # No event, tag 'tag1' present: row_order=1 fills Конверт=WithTag;
             # row_order=3 supplies Расходы=CatA.
-            result = ledger_repo.logging_projection(
+            result = logging_projection(
                 con,
                 category_id=1,
                 event_id=None,
@@ -109,7 +110,7 @@ class TestLoggingProjection:
             con.close()
 
     def test_partial_resolution_keeps_resolved_column(self, logging_setup):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             # tag 'tag2' is not required by any row, no event: rows 1 and 2
             # are skipped, row 3 fills Расходы=CatA but leaves Конверт as
@@ -117,7 +118,7 @@ class TestLoggingProjection:
             # missing ``sheet_group`` with the empty-string fallback —
             # dropping CatA would be strictly worse since we already
             # picked a better-than-default value for that column.
-            result = ledger_repo.logging_projection(
+            result = logging_projection(
                 con,
                 category_id=1,
                 event_id=None,
@@ -128,12 +129,12 @@ class TestLoggingProjection:
             con.close()
 
     def test_unknown_category_returns_none(self, logging_setup):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             # category_id=999 has no rows at all and no canonical name —
             # the projection returns None so the drain worker can poison
             # the queued row rather than logging to a bogus target.
-            result = ledger_repo.logging_projection(
+            result = logging_projection(
                 con,
                 category_id=999,
                 event_id=None,
@@ -144,14 +145,14 @@ class TestLoggingProjection:
             con.close()
 
     def test_no_event_no_tags_fills_envelope_with_empty_string(self, logging_setup):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             # Same shape as ``test_partial_resolution_keeps_resolved_column``
             # but with no tags at all; rows 1 and 2 require tag/event and
             # are skipped, row 3 assigns Расходы and leaves Конверт as
             # ``*``. The resolver fills Конверт with the empty-string
             # fallback while keeping the explicit ``CatA`` mapping.
-            result = ledger_repo.logging_projection(
+            result = logging_projection(
                 con,
                 category_id=1,
                 event_id=None,
@@ -168,7 +169,7 @@ class TestLoggingProjection:
         back" contract with an in-helper default so partial matches
         never get discarded.
         """
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'g', 1)",
@@ -177,7 +178,7 @@ class TestLoggingProjection:
                 "INSERT INTO categories (id, name, group_id) VALUES (1, 'еда', 1)",
             )
             con.commit()
-            assert ledger_repo.logging_projection(
+            assert logging_projection(
                 con,
                 category_id=1,
                 event_id=None,
@@ -189,7 +190,7 @@ class TestLoggingProjection:
     def test_both_columns_resolved_when_wildcard_row_fills_конверт(self, fresh_db):
         """A dedicated envelope-fill row + a category row together resolve
         both columns and produce a non-None result."""
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'g', 1)",
@@ -208,7 +209,7 @@ class TestLoggingProjection:
                 " VALUES (2, 1, NULL, 'CatA', '*')",
             )
             con.commit()
-            assert ledger_repo.logging_projection(
+            assert logging_projection(
                 con,
                 category_id=1,
                 event_id=None,
@@ -218,7 +219,7 @@ class TestLoggingProjection:
             con.close()
 
     def test_event_wildcard_row_matches_specific_event(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'g', 1)",
@@ -246,13 +247,13 @@ class TestLoggingProjection:
                 " VALUES (2, 1, NULL, 'Default', '*')",
             )
             con.commit()
-            assert ledger_repo.logging_projection(
+            assert logging_projection(
                 con,
                 category_id=1,
                 event_id=1,
                 tag_ids=[],
             ) == ("Trips", "")
-            assert ledger_repo.logging_projection(
+            assert logging_projection(
                 con,
                 category_id=1,
                 event_id=None,

@@ -39,7 +39,7 @@ class SQLiteBackend(DatabaseBackend):
     happen to cross this backend's cursors still round-trip
     correctly as long as ``sqlite_types`` has been imported at
     least once in the process (which is true at runtime because
-    ``ledger_repo`` imports it eagerly, and true in tests because
+    ``db`` imports it eagerly, and true in tests because
     ``tests/conftest.py`` does the same). If a future migration
     starts binding those Python types via ``?`` parameters, keep
     this contract in mind or switch the backend over to

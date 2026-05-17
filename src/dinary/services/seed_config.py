@@ -55,7 +55,8 @@ import logging
 import sqlite3
 from datetime import date
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.catalog import set_catalog_version
 from dinary.services.sql_loader import fetchall_as, load_sql
 
 logger = logging.getLogger(__name__)
@@ -413,7 +414,7 @@ def seed_classification_catalog(
     # to the existing id rather than silently failing. Retired rows
     # deliberately keep their ids so mapping rebuilds can point at
     # them if a rule explicitly does (tests cover the rename path).
-    for r in fetchall_as(ledger_repo.IdNameRow, con, load_sql("seed_load_categories.sql")):
+    for r in fetchall_as(storage.IdNameRow, con, load_sql("seed_load_categories.sql")):
         cat_id_by_name.setdefault(r.name, r.id)
 
     # 3. tags (stable ids by name). Upserted BEFORE events so that
@@ -500,16 +501,16 @@ def bootstrap_catalog(year: int | None = None) -> dict:
     transitions from the schema-default ``0`` to the initial post-seed
     state; subsequent runs are proper no-ops.
     """
-    ledger_repo.init_db()
+    storage.init_db()
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         con.execute("BEGIN IMMEDIATE")
         try:
             summary, _ = seed_classification_catalog(con, year=year)
             con.execute("COMMIT")
         except Exception:
-            ledger_repo.best_effort_rollback(con, context="bootstrap_catalog")
+            storage.best_effort_rollback(con, context="bootstrap_catalog")
             raise
     finally:
         con.close()
@@ -528,11 +529,11 @@ def _bump_catalog_version(con: sqlite3.Connection, *, previous: int) -> int:
 
     One of the two write paths that touch ``catalog_version`` — the
     other is ``catalog_writer._commit_with_bump`` on the admin-API
-    path. Both funnel through ``ledger_repo.set_catalog_version`` so
+    path. Both funnel through ``catalog.set_catalog_version`` so
     future auditing hooks can intercept writes uniformly.
     """
     new_version = previous + 1
-    ledger_repo.set_catalog_version(con, new_version)
+    set_catalog_version(con, new_version)
     return new_version
 
 

@@ -15,13 +15,14 @@ from decimal import Decimal
 import pytest
 
 from dinary.config import settings
-from dinary.services import ledger_repo, sheet_logging
+from dinary.services import storage, sheet_logging
+from dinary.services.expenses import ExpensePayload, ExpenseRow, insert_expense
 
 
 @pytest.fixture(autouse=True)
 def data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "dinary.db")
     monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "test-spreadsheet-id")
 
 
@@ -44,7 +45,7 @@ def setup(tmp_path, blank_db) -> int:
     string id.
     """
     shutil.copy(blank_db, tmp_path / "dinary.db")
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -60,11 +61,11 @@ def setup(tmp_path, blank_db) -> int:
     finally:
         con.close()
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
-        ledger_repo.insert_expense(
+        insert_expense(
             con,
-            ledger_repo.ExpensePayload(
+            ExpensePayload(
                 client_expense_id="exp1-client-key",
                 expense_datetime=datetime(2026, 4, 14, 10),
                 amount=12.0,
@@ -93,14 +94,14 @@ def _expense_row(
     amount: Decimal,
     amount_original: Decimal,
     currency_original: str,
-) -> ledger_repo.ExpenseRow:
+) -> ExpenseRow:
     """Minimal ``ExpenseRow`` factory for pure-helper tests.
 
     ``_derive_app_currency_amount_for_sheet`` only reads ``amount``, ``amount_original``
     and ``currency_original``; the rest exists solely to satisfy the
     dataclass slots.
     """
-    return ledger_repo.ExpenseRow(
+    return ExpenseRow(
         id=1,
         client_expense_id="x",
         datetime=datetime(2026, 4, 14, 10),

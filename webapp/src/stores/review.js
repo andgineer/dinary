@@ -6,6 +6,9 @@ import { useToastStore } from "./toast.js";
 import { useCatalogStore } from "./catalog.js";
 
 const CACHE_KEY = "dinary:review:v1";
+const DIRTY_KEY = "dinary:review:dirty";
+const FETCHED_KEY = "dinary:review:fetchedAt";
+const TTL_MS = 24 * 60 * 60 * 1000;
 
 function readCache() {
   try {
@@ -42,6 +45,8 @@ export const useReviewStore = defineStore("review", () => {
   const loading = ref(false);
   const totalLoaded = ref(cached?.totalLoaded ?? 0);
   const fromCache = ref(!!cached);
+  const dirtyFlag = ref(localStorage.getItem(DIRTY_KEY) === "1");
+  const lastFetchedAt = ref(Number(localStorage.getItem(FETCHED_KEY)) || null);
 
   function _persistState() {
     writeCache({
@@ -53,10 +58,27 @@ export const useReviewStore = defineStore("review", () => {
     });
   }
 
+  function markDirty() {
+    dirtyFlag.value = true;
+    localStorage.setItem(DIRTY_KEY, "1");
+  }
+
+  async function loadIfNeeded() {
+    const age = lastFetchedAt.value ? Date.now() - lastFetchedAt.value : Infinity;
+    if (dirtyFlag.value || !lastFetchedAt.value || age > TTL_MS) {
+      reset();
+      await loadNextPage();
+    }
+  }
+
   async function fetchCounts() {
     try {
       const data = await getReviewCounts();
       doubtfulCount.value = data.doubtful_count ?? 0;
+      if ((data.pending_receipts ?? 0) === 0) {
+        dirtyFlag.value = false;
+        localStorage.removeItem(DIRTY_KEY);
+      }
     } catch {
       // best-effort: badge stays at 0 on failure
     }
@@ -77,6 +99,12 @@ export const useReviewStore = defineStore("review", () => {
       page.value = nextPage;
       totalLoaded.value += incoming.length;
       fromCache.value = false;
+      lastFetchedAt.value = Date.now();
+      localStorage.setItem(FETCHED_KEY, String(lastFetchedAt.value));
+      if ((data.pending_receipts ?? 0) === 0) {
+        dirtyFlag.value = false;
+        localStorage.removeItem(DIRTY_KEY);
+      }
       _persistState();
     } catch (err) {
       if (navigator.onLine) {
@@ -139,7 +167,11 @@ export const useReviewStore = defineStore("review", () => {
     loading.value = false;
     totalLoaded.value = 0;
     fromCache.value = false;
+    lastFetchedAt.value = null;
     clearCache();
+    try {
+      localStorage.removeItem(FETCHED_KEY);
+    } catch {}
   }
 
   return {
@@ -150,6 +182,10 @@ export const useReviewStore = defineStore("review", () => {
     loading,
     totalLoaded,
     fromCache,
+    dirtyFlag,
+    lastFetchedAt,
+    markDirty,
+    loadIfNeeded,
     fetchCounts,
     loadNextPage,
     correct,

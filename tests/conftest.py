@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 
 from dinary.config import settings
 from dinary.main import create_app
-from dinary.services import db_migrations, ledger_repo, rate_helpers, sheet_mapping
+from dinary.services import db_migrations, rate_helpers, sheet_mapping
+from dinary.services import storage
 
 # Tests that need the built Vue PWA must depend on ``built_static_dir``;
 # the fixture FAILS LOUDLY when ``_static/`` is absent (instead of
@@ -49,20 +50,20 @@ def blank_db(tmp_path_factory):
 def db(tmp_path, monkeypatch, blank_db):
     dst = tmp_path / "dinary.db"
     shutil.copy(blank_db, dst)
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", dst)
 
 
 def _reset_db_singleton() -> None:
     """Reset repo-level DB state between tests.
 
-    ``ledger_repo.get_connection`` returns a fresh ``sqlite3``
+    ``storage.get_connection`` returns a fresh ``sqlite3``
     connection per call, so there is no singleton to close today —
     ``close_connection`` is a no-op. The fixture hook is retained as
     a known tear-down point if any future connection-pool-style
     caching is added.
     """
-    ledger_repo.close_connection()
+    storage.close_connection()
 
 
 @pytest.fixture(autouse=True)
@@ -95,7 +96,7 @@ def _disable_llm_seed(monkeypatch):
     Patches seed_llm_provider_if_empty directly so both the TOML file
     path and the env-var fallback are blocked in one place.
     """
-    monkeypatch.setattr(ledger_repo, "seed_llm_provider_if_empty", lambda *_a, **_kw: None)
+    monkeypatch.setattr(storage, "seed_llm_provider_if_empty", lambda *_a, **_kw: None)
 
 
 @pytest.fixture(autouse=True)

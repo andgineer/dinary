@@ -10,13 +10,13 @@ import allure
 import pytest
 
 from dinary.reports import expenses as expenses_report
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 
 @pytest.fixture(autouse=True)
 def data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "dinary.db")
 
 
 def _seed_catalog(con) -> None:
@@ -60,7 +60,7 @@ def _seed_catalog(con) -> None:
 @pytest.fixture
 def _seeded_con(tmp_path, blank_db):
     shutil.copy(blank_db, tmp_path / "dinary.db")
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         _seed_catalog(con)
         yield con
@@ -221,7 +221,7 @@ class TestRun:
         # Point DB_PATH at a path that does NOT exist. run() must
         # refuse to silently init an empty DB — the CLI already
         # offers --remote for the "no local snapshot" case.
-        monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "absent.db")
+        monkeypatch.setattr(storage, "DB_PATH", tmp_path / "absent.db")
         buf = io.StringIO()
         rc = expenses_report.run(year=None, month=None, as_csv=False, stream=buf)
         captured = capsys.readouterr()

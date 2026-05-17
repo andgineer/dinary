@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import allure
 import pytest
 
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 from _api_helpers import db  # noqa: F401
 
@@ -65,9 +65,11 @@ class TestReviewFeed:
         data = resp.json()
         assert data["items"] == []
         assert data["doubtful_count"] == 0
+        assert "pending_receipts" in data
+        assert data["pending_receipts"] == 0
 
     def test_doubtful_item_in_block1(self, client, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed_review_data(conn)
         finally:
@@ -100,7 +102,7 @@ class TestReviewFeed:
 
     def test_two_block_pagination_uses_sql_limit_not_memory_slice(self, client, db):  # noqa: ARG002
         """Page 2 must return a different rule than page 1 with page_size=1."""
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
             conn.execute(
@@ -161,7 +163,7 @@ class TestReviewFeed:
 @allure.feature("Receipt Review")
 class TestReviewFeedCertainRules:
     def test_certain_rule_in_feed(self, client, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed_certain_rule(conn)
         finally:
@@ -182,7 +184,7 @@ class TestReviewFeedCertainRules:
         assert "datetime" in c
 
     def test_certain_rule_not_included_in_doubtful_count(self, client, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed_certain_rule(conn)
         finally:
@@ -192,7 +194,7 @@ class TestReviewFeedCertainRules:
         assert resp.json()["doubtful_count"] == 0
 
     def test_rule_name_comes_from_classification_rules(self, client, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed_certain_rule(conn)
         finally:
@@ -205,7 +207,7 @@ class TestReviewFeedCertainRules:
 
     def test_doubtful_rule_appears_as_doubtful(self, client, db):  # noqa: ARG002
         """A low-confidence rule with a matching receipt_item appears as doubtful."""
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
             conn.execute(
@@ -248,7 +250,7 @@ class TestReviewCounts:
         assert resp.json()["doubtful_rules"] == 0
 
     def test_counts_with_doubtful(self, client, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed_review_data(conn)
         finally:
@@ -257,9 +259,35 @@ class TestReviewCounts:
         resp = client.get("/api/receipts/review/counts")
         assert resp.json()["doubtful_rules"] == 1
 
+    def test_counts_includes_pending_receipts_zero_when_empty(self, client, db):  # noqa: ARG002
+        resp = client.get("/api/receipts/review/counts")
+        assert resp.status_code == 200
+        assert "pending_receipts" in resp.json()
+        assert resp.json()["pending_receipts"] == 0
+
+    def test_counts_pending_receipts_counts_pending_and_in_progress(
+        self,
+        client,
+        db,  # noqa: ARG002
+    ):
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (id, client_receipt_id, url) VALUES (10, 'rc1', 'https://x')"
+            )
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, status)"
+                " VALUES (10, 'pending')"
+            )
+        finally:
+            conn.close()
+
+        resp = client.get("/api/receipts/review/counts")
+        assert resp.json()["pending_receipts"] == 1
+
     def test_orphaned_rule_not_counted(self, client, db):  # noqa: ARG002
         """A rule with no matching receipt_items must not inflate the badge count."""
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             # Insert a rule with conf < 4 but NO receipt_items referencing it
             conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
@@ -298,7 +326,7 @@ class TestCategoryCorrection:
         conn.execute("UPDATE receipt_items SET expense_id = 1 WHERE id = 1")
 
     def test_correction_sets_conf4(self, client, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed_correction(conn)
         finally:
@@ -309,7 +337,7 @@ class TestCategoryCorrection:
         data = resp.json()
         assert data["corrected_expense_id"] == 1
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp = conn.execute(
                 "SELECT category_id, confidence_level FROM expenses WHERE id = 1"
@@ -326,7 +354,7 @@ class TestCategoryCorrection:
         assert item[1] == 4
 
     def test_correction_creates_rule(self, client, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed_correction(conn)
         finally:
@@ -334,7 +362,7 @@ class TestCategoryCorrection:
 
         client.patch("/api/expenses/1/category", json={"category_id": 2})
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             rule = conn.execute(
                 "SELECT category_id, confidence_level, source"
@@ -353,7 +381,7 @@ class TestCategoryCorrection:
         assert resp.status_code == 404
 
     def test_correction_inactive_category_returns_422(self, client, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed_correction(conn)
         finally:
@@ -364,7 +392,7 @@ class TestCategoryCorrection:
 
     def test_correction_on_non_receipt_expense(self, client, db):  # noqa: ARG002
         """Correcting a manual (non-receipt) expense updates category only — no rules, no items."""
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             conn.execute(
                 "INSERT INTO expenses"
@@ -381,7 +409,7 @@ class TestCategoryCorrection:
         assert data["corrected_expense_id"] == expense_id
         assert data["batch_updated_count"] == 0
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp = conn.execute(
                 "SELECT category_id, confidence_level FROM expenses WHERE id = ?", [expense_id]
@@ -439,7 +467,7 @@ class TestBatchPropagation:
         client,
         db,  # noqa: ARG002
     ):
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed(conn)
         finally:
@@ -450,7 +478,7 @@ class TestBatchPropagation:
         data = resp.json()
         assert data["batch_updated_count"] == 1
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             # Direct expense corrected
             exp1 = conn.execute(
@@ -477,7 +505,7 @@ class TestBatchPropagation:
         client,
         db,  # noqa: ARG002
     ):
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed(conn)
         finally:
@@ -485,7 +513,7 @@ class TestBatchPropagation:
 
         client.patch("/api/expenses/1/category", json={"category_id": 2})
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             rule = conn.execute(
                 "SELECT category_id, confidence_level, source"
@@ -565,7 +593,7 @@ class TestBatchPropagationNullStore:
         db,  # noqa: ARG002
     ):
         """Correcting an unresolved-store expense only propagates to other unresolved-store receipts."""
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed(conn)
         finally:
@@ -575,7 +603,7 @@ class TestBatchPropagationNullStore:
         assert resp.status_code == 200
         assert resp.json()["batch_updated_count"] == 1  # only the null-store receipt 11
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp11 = conn.execute("SELECT category_id FROM expenses WHERE id = 11").fetchone()
             exp12 = conn.execute("SELECT category_id FROM expenses WHERE id = 12").fetchone()
@@ -591,7 +619,7 @@ class TestBatchPropagationNullStore:
         db,  # noqa: ARG002
     ):
         """Correcting an unresolved-store expense propagates to all null-store receipts."""
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed(conn)
         finally:
@@ -600,7 +628,7 @@ class TestBatchPropagationNullStore:
         resp = client.patch("/api/expenses/10/category", json={"category_id": 2})
         assert resp.status_code == 200
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             item11 = conn.execute(
                 "SELECT category_id, confidence_level FROM receipt_items WHERE id = 11"
@@ -665,7 +693,7 @@ class TestExpenseSplitMerge:
         client,
         db,  # noqa: ARG002
     ):
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed(conn)
         finally:
@@ -676,7 +704,7 @@ class TestExpenseSplitMerge:
         assert resp.status_code == 200
         assert resp.json()["batch_updated_count"] == 1
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp1 = conn.execute("SELECT amount, category_id FROM expenses WHERE id = 1").fetchone()
             # expense1 keeps only "mleko" (50.0); "hleb" (100.0) is split out
@@ -713,7 +741,7 @@ class TestExpenseSplitMerge:
         client,
         db,  # noqa: ARG002
     ):
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed(conn)
         finally:
@@ -726,7 +754,7 @@ class TestExpenseSplitMerge:
         resp = client.patch("/api/expenses/1/category", json={"category_id": 2})
         assert resp.status_code == 200
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp2 = conn.execute("SELECT amount, category_id FROM expenses WHERE id = 2").fetchone()
             # expense2 had only "hleb"; all items moved → category updated in place
@@ -781,7 +809,7 @@ class TestScopedCorrections:
         conn.execute(f"UPDATE receipt_items SET expense_id = {expense_id} WHERE id = {expense_id}")
 
     def test_scope_single_skips_batch(self, client, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed(conn, "2026-05-01T10:00:00", expense_id=1)
             self._seed_other_expense(conn, "2026-05-01T10:00:00", receipt_id=2, expense_id=2)
@@ -792,7 +820,7 @@ class TestScopedCorrections:
         assert resp.status_code == 200
         assert resp.json()["batch_updated_count"] == 0
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp2 = conn.execute("SELECT category_id FROM expenses WHERE id = 2").fetchone()
         finally:
@@ -801,7 +829,7 @@ class TestScopedCorrections:
         assert exp2[0] == 1, "other expense must not be updated with scope=single"
 
     def test_scope_single_still_upserts_rule(self, client, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed(conn, "2026-05-01T10:00:00", expense_id=1)
         finally:
@@ -809,7 +837,7 @@ class TestScopedCorrections:
 
         client.patch("/api/expenses/1/category", json={"category_id": 2, "scope": "single"})
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             rule = conn.execute(
                 "SELECT category_id FROM classification_rules WHERE item_name_normalized = 'hleb'"
@@ -822,7 +850,7 @@ class TestScopedCorrections:
 
     def test_scope_all_updates_all_history(self, client, db):  # noqa: ARG002
         old_date = "2020-01-01T10:00:00"
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed(conn, "2026-05-01T10:00:00", expense_id=1)
             self._seed_other_expense(conn, old_date, receipt_id=2, expense_id=2)
@@ -833,7 +861,7 @@ class TestScopedCorrections:
         assert resp.status_code == 200
         assert resp.json()["batch_updated_count"] == 1
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp2 = conn.execute("SELECT category_id FROM expenses WHERE id = 2").fetchone()
         finally:
@@ -844,7 +872,7 @@ class TestScopedCorrections:
     def test_scope_month_only_updates_recent_expenses(self, client, db):  # noqa: ARG002
         recent_date = (datetime.now(UTC) - timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%S")
         old_date = (datetime.now(UTC) - timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%S")
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed(conn, recent_date, expense_id=1)
             self._seed_other_expense(conn, recent_date, receipt_id=2, expense_id=2)
@@ -856,7 +884,7 @@ class TestScopedCorrections:
         assert resp.status_code == 200
         assert resp.json()["batch_updated_count"] == 1
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp2 = conn.execute("SELECT category_id FROM expenses WHERE id = 2").fetchone()
             exp3 = conn.execute("SELECT category_id FROM expenses WHERE id = 3").fetchone()
@@ -869,7 +897,7 @@ class TestScopedCorrections:
     def test_scope_year_only_updates_this_year(self, client, db):  # noqa: ARG002
         this_year_date = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%S")
         last_year_date = f"{datetime.now(UTC).year - 1}-06-15T10:00:00"
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             self._seed(conn, this_year_date, expense_id=1)
             self._seed_other_expense(conn, this_year_date, receipt_id=2, expense_id=2)
@@ -881,7 +909,7 @@ class TestScopedCorrections:
         assert resp.status_code == 200
         assert resp.json()["batch_updated_count"] == 1
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp2 = conn.execute("SELECT category_id FROM expenses WHERE id = 2").fetchone()
             exp3 = conn.execute("SELECT category_id FROM expenses WHERE id = 3").fetchone()

@@ -17,18 +17,18 @@ import allure
 import pytest
 
 from dinary.config import settings
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 
 @pytest.fixture(autouse=True)
 def db(tmp_path, monkeypatch, blank_db):
     dst = tmp_path / "dinary.db"
     shutil.copy(blank_db, dst)
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", dst)
     # Ensure init_db re-seeds the saved-currency table for the
     # tmp DB. ``client`` runs ``create_app`` which enters the
-    # FastAPI lifespan and calls ``ledger_repo.init_db``.
+    # FastAPI lifespan and calls ``storage.init_db``.
 
 
 @allure.epic("API")

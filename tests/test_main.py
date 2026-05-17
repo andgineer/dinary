@@ -8,7 +8,7 @@ import pytest
 
 from dinary.config import settings
 from dinary.main import _lifespan, create_app
-from dinary.services import ledger_repo, sheet_logging
+from dinary.services import storage, sheet_logging
 from dinary import __version__
 
 
@@ -22,7 +22,7 @@ def _lifespan_stubs(monkeypatch):
     calls; it runs concurrently and adds noise to timing assertions.
     Both are no-ops here so the tests stay fast and hermetic.
     """
-    monkeypatch.setattr(ledger_repo, "init_db", lambda: None)
+    monkeypatch.setattr(storage, "init_db", lambda: None)
 
     async def _noop_rate_prefetch():
         await asyncio.sleep(9999)

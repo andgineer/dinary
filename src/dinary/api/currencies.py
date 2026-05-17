@@ -28,7 +28,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from dinary.config import settings
-from dinary.services import currency_repo, ledger_repo
+from dinary.services import currencies, storage
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -52,21 +52,21 @@ class CurrencyListResponse(BaseModel):
 
 def _normalise_code_or_400(code: str) -> str:
     try:
-        return currency_repo._normalise_code(code)  # noqa: SLF001
+        return currencies._normalise_code(code)  # noqa: SLF001
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 def _list_response(con) -> CurrencyListResponse:
     return CurrencyListResponse(
-        codes=currency_repo.list_currencies(con),
+        codes=currencies.list_currencies(con),
         default_code=settings.app_currency.upper(),
     )
 
 
 @router.get("/api/currencies", response_model=CurrencyListResponse)
 def get_currencies() -> CurrencyListResponse:
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         return _list_response(con)
     finally:
@@ -76,9 +76,9 @@ def get_currencies() -> CurrencyListResponse:
 @router.post("/api/currencies", response_model=CurrencyListResponse)
 def add_currency(body: CurrencyAddBody) -> CurrencyListResponse:
     code = _normalise_code_or_400(body.code)
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
-        currency_repo.add_currency(con, code)
+        currencies.add_currency(con, code)
         return _list_response(con)
     finally:
         con.close()
@@ -95,9 +95,9 @@ def delete_currency(code: str) -> CurrencyListResponse:
             status_code=409,
             detail=f"Cannot delete the default currency {canonical!r}",
         )
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
-        currency_repo.remove_currency(con, canonical)
+        currencies.remove_currency(con, canonical)
         return _list_response(con)
     finally:
         con.close()

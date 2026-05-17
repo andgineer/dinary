@@ -158,6 +158,125 @@ describe("review store: correct()", () => {
   });
 });
 
+describe("review store: markDirty()", () => {
+  it("sets dirtyFlag to true and persists to localStorage", () => {
+    const store = useReviewStore();
+    expect(store.dirtyFlag).toBe(false);
+    store.markDirty();
+    expect(store.dirtyFlag).toBe(true);
+    expect(localStorage.getItem("dinary:review:dirty")).toBe("1");
+  });
+});
+
+describe("review store: loadIfNeeded()", () => {
+  it("fetches (reset + page 1) when dirtyFlag is set", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [{ id: 1, is_doubtful: false }],
+      doubtful_count: 0,
+      has_more: false,
+      pending_receipts: 0,
+    });
+    const store = useReviewStore();
+    store.markDirty();
+    await store.loadIfNeeded();
+    expect(reviewApi.getReviewFeed).toHaveBeenCalledTimes(1);
+    expect(store.items).toHaveLength(1);
+  });
+
+  it("fetches when no lastFetchedAt (never loaded)", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      pending_receipts: 0,
+    });
+    const store = useReviewStore();
+    expect(store.lastFetchedAt).toBeNull();
+    await store.loadIfNeeded();
+    expect(reviewApi.getReviewFeed).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetches when data is older than 24h", async () => {
+    const old = Date.now() - 25 * 60 * 60 * 1000;
+    localStorage.setItem("dinary:review:fetchedAt", String(old));
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      pending_receipts: 0,
+    });
+    setActivePinia(createPinia());
+    const store = useReviewStore();
+    await store.loadIfNeeded();
+    expect(reviewApi.getReviewFeed).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips fetch when clean and data is recent", async () => {
+    localStorage.setItem("dinary:review:fetchedAt", String(Date.now() - 60_000));
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      pending_receipts: 0,
+    });
+    setActivePinia(createPinia());
+    const store = useReviewStore();
+    expect(store.dirtyFlag).toBe(false);
+    await store.loadIfNeeded();
+    expect(reviewApi.getReviewFeed).not.toHaveBeenCalled();
+  });
+});
+
+describe("review store: pending_receipts clears dirty flag", () => {
+  it("clears dirtyFlag when loadNextPage returns pending_receipts=0", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      pending_receipts: 0,
+    });
+    const store = useReviewStore();
+    store.markDirty();
+    await store.loadNextPage();
+    expect(store.dirtyFlag).toBe(false);
+    expect(localStorage.getItem("dinary:review:dirty")).toBeNull();
+  });
+
+  it("keeps dirtyFlag when loadNextPage returns pending_receipts > 0", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      pending_receipts: 2,
+    });
+    const store = useReviewStore();
+    store.markDirty();
+    await store.loadNextPage();
+    expect(store.dirtyFlag).toBe(true);
+  });
+
+  it("sets lastFetchedAt after successful loadNextPage", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      pending_receipts: 0,
+    });
+    const store = useReviewStore();
+    const before = Date.now();
+    await store.loadNextPage();
+    expect(store.lastFetchedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it("reset() clears lastFetchedAt from localStorage", () => {
+    localStorage.setItem("dinary:review:fetchedAt", String(Date.now()));
+    const store = useReviewStore();
+    store.reset();
+    expect(store.lastFetchedAt).toBeNull();
+    expect(localStorage.getItem("dinary:review:fetchedAt")).toBeNull();
+  });
+});
+
 describe("review store: loadNextPage() offline", () => {
   it("suppresses error toast when offline and API fails", async () => {
     vi.spyOn(reviewApi, "getReviewFeed").mockRejectedValueOnce(new Error("Network error"));

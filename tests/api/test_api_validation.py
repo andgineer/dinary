@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 import allure
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.expenses import lookup_existing_expense
 
 from _api_helpers import _mock_get_rate, db  # noqa: F401  (autouse + helper)
 
@@ -85,13 +86,13 @@ class TestPostExpenseValidation:
         }
         resp = client.post("/api/expenses", json=bad)
         assert resp.status_code == 422
-        assert ledger_repo.lookup_existing_expense("e_leak") is None
+        assert lookup_existing_expense("e_leak") is None
 
         good = {**bad, "category_id": 1}
         resp = client.post("/api/expenses", json=good)
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
-        assert ledger_repo.lookup_existing_expense("e_leak") is not None
+        assert lookup_existing_expense("e_leak") is not None
 
 
 @allure.epic("API")
@@ -128,7 +129,7 @@ class TestPostExpenseInactiveCarveout:
         resp = client.post("/api/expenses", json=post_body)
         assert resp.status_code == 200, resp.text
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             # Simulate the FK-safe reseed path: mark the category inactive
             # rather than deleting (which would violate the FK held by
@@ -196,7 +197,7 @@ class TestPostExpenseInactiveCarveout:
         resp = client.post("/api/expenses", json=post_body)
         assert resp.status_code == 200, resp.text
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute("UPDATE tags SET is_active = FALSE WHERE id = 1")
         finally:
@@ -245,7 +246,7 @@ class TestPostExpenseInactiveCarveout:
         resp = client.post("/api/expenses", json=post_body)
         assert resp.status_code == 200, resp.text
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute("UPDATE tags SET is_active = FALSE WHERE id = 1")
         finally:

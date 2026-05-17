@@ -24,7 +24,7 @@ from unittest.mock import MagicMock, patch
 import allure
 import pytest
 
-from dinary.services import db_migrations, ledger_repo, sqlite_types
+from dinary.services import db_migrations, storage, sqlite_types
 from dinary.services.exchange_rates import get_rate
 from dinary.services.nbp import _fetch_nbp_pln_leg
 from dinary.services.nbs import _fetch_nbs_rate
@@ -49,7 +49,7 @@ class TestExchangeRate:
         mock_resp.status_code = 200
         mock_get.return_value = mock_resp
 
-        ledger_repo.ensure_data_dir()
+        storage.ensure_data_dir()
         db_path = tmp_path / "dinary.db"
         db_migrations.migrate_db(db_path)
 

@@ -33,8 +33,15 @@ from pydantic import BaseModel, Field
 
 from dinary.api.catalog import _most_used_category_per_group, _most_used_group
 from dinary.config import settings
-from dinary.services import ledger_repo, sheet_mapping
+from dinary.services import sheet_mapping, storage
+from dinary.services.catalog import get_catalog_version
 from dinary.services.exchange_rates import get_rate
+from dinary.services.expenses import (
+    ExpensePayload,
+    describe_expense_conflict,
+    insert_expense,
+    lookup_existing_expense,
+)
 from dinary.services.sheet_logging import is_sheet_logging_enabled, notify_new_work
 
 router = APIRouter()
@@ -83,7 +90,7 @@ async def create_expense(req: ExpenseRequest) -> ExpenseResponse:
 def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
     currency = req.currency or settings.app_currency
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         _resolve_category_for_write(con, req)
         _validate_event(con, req)
@@ -138,9 +145,9 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
         amount_orig_f = float(req.amount)
         comment = req.comment or ""
         try:
-            result = ledger_repo.insert_expense(
+            result = insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id=req.client_expense_id,
                     expense_datetime=expense_dt,
                     amount=amount_acc_f,
@@ -165,9 +172,9 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
             # the original POST and a replay — lands here as a
             # tag_ids-only diff, which lets the client distinguish it
             # from a real body-drift conflict without guessing.
-            diff = ledger_repo.describe_expense_conflict(
+            diff = describe_expense_conflict(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id=req.client_expense_id,
                     expense_datetime=expense_dt,
                     amount=amount_acc_f,
@@ -188,7 +195,7 @@ def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
                 detail = f"{detail}: {diff}"
             raise HTTPException(status_code=409, detail=detail)
 
-        catalog_version = ledger_repo.get_catalog_version(con)
+        catalog_version = get_catalog_version(con)
         default_group_id = _most_used_group(con)
         category_defaults = _most_used_category_per_group(con)
     finally:
@@ -218,7 +225,7 @@ def _is_replay(
     for correct duplicate-vs-conflict classification (200 or 409).
 
     The actual duplicate-vs-conflict decision is made in a single place
-    (``ledger_repo.insert_expense``) so we never drift two compare
+    (``expenses.insert_expense``) so we never drift two compare
     implementations apart.
 
     Race window (single-worker deployment, very narrow):
@@ -247,7 +254,7 @@ def _is_replay(
     ``insert_expense``'s ``BEGIN``; deferred because the refactor
     touches every catalog validation path in this module.
     """
-    return ledger_repo.lookup_existing_expense(client_expense_id, con=con) is not None
+    return lookup_existing_expense(client_expense_id, con=con) is not None
 
 
 def _resolve_category_for_write(

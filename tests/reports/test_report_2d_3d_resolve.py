@@ -9,7 +9,7 @@ fix path. Aggregation, rendering and CLI dispatch live in sibling
 import allure
 
 from dinary.imports.expense_import import ResolutionContext, resolve_row_to_3d
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 from _report_2d_3d_helpers import (  # noqa: F401  (autouse + helper)
     _seed_catalog,
@@ -23,7 +23,7 @@ from _report_2d_3d_helpers import (  # noqa: F401  (autouse + helper)
 class TestResolveRowTo3d:
     def test_mapping_resolution_kind(self, blank_db):
         _seed_catalog(blank_db)
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -49,7 +49,7 @@ class TestResolveRowTo3d:
 
     def test_event_from_mapping(self, blank_db):
         _seed_catalog(blank_db)
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -74,7 +74,7 @@ class TestResolveRowTo3d:
     def test_heuristic_detection_small_amount(self, blank_db):
         """Amount < 200 EUR on 'аренда'+'релокация' → 'коммунальные' via heuristic."""
         _seed_catalog(blank_db)
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -99,7 +99,7 @@ class TestResolveRowTo3d:
     def test_no_heuristic_for_large_amount(self, blank_db):
         """Amount >= 200 EUR on 'аренда'+'релокация' stays 'аренда'."""
         _seed_catalog(blank_db)
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -123,7 +123,7 @@ class TestResolveRowTo3d:
 
     def test_beneficiary_tag_added(self, blank_db):
         _seed_catalog(blank_db)
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -147,7 +147,7 @@ class TestResolveRowTo3d:
 
     def test_returns_none_for_unknown_pair(self, blank_db):
         _seed_catalog(blank_db)
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -173,7 +173,7 @@ class TestResolveRowTo3d:
 class TestPostImportFixViaResolve:
     def test_comment_keyed_fix_overrides_mapping(self, blank_db):
         _seed_catalog(blank_db)
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,
@@ -198,7 +198,7 @@ class TestPostImportFixViaResolve:
 
     def test_unmatched_comment_keeps_mapping(self, blank_db):
         _seed_catalog(blank_db)
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             result = resolve_row_to_3d(
                 con,

@@ -15,13 +15,13 @@ import shutil
 
 import pytest
 
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 
 @pytest.fixture(autouse=True)
 def data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "dinary.db")
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def fresh_db(tmp_path, blank_db):
 @pytest.fixture
 def populated_catalog(fresh_db):
     """Seed the catalog with a minimal 3D dataset."""
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"

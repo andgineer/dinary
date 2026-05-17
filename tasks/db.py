@@ -38,8 +38,8 @@ def migrate(c):
     on the server; no separate migrate step is needed there.
     """
     c.run(
-        "uv run python -c 'from dinary.services import ledger_repo; "
-        'ledger_repo.init_db(); print("Migrated data/dinary.db")\'',
+        "uv run python -c 'from dinary.services import storage; "
+        'storage.init_db(); print("Migrated data/dinary.db")\'',
     )
 
 

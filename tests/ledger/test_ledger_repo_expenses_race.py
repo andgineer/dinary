@@ -14,7 +14,9 @@ from datetime import datetime
 import allure
 import pytest
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.expenses import ExpensePayload, insert_expense
+from dinary.services import expenses as expenses_mod
 
 from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
     data_dir,
@@ -53,11 +55,11 @@ class TestInsertExpenseRaceRecovery:
 
     def _insert_winner(self, populated_catalog) -> None:
         """Commit the original ``client_expense_id='race-x'`` row."""
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            result = ledger_repo.insert_expense(
+            result = insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="race-x",
                     expense_datetime=datetime(2026, 5, 5, 12),
                     amount=10.0,
@@ -95,7 +97,7 @@ class TestInsertExpenseRaceRecovery:
         """Identical second insert → ``IntegrityError`` → recovery → ``duplicate``."""
         self._insert_winner(populated_catalog)
 
-        original_load_sql = ledger_repo.load_sql
+        original_load_sql = expenses_mod.load_sql
         bare_sql = self._bare_insert_sql()
 
         def fake_load_sql(name: str) -> str:
@@ -103,13 +105,13 @@ class TestInsertExpenseRaceRecovery:
                 return bare_sql
             return original_load_sql(name)
 
-        monkeypatch.setattr(ledger_repo, "load_sql", fake_load_sql)
+        monkeypatch.setattr(expenses_mod, "load_sql", fake_load_sql)
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            result = ledger_repo.insert_expense(
+            result = insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="race-x",
                     expense_datetime=datetime(2026, 5, 5, 12),
                     amount=10.0,
@@ -132,7 +134,7 @@ class TestInsertExpenseRaceRecovery:
         """Different amount on second insert → ``IntegrityError`` → recovery → ``conflict``."""
         self._insert_winner(populated_catalog)
 
-        original_load_sql = ledger_repo.load_sql
+        original_load_sql = expenses_mod.load_sql
         bare_sql = self._bare_insert_sql()
 
         def fake_load_sql(name: str) -> str:
@@ -140,13 +142,13 @@ class TestInsertExpenseRaceRecovery:
                 return bare_sql
             return original_load_sql(name)
 
-        monkeypatch.setattr(ledger_repo, "load_sql", fake_load_sql)
+        monkeypatch.setattr(expenses_mod, "load_sql", fake_load_sql)
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            result = ledger_repo.insert_expense(
+            result = insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="race-x",
                     expense_datetime=datetime(2026, 5, 5, 12),
                     amount=99.0,
@@ -238,13 +240,13 @@ class TestIsUniqueViolationOfClientExpenseId:
 
     def test_classifies_real_duplicate_key_as_race(self):
         exc = self._real_duplicate_key_exception()
-        assert ledger_repo._is_unique_violation_of_client_expense_id(exc), (
+        assert expenses_mod._is_unique_violation_of_client_expense_id(exc), (
             f"SQLite dup-key message no longer matches classifier keywords: {exc!s}"
         )
 
     def test_classifies_real_fk_violation_as_not_a_race(self):
         exc = self._real_fk_violation_exception()
-        assert not ledger_repo._is_unique_violation_of_client_expense_id(exc), (
+        assert not expenses_mod._is_unique_violation_of_client_expense_id(exc), (
             f"FK violation was misclassified as a client_expense_id "
             f"UNIQUE race; would be swallowed as a duplicate/conflict "
             f"response instead of surfacing as 500. Message: {exc!s}"
@@ -289,4 +291,4 @@ class TestIsUniqueViolationOfClientExpenseId:
         flips at least one row here.
         """
         fake = RuntimeError(message)
-        assert ledger_repo._is_unique_violation_of_client_expense_id(fake) is expected, message
+        assert expenses_mod._is_unique_violation_of_client_expense_id(fake) is expected, message

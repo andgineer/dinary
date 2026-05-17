@@ -12,8 +12,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from dinary.background.receipt_classification_task import notify_new_receipt
-from dinary.services import ledger_repo
-from dinary.services.receipt_repo import (
+from dinary.services import storage
+from dinary.services.receipts import (
     get_receipt_by_client_id,
     insert_job,
     insert_receipt,
@@ -41,7 +41,7 @@ async def create_receipt(req: ReceiptRequest) -> ReceiptResponse:
 
 
 def _create_receipt_sync(req: ReceiptRequest) -> ReceiptResponse:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         existing = get_receipt_by_client_id(conn, req.client_receipt_id)
         if existing:

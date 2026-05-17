@@ -37,7 +37,7 @@ from dataclasses import dataclass
 import gspread
 
 from dinary.config import settings, spreadsheet_id_from_setting
-from dinary.services import ledger_repo
+from dinary.services import storage
 from dinary.services.sheets import drive_get_modified_time, get_sheet
 
 logger = logging.getLogger(__name__)
@@ -240,7 +240,7 @@ def resolve_projection(
     resolved ``(sheet_category, sheet_group)`` pair; an empty string
     is a legitimate per-column result (explicit clear).
 
-    NOTE: ``ledger_repo.logging_projection`` contains a second copy of
+    NOTE: ``catalog.logging_projection`` contains a second copy of
     this same semantics (running directly against ``sheet_mapping`` /
     ``sheet_mapping_tags`` rows fetched from the DB). The two live
     apart so this pure helper can stay as a dependency-free building
@@ -329,7 +329,7 @@ def _atomic_swap(con: sqlite3.Connection, rows: list[MapRow]) -> None:
                 )
         con.execute("COMMIT")
     except Exception:
-        ledger_repo.best_effort_rollback(con, context="sheet_mapping._atomic_swap")
+        storage.best_effort_rollback(con, context="sheet_mapping._atomic_swap")
         raise
 
 
@@ -375,7 +375,7 @@ def reload_now(*, check_after: bool = True) -> dict:
 
     raw = ws.get_all_values()[1:]
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         cat_id_by_name, event_id_by_name, tag_id_by_name = _load_catalog(con)
         rows = parse_rows(
@@ -514,7 +514,7 @@ _TAG_RULES: list[tuple[str, str]] = [
 # Конверт is not the resolver's default blank. ``Расходы`` is left as
 # ``WILDCARD`` because the "no rule matched" fallback in both
 # ``resolve_projection`` (sheet_mapping.py) and
-# ``logging_projection`` (ledger_repo.py) already substitutes the
+# ``logging_projection`` (db.py) already substitutes the
 # category's canonical name — so a literal ``cname`` here would just
 # be noise duplicating a fallback that is exercised by tests.
 _CATEGORY_ENVELOPES: dict[str, str] = {
@@ -597,14 +597,14 @@ def ensure_default_map_tab() -> None:
     except gspread.WorksheetNotFound:
         pass
     else:
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             _warn_if_existing_map_tab_is_stale(existing_ws, con)
         finally:
             con.close()
         return
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         cat_rows = con.execute(
             "SELECT c.name FROM categories c"

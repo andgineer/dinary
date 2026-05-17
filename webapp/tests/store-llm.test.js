@@ -33,14 +33,17 @@ const SAMPLE_STATUS = {
     },
   ],
   meta: { llm_last_provider_idx: "0" },
+  pending_receipts: 0,
 };
 
 beforeEach(() => {
+  localStorage.clear();
   setActivePinia(createPinia());
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 describe("llm store: refresh() offline", () => {
@@ -95,5 +98,80 @@ describe("llm store: refresh()", () => {
 
   it("listProviders is not exported from adminLlm", () => {
     expect(llmApi.listProviders).toBeUndefined();
+  });
+});
+
+describe("llm store: markDirty()", () => {
+  it("sets dirtyFlag to true and persists to localStorage", () => {
+    const store = useLlmStore();
+    expect(store.dirtyFlag).toBe(false);
+    store.markDirty();
+    expect(store.dirtyFlag).toBe(true);
+    expect(localStorage.getItem("dinary:llm:dirty")).toBe("1");
+  });
+});
+
+describe("llm store: loadIfNeeded()", () => {
+  it("fetches when dirtyFlag is set", async () => {
+    const spy = vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
+    const store = useLlmStore();
+    store.markDirty();
+    await store.loadIfNeeded();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetches when no lastFetchedAt (never loaded)", async () => {
+    const spy = vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
+    const store = useLlmStore();
+    expect(store.lastFetchedAt).toBeNull();
+    await store.loadIfNeeded();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetches when data is older than 24h", async () => {
+    const old = Date.now() - 25 * 60 * 60 * 1000;
+    localStorage.setItem("dinary:llm:fetchedAt", String(old));
+    const spy = vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
+    setActivePinia(createPinia());
+    const store = useLlmStore();
+    await store.loadIfNeeded();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips fetch when clean and data is recent", async () => {
+    localStorage.setItem("dinary:llm:fetchedAt", String(Date.now() - 60_000));
+    const spy = vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
+    setActivePinia(createPinia());
+    const store = useLlmStore();
+    expect(store.dirtyFlag).toBe(false);
+    await store.loadIfNeeded();
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("llm store: refresh() clears dirty flag when pending_receipts is 0", () => {
+  it("clears dirtyFlag and localStorage when pending_receipts === 0", async () => {
+    vi.spyOn(llmApi, "getStatus").mockResolvedValue({ ...SAMPLE_STATUS, pending_receipts: 0 });
+    const store = useLlmStore();
+    store.markDirty();
+    await store.refresh();
+    expect(store.dirtyFlag).toBe(false);
+    expect(localStorage.getItem("dinary:llm:dirty")).toBeNull();
+  });
+
+  it("keeps dirtyFlag when pending_receipts > 0", async () => {
+    vi.spyOn(llmApi, "getStatus").mockResolvedValue({ ...SAMPLE_STATUS, pending_receipts: 3 });
+    const store = useLlmStore();
+    store.markDirty();
+    await store.refresh();
+    expect(store.dirtyFlag).toBe(true);
+  });
+
+  it("sets lastFetchedAt after successful refresh", async () => {
+    vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
+    const store = useLlmStore();
+    const before = Date.now();
+    await store.refresh();
+    expect(store.lastFetchedAt).toBeGreaterThanOrEqual(before);
   });
 });

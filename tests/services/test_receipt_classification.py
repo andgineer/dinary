@@ -10,9 +10,9 @@ import allure
 import pytest
 
 from dinary.background.receipt_classification_task import _classify_and_persist
-from dinary.services import db_migrations, ledger_repo
+from dinary.services import db_migrations, storage
 from dinary.services.llm_client import AllProvidersExhausted, ClassificationResult, ProviderPool
-from dinary.services.receipt_repo import (
+from dinary.services.receipts import (
     ReceiptJobRow,
     claim_next_job,
     get_receipt_items,
@@ -36,10 +36,10 @@ def conn(tmp_path, monkeypatch):
         db_migrations.migrate_db(blank_src)
 
     shutil.copy(blank_src, dst)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", dst)
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
 
-    c = ledger_repo.get_connection()
+    c = storage.get_connection()
     yield c
     c.close()
 

@@ -1,19 +1,18 @@
-"""Catalog read queries + mapping resolution + sheet-logging projection.
+"""Catalog read queries, mapping resolution, and sheet-logging projection.
 
-Split out of ``ledger_repo`` to keep files focused. All functions accept
-an open ``sqlite3.Connection`` (from ``ledger_repo.get_connection()``) and
-are read-only except ``set_catalog_version``.
+All functions accept an open ``sqlite3.Connection`` (from ``db.get_connection()``)
+and are read-only except ``set_catalog_version``.
 """
 
 import json
 import sqlite3
 
-from dinary.services.ledger_repo import (
+from dinary.services.sql_loader import fetchall_as, fetchone_as, load_sql
+from dinary.services.storage import (
     CategoryListRow,
     LoggingProjectionCandidateRow,
     MappingRow,
 )
-from dinary.services.sql_loader import fetchall_as, fetchone_as, load_sql
 
 # ---------------------------------------------------------------------------
 # Catalog queries

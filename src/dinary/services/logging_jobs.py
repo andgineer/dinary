@@ -1,7 +1,6 @@
 """Sheet-logging job queue helpers.
 
-Split out of ``ledger_repo`` to keep files focused. All functions accept
-an open ``sqlite3.Connection`` (from ``ledger_repo.get_connection()``).
+All functions accept an open ``sqlite3.Connection`` (from ``db.get_connection()``).
 """
 
 import logging
@@ -9,7 +8,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-from dinary.services.ledger_repo import best_effort_rollback, default_claim_stale_timeout
+from dinary.services.storage import best_effort_rollback, default_claim_stale_timeout
 
 logger = logging.getLogger(__name__)
 

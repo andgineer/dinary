@@ -13,7 +13,9 @@ from unittest.mock import patch
 import allure
 
 from dinary.config import settings
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.logging_jobs import list_logging_jobs
+from dinary.services.expenses import get_expense_tags
 
 from _api_helpers import _mock_get_rate, db  # noqa: F401  (autouse + helper)
 
@@ -66,7 +68,7 @@ class TestPostExpenseHappyPath:
         assert second.json()["status"] == "duplicate"
 
         # The idempotent replay does not create a second row.
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             count = con.execute(
                 "SELECT COUNT(*) FROM expenses WHERE client_expense_id = 'e2'",
@@ -91,14 +93,14 @@ class TestPostExpenseHappyPath:
             },
         )
         assert resp.status_code == 200, resp.text
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             row = con.execute(
                 "SELECT id, event_id FROM expenses WHERE client_expense_id = 'e_evt'",
             ).fetchone()
             assert row is not None
             assert int(row[1]) == 1
-            tags = sorted(ledger_repo.get_expense_tags(con, int(row[0])))
+            tags = sorted(get_expense_tags(con, int(row[0])))
         finally:
             con.close()
         assert tags == [1, 2]
@@ -114,7 +116,7 @@ class TestPostExpenseHappyPath:
         main "same-invariant-on-both-paths" contract tests around
         ``events.auto_tags`` rely on.
         """
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "UPDATE events SET auto_tags = ? WHERE id = 1",
@@ -138,13 +140,13 @@ class TestPostExpenseHappyPath:
         )
         assert resp.status_code == 200, resp.text
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             row = con.execute(
                 "SELECT id FROM expenses WHERE client_expense_id = 'e_auto'",
             ).fetchone()
             assert row is not None
-            stored = sorted(ledger_repo.get_expense_tags(con, int(row[0])))
+            stored = sorted(get_expense_tags(con, int(row[0])))
         finally:
             con.close()
         assert stored == [1, 2]
@@ -248,7 +250,7 @@ class TestPostExpenseHappyPath:
         assert data["currency_original"] == "RSD"
 
         # The stored ``amount`` is in accounting currency (1170 / 117 = 10 EUR).
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             row = con.execute(
                 "SELECT amount, amount_original, currency_original"
@@ -287,9 +289,9 @@ class TestPostExpenseSheetLogging:
         )
         assert resp.status_code == 200, resp.text
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.list_logging_jobs(con) == []
+            assert list_logging_jobs(con) == []
         finally:
             con.close()
 
@@ -320,9 +322,9 @@ class TestPostExpenseSheetLogging:
         )
         assert resp.status_code == 200, resp.text
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            pks = ledger_repo.list_logging_jobs(con)
+            pks = list_logging_jobs(con)
             expected_pk_row = con.execute(
                 "SELECT id FROM expenses WHERE client_expense_id = ?",
                 ["e_log"],
@@ -369,7 +371,7 @@ class TestExpenseDefaults:
         assert data["default_category_ids"]["1"] == 1
 
     def test_most_used_manual_category_returned(self, client):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             _insert_expense_direct(con, 10, 1)
             _insert_expense_direct(con, 11, 1)
@@ -391,7 +393,7 @@ class TestExpenseDefaults:
         assert data["default_category_ids"]["1"] == 1
 
     def test_receipt_sourced_expenses_excluded(self, client):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO receipts (id, client_receipt_id, url, store_name_raw,"
@@ -419,7 +421,7 @@ class TestExpenseDefaults:
         assert data["default_category_ids"]["1"] == 1
 
     def test_old_expenses_excluded_from_defaults(self, client):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             # Category 2 used heavily but 100 days ago (outside 3-month window)
             for i in range(20, 26):

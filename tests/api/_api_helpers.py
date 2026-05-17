@@ -6,7 +6,7 @@ them as fixtures because they're in the test module's namespace.
 
 The autouse ``_tmp_db`` is module-local rather than promoted to
 ``conftest.py`` so the per-test DB-path override stays scoped to the
-API suite (sibling tests must not have their ``ledger_repo.DATA_DIR``
+API suite (sibling tests must not have their ``storage.DATA_DIR``
 silently rewritten).
 """
 
@@ -18,7 +18,8 @@ from unittest.mock import patch
 
 import pytest
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services import expenses
 
 
 @contextlib.contextmanager
@@ -27,7 +28,7 @@ def _count_race_recoveries():
 
     Yields a ``{"count": int}`` dict that callers read *after* the
     ``with`` block exits. Works by wrapping
-    ``ledger_repo.best_effort_rollback`` with a counter that
+    ``storage.best_effort_rollback`` with a counter that
     increments on contexts containing ``"race-recovery"`` — the
     substring both INSERT-time and COMMIT-time ``_RACE_EXCS``
     branches embed in their context string. The outer
@@ -44,7 +45,7 @@ def _count_race_recoveries():
     """
     counter = {"count": 0}
     lock = threading.Lock()
-    original = ledger_repo.best_effort_rollback
+    original = storage.best_effort_rollback
 
     def counting_rollback(con, *, context: str) -> None:
         if "race-recovery" in context:
@@ -52,7 +53,7 @@ def _count_race_recoveries():
                 counter["count"] += 1
         original(con, context=context)
 
-    with patch.object(ledger_repo, "best_effort_rollback", new=counting_rollback):
+    with patch.object(expenses, "best_effort_rollback", new=counting_rollback):
         yield counter
 
 
@@ -66,10 +67,10 @@ def db(tmp_path, monkeypatch, blank_db):
     """Point the repo at a fresh per-test DB and seed a minimal catalog."""
     dst = tmp_path / "dinary.db"
     shutil.copy(blank_db, dst)
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", dst)
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"

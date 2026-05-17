@@ -27,7 +27,7 @@ def seeded_db(tmp_path, monkeypatch):
     coercion paths without coupling these tests to every migration.
     Only ``settings.data_path`` needs monkeypatching because
     ``sql._execute`` reads that directly rather than going through
-    ``ledger_repo.DB_PATH`` (the stored-SQL runner is not relevant to
+    ``db.DB_PATH`` (the stored-SQL runner is not relevant to
     this ad-hoc tool).
     """
     db_path = tmp_path / "dinary.db"

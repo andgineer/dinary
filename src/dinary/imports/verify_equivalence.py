@@ -28,7 +28,7 @@ from dinary.imports.expense_import import (
     parse_display_amount,
     resolve_currency,
 )
-from dinary.services import ledger_repo
+from dinary.services import storage
 from dinary.services.sheets import (
     HEADER_ROWS,
     _cell,
@@ -105,7 +105,7 @@ def _read_db_aggregates(year: int) -> dict[int, dict[tuple[str, str], dict]]:
     """Aggregate every bootstrap-imported expense row by sheet provenance."""
     result: dict[int, dict[tuple[str, str], dict]] = defaultdict(dict)
 
-    con = ledger_repo.get_connection()
+    con = storage.get_connection()
     try:
         rows = con.execute(
             "SELECT CAST(strftime('%m', datetime) AS INTEGER),"
@@ -136,7 +136,7 @@ def verify_bootstrap_import(year: int) -> dict:
     but do not flip `ok` (sheet-side comments are concatenated with `;` and
     the import path may have applied normalization).
     """
-    ledger_repo.init_db()
+    storage.init_db()
     sheet_data = _read_sheet_aggregates(year)
     db_data = _read_db_aggregates(year)
 

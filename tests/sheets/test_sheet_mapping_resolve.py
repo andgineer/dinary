@@ -21,7 +21,7 @@ Parsing lives in :file:`test_sheet_mapping_parse.py`; the reload /
 
 import allure
 
-from dinary.services import ledger_repo, sheet_mapping
+from dinary.services import storage, sheet_mapping
 
 from _sheet_mapping_helpers import (  # noqa: F401  (autouse + helpers)
     _catalog,
@@ -128,7 +128,7 @@ class TestAtomicSwap:
             event_id_by_name=events,
             tag_id_by_name=tags,
         )
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             sheet_mapping._atomic_swap(con, rows)
             result = con.execute(
@@ -153,7 +153,7 @@ class TestAtomicSwap:
             event_id_by_name=events,
             tag_id_by_name=tags,
         )
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             sheet_mapping._atomic_swap(con, first)
             sheet_mapping._atomic_swap(con, second)
@@ -184,7 +184,7 @@ class TestAtomicSwap:
             event_id_by_name=events,
             tag_id_by_name=tags,
         )
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             sheet_mapping._atomic_swap(con, first)
             first_tags = con.execute(
@@ -217,7 +217,7 @@ class TestLoadCatalog:
     """
 
     def test_loads_inactive_tags(self):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute("UPDATE tags SET is_active = FALSE WHERE id = 3")
             _, _, tag_id_by_name = sheet_mapping._load_catalog(con)
@@ -226,7 +226,7 @@ class TestLoadCatalog:
         assert tag_id_by_name.get("путешествия") == 3
 
     def test_loads_inactive_categories(self):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute("UPDATE categories SET is_active = FALSE WHERE id = 2")
             cat_id_by_name, _, _ = sheet_mapping._load_catalog(con)
@@ -235,7 +235,7 @@ class TestLoadCatalog:
         assert cat_id_by_name.get("машина") == 2
 
     def test_loads_inactive_events(self):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute("UPDATE events SET is_active = FALSE WHERE id = 1")
             _, event_id_by_name, _ = sheet_mapping._load_catalog(con)
@@ -250,7 +250,7 @@ class TestLoadCatalog:
         row ``*,*,отпуск,*,путешествия`` surviving the operator
         deactivating "отпуск" via the PWA "Управлять" list.
         """
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute("UPDATE tags SET is_active = FALSE WHERE id = 3")
             cats, events, tags = sheet_mapping._load_catalog(con)
@@ -270,7 +270,7 @@ class TestLoadCatalog:
 @allure.feature("event auto_tags helpers")
 class TestEventAutoTags:
     def test_resolve_returns_active_tag_ids(self):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "UPDATE events SET auto_tags = '[\"путешествия\"]' WHERE id = 1",
@@ -281,14 +281,14 @@ class TestEventAutoTags:
         assert ids == [3]
 
     def test_missing_event_returns_empty(self):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             assert sheet_mapping.resolve_event_auto_tag_ids(con, 999) == []
         finally:
             con.close()
 
     def test_malformed_json_is_treated_as_empty(self):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute("UPDATE events SET auto_tags = 'not-json' WHERE id = 1")
             assert sheet_mapping.resolve_event_auto_tag_ids(con, 1) == []
@@ -296,7 +296,7 @@ class TestEventAutoTags:
             con.close()
 
     def test_unknown_tag_names_are_dropped(self):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 'UPDATE events SET auto_tags = \'["путешествия", "missing"]\' WHERE id = 1',
@@ -314,7 +314,7 @@ class TestEventAutoTags:
         vacation-only tag like "отпуск" silently breaks the
         event-based auto-attach pipeline (the direct complaint behind
         this regression test)."""
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute("UPDATE tags SET is_active = FALSE WHERE id = 3")
             con.execute(

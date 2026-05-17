@@ -15,7 +15,8 @@ from unittest.mock import MagicMock, patch
 import allure
 import pytest
 
-from dinary.services import ledger_repo, sheet_logging
+from dinary.services import storage, sheet_logging
+from dinary.services.logging_jobs import list_logging_jobs
 
 from _sheet_logging_helpers import (  # noqa: F401  (autouse + fixtures)
     _reset_backoff,
@@ -61,9 +62,9 @@ class TestDrainOneJobReturnContract:
 
         # Queue row remains ``pending`` (claim released) so the next
         # sweep retries.
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.list_logging_jobs(con) == [expense_pk]
+            assert list_logging_jobs(con) == [expense_pk]
         finally:
             con.close()
 
@@ -101,16 +102,16 @@ class TestDrainOneJobClaimStolen:
         mock_ecr.return_value = (3, values)
 
         expense_pk = setup
-        with patch.object(ledger_repo, "clear_logging_job", return_value=False):
+        with patch("dinary.services.sheet_logging.clear_logging_job", return_value=False):
             result = sheet_logging._drain_one_job(
                 expense_pk,
                 spreadsheet_id="test-spreadsheet-id",
             )
 
         assert result is sheet_logging.DrainResult.RECOVERED_WITH_DUPLICATE
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.list_logging_jobs(con) == []
+            assert list_logging_jobs(con) == []
         finally:
             con.close()
 
@@ -141,8 +142,8 @@ class TestDrainOneJobClaimStolen:
 
         expense_pk = setup
         with (
-            patch.object(ledger_repo, "clear_logging_job", return_value=False),
-            patch.object(ledger_repo, "force_clear_logging_job", return_value=False),
+            patch("dinary.services.sheet_logging.clear_logging_job", return_value=False),
+            patch("dinary.services.sheet_logging.force_clear_logging_job", return_value=False),
         ):
             result = sheet_logging._drain_one_job(
                 expense_pk,

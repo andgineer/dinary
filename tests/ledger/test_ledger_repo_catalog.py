@@ -12,7 +12,16 @@ sibling module :file:`test_ledger_repo_logging_projection.py`.
 import allure
 import pytest
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.catalog import (
+    get_catalog_version,
+    get_category_name,
+    get_mapping_tag_ids,
+    list_categories,
+    resolve_mapping,
+    resolve_mapping_for_year,
+    set_catalog_version,
+)
 
 from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
     data_dir,
@@ -25,13 +34,13 @@ from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
 @allure.feature("Connection lifecycle")
 class TestConnectionLifecycle:
     def test_init_creates_file(self, tmp_path):
-        assert not ledger_repo.DB_PATH.exists()
-        ledger_repo.init_db()
-        assert ledger_repo.DB_PATH.exists()
+        assert not storage.DB_PATH.exists()
+        storage.init_db()
+        assert storage.DB_PATH.exists()
 
     def test_get_connection_before_init_autocreates(self, tmp_path):
         """``get_connection`` opens the file even without explicit init."""
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             row = con.execute("SELECT 1").fetchone()
         finally:
@@ -43,8 +52,8 @@ class TestConnectionLifecycle:
         # test-harness compatibility; ``get_connection`` always returns
         # a fresh connection after the port. The test still exercises
         # the call to pin the no-op contract.
-        ledger_repo.close_connection()
-        con = ledger_repo.get_connection()
+        storage.close_connection()
+        con = storage.get_connection()
         try:
             con.execute("SELECT 1").fetchone()
         finally:
@@ -58,8 +67,8 @@ class TestConnectionLifecycle:
         explicit commit on the writer lets the second connection
         observe the new row.
         """
-        c1 = ledger_repo.get_connection()
-        c2 = ledger_repo.get_connection()
+        c1 = storage.get_connection()
+        c2 = storage.get_connection()
         try:
             c1.execute(
                 "INSERT INTO category_groups (id, name, sort_order) VALUES (42, 'g42', 99)",
@@ -78,26 +87,26 @@ class TestConnectionLifecycle:
 @allure.feature("Catalog version")
 class TestCatalogVersion:
     def test_initial_version_is_one(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.get_catalog_version(con) == 1
+            assert get_catalog_version(con) == 1
         finally:
             con.close()
 
     def test_set_then_get(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            ledger_repo.set_catalog_version(con, 42)
-            assert ledger_repo.get_catalog_version(con) == 42
+            set_catalog_version(con, 42)
+            assert get_catalog_version(con) == 42
         finally:
             con.close()
 
     def test_missing_key_raises(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute("DELETE FROM app_metadata WHERE key = 'catalog_version'")
             with pytest.raises(RuntimeError, match="catalog_version"):
-                ledger_repo.get_catalog_version(con)
+                get_catalog_version(con)
         finally:
             con.close()
 
@@ -106,7 +115,7 @@ class TestCatalogVersion:
 @allure.feature("List categories (is_active)")
 class TestListCategories:
     def test_filters_inactive_rows(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -118,7 +127,7 @@ class TestListCategories:
                 " (2, 'retired', 1, 0),"
                 " (3, 'orphan-group', 2, 1)",
             )
-            rows = ledger_repo.list_categories(con)
+            rows = list_categories(con)
         finally:
             con.close()
         names = {r.name for r in rows}
@@ -127,7 +136,7 @@ class TestListCategories:
         assert names == {"active"}
 
     def test_ordering(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -139,7 +148,7 @@ class TestListCategories:
                 " (2, 'a', 1, 1),"
                 " (3, 'c', 2, 1)",
             )
-            rows = ledger_repo.list_categories(con)
+            rows = list_categories(con)
         finally:
             con.close()
         # Groups ordered by sort_order: 'A' (1) before 'Z' (2); within each
@@ -155,9 +164,9 @@ class TestListCategories:
 @allure.feature("Sheet mapping (3D)")
 class TestSheetMapping:
     def test_resolve_year_zero_default(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            row = ledger_repo.resolve_mapping(con, "еда", "собака")
+            row = resolve_mapping(con, "еда", "собака")
             assert row is not None
             assert row.category_id == 1
             assert row.event_id is None
@@ -165,9 +174,9 @@ class TestSheetMapping:
             con.close()
 
     def test_year_specific_overrides_default(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            row = ledger_repo.resolve_mapping_for_year(con, "еда", "собака", 2026)
+            row = resolve_mapping_for_year(con, "еда", "собака", 2026)
             assert row is not None
             assert row.category_id == 2
             assert row.event_id == 10
@@ -175,26 +184,26 @@ class TestSheetMapping:
             con.close()
 
     def test_year_falls_back_to_zero(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            row = ledger_repo.resolve_mapping_for_year(con, "еда", "собака", 2024)
+            row = resolve_mapping_for_year(con, "еда", "собака", 2024)
             assert row is not None
             assert row.category_id == 1
         finally:
             con.close()
 
     def test_unknown_returns_none(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.resolve_mapping(con, "missing", "?") is None
+            assert resolve_mapping(con, "missing", "?") is None
         finally:
             con.close()
 
     def test_get_mapping_tag_ids(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.get_mapping_tag_ids(con, 1) == [1]
-            assert ledger_repo.get_mapping_tag_ids(con, 2) == []
+            assert get_mapping_tag_ids(con, 1) == [1]
+            assert get_mapping_tag_ids(con, 2) == []
         finally:
             con.close()
 
@@ -203,7 +212,7 @@ class TestSheetMapping:
 @allure.feature("get_category_name")
 class TestGetCategoryName:
     def test_existing(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'g', 1)",
@@ -212,13 +221,13 @@ class TestGetCategoryName:
                 "INSERT INTO categories (id, name, group_id) VALUES (1, 'еда', 1)",
             )
             con.commit()
-            assert ledger_repo.get_category_name(con, 1) == "еда"
+            assert get_category_name(con, 1) == "еда"
         finally:
             con.close()
 
     def test_missing(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.get_category_name(con, 999) is None
+            assert get_category_name(con, 999) is None
         finally:
             con.close()

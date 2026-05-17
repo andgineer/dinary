@@ -2,8 +2,8 @@
 
 import allure
 
-from dinary.services import ledger_repo
-from dinary.services.receipt_repo import requeue_receipts
+from dinary.services.receipts import requeue_receipts
+from dinary.services import storage
 
 
 def _seed(conn):
@@ -76,7 +76,7 @@ def _seed(conn):
 @allure.feature("reclassify-receipts")
 class TestRequeuReceipts:
     def test_resets_classification_and_queues_job(self, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             r1, _ = _seed(conn)
             conn.execute("BEGIN IMMEDIATE")
@@ -110,7 +110,7 @@ class TestRequeuReceipts:
             conn.close()
 
     def test_idempotent_when_run_twice(self, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             r1, _ = _seed(conn)
             conn.execute("BEGIN IMMEDIATE")
@@ -129,7 +129,7 @@ class TestRequeuReceipts:
             conn.close()
 
     def test_scoped_to_specified_receipts(self, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             r1, r2 = _seed(conn)
             conn.execute("BEGIN IMMEDIATE")
@@ -151,7 +151,7 @@ class TestRequeuReceipts:
             conn.close()
 
     def test_clear_rules_removes_store_scoped_and_generic_rules(self, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             r1, _ = _seed(conn)
             lidl_id = conn.execute("SELECT store_id FROM receipts WHERE id = ?", [r1]).fetchone()[0]
@@ -194,7 +194,7 @@ class TestRequeuReceipts:
 
     def test_clear_rules_removes_generic_rule_for_item_in_receipt(self, db):  # noqa: ARG002
         """clear_rules=True must also delete generic (store_id IS NULL) rules for items in the target receipts."""
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             r1, _ = _seed(conn)
             # Add a generic "hleb" rule (same item that IS in r1)
@@ -223,7 +223,7 @@ class TestRequeuReceipts:
             conn.close()
 
     def test_empty_ids_is_noop(self, db):  # noqa: ARG002
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             _seed(conn)
             conn.execute("BEGIN IMMEDIATE")

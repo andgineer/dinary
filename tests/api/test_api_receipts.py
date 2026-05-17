@@ -2,7 +2,7 @@
 
 import allure
 
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 from _api_helpers import db  # noqa: F401 (autouse fixture)
 
@@ -46,7 +46,7 @@ class TestPostReceipt:
             json={"client_receipt_id": "r4", "url": "https://suf.purs.gov.rs/v/?vl=xyz"},
         )
         receipt_id = resp.json()["receipt_id"]
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             row = con.execute(
                 "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?",

@@ -22,16 +22,16 @@ import allure
 import pytest
 
 from dinary.api.catalog import _if_none_match_matches
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 
 @pytest.fixture(autouse=True)
 def db(tmp_path, monkeypatch, blank_db):
     dst = tmp_path / "dinary.db"
     shutil.copy(blank_db, dst)
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
-    con = ledger_repo.get_connection()
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", dst)
+    con = storage.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -144,7 +144,7 @@ class TestCatalogRemovableFlag:
         assert groups[2] is True
 
     def test_category_becomes_non_removable_when_referenced_by_expense(self, client):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO expenses (id, client_expense_id, datetime, amount,"
@@ -168,7 +168,7 @@ class TestCatalogRemovableFlag:
         # pressing it soft-deletes (because of the FK), the row
         # vanishes from "active", and the operator is left wondering
         # why expense history "lost" the event reference.
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO expenses (id, client_expense_id, datetime, amount,"
@@ -186,7 +186,7 @@ class TestCatalogRemovableFlag:
         # payload. The FK engine won't see the name->name link, but
         # the snapshot builder scans auto_tags and must mark the tag
         # as non-removable.
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO tags (id, name, is_active) VALUES (99, 'vacation', TRUE)",

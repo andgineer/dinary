@@ -6,7 +6,13 @@ from datetime import datetime
 
 import allure
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.expenses import (
+    ExpensePayload,
+    get_expense_by_id,
+    insert_expense,
+    lookup_existing_expense,
+)
 
 from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
     data_dir,
@@ -19,11 +25,11 @@ from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
 @allure.feature("lookup_existing_expense")
 class TestLookupExistingExpense:
     def test_found(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            ledger_repo.insert_expense(
+            insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="L1",
                     expense_datetime=datetime(2026, 4, 15, 12),
                     amount=42.0,
@@ -38,25 +44,25 @@ class TestLookupExistingExpense:
         finally:
             con.close()
 
-        row = ledger_repo.lookup_existing_expense("L1")
+        row = lookup_existing_expense("L1")
         assert row is not None
         assert row.currency_original == "EUR"
         assert row.category_id == 1
         assert row.comment == "lunch"
 
     def test_not_found(self, populated_catalog):
-        assert ledger_repo.lookup_existing_expense("missing") is None
+        assert lookup_existing_expense("missing") is None
 
 
 @allure.epic("Ledger repo")
 @allure.feature("get_expense_by_id")
 class TestGetExpenseById:
     def test_roundtrip(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            ledger_repo.insert_expense(
+            insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="E1",
                     expense_datetime=datetime(2026, 3, 3, 12),
                     amount=1.5,
@@ -71,7 +77,7 @@ class TestGetExpenseById:
             pk = con.execute(
                 "SELECT id FROM expenses WHERE client_expense_id = 'E1'",
             ).fetchone()[0]
-            row = ledger_repo.get_expense_by_id(con, int(pk))
+            row = get_expense_by_id(con, int(pk))
         finally:
             con.close()
         assert row is not None
@@ -80,8 +86,8 @@ class TestGetExpenseById:
         assert row.comment == "c"
 
     def test_missing_returns_none(self, populated_catalog):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.get_expense_by_id(con, 99999) is None
+            assert get_expense_by_id(con, 99999) is None
         finally:
             con.close()

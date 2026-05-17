@@ -10,10 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import allure
 
 from dinary.background.receipt_classification_task import _process_job
-from dinary.services import ledger_repo
+from dinary.services import storage
 from dinary.services.llm_client import ClassificationResult
 from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-from dinary.services.receipt_repo import claim_next_job
+from dinary.services.receipts import claim_next_job
 
 from _api_helpers import db  # noqa: F401
 
@@ -82,7 +82,7 @@ class TestReceiptPipelineE2E:
         assert resp.status_code == 200
         receipt_id = resp.json()["receipt_id"]
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             job = claim_next_job(conn)
         finally:
@@ -92,7 +92,7 @@ class TestReceiptPipelineE2E:
 
         _run_drain(job)
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp = conn.execute(
                 "SELECT id, amount, category_id, confidence_level"
@@ -113,7 +113,7 @@ class TestReceiptPipelineE2E:
             "/api/receipts",
             json={"client_receipt_id": "e2e-r2", "url": "https://suf.purs.gov.rs/v/?vl=abc"},
         )
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             job = claim_next_job(conn)
         finally:
@@ -135,14 +135,14 @@ class TestReceiptPipelineE2E:
         )
         receipt_id = resp.json()["receipt_id"]
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             job = claim_next_job(conn)
         finally:
             conn.close()
         _run_drain(job)
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp = conn.execute(
                 "SELECT id FROM expenses WHERE receipt_id = ?", [receipt_id]
@@ -155,7 +155,7 @@ class TestReceiptPipelineE2E:
         assert patch_resp.status_code == 200
         assert patch_resp.json()["corrected_expense_id"] == expense_id
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             updated = conn.execute(
                 "SELECT category_id, confidence_level FROM expenses WHERE id = ?",
@@ -181,14 +181,14 @@ class TestReceiptPipelineE2E:
         )
         receipt_id = resp.json()["receipt_id"]
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             job = claim_next_job(conn)
         finally:
             conn.close()
         _run_drain(job)
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             remaining = conn.execute(
                 "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?",
@@ -209,7 +209,7 @@ class TestReceiptPipelineE2E:
         assert r2.json()["status"] == "duplicate"
         assert r2.json()["receipt_id"] == r1.json()["receipt_id"]
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             job_count = conn.execute("SELECT COUNT(*) FROM receipt_classification_jobs").fetchone()[
                 0
@@ -226,7 +226,7 @@ class TestReceiptPipelineE2E:
         )
         receipt_id = resp.json()["receipt_id"]
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             job = claim_next_job(conn)
         finally:
@@ -237,7 +237,7 @@ class TestReceiptPipelineE2E:
         call_count_after_first = pool.classify_receipt.call_count
 
         # Simulate re-claim (stale job re-entry) by reconstructing the job
-        from dinary.services.receipt_repo import ReceiptJobRow
+        from dinary.services.receipts import ReceiptJobRow
 
         stale_job = ReceiptJobRow(
             receipt_id=receipt_id,
@@ -254,7 +254,7 @@ class TestReceiptPipelineE2E:
 
         pool2.classify_receipt.assert_not_called()
 
-        conn = ledger_repo.get_connection()
+        conn = storage.get_connection()
         try:
             exp_count = conn.execute(
                 "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]

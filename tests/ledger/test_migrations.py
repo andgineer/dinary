@@ -11,16 +11,17 @@ import allure
 import pytest
 
 from dinary.config import settings
-from dinary.services import db_migrations, ledger_repo
+from dinary.services import db_migrations, storage
+from dinary.services.catalog import get_catalog_version
 
 
 @pytest.fixture
 def fresh_db(tmp_path, monkeypatch):
     """Point ``ledger_repo`` at an empty tmp file and apply all migrations."""
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
-    db_migrations.migrate_db(ledger_repo.DB_PATH)
-    return ledger_repo.DB_PATH
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "dinary.db")
+    db_migrations.migrate_db(storage.DB_PATH)
+    return storage.DB_PATH
 
 
 def _connect(path) -> sqlite3.Connection:
@@ -182,16 +183,16 @@ class TestInitialSchema:
 @allure.feature("init_db integration")
 class TestInitDbIntegration:
     def test_init_db_creates_file_and_connects(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-        monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+        monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(storage, "DB_PATH", tmp_path / "dinary.db")
 
-        assert not ledger_repo.DB_PATH.exists()
-        ledger_repo.init_db()
-        assert ledger_repo.DB_PATH.exists()
+        assert not storage.DB_PATH.exists()
+        storage.init_db()
+        assert storage.DB_PATH.exists()
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            version = ledger_repo.get_catalog_version(con)
+            version = get_catalog_version(con)
         finally:
             con.close()
         assert version == 1
@@ -207,8 +208,8 @@ class TestAccountingCurrencyAnchor:
     """
 
     def _point_repo_at_tmp(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-        monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+        monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(storage, "DB_PATH", tmp_path / "dinary.db")
 
     def test_fresh_db_persists_anchor_uppercased(self, tmp_path, monkeypatch):
         """First ``init_db`` on an empty file must stamp the canonical
@@ -220,9 +221,9 @@ class TestAccountingCurrencyAnchor:
         self._point_repo_at_tmp(tmp_path, monkeypatch)
         monkeypatch.setattr(settings, "accounting_currency", "eur")
 
-        ledger_repo.init_db()
+        storage.init_db()
 
-        con = _connect(ledger_repo.DB_PATH)
+        con = _connect(storage.DB_PATH)
         try:
             row = con.execute(
                 "SELECT value FROM app_metadata WHERE key = 'accounting_currency'",
@@ -241,10 +242,10 @@ class TestAccountingCurrencyAnchor:
         self._point_repo_at_tmp(tmp_path, monkeypatch)
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
 
-        ledger_repo.init_db()
-        ledger_repo.init_db()
+        storage.init_db()
+        storage.init_db()
 
-        con = _connect(ledger_repo.DB_PATH)
+        con = _connect(storage.DB_PATH)
         try:
             rows = con.execute(
                 "SELECT value FROM app_metadata WHERE key = 'accounting_currency'",
@@ -263,11 +264,11 @@ class TestAccountingCurrencyAnchor:
         self._point_repo_at_tmp(tmp_path, monkeypatch)
 
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        ledger_repo.init_db()
+        storage.init_db()
 
         monkeypatch.setattr(settings, "accounting_currency", "RSD")
         with pytest.raises(RuntimeError, match="accounting_currency") as excinfo:
-            ledger_repo.init_db()
+            storage.init_db()
         assert "'EUR'" in str(excinfo.value)
         assert "'RSD'" in str(excinfo.value)
 
@@ -279,10 +280,10 @@ class TestAccountingCurrencyAnchor:
         self._point_repo_at_tmp(tmp_path, monkeypatch)
 
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        ledger_repo.init_db()
+        storage.init_db()
 
         monkeypatch.setattr(settings, "accounting_currency", "eur")
-        ledger_repo.init_db()
+        storage.init_db()
         assert settings.accounting_currency == "EUR"
 
     def test_fresh_db_without_env_rejects(self, tmp_path, monkeypatch):
@@ -294,7 +295,7 @@ class TestAccountingCurrencyAnchor:
         monkeypatch.setattr(settings, "accounting_currency", "  ")
 
         with pytest.raises(RuntimeError, match="Fresh"):
-            ledger_repo.init_db()
+            storage.init_db()
 
     def test_populated_db_without_env_reads_anchor(self, tmp_path, monkeypatch):
         """The steady-state path: DB is already anchored, operator
@@ -307,13 +308,13 @@ class TestAccountingCurrencyAnchor:
         self._point_repo_at_tmp(tmp_path, monkeypatch)
 
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        ledger_repo.init_db()
+        storage.init_db()
 
         monkeypatch.setattr(settings, "accounting_currency", "")
-        ledger_repo.init_db()
+        storage.init_db()
 
         assert settings.accounting_currency == "EUR"
-        con = _connect(ledger_repo.DB_PATH)
+        con = _connect(storage.DB_PATH)
         try:
             row = con.execute(
                 "SELECT value FROM app_metadata WHERE key = 'accounting_currency'",

@@ -67,7 +67,7 @@ def has_currency(con: sqlite3.Connection, code: str) -> bool:
 def seed_default_if_empty(con: sqlite3.Connection, default_code: str) -> None:
     """Insert ``default_code`` if the table is empty.
 
-    Called from ``ledger_repo.init_db`` so a fresh DB starts with the
+    Called from ``db.init_db`` so a fresh DB starts with the
     operator's chosen ``app_currency`` already in the picker. No-op
     once any row exists, so operators are free to add/remove
     currencies later without the seed re-asserting itself on reboot.

@@ -22,7 +22,8 @@ from datetime import datetime
 
 import allure
 
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.expenses import ExpensePayload, insert_expense
 
 from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 
@@ -48,11 +49,11 @@ class TestAdminDelete:
             json={"name": "cat-for-tag", "group_id": 1},
         )
         cid = cat.json()["new_id"]
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            ledger_repo.insert_expense(
+            insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="tag-soft-1",
                     expense_datetime=datetime(2026, 4, 20, 10, 0, 0),
                     amount=1.0,
@@ -83,11 +84,11 @@ class TestAdminDelete:
             json={"name": "pinned-cat", "group_id": 1},
         )
         cid = cat.json()["new_id"]
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            ledger_repo.insert_expense(
+            insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="cat-soft-1",
                     expense_datetime=datetime(2026, 4, 20, 10, 0, 0),
                     amount=1.0,
@@ -150,7 +151,7 @@ class TestAdminDelete:
             json={"name": "mapped-only", "group_id": 1},
         )
         cid = cat.json()["new_id"]
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO sheet_mapping"
@@ -173,7 +174,7 @@ class TestAdminDelete:
     def test_delete_tag_referenced_by_sheet_mapping_tags_is_soft(self, client):
         tag = client.post("/api/admin/catalog/tags", json={"name": "mapped-tag"})
         tid = tag.json()["new_id"]
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO sheet_mapping"
@@ -227,7 +228,7 @@ class TestAdminDelete:
         # auto_tags name list on the event is unchanged: the tag row is
         # retired (is_active=FALSE) but still reachable by id, and the
         # name reference in events.auto_tags stays intact.
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             row = con.execute(
                 "SELECT auto_tags FROM events WHERE id = ?",
@@ -248,7 +249,7 @@ class TestAdminDelete:
             },
         )
         eid = ev.json()["new_id"]
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO sheet_mapping"

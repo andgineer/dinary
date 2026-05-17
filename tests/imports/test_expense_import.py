@@ -11,13 +11,14 @@ from dinary import config
 from dinary.config import ImportSourceRow
 from dinary.imports import expense_import
 from dinary.imports.expense_import import import_year
-from dinary.services import ledger_repo
+from dinary.services import storage
+from dinary.services.logging_jobs import list_logging_jobs
 
 
 @pytest.fixture(autouse=True)
 def data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "dinary.db")
 
 
 @pytest.fixture(autouse=True)
@@ -48,8 +49,8 @@ def _seed_catalog(db_template):
     trip) and ``"релокация-в-Сербию"`` — the importer looks them up by
     name.
     """
-    shutil.copy(db_template, ledger_repo.DB_PATH)
-    con = ledger_repo.get_connection()
+    shutil.copy(db_template, storage.DB_PATH)
+    con = storage.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -139,7 +140,7 @@ class TestImportYear:
         assert result["expenses_created"] == 4
         assert result["errors"] == 0
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             rows = con.execute(
                 "SELECT category_id, event_id, sheet_category, sheet_group,"
@@ -165,7 +166,7 @@ class TestImportYear:
         mock_sheet.return_value = _mock_sheet()
         import_year(2026)
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             tag_rows = con.execute(
                 "SELECT t.tag_id FROM expense_tags t"
@@ -186,9 +187,9 @@ class TestImportYear:
         mock_sheet.return_value = _mock_sheet()
         import_year(2026)
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.list_logging_jobs(con) == []
+            assert list_logging_jobs(con) == []
         finally:
             con.close()
 
@@ -207,7 +208,7 @@ class TestImportYear:
         # NULL client_expense_id is legal multiple times; the re-import
         # wipes rows whose datetime-year matches *year* first so we
         # still end up with exactly four expenses, not eight.
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             total = con.execute(
                 "SELECT COUNT(*) FROM expenses WHERE strftime('%Y', datetime) = '2026'",
@@ -235,7 +236,7 @@ class TestImportYear:
         mock_sheet.return_value = _mock_sheet()
         import_year(2026)
 
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             existing_id = con.execute(
                 "SELECT id FROM expenses WHERE strftime('%Y', datetime) = '2026' LIMIT 1",
@@ -249,9 +250,9 @@ class TestImportYear:
 
         result = import_year(2026)
         assert result["errors"] == 0
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
-            assert ledger_repo.list_logging_jobs(con) == []
+            assert list_logging_jobs(con) == []
         finally:
             con.close()
 

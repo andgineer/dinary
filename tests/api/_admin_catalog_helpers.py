@@ -14,16 +14,16 @@ import shutil
 
 import pytest
 
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 
 @pytest.fixture(autouse=True)
 def db(tmp_path, monkeypatch, blank_db):
     dst = tmp_path / "dinary.db"
     shutil.copy(blank_db, dst)
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", dst)
-    con = ledger_repo.get_connection()
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", dst)
+    con = storage.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"

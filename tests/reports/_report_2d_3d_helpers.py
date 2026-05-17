@@ -14,13 +14,13 @@ import pytest
 
 from dinary import config
 from dinary.config import ImportSourceRow
-from dinary.services import ledger_repo
+from dinary.services import storage
 
 
 @pytest.fixture(autouse=True)
 def data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(ledger_repo, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(ledger_repo, "DB_PATH", tmp_path / "dinary.db")
+    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(storage, "DB_PATH", tmp_path / "dinary.db")
 
 
 @pytest.fixture(autouse=True)
@@ -44,8 +44,8 @@ def _stub_import_sources(monkeypatch):
 
 def _seed_catalog(db_template):
     """Seed a minimal catalog into ``dinary.db`` for resolution tests."""
-    shutil.copy(db_template, ledger_repo.DB_PATH)
-    con = ledger_repo.get_connection()
+    shutil.copy(db_template, storage.DB_PATH)
+    con = storage.get_connection()
     try:
         con.execute(
             "INSERT INTO category_groups (id, name, sort_order, is_active)"

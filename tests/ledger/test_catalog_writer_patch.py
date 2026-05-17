@@ -15,7 +15,9 @@ from datetime import date
 import allure
 import pytest
 
-from dinary.services import catalog_writer, ledger_repo
+from dinary.services import catalog_writer, storage
+from dinary.services.expenses import ExpensePayload, insert_expense
+from dinary.services.catalog import get_catalog_version
 
 from _catalog_writer_helpers import _DT, _seed_minimal, fresh_db  # noqa: F401
 
@@ -28,7 +30,7 @@ class TestAtomicPatch:
         ``sheet_group`` back to NULL. Needed by the future in-app
         editor so an operator can remove a stale mapping without
         having to delete and re-add the category."""
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO category_groups (id, name, sort_order, is_active)"
@@ -54,17 +56,17 @@ class TestAtomicPatch:
         assert row[1] is None
 
     def test_edit_category_applies_name_and_deactivate_in_one_tx(self, fresh_db):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             _seed_minimal(con)
-            v0 = ledger_repo.get_catalog_version(con)
+            v0 = get_catalog_version(con)
             catalog_writer.edit_category(
                 con,
                 1,
                 name="food-renamed",
                 is_active=False,
             )
-            v1 = ledger_repo.get_catalog_version(con)
+            v1 = get_catalog_version(con)
             row = con.execute(
                 "SELECT name, is_active FROM categories WHERE id = 1",
             ).fetchone()
@@ -80,7 +82,7 @@ class TestAtomicPatch:
         and must not commit any other column change in the same PATCH
         — the writer validates all inputs before any UPDATE so a
         partial commit is not possible."""
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             _seed_minimal(con)
             # Sibling row the rename would collide with.
@@ -88,7 +90,7 @@ class TestAtomicPatch:
                 "INSERT INTO categories (id, name, group_id, is_active)"
                 " VALUES (2, 'drink', 1, TRUE)",
             )
-            v0 = ledger_repo.get_catalog_version(con)
+            v0 = get_catalog_version(con)
             with pytest.raises(catalog_writer.CatalogConflictError):
                 catalog_writer.edit_category(
                     con,
@@ -96,7 +98,7 @@ class TestAtomicPatch:
                     name="drink",
                     is_active=False,
                 )
-            v1 = ledger_repo.get_catalog_version(con)
+            v1 = get_catalog_version(con)
             row = con.execute(
                 "SELECT name, is_active FROM categories WHERE id = 1",
             ).fetchone()
@@ -112,7 +114,7 @@ class TestAtomicPatch:
         self,
         fresh_db,
     ):
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO events"
@@ -151,7 +153,7 @@ class TestTagUsage:
         ``_require_known_tag_names`` on every subsequent event-edit
         that still named it.
         """
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             _seed_minimal(con)
             con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'отпуск', FALSE)")
@@ -171,7 +173,7 @@ class TestTagUsage:
         gate stays: a typo or a hard-deleted tag name still 422s so
         ``resolve_event_auto_tag_ids`` never silently drops at runtime.
         """
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             _seed_minimal(con)
             con.execute(
@@ -192,13 +194,13 @@ class TestTagUsage:
         inactive tags — that's the whole point of "hide from picker,
         keep as an event auto_tags anchor".
         """
-        con = ledger_repo.get_connection()
+        con = storage.get_connection()
         try:
             _seed_minimal(con)
             con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 't1', TRUE)")
-            ledger_repo.insert_expense(
+            insert_expense(
                 con,
-                ledger_repo.ExpensePayload(
+                ExpensePayload(
                     client_expense_id="tag-pin",
                     expense_datetime=_DT,
                     amount=1.0,

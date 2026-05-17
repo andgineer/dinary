@@ -14,8 +14,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from dinary.services import ledger_repo
+from dinary.services import storage
 from dinary.services.llm_client import OpenAICompatibleClient
+from dinary.services.receipts import count_pending_classification_jobs
 
 router = APIRouter()
 
@@ -53,7 +54,7 @@ def _row_to_dict(row: tuple) -> dict[str, Any]:
 
 @router.get("/api/admin/llm-providers")
 def list_providers() -> list[dict]:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         rows = conn.execute(
             "SELECT id, label, base_url, model, priority, is_enabled,"
@@ -67,7 +68,7 @@ def list_providers() -> list[dict]:
 
 @router.post("/api/admin/llm-providers", status_code=201)
 def add_provider(body: ProviderIn) -> dict:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(
@@ -94,7 +95,7 @@ def add_provider(body: ProviderIn) -> dict:
 
 @router.patch("/api/admin/llm-providers/{provider_id}")
 def update_provider(provider_id: int, body: ProviderPatch) -> dict:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         row = conn.execute(
             "SELECT id FROM llm_providers WHERE id = ?",
@@ -144,7 +145,7 @@ def update_provider(provider_id: int, body: ProviderPatch) -> dict:
 
 @router.delete("/api/admin/llm-providers/{provider_id}")
 def delete_provider(provider_id: int) -> dict:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         if (
             conn.execute("SELECT id FROM llm_providers WHERE id = ?", [provider_id]).fetchone()
@@ -183,7 +184,7 @@ def delete_provider(provider_id: int) -> dict:
 
 @router.post("/api/admin/llm-providers/{provider_id}/test")
 async def test_provider(provider_id: int) -> dict:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     try:
         row = conn.execute(
             "SELECT base_url, api_key, model FROM llm_providers WHERE id = ?",
@@ -209,7 +210,7 @@ async def test_provider(provider_id: int) -> dict:
 
 @router.get("/api/admin/llm-status")
 def llm_status() -> dict:
-    conn = ledger_repo.get_connection()
+    conn = storage.get_connection()
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
@@ -263,6 +264,13 @@ def llm_status() -> dict:
             "last_switch": meta.get("llm_provider_switch_last"),
         }
 
-        return {"health": health, "providers": provider_list, "meta": meta}
+        pending_receipts = count_pending_classification_jobs(conn)
+
+        return {
+            "health": health,
+            "providers": provider_list,
+            "meta": meta,
+            "pending_receipts": int(pending_receipts),
+        }
     finally:
         conn.close()

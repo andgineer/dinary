@@ -8,11 +8,12 @@ from invoke import task
 from sr_invoice_parser.exceptions import ParserParseException, ParserRequestException
 
 from dinary.config import settings
+from dinary.services.catalog import list_categories
 from dinary.services.item_normalizer import normalize_item_name
-from dinary.services.ledger_repo import get_connection, list_categories
 from dinary.services.llm_client import OpenAICompatibleClient
 from dinary.services.receipt_parser import parse_receipt
-from dinary.services.receipt_repo import requeue_receipts
+from dinary.services.receipts import requeue_receipts
+from dinary.services.storage import get_connection
 
 
 @task(name="classify-receipt", iterable=["url"])
