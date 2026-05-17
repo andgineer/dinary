@@ -2,42 +2,25 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { getReviewFeed, getReviewCounts } from "../api/review.js";
 import { correctCategory } from "../api/expenseCorrections.js";
+import { useStaleCache } from "../composables/useStaleCache.js";
 import { useToastStore } from "./toast.js";
 import { useCatalogStore } from "./catalog.js";
 
 const CACHE_KEY = "dinary:review:v1";
 const DIRTY_KEY = "dinary:review:dirty";
 const FETCHED_KEY = "dinary:review:fetchedAt";
-const TTL_MS = 24 * 60 * 60 * 1000;
-
-function readCache() {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed?.items) || parsed.items.length === 0) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function writeCache(state) {
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(state));
-  } catch {
-    // Quota / private mode: harmless.
-  }
-}
-
-function clearCache() {
-  try {
-    localStorage.removeItem(CACHE_KEY);
-  } catch {}
-}
 
 export const useReviewStore = defineStore("review", () => {
-  const cached = readCache();
+  const { dirtyFlag, lastFetchedAt, markDirty, stampFresh, bumpFetchTime, isStale, readCache, writeCache, clearCache } = useStaleCache({
+    dirtyKey: DIRTY_KEY,
+    fetchedKey: FETCHED_KEY,
+    dataKey: CACHE_KEY,
+  });
+  const cached = (() => {
+    const c = readCache();
+    if (!Array.isArray(c?.items) || c.items.length === 0) return null;
+    return c;
+  })();
   const items = ref(cached?.items ?? []);
   const doubtfulCount = ref(cached?.doubtfulCount ?? 0);
   const hasMore = ref(cached?.hasMore ?? true);
@@ -45,8 +28,6 @@ export const useReviewStore = defineStore("review", () => {
   const loading = ref(false);
   const totalLoaded = ref(cached?.totalLoaded ?? 0);
   const fromCache = ref(!!cached);
-  const dirtyFlag = ref(localStorage.getItem(DIRTY_KEY) === "1");
-  const lastFetchedAt = ref(Number(localStorage.getItem(FETCHED_KEY)) || null);
 
   function _persistState() {
     writeCache({
@@ -58,14 +39,8 @@ export const useReviewStore = defineStore("review", () => {
     });
   }
 
-  function markDirty() {
-    dirtyFlag.value = true;
-    localStorage.setItem(DIRTY_KEY, "1");
-  }
-
   async function loadIfNeeded() {
-    const age = lastFetchedAt.value ? Date.now() - lastFetchedAt.value : Infinity;
-    if (dirtyFlag.value || !lastFetchedAt.value || age > TTL_MS) {
+    if (isStale()) {
       reset();
       await loadNextPage();
     }
@@ -99,11 +74,10 @@ export const useReviewStore = defineStore("review", () => {
       page.value = nextPage;
       totalLoaded.value += incoming.length;
       fromCache.value = false;
-      lastFetchedAt.value = Date.now();
-      localStorage.setItem(FETCHED_KEY, String(lastFetchedAt.value));
       if ((data.pending_receipts ?? 0) === 0) {
-        dirtyFlag.value = false;
-        localStorage.removeItem(DIRTY_KEY);
+        stampFresh();
+      } else {
+        bumpFetchTime();
       }
       _persistState();
     } catch (err) {

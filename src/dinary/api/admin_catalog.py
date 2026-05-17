@@ -29,14 +29,16 @@ under Show inactive (N historical references)".
 """
 
 import logging
+import sqlite3
 from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from dinary.config import settings, spreadsheet_id_from_setting
-from dinary.services import catalog_writer, sheet_mapping, storage
+from dinary.services import catalog_writer, sheet_mapping
+from dinary.services.storage import get_db
 
 from .catalog import (
     CategoryGroupItem,
@@ -185,20 +187,17 @@ def _snapshot_response(
 def add_group(
     body: GroupAddBody,
     response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
-    con = storage.get_connection()
     try:
-        try:
-            result = catalog_writer.add_group(
-                con,
-                name=body.name,
-                sort_order=body.sort_order,
-            )
-        except catalog_writer.CatalogWriteError as exc:
-            raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response, add_result=result)
-    finally:
-        con.close()
+        result = catalog_writer.add_group(
+            con,
+            name=body.name,
+            sort_order=body.sort_order,
+        )
+    except catalog_writer.CatalogWriteError as exc:
+        raise _wrap_catalog_error(exc) from None
+    return _snapshot_response(con, response, add_result=result)
 
 
 @router.patch("/api/admin/catalog/groups/{group_id}", response_model=AdminCatalogResponse)
@@ -206,38 +205,32 @@ def edit_group(
     group_id: int,
     body: GroupPatchBody,
     response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
-    con = storage.get_connection()
     try:
-        try:
-            catalog_writer.edit_group(
-                con,
-                group_id,
-                name=body.name,
-                sort_order=body.sort_order,
-                is_active=body.is_active,
-            )
-        except catalog_writer.CatalogWriteError as exc:
-            raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response)
-    finally:
-        con.close()
+        catalog_writer.edit_group(
+            con,
+            group_id,
+            name=body.name,
+            sort_order=body.sort_order,
+            is_active=body.is_active,
+        )
+    except catalog_writer.CatalogWriteError as exc:
+        raise _wrap_catalog_error(exc) from None
+    return _snapshot_response(con, response)
 
 
 @router.delete("/api/admin/catalog/groups/{group_id}", response_model=AdminCatalogResponse)
 def delete_group(
     group_id: int,
     response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
-    con = storage.get_connection()
     try:
-        try:
-            result = catalog_writer.delete_group(con, group_id)
-        except catalog_writer.CatalogWriteError as exc:
-            raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response, delete_result=result)
-    finally:
-        con.close()
+        result = catalog_writer.delete_group(con, group_id)
+    except catalog_writer.CatalogWriteError as exc:
+        raise _wrap_catalog_error(exc) from None
+    return _snapshot_response(con, response, delete_result=result)
 
 
 # ---------------------------------------------------------------------------
@@ -249,22 +242,19 @@ def delete_group(
 def add_category(
     body: CategoryAddBody,
     response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
-    con = storage.get_connection()
     try:
-        try:
-            result = catalog_writer.add_category(
-                con,
-                name=body.name,
-                group_id=body.group_id,
-                sheet_name=body.sheet_name,
-                sheet_group=body.sheet_group,
-            )
-        except catalog_writer.CatalogWriteError as exc:
-            raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response, add_result=result)
-    finally:
-        con.close()
+        result = catalog_writer.add_category(
+            con,
+            name=body.name,
+            group_id=body.group_id,
+            sheet_name=body.sheet_name,
+            sheet_group=body.sheet_group,
+        )
+    except catalog_writer.CatalogWriteError as exc:
+        raise _wrap_catalog_error(exc) from None
+    return _snapshot_response(con, response, add_result=result)
 
 
 @router.patch("/api/admin/catalog/categories/{category_id}", response_model=AdminCatalogResponse)
@@ -272,24 +262,21 @@ def edit_category(
     category_id: int,
     body: CategoryPatchBody,
     response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
-    con = storage.get_connection()
     try:
-        try:
-            catalog_writer.edit_category(
-                con,
-                category_id,
-                name=body.name,
-                group_id=body.group_id,
-                sheet_name=body.sheet_name,
-                sheet_group=body.sheet_group,
-                is_active=body.is_active,
-            )
-        except catalog_writer.CatalogWriteError as exc:
-            raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response)
-    finally:
-        con.close()
+        catalog_writer.edit_category(
+            con,
+            category_id,
+            name=body.name,
+            group_id=body.group_id,
+            sheet_name=body.sheet_name,
+            sheet_group=body.sheet_group,
+            is_active=body.is_active,
+        )
+    except catalog_writer.CatalogWriteError as exc:
+        raise _wrap_catalog_error(exc) from None
+    return _snapshot_response(con, response)
 
 
 @router.delete(
@@ -299,16 +286,13 @@ def edit_category(
 def delete_category(
     category_id: int,
     response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
-    con = storage.get_connection()
     try:
-        try:
-            result = catalog_writer.delete_category(con, category_id)
-        except catalog_writer.CatalogWriteError as exc:
-            raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response, delete_result=result)
-    finally:
-        con.close()
+        result = catalog_writer.delete_category(con, category_id)
+    except catalog_writer.CatalogWriteError as exc:
+        raise _wrap_catalog_error(exc) from None
+    return _snapshot_response(con, response, delete_result=result)
 
 
 # ---------------------------------------------------------------------------
@@ -320,23 +304,20 @@ def delete_category(
 def add_event(
     body: EventAddBody,
     response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
-    con = storage.get_connection()
     try:
-        try:
-            result = catalog_writer.add_event(
-                con,
-                name=body.name,
-                date_from=body.date_from,
-                date_to=body.date_to,
-                auto_attach_enabled=body.auto_attach_enabled,
-                auto_tags=body.auto_tags,
-            )
-        except catalog_writer.CatalogWriteError as exc:
-            raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response, add_result=result)
-    finally:
-        con.close()
+        result = catalog_writer.add_event(
+            con,
+            name=body.name,
+            date_from=body.date_from,
+            date_to=body.date_to,
+            auto_attach_enabled=body.auto_attach_enabled,
+            auto_tags=body.auto_tags,
+        )
+    except catalog_writer.CatalogWriteError as exc:
+        raise _wrap_catalog_error(exc) from None
+    return _snapshot_response(con, response, add_result=result)
 
 
 @router.patch("/api/admin/catalog/events/{event_id}", response_model=AdminCatalogResponse)
@@ -344,41 +325,35 @@ def edit_event(
     event_id: int,
     body: EventPatchBody,
     response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
-    con = storage.get_connection()
     try:
-        try:
-            catalog_writer.edit_event(
-                con,
-                event_id,
-                name=body.name,
-                date_from=body.date_from,
-                date_to=body.date_to,
-                auto_attach_enabled=body.auto_attach_enabled,
-                auto_tags=body.auto_tags,
-                is_active=body.is_active,
-            )
-        except catalog_writer.CatalogWriteError as exc:
-            raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response)
-    finally:
-        con.close()
+        catalog_writer.edit_event(
+            con,
+            event_id,
+            name=body.name,
+            date_from=body.date_from,
+            date_to=body.date_to,
+            auto_attach_enabled=body.auto_attach_enabled,
+            auto_tags=body.auto_tags,
+            is_active=body.is_active,
+        )
+    except catalog_writer.CatalogWriteError as exc:
+        raise _wrap_catalog_error(exc) from None
+    return _snapshot_response(con, response)
 
 
 @router.delete("/api/admin/catalog/events/{event_id}", response_model=AdminCatalogResponse)
 def delete_event(
     event_id: int,
     response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
-    con = storage.get_connection()
     try:
-        try:
-            result = catalog_writer.delete_event(con, event_id)
-        except catalog_writer.CatalogWriteError as exc:
-            raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response, delete_result=result)
-    finally:
-        con.close()
+        result = catalog_writer.delete_event(con, event_id)
+    except catalog_writer.CatalogWriteError as exc:
+        raise _wrap_catalog_error(exc) from None
+    return _snapshot_response(con, response, delete_result=result)
 
 
 # ---------------------------------------------------------------------------
@@ -390,16 +365,13 @@ def delete_event(
 def add_tag(
     body: TagAddBody,
     response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
-    con = storage.get_connection()
     try:
-        try:
-            result = catalog_writer.add_tag(con, name=body.name)
-        except catalog_writer.CatalogWriteError as exc:
-            raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response, add_result=result)
-    finally:
-        con.close()
+        result = catalog_writer.add_tag(con, name=body.name)
+    except catalog_writer.CatalogWriteError as exc:
+        raise _wrap_catalog_error(exc) from None
+    return _snapshot_response(con, response, add_result=result)
 
 
 @router.patch("/api/admin/catalog/tags/{tag_id}", response_model=AdminCatalogResponse)
@@ -407,37 +379,31 @@ def edit_tag(
     tag_id: int,
     body: TagPatchBody,
     response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
-    con = storage.get_connection()
     try:
-        try:
-            catalog_writer.edit_tag(
-                con,
-                tag_id,
-                name=body.name,
-                is_active=body.is_active,
-            )
-        except catalog_writer.CatalogWriteError as exc:
-            raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response)
-    finally:
-        con.close()
+        catalog_writer.edit_tag(
+            con,
+            tag_id,
+            name=body.name,
+            is_active=body.is_active,
+        )
+    except catalog_writer.CatalogWriteError as exc:
+        raise _wrap_catalog_error(exc) from None
+    return _snapshot_response(con, response)
 
 
 @router.delete("/api/admin/catalog/tags/{tag_id}", response_model=AdminCatalogResponse)
 def delete_tag(
     tag_id: int,
     response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
-    con = storage.get_connection()
     try:
-        try:
-            result = catalog_writer.delete_tag(con, tag_id)
-        except catalog_writer.CatalogWriteError as exc:
-            raise _wrap_catalog_error(exc) from None
-        return _snapshot_response(con, response, delete_result=result)
-    finally:
-        con.close()
+        result = catalog_writer.delete_tag(con, tag_id)
+    except catalog_writer.CatalogWriteError as exc:
+        raise _wrap_catalog_error(exc) from None
+    return _snapshot_response(con, response, delete_result=result)
 
 
 # ---------------------------------------------------------------------------

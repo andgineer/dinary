@@ -1,29 +1,26 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import * as llmApi from "../api/adminLlm.js";
+import { useStaleCache } from "../composables/useStaleCache.js";
 import { useToastStore } from "./toast.js";
 
+const CACHE_KEY = "dinary:llm:v1";
 const DIRTY_KEY = "dinary:llm:dirty";
 const FETCHED_KEY = "dinary:llm:fetchedAt";
-const TTL_MS = 24 * 60 * 60 * 1000;
 
 export const useLlmStore = defineStore("llm", () => {
-  const providers = ref([]);
-  const health = ref(null);
+  const { dirtyFlag, lastFetchedAt, markDirty, stampFresh, bumpFetchTime, isStale, readCache, writeCache } = useStaleCache({
+    dirtyKey: DIRTY_KEY,
+    fetchedKey: FETCHED_KEY,
+    dataKey: CACHE_KEY,
+  });
+  const cached = readCache();
+  const providers = ref(cached?.providers ?? []);
+  const health = ref(cached?.health ?? null);
   const loading = ref(false);
-  const dirtyFlag = ref(localStorage.getItem(DIRTY_KEY) === "1");
-  const lastFetchedAt = ref(Number(localStorage.getItem(FETCHED_KEY)) || null);
-
-  function markDirty() {
-    dirtyFlag.value = true;
-    localStorage.setItem(DIRTY_KEY, "1");
-  }
 
   async function loadIfNeeded() {
-    const age = lastFetchedAt.value ? Date.now() - lastFetchedAt.value : Infinity;
-    if (dirtyFlag.value || !lastFetchedAt.value || age > TTL_MS) {
-      await refresh();
-    }
+    if (isStale()) await refresh();
   }
 
   async function refresh() {
@@ -32,11 +29,11 @@ export const useLlmStore = defineStore("llm", () => {
       const status = await llmApi.getStatus();
       providers.value = status.providers ?? [];
       health.value = status.health ?? null;
-      lastFetchedAt.value = Date.now();
-      localStorage.setItem(FETCHED_KEY, String(lastFetchedAt.value));
+      writeCache({ providers: providers.value, health: health.value });
       if ((status.pending_receipts ?? 0) === 0) {
-        dirtyFlag.value = false;
-        localStorage.removeItem(DIRTY_KEY);
+        stampFresh();
+      } else {
+        bumpFetchTime();
       }
     } catch (err) {
       if (navigator.onLine) {

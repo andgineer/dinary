@@ -6,11 +6,11 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from dinary.services import storage
 from dinary.services.classification_rules import RuleSpec, create_or_update_rule
+from dinary.services.storage import get_db, transaction
 
 router = APIRouter()
 
@@ -36,8 +36,9 @@ class CategoryCorrectionResponse(BaseModel):
 async def correct_expense_category(
     expense_id: int,
     req: CategoryCorrectionRequest,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> CategoryCorrectionResponse:
-    return await asyncio.to_thread(_correct_category_sync, expense_id, req)
+    return await asyncio.to_thread(_correct_category_sync, expense_id, req, con)
 
 
 def _query_other_items(
@@ -87,83 +88,72 @@ def _since_for_scope(scope: CorrectionScope) -> str | None:
 def _correct_category_sync(
     expense_id: int,
     req: CategoryCorrectionRequest,
+    con: sqlite3.Connection,
 ) -> CategoryCorrectionResponse:
-    con = storage.get_connection()
-    try:
-        row = con.execute(
-            "SELECT receipt_id, store_id FROM expenses WHERE id = ?",
-            [expense_id],
-        ).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail="Expense not found")
+    row = con.execute(
+        "SELECT receipt_id, store_id FROM expenses WHERE id = ?",
+        [expense_id],
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Expense not found")
 
-        cat_row = con.execute(
-            "SELECT id FROM categories WHERE id = ? AND is_active = 1",
-            [req.category_id],
-        ).fetchone()
-        if cat_row is None:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Unknown or inactive category_id: {req.category_id}",
-            )
-
-        receipt_id = row[0]
-        store_id = row[1]
-
-        con.execute("BEGIN IMMEDIATE")
-        try:
-            con.execute(
-                "UPDATE expenses SET category_id = ?, confidence_level = 4 WHERE id = ?",
-                [req.category_id, expense_id],
-            )
-
-            item_names: list[str] = []
-            if receipt_id is not None:
-                items = con.execute(
-                    "SELECT id, name_normalized FROM receipt_items WHERE expense_id = ?",
-                    [expense_id],
-                ).fetchall()
-                for item_id, name_norm in items:
-                    if name_norm:
-                        item_names.append(name_norm)
-                    con.execute(
-                        "UPDATE receipt_items"
-                        " SET category_id = ?, confidence_level = 4 WHERE id = ?",
-                        [req.category_id, item_id],
-                    )
-
-            since = _since_for_scope(req.scope)
-            items_by_expense: defaultdict[int, list[tuple[int, int, float]]] = defaultdict(list)
-            for name_norm in set(item_names):
-                _upsert_rule_in_tx(con, store_id, name_norm, req.category_id)
-
-                if req.scope == CorrectionScope.single:
-                    continue
-
-                other_items = _query_other_items(con, name_norm, store_id, expense_id, since)
-                for other_item_id, other_receipt_id, old_exp_id, total_price in other_items:
-                    con.execute(
-                        "UPDATE receipt_items"
-                        " SET category_id = ?, confidence_level = 4 WHERE id = ?",
-                        [req.category_id, other_item_id],
-                    )
-                    items_by_expense[int(old_exp_id)].append(
-                        (int(other_item_id), int(other_receipt_id), float(total_price)),
-                    )
-
-            batch_count = _split_merge_expenses(con, req.category_id, expense_id, items_by_expense)
-
-            con.execute("COMMIT")
-        except BaseException:
-            con.execute("ROLLBACK")
-            raise
-
-        return CategoryCorrectionResponse(
-            corrected_expense_id=expense_id,
-            batch_updated_count=batch_count,
+    cat_row = con.execute(
+        "SELECT id FROM categories WHERE id = ? AND is_active = 1",
+        [req.category_id],
+    ).fetchone()
+    if cat_row is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown or inactive category_id: {req.category_id}",
         )
-    finally:
-        con.close()
+
+    receipt_id = row[0]
+    store_id = row[1]
+
+    with transaction(con):
+        con.execute(
+            "UPDATE expenses SET category_id = ?, confidence_level = 4 WHERE id = ?",
+            [req.category_id, expense_id],
+        )
+
+        item_names: list[str] = []
+        if receipt_id is not None:
+            items = con.execute(
+                "SELECT id, name_normalized FROM receipt_items WHERE expense_id = ?",
+                [expense_id],
+            ).fetchall()
+            for item_id, name_norm in items:
+                if name_norm:
+                    item_names.append(name_norm)
+                con.execute(
+                    "UPDATE receipt_items SET category_id = ?, confidence_level = 4 WHERE id = ?",
+                    [req.category_id, item_id],
+                )
+
+        since = _since_for_scope(req.scope)
+        items_by_expense: defaultdict[int, list[tuple[int, int, float]]] = defaultdict(list)
+        for name_norm in set(item_names):
+            _upsert_rule_in_tx(con, store_id, name_norm, req.category_id)
+
+            if req.scope == CorrectionScope.single:
+                continue
+
+            other_items = _query_other_items(con, name_norm, store_id, expense_id, since)
+            for other_item_id, other_receipt_id, old_exp_id, total_price in other_items:
+                con.execute(
+                    "UPDATE receipt_items SET category_id = ?, confidence_level = 4 WHERE id = ?",
+                    [req.category_id, other_item_id],
+                )
+                items_by_expense[int(old_exp_id)].append(
+                    (int(other_item_id), int(other_receipt_id), float(total_price)),
+                )
+
+        batch_count = _split_merge_expenses(con, req.category_id, expense_id, items_by_expense)
+
+    return CategoryCorrectionResponse(
+        corrected_expense_id=expense_id,
+        batch_updated_count=batch_count,
+    )
 
 
 def _split_merge_expenses(

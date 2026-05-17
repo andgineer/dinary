@@ -17,11 +17,11 @@ import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 
 import * as currenciesApi from "../api/currencies.js";
+import { useStaleCache } from "../composables/useStaleCache.js";
 
 const LAST_USED_LS_KEY = "dinary.currency.lastUsed";
 const DIRTY_KEY = "dinary:currency:dirty";
 const FETCHED_KEY = "dinary:currency:fetchedAt";
-const TTL_MS = 24 * 60 * 60 * 1000;
 
 function readLastUsed() {
   try {
@@ -48,8 +48,10 @@ export const useCurrencyStore = defineStore("currency", () => {
   const defaultCode = ref("RSD");
   const lastUsed = ref(readLastUsed());
   const lastListError = ref(null);
-  const dirtyFlag = ref(localStorage.getItem(DIRTY_KEY) === "1");
-  const lastFetchedAt = ref(Number(localStorage.getItem(FETCHED_KEY)) || null);
+  const { dirtyFlag, lastFetchedAt, markDirty, stampFresh: _stampFresh, isStale } = useStaleCache({
+    dirtyKey: DIRTY_KEY,
+    fetchedKey: FETCHED_KEY,
+  });
 
   /**
    * Currency code the picker should default to. Order:
@@ -64,22 +66,8 @@ export const useCurrencyStore = defineStore("currency", () => {
       "RSD",
   );
 
-  function markDirty() {
-    dirtyFlag.value = true;
-    localStorage.setItem(DIRTY_KEY, "1");
-  }
-
-  function _stampFresh() {
-    const now = Date.now();
-    lastFetchedAt.value = now;
-    localStorage.setItem(FETCHED_KEY, String(now));
-    dirtyFlag.value = false;
-    localStorage.removeItem(DIRTY_KEY);
-  }
-
   async function loadIfNeeded() {
-    const age = lastFetchedAt.value ? Date.now() - lastFetchedAt.value : Infinity;
-    if (!dirtyFlag.value && codes.value.length > 0 && lastFetchedAt.value && age <= TTL_MS) return;
+    if (codes.value.length > 0 && !isStale()) return;
     try {
       const snap = await currenciesApi.fetchCurrencies();
       codes.value = Array.isArray(snap?.codes) ? snap.codes.slice() : [];

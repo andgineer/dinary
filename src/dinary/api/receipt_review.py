@@ -12,16 +12,16 @@ GET /api/receipts/review/counts
 import sqlite3
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from dinary.services import storage
 from dinary.services.receipts import count_pending_classification_jobs
+from dinary.services.storage import get_db
 
 router = APIRouter()
 
 
-def _count_doubtful(conn: sqlite3.Connection) -> int:
-    return conn.execute(
+def _count_doubtful(con: sqlite3.Connection) -> int:
+    return con.execute(
         """
         SELECT COUNT(*) FROM (
             SELECT cr.id
@@ -36,8 +36,8 @@ def _count_doubtful(conn: sqlite3.Connection) -> int:
     ).fetchone()[0]
 
 
-def _count_total(conn: sqlite3.Connection) -> int:
-    return conn.execute(
+def _count_total(con: sqlite3.Connection) -> int:
+    return con.execute(
         """
         SELECT COUNT(*) FROM (
             SELECT cr.id
@@ -51,8 +51,8 @@ def _count_total(conn: sqlite3.Connection) -> int:
     ).fetchone()[0]
 
 
-def _query_rules(conn: sqlite3.Connection, limit: int, offset: int) -> list[dict]:
-    rows = conn.execute(
+def _query_rules(con: sqlite3.Connection, limit: int, offset: int) -> list[dict]:
+    rows = con.execute(
         """
         WITH rule_stats AS (
             SELECT
@@ -105,19 +105,19 @@ def _query_rules(conn: sqlite3.Connection, limit: int, offset: int) -> list[dict
     ]
 
 
-def _build_feed(conn: sqlite3.Connection, page: int, page_size: int) -> dict[str, Any]:
-    conn.row_factory = sqlite3.Row
+def _build_feed(con: sqlite3.Connection, page: int, page_size: int) -> dict[str, Any]:
+    con.row_factory = sqlite3.Row
     offset = (page - 1) * page_size
 
-    d_total = _count_doubtful(conn)
-    total = _count_total(conn)
-    rows = _query_rules(conn, page_size, offset) if total > 0 else []
+    d_total = _count_doubtful(con)
+    total = _count_total(con)
+    rows = _query_rules(con, page_size, offset) if total > 0 else []
 
     return {
         "doubtful_count": d_total,
         "items": rows,
         "has_more": offset + page_size < total,
-        "pending_receipts": count_pending_classification_jobs(conn),
+        "pending_receipts": count_pending_classification_jobs(con),
     }
 
 
@@ -125,31 +125,24 @@ def _build_feed(conn: sqlite3.Connection, page: int, page_size: int) -> dict[str
 def review_feed(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> dict:
-    conn = storage.get_connection()
-    try:
-        return _build_feed(conn, page, page_size)
-    finally:
-        conn.close()
+    return _build_feed(con, page, page_size)
 
 
 @router.get("/api/receipts/review/counts")
-def review_counts() -> dict:
-    conn = storage.get_connection()
-    try:
-        count = conn.execute(
-            """
-            SELECT COUNT(DISTINCT cr.id)
-              FROM classification_rules cr
-              JOIN receipt_items ri ON ri.name_normalized = cr.item_name_normalized
-              JOIN receipts rec ON rec.id = ri.receipt_id
-                 AND (cr.store_id IS NULL OR rec.store_id = cr.store_id)
-             WHERE cr.confidence_level < 4
-            """,
-        ).fetchone()[0]
-        return {
-            "doubtful_rules": int(count),
-            "pending_receipts": count_pending_classification_jobs(conn),
-        }
-    finally:
-        conn.close()
+def review_counts(con: sqlite3.Connection = Depends(get_db)) -> dict:  # noqa: B008
+    count = con.execute(
+        """
+        SELECT COUNT(DISTINCT cr.id)
+          FROM classification_rules cr
+          JOIN receipt_items ri ON ri.name_normalized = cr.item_name_normalized
+          JOIN receipts rec ON rec.id = ri.receipt_id
+             AND (cr.store_id IS NULL OR rec.store_id = cr.store_id)
+         WHERE cr.confidence_level < 4
+        """,
+    ).fetchone()[0]
+    return {
+        "doubtful_rules": int(count),
+        "pending_receipts": count_pending_classification_jobs(con),
+    }

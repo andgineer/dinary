@@ -23,12 +23,14 @@ to put the service behind a private network / ACL.
 """
 
 import logging
+import sqlite3
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from dinary.config import settings
-from dinary.services import currencies, storage
+from dinary.services import currencies
+from dinary.services.storage import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -65,27 +67,25 @@ def _list_response(con) -> CurrencyListResponse:
 
 
 @router.get("/api/currencies", response_model=CurrencyListResponse)
-def get_currencies() -> CurrencyListResponse:
-    con = storage.get_connection()
-    try:
-        return _list_response(con)
-    finally:
-        con.close()
+def get_currencies(con: sqlite3.Connection = Depends(get_db)) -> CurrencyListResponse:  # noqa: B008
+    return _list_response(con)
 
 
 @router.post("/api/currencies", response_model=CurrencyListResponse)
-def add_currency(body: CurrencyAddBody) -> CurrencyListResponse:
+def add_currency(
+    body: CurrencyAddBody,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> CurrencyListResponse:
     code = _normalise_code_or_400(body.code)
-    con = storage.get_connection()
-    try:
-        currencies.add_currency(con, code)
-        return _list_response(con)
-    finally:
-        con.close()
+    currencies.add_currency(con, code)
+    return _list_response(con)
 
 
 @router.delete("/api/currencies/{code}", response_model=CurrencyListResponse)
-def delete_currency(code: str) -> CurrencyListResponse:
+def delete_currency(
+    code: str,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> CurrencyListResponse:
     canonical = _normalise_code_or_400(code)
     if canonical == settings.app_currency.upper():
         # The default currency is the operator's input currency for
@@ -95,9 +95,5 @@ def delete_currency(code: str) -> CurrencyListResponse:
             status_code=409,
             detail=f"Cannot delete the default currency {canonical!r}",
         )
-    con = storage.get_connection()
-    try:
-        currencies.remove_currency(con, canonical)
-        return _list_response(con)
-    finally:
-        con.close()
+    currencies.remove_currency(con, canonical)
+    return _list_response(con)

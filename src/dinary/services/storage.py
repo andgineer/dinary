@@ -10,6 +10,7 @@ import contextlib
 import dataclasses
 import logging
 import sqlite3
+from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
 
@@ -200,6 +201,27 @@ def get_connection() -> sqlite3.Connection:
     Callers must close the connection (``try ... finally: con.close()``).
     """
     return _sqlite_types.connect(str(_get_db_path()))
+
+
+def get_db() -> Iterator[sqlite3.Connection]:
+    """FastAPI dependency: yield an open connection, close it on exit."""
+    con = get_connection()
+    try:
+        yield con
+    finally:
+        con.close()
+
+
+@contextlib.contextmanager
+def transaction(con: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """Context manager: BEGIN IMMEDIATE, COMMIT on exit, ROLLBACK on any exception."""
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        yield con
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
 
 
 def close_connection() -> None:

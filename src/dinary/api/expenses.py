@@ -28,12 +28,12 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from dinary.api.catalog import _most_used_category_per_group, _most_used_group
 from dinary.config import settings
-from dinary.services import sheet_mapping, storage
+from dinary.services import sheet_mapping
 from dinary.services.catalog import get_catalog_version
 from dinary.services.exchange_rates import get_rate
 from dinary.services.expenses import (
@@ -43,6 +43,7 @@ from dinary.services.expenses import (
     lookup_existing_expense,
 )
 from dinary.services.sheet_logging import is_sheet_logging_enabled, notify_new_work
+from dinary.services.storage import get_db
 
 router = APIRouter()
 
@@ -72,12 +73,15 @@ class ExpenseResponse(BaseModel):
 
 
 @router.post("/api/expenses", response_model=ExpenseResponse)
-async def create_expense(req: ExpenseRequest) -> ExpenseResponse:
+async def create_expense(
+    req: ExpenseRequest,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> ExpenseResponse:
     # SQLite / NBS calls are synchronous and would otherwise block every
     # other request on the single-worker event loop. Offload the whole
     # body to the default thread pool; the lifespan drain already does
     # the same for its own blocking work.
-    resp = await asyncio.to_thread(_create_expense_sync, req)
+    resp = await asyncio.to_thread(_create_expense_sync, req, con)
     # Wake the drain loop for fresh creates so the sheet append runs
     # immediately instead of waiting up to `drain_interval_sec` for the
     # next periodic tick. Duplicates did not enqueue a new job (the
@@ -87,119 +91,113 @@ async def create_expense(req: ExpenseRequest) -> ExpenseResponse:
     return resp
 
 
-def _create_expense_sync(req: ExpenseRequest) -> ExpenseResponse:
+def _create_expense_sync(req: ExpenseRequest, con: sqlite3.Connection) -> ExpenseResponse:
     currency = req.currency or settings.app_currency
 
-    con = storage.get_connection()
+    _resolve_category_for_write(con, req)
+    _validate_event(con, req)
+    _validate_tags(con, req)
+
+    amount_acc = req.amount
+    if currency.upper() != settings.accounting_currency.upper():
+        rate = get_rate(
+            con,
+            req.date,
+            currency,
+            settings.accounting_currency,
+            offline=True,
+        )
+        amount_acc = (req.amount * rate).quantize(Decimal("0.01"))
+
+    expense_dt = datetime.combine(req.date, datetime.min.time())
+
+    # Union event.auto_tags into the submitted tag set. This is the
+    # runtime-write counterpart to the historical importer, which
+    # applies the same union at import time; keeping both paths in
+    # sync means the "vacation expense always carries both отпуск
+    # and путешествия" invariant holds regardless of which path
+    # created the row.
+    #
+    # Idempotency caveat: ``insert_expense`` compares the stored
+    # ``tag_ids`` against ``effective_tag_ids`` on ON CONFLICT. If
+    # the operator edits ``events.auto_tags`` between the original
+    # POST and a replay carrying the same ``client_expense_id`` +
+    # ``req.tag_ids``, the recomputed union can differ and the
+    # replay gets 409 conflict instead of 200 duplicate. That's a
+    # narrow race (the auto_tags edit would have to land between
+    # a failed POST and the retry) and the safer of the two
+    # failure modes — surfacing it tells the operator their
+    # vocabulary changed mid-flight rather than silently writing
+    # the older tag set.
+    effective_tag_ids: list[int] = list(dict.fromkeys(int(t) for t in req.tag_ids))
+    if req.event_id is not None:
+        for auto_id in sheet_mapping.resolve_event_auto_tag_ids(con, req.event_id):
+            if auto_id not in effective_tag_ids:
+                effective_tag_ids.append(auto_id)
+
+    # ``insert_expense`` is the single source of truth for the
+    # duplicate-vs-conflict decision: it runs the INSERT with
+    # ``ON CONFLICT DO NOTHING`` and, on conflict, compares the full
+    # stored payload against the incoming one. We intentionally do
+    # not pre-check with ``lookup_existing_expense`` for the
+    # happy-path compare — a double compare would drift over time,
+    # and the ON CONFLICT path is already atomic against concurrent
+    # POSTs sharing the same ``client_expense_id``.
+    amount_acc_f = float(amount_acc)
+    amount_orig_f = float(req.amount)
+    comment = req.comment or ""
     try:
-        _resolve_category_for_write(con, req)
-        _validate_event(con, req)
-        _validate_tags(con, req)
+        result = insert_expense(
+            con,
+            ExpensePayload(
+                client_expense_id=req.client_expense_id,
+                expense_datetime=expense_dt,
+                amount=amount_acc_f,
+                amount_original=amount_orig_f,
+                currency_original=currency,
+                category_id=req.category_id,
+                event_id=req.event_id,
+                comment=comment,
+                sheet_category=None,
+                sheet_group=None,
+                tag_ids=effective_tag_ids,
+            ),
+            enqueue_logging=is_sheet_logging_enabled(),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
 
-        amount_acc = req.amount
-        if currency.upper() != settings.accounting_currency.upper():
-            rate = get_rate(
-                con,
-                req.date,
-                currency,
-                settings.accounting_currency,
-                offline=True,
-            )
-            amount_acc = (req.amount * rate).quantize(Decimal("0.01"))
+    if result == "conflict":
+        # Re-run the stored-vs-incoming compare so the 409 body
+        # names the columns that differ. The common "narrow race"
+        # case — the operator edited ``events.auto_tags`` between
+        # the original POST and a replay — lands here as a
+        # tag_ids-only diff, which lets the client distinguish it
+        # from a real body-drift conflict without guessing.
+        diff = describe_expense_conflict(
+            con,
+            ExpensePayload(
+                client_expense_id=req.client_expense_id,
+                expense_datetime=expense_dt,
+                amount=amount_acc_f,
+                amount_original=amount_orig_f,
+                currency_original=currency,
+                category_id=req.category_id,
+                event_id=req.event_id,
+                comment=comment,
+                sheet_category=None,
+                sheet_group=None,
+                tag_ids=effective_tag_ids,
+            ),
+        )
+        detail = f"client_expense_id {req.client_expense_id!r} already exists with different data"
+        if diff:
+            detail = f"{detail}: {diff}"
+        raise HTTPException(status_code=409, detail=detail)
 
-        expense_dt = datetime.combine(req.date, datetime.min.time())
-
-        # Union event.auto_tags into the submitted tag set. This is the
-        # runtime-write counterpart to the historical importer, which
-        # applies the same union at import time; keeping both paths in
-        # sync means the "vacation expense always carries both отпуск
-        # and путешествия" invariant holds regardless of which path
-        # created the row.
-        #
-        # Idempotency caveat: ``insert_expense`` compares the stored
-        # ``tag_ids`` against ``effective_tag_ids`` on ON CONFLICT. If
-        # the operator edits ``events.auto_tags`` between the original
-        # POST and a replay carrying the same ``client_expense_id`` +
-        # ``req.tag_ids``, the recomputed union can differ and the
-        # replay gets 409 conflict instead of 200 duplicate. That's a
-        # narrow race (the auto_tags edit would have to land between
-        # a failed POST and the retry) and the safer of the two
-        # failure modes — surfacing it tells the operator their
-        # vocabulary changed mid-flight rather than silently writing
-        # the older tag set.
-        effective_tag_ids: list[int] = list(dict.fromkeys(int(t) for t in req.tag_ids))
-        if req.event_id is not None:
-            for auto_id in sheet_mapping.resolve_event_auto_tag_ids(con, req.event_id):
-                if auto_id not in effective_tag_ids:
-                    effective_tag_ids.append(auto_id)
-
-        # ``insert_expense`` is the single source of truth for the
-        # duplicate-vs-conflict decision: it runs the INSERT with
-        # ``ON CONFLICT DO NOTHING`` and, on conflict, compares the full
-        # stored payload against the incoming one. We intentionally do
-        # not pre-check with ``lookup_existing_expense`` for the
-        # happy-path compare — a double compare would drift over time,
-        # and the ON CONFLICT path is already atomic against concurrent
-        # POSTs sharing the same ``client_expense_id``.
-        amount_acc_f = float(amount_acc)
-        amount_orig_f = float(req.amount)
-        comment = req.comment or ""
-        try:
-            result = insert_expense(
-                con,
-                ExpensePayload(
-                    client_expense_id=req.client_expense_id,
-                    expense_datetime=expense_dt,
-                    amount=amount_acc_f,
-                    amount_original=amount_orig_f,
-                    currency_original=currency,
-                    category_id=req.category_id,
-                    event_id=req.event_id,
-                    comment=comment,
-                    sheet_category=None,
-                    sheet_group=None,
-                    tag_ids=effective_tag_ids,
-                ),
-                enqueue_logging=is_sheet_logging_enabled(),
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e)) from None
-
-        if result == "conflict":
-            # Re-run the stored-vs-incoming compare so the 409 body
-            # names the columns that differ. The common "narrow race"
-            # case — the operator edited ``events.auto_tags`` between
-            # the original POST and a replay — lands here as a
-            # tag_ids-only diff, which lets the client distinguish it
-            # from a real body-drift conflict without guessing.
-            diff = describe_expense_conflict(
-                con,
-                ExpensePayload(
-                    client_expense_id=req.client_expense_id,
-                    expense_datetime=expense_dt,
-                    amount=amount_acc_f,
-                    amount_original=amount_orig_f,
-                    currency_original=currency,
-                    category_id=req.category_id,
-                    event_id=req.event_id,
-                    comment=comment,
-                    sheet_category=None,
-                    sheet_group=None,
-                    tag_ids=effective_tag_ids,
-                ),
-            )
-            detail = (
-                f"client_expense_id {req.client_expense_id!r} already exists with different data"
-            )
-            if diff:
-                detail = f"{detail}: {diff}"
-            raise HTTPException(status_code=409, detail=detail)
-
-        catalog_version = get_catalog_version(con)
-        default_group_id = _most_used_group(con)
-        category_defaults = _most_used_category_per_group(con)
-    finally:
-        con.close()
+    catalog_version = get_catalog_version(con)
+    default_group_id = _most_used_group(con)
+    category_defaults = _most_used_category_per_group(con)
 
     return ExpenseResponse(
         status="ok" if result == "created" else "duplicate",
