@@ -30,7 +30,7 @@
 | src/dinary/reports/income.py                           |       86 |        3 |     97% |209-210, 285 |
 | src/dinary/reports/verify\_budget.py                   |       83 |        1 |     99% |       104 |
 | src/dinary/reports/verify\_income.py                   |       88 |        1 |     99% |        38 |
-| src/dinary/services/catalog.py                         |       46 |        0 |    100% |           |
+| src/dinary/services/catalog.py                         |       44 |        0 |    100% |           |
 | src/dinary/services/catalog\_writer.py                 |      266 |       46 |     83% |175-176, 338-342, 496-498, 518-560, 569, 660, 671, 705, 748, 753, 770, 866, 898, 902-904, 911-913 |
 | src/dinary/services/catalog\_writer\_events.py         |      167 |       33 |     80% |117-119, 134, 144-149, 183, 185, 187, 189, 199, 215, 255-257, 293, 302, 316-318, 343, 382, 386-388, 395-397, 419, 432-434 |
 | src/dinary/services/classification\_rules.py           |       21 |        0 |    100% |           |
@@ -51,7 +51,7 @@
 | src/dinary/services/seed\_config.py                    |      139 |        7 |     95% |221-222, 512-514, 552-556 |
 | src/dinary/services/sheet\_logging.py                  |      226 |       41 |     82% |107-111, 125-132, 140, 206-207, 217, 222-224, 267-269, 293-294, 298-308, 385, 424-428, 439, 443, 473-474, 494-504 |
 | src/dinary/services/sheet\_mapping.py                  |      250 |       54 |     78% |259, 331-333, 360-361, 368-374, 424, 427-439, 453-454, 464-482, 559-566, 594-646, 674, 685-690 |
-| src/dinary/services/sheets.py                          |      233 |       63 |     73% |87-96, 100, 137-146, 164-176, 210-211, 238, 292, 331, 389, 472, 622, 666-671, 707-747 |
+| src/dinary/services/sheets.py                          |      214 |       71 |     67% |87-96, 100, 137-146, 164-176, 210-211, 238, 292, 331, 447, 581-586, 596-599, 610-615, 651-691 |
 | src/dinary/services/sql\_loader.py                     |       31 |        0 |    100% |           |
 | src/dinary/services/sqlite\_types.py                   |       36 |        0 |    100% |           |
 | src/dinary/services/storage.py                         |       72 |        8 |     89% |46-47, 158-161, 169-175 |
@@ -60,7 +60,7 @@
 | src/dinary/tools/backup\_snapshots.py                  |       79 |        7 |     91% |157, 213-218 |
 | src/dinary/tools/report\_helpers.py                    |       30 |       10 |     67% |     44-53 |
 | src/dinary/tools/sql.py                                |       71 |        3 |     96% |86, 176, 183 |
-| **TOTAL**                                              | **5540** | **1091** | **80%** |           |
+| **TOTAL**                                              | **5519** | **1099** | **80%** |           |
 
 
 ## Setup coverage badge
