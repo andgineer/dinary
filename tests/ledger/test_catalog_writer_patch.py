@@ -15,9 +15,12 @@ from datetime import date
 import allure
 import pytest
 
-from dinary.services import catalog_writer, storage
-from dinary.services.expenses import ExpensePayload, insert_expense
+from dinary.services import storage
 from dinary.services.catalog import get_catalog_version
+from dinary.services.catalog_writer_errors import CatalogConflictError, CatalogWriteError
+from dinary.services.catalog_writer_categories import edit_category
+from dinary.services.catalog_writer_events import edit_event, set_tag_active
+from dinary.services.expenses import ExpensePayload, insert_expense
 
 from _catalog_writer_helpers import _DT, _seed_minimal, fresh_db  # noqa: F401
 
@@ -41,7 +44,7 @@ class TestAtomicPatch:
                 " (id, name, group_id, is_active, sheet_name, sheet_group)"
                 " VALUES (1, 'food', 1, TRUE, 'legacy_name', 'legacy_group')",
             )
-            catalog_writer.edit_category(
+            edit_category(
                 con,
                 1,
                 sheet_name="",
@@ -60,7 +63,7 @@ class TestAtomicPatch:
         try:
             _seed_minimal(con)
             v0 = get_catalog_version(con)
-            catalog_writer.edit_category(
+            edit_category(
                 con,
                 1,
                 name="food-renamed",
@@ -91,8 +94,8 @@ class TestAtomicPatch:
                 " VALUES (2, 'drink', 1, TRUE)",
             )
             v0 = get_catalog_version(con)
-            with pytest.raises(catalog_writer.CatalogConflictError):
-                catalog_writer.edit_category(
+            with pytest.raises(CatalogConflictError):
+                edit_category(
                     con,
                     1,
                     name="drink",
@@ -123,8 +126,8 @@ class TestAtomicPatch:
             )
             # Attempt to move date_from past existing date_to; must 422
             # and leave the row untouched.
-            with pytest.raises(catalog_writer.CatalogWriteError):
-                catalog_writer.edit_event(
+            with pytest.raises(CatalogWriteError):
+                edit_event(
                     con,
                     1,
                     date_from=date(2027, 1, 1),
@@ -162,7 +165,7 @@ class TestTagUsage:
                 " (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
                 " VALUES (1, 'trip', '2026-01-01', '2026-12-31', TRUE, TRUE, '[]')",
             )
-            catalog_writer.edit_event(con, 1, auto_tags=["отпуск"])
+            edit_event(con, 1, auto_tags=["отпуск"])
             stored = con.execute("SELECT auto_tags FROM events WHERE id = 1").fetchone()
         finally:
             con.close()
@@ -181,8 +184,8 @@ class TestTagUsage:
                 " (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
                 " VALUES (1, 'trip', '2026-01-01', '2026-12-31', TRUE, TRUE, '[]')",
             )
-            with pytest.raises(catalog_writer.CatalogWriteError, match="unknown tag name"):
-                catalog_writer.edit_event(con, 1, auto_tags=["ghost_tag"])
+            with pytest.raises(CatalogWriteError, match="unknown tag name"):
+                edit_event(con, 1, auto_tags=["ghost_tag"])
         finally:
             con.close()
 
@@ -215,7 +218,7 @@ class TestTagUsage:
                 ),
                 enqueue_logging=False,
             )
-            catalog_writer.set_tag_active(con, 1, active=False)
+            set_tag_active(con, 1, active=False)
             row = con.execute("SELECT is_active FROM tags WHERE id = 1").fetchone()
         finally:
             con.close()

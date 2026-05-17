@@ -1,30 +1,10 @@
-"""Runtime 3D -> 2D mapping sourced from a curated ``map`` worksheet tab.
+"""Runtime 3D→2D mapping from the ``map`` worksheet tab.
 
-The tab is a flat, human-editable table; the drain loop uses it to
-resolve a 2D target ``(sheet_category, sheet_group)`` for each 3D
-expense ``(category_id, event_id, tag_ids)``. The evaluation model is
-"first non-``*`` wins per column, independently": rows are scanned
-top-to-bottom, every matching row contributes its values, and for each
-of the two output columns we pick the first non-wildcard value we see.
-
-Tab layout (columns A..E, one header row, then data rows):
-
-    A  category    canonical category name, or ``*`` for "any"
-    B  event       event name, or ``*`` for "any" (includes no event)
-    C  tags        comma- or whitespace-separated tag names that must
-                   ALL be present on the expense; ``*`` / empty = no
-                   required tags
-    D  Расходы     target sheet_category; ``*`` / empty means
-                   "don't decide here"; any other value wins
-    E  Конверт     same three semantics for sheet_group
-
-Fallbacks applied only when no row decides a column:
-  sheet_category -> ``categories.name``
-  sheet_group    -> ``""``
-
-The DB tables ``sheet_mapping`` / ``sheet_mapping_tags`` are derived
-state; the tab is the source of truth. ``reload_now`` swaps them
-atomically.
+Tab columns: A=category, B=event, C=tags, D=Расходы, E=Конверт.
+Evaluation: first non-``*`` wins per column independently.
+Fallback: sheet_category→categories.name, sheet_group→"".
+DB tables are derived state; tab is source of truth. ``reload_now`` swaps atomically.
+See ``.plans/sheets.md``.
 """
 
 import json
@@ -38,7 +18,7 @@ import gspread
 
 from dinary.config import settings, spreadsheet_id_from_setting
 from dinary.services import storage
-from dinary.services.sheets import drive_get_modified_time, get_sheet
+from dinary.services.sheets_client import drive_get_modified_time, get_sheet
 
 logger = logging.getLogger(__name__)
 

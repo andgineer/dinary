@@ -1,52 +1,9 @@
-"""Runtime classification taxonomy for ``dinary.db``.
+"""Runtime catalog taxonomy: hardcoded groups/categories/tags/events + FK-safe upsert.
 
-This file is the authoritative source of truth for the runtime catalog
-tables: ``category_groups``, ``categories``, ``tags``, and ``events``.
-When this file disagrees with ``docs/src/ru/taxonomy.md``, the code
-wins.
-
-Phase 1 PWA hardcodes the same tag dictionary defined here. There is
-no ``/api/tags`` endpoint.
-
-Scope of this module
---------------------
-
-Only the *runtime* catalog lives here — the hardcoded 3D vocabulary
-(``ENTRY_GROUPS``, ``PHASE1_TAGS``, event constants, ``EXPLICIT_EVENTS``)
-plus the FK-safe in-place upsert primitives and the single public
-entry point ``seed_classification_catalog``. The ``import_mapping``
-table, the legacy 2D→3D derivation rules, and the
-``.deploy/import_sources.json``-driven category discovery all live
-in ``dinary.imports.seed``. The direction of dependency is strictly
-``imports.seed -> services.seed_config`` (never the reverse); runtime
-code never reaches into ``imports.seed``, and non-import deployments
-never import it.
-
-Non-import bootstrap: ``bootstrap_catalog()`` provides a zero-Sheets
-entry point that seeds only the hardcoded runtime taxonomy. This is
-what ``inv bootstrap-catalog`` invokes on every deploy, so every
-deployment lands with a populated catalog even when the operator has
-no historical Google Sheets to import from.
-
-FK-safe in-place sync
----------------------
-
-``seed_classification_catalog`` never deletes the DB file and never
-renumbers catalog ids. Ledger tables (``expenses``, ``expense_tags``,
-``sheet_logging_jobs``, ``income``) carry real FKs into the catalog;
-deleting and renumbering referenced rows would violate those FKs.
-
-The sync algorithm:
-
-1. Mark every catalog row ``is_active=FALSE``. Rows that reappear in
-   the new taxonomy snapshot get flipped back to ``TRUE``; rows that
-   don't stay ``FALSE`` and are hidden from the live API while
-   remaining FK-valid targets for historical ledger rows.
-2. Upsert groups / categories / tags / events by ``name`` (the
-   natural key). Pre-existing rows keep their integer ``id``; new
-   rows get a fresh ``id = max(id)+1``.
-3. Return a summary dict + a ``TaxonomyIdMaps`` snapshot the caller
-   needs to hand to any import-mapping rebuild step.
+Authoritative source for the runtime catalog tables; when this disagrees with
+``docs/src/ru/taxonomy.md``, the code wins. Import-mapping and 2D→3D derivation
+rules live in ``dinary.imports.seed`` (never the reverse dependency).
+See ``.plans/catalog-api.md`` for the FK-safe sync algorithm.
 """
 
 import dataclasses

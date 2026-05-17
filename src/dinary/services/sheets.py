@@ -1,179 +1,29 @@
-"""Google Sheets read/write via gspread.
+"""Google Sheets row utilities: cell parsing, year decoding, row finding.
 
-Shared between historical import (read-only) and optional runtime sheet
-logging (append-only). The sheet logging path uses ``ensure_category_row``
-to insert rows on demand — no month-copying. Import uses layout-aware
-readers in ``dinary.imports``.
-
-Year-aware matching
--------------------
-The optional sheet-logging spreadsheet holds expenses for *all* years.
-Column G stores the month number 1..12 only, so any helper that filters
-rows by month would otherwise collapse e.g. January 2026 and January
-2027 into one match — appending a 2027 expense onto a 2026 row.
-
-The fix is keyed on column A: ``insert_logging_row`` writes
-``YYYY-MM-DD`` there with ``USER_ENTERED``, so Google Sheets stores it
-as a date serial. ``ws.get_all_values()`` returns the *formatted*
-display string (``"Apr-1"`` etc.), which doesn't carry the year, so we
-fetch column A separately with ``UNFORMATTED_VALUE`` via
-``fetch_row_years`` and pass the resulting per-row year list as
-``years_by_row`` into the matching helpers.
-
-When ``years_by_row`` (and ``target_year``) is omitted, the helpers
-fall back to legacy month-only matching — that path stays alive for
-unit tests that mock ``ws.get_all_values()`` only and never need a
-multi-year sheet, and for any caller that genuinely doesn't care about
-year (e.g. a single-year diagnostic).
+Year-aware matching: column A stores a date serial; ``get_all_values()``
+returns the formatted display string without the year, so ``fetch_row_years()``
+reads column A unformatted separately. Pass ``(target_year, years_by_row)``
+together or omit both (falls back to month-only matching for tests/single-year callers).
+See ``.plans/sheets.md``.
 """
 
 import logging
-import threading
 from datetime import date, timedelta
 
-import google.auth.transport.requests as _google_requests
 import gspread
-import httpx
-from google.oauth2.service_account import Credentials
-from gspread.utils import ValueInputOption, ValueRenderOption
-
-from dinary.config import settings
+from gspread.utils import ValueRenderOption
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-# Drive metadata access goes through the dedicated ``_drive_credentials()``
-# path below, with its own ``_DRIVE_SCOPES`` constant. Keeping the
-# gspread client's scope list minimal means a leaked gspread token
-# cannot read file listings elsewhere in the service account's Drive.
-
-# 1-indexed column numbers matching the actual Google Sheet layout:
+# 1-indexed column numbers matching the Google Sheet layout:
 #   A=Date  B=AppCurrency(formula)  C=EUR(formula)  D=Category  E=Group
 #   F=Comment  G=Month  H=Rate  J=LastClientExpenseId
-# Column I is intentionally skipped to leave the human-visible block
-# (A..H) untouched. J stores only the *most recent* ``client_expense_id``
-# appended to the row ("last-key-only" marker). If a retry arrives for
-# the same ``client_expense_id``, the drain worker sees J == key and
-# skips the second write; otherwise the marker is overwritten so the
-# cell size stays bounded to a single UUID regardless of how many
-# expenses a row aggregates over a month.
-COL_DATE = 1
-COL_AMOUNT_APP = 2
+# Column I is intentionally skipped (keeps the human-visible A..H block intact).
 COL_CATEGORY = 4
 COL_GROUP = 5
-COL_COMMENT = 6
 COL_MONTH = 7
-COL_RATE = 8
-COL_EXPENSE_IDS = 10
 
 HEADER_ROWS = 1
-
-
-_gc: gspread.Client | None = None
-
-# Guards lazy init of ``_gc`` and ``_drive_creds`` against concurrent
-# first-touch from worker threads. FastAPI offloads blocking I/O
-# (``asyncio.to_thread``) and the drain loop can overlap with an admin
-# ``POST /api/admin/reload-map`` call; without the lock two threads can
-# both find the singleton ``None`` and both run
-# ``Credentials.from_service_account_file`` (which hits disk and parses
-# JSON). The result is still correct (last write wins, both objects are
-# equivalent), but the wasted work is easy to avoid.
-_client_lock = threading.Lock()
-
-
-def _get_client() -> gspread.Client:
-    global _gc  # noqa: PLW0603
-    if _gc is not None:
-        return _gc
-    with _client_lock:
-        if _gc is None:
-            creds = Credentials.from_service_account_file(
-                str(settings.google_sheets_credentials_path),
-                scopes=SCOPES,
-            )
-            _gc = gspread.authorize(creds)
-    return _gc
-
-
-def get_sheet(spreadsheet_id: str) -> gspread.Spreadsheet:
-    return _get_client().open_by_key(spreadsheet_id)
-
-
-_DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
-
-# Process-wide cache for the Drive-only credentials object. The
-# service-account JSON is read from disk exactly once; subsequent
-# calls reuse the in-memory ``Credentials`` and let the google-auth
-# library refresh the OAuth access token on demand (it handles
-# expiry tracking internally).
-_drive_creds: Credentials | None = None
-_drive_creds_lock = threading.Lock()
-
-
-def _drive_credentials() -> Credentials:
-    """Return service-account credentials scoped for Drive metadata reads only.
-
-    Cached after the first call so ``ensure_fresh()`` does not re-read
-    the service-account JSON and force a token refresh on every drain
-    sweep. The google-auth ``Credentials`` object tracks its own
-    access-token expiry; calling ``refresh`` only when ``expired`` is
-    True keeps the hot path at one Drive metadata request with no
-    token-exchange round-trip in steady state.
-
-    Kept separate from ``_get_client()``'s credentials because a
-    token refresh only delivers the scopes the credentials object was
-    created with. Keeping a dedicated Drive-only credential makes the
-    principle of least privilege visible at the call site.
-
-    Thread-safety: lazy init is serialised via ``_drive_creds_lock`` so
-    two worker threads racing the first call do not both read the
-    service-account JSON. ``refresh()`` is *not* inside the lock —
-    google-auth's ``Credentials`` documents concurrent ``refresh`` as
-    safe, and holding the lock across a network round-trip would
-    serialise every drain sweep behind every admin call.
-    """
-    global _drive_creds  # noqa: PLW0603
-    if _drive_creds is None:
-        with _drive_creds_lock:
-            if _drive_creds is None:
-                _drive_creds = Credentials.from_service_account_file(
-                    str(settings.google_sheets_credentials_path),
-                    scopes=_DRIVE_SCOPES,
-                )
-    if not _drive_creds.valid:
-        _drive_creds.refresh(_google_requests.Request())
-    return _drive_creds
-
-
-def drive_get_modified_time(spreadsheet_id: str) -> str:
-    """Return the spreadsheet's ``modifiedTime`` as an RFC3339 UTC string.
-
-    Used by ``sheet_mapping.ensure_fresh()`` as a cheap staleness check:
-    the drain loop calls this before every batch of sheet-logging
-    jobs, and only re-parses the ``map`` tab when the returned
-    timestamp differs from the one cached from the previous parse.
-    This turns the hot path's Drive cost into a single metadata
-    fetch (sub-second, no row data) instead of a full worksheet
-    pull.
-
-    Raises ``httpx.HTTPStatusError`` on non-2xx responses so the
-    caller can decide whether to bail and keep the cached map or
-    reload eagerly.
-    """
-    creds = _drive_credentials()
-    url = f"https://www.googleapis.com/drive/v3/files/{spreadsheet_id}"
-    headers = {"Authorization": f"Bearer {creds.token}"}
-    params = {"fields": "modifiedTime", "supportsAllDrives": "true"}
-    with httpx.Client(timeout=10.0) as client:
-        resp = client.get(url, headers=headers, params=params)
-    resp.raise_for_status()
-    body = resp.json()
-    modified_time = body.get("modifiedTime")
-    if not isinstance(modified_time, str):
-        msg = f"Drive API returned no modifiedTime for {spreadsheet_id!r}: {body!r}"
-        raise TypeError(msg)
-    return modified_time
 
 
 def _cell(row: list[str], col_1indexed: int) -> str:
@@ -198,9 +48,8 @@ def fmt_amount(amount: float) -> str:
     return str(int(amount)) if amount == int(amount) else f"{amount:.2f}"
 
 
-# Google Sheets stores dates as the number of days since 1899-12-30
-# (the "1900 date system" inherited from Excel, with the Lotus 1-2-3
-# leap-year quirk built into the epoch shift).
+# Google Sheets stores dates as days since 1899-12-30 (the "1900 date system"
+# inherited from Excel with the Lotus 1-2-3 leap-year quirk).
 _SHEETS_EPOCH = date(1899, 12, 30)
 
 
@@ -221,13 +70,9 @@ def _year_from_iso_string(value: str) -> int | None:
 def _year_from_a_value(value: object) -> int | None:
     """Extract the year from a column-A cell read with ``UNFORMATTED_VALUE``.
 
-    ``insert_logging_row`` writes the first day of the month with
-    ``USER_ENTERED``, so Google parses it into a date serial. Older /
-    legacy rows entered as plain text may show up as ``YYYY-MM-DD``
-    strings instead. Anything else (the displayed ``"Apr-1"`` form, an
-    empty cell, an unrecognised string) returns ``None`` and is treated
-    as "year unknown" by the matching helpers — those rows still match
-    on (month, cat, grp) only, preserving backwards compatibility.
+    Date serial → decoded year. Plain ``YYYY-MM-DD`` text → parsed year.
+    Anything else (formatted display strings, empty cells) → ``None``
+    (treated as "year unknown" by matching helpers; wildcard-matches month).
     """
     if value is None or value == "" or isinstance(value, bool):
         return None
@@ -239,24 +84,11 @@ def _year_from_a_value(value: object) -> int | None:
 
 
 def fetch_row_years(ws: gspread.Worksheet, n_rows: int) -> list[int | None]:
-    """Read column A unformatted and return ``years_by_row[i-1]`` for row ``i``.
+    """Read column A unformatted; return a list aligned 1:1 with ``get_all_values()``.
 
-    A separate ``batch_get`` is required because ``ws.get_all_values()``
-    returns the *displayed* (formatted) text — Google shows column A as
-    ``"Apr-1"`` etc., dropping the year. The unformatted read returns
-    the underlying date serial (or the original string for text-typed
-    cells), which ``_year_from_a_value`` decodes.
-
-    Header rows are read too so the returned list aligns 1:1 with
-    ``ws.get_all_values()``.
-
-    Caller contract: pass ``n_rows = len(ws.get_all_values())`` from the
-    same logical fetch. The result is always exactly ``n_rows`` long —
-    Sheets API trims trailing empty rows out of ``batch_get`` so we pad
-    with ``None`` to restore the 1:1 alignment that ``_row_year_matches``
-    and ``_find_insertion_row`` index into. ``None`` entries are treated
-    as "year unknown" and wildcard-match — the right behavior for
-    pre-year-aware sheets and blank/text column-A cells.
+    Sheets API trims trailing empty rows from ``batch_get``, so the result is
+    padded with ``None`` to exactly ``n_rows`` entries. ``None`` = year unknown
+    → wildcard-matches any target year.
     """
     if n_rows < 1:
         return []
@@ -278,15 +110,10 @@ def _check_year_args_paired(
     target_year: int | None,
     years_by_row: list[int | None] | None,
 ) -> None:
-    """Reject callers that opt into year-aware mode only halfway.
+    """Raise if exactly one of (target_year, years_by_row) is provided.
 
-    ``target_year`` and ``years_by_row`` are a single contract: either
-    both present (year-aware matching is on) or both absent (legacy
-    month-only matching). Passing one without the other previously
-    yielded silent wildcard matches that *looked* year-aware to the
-    caller — exactly the failure mode behind the rate-corruption bug
-    we just fixed in ``_append_row_to_sheet``. Failing loudly here
-    surfaces the caller bug instead of laundering it.
+    Partial year-aware mode silently wildcards — the failure mode behind a
+    previous rate-corruption bug. Failing loudly here surfaces the caller bug.
     """
     if (target_year is None) != (years_by_row is None):
         raise ValueError(
@@ -302,30 +129,9 @@ def _row_year_matches(
     target_year: int | None,
     years_by_row: list[int | None] | None,
 ) -> bool:
-    """Year-aware acceptance check shared by the matching helpers.
-
-    Returns ``True`` when:
-
-    * year-aware mode is off (no ``target_year`` and no
-      ``years_by_row`` — already validated by
-      ``_check_year_args_paired``);
-    * the row's parsed year matches ``target_year``;
-    * the row's year is ``None`` — happens for header rows, blank
-      column-A cells, and legacy/test rows whose A is formatted text
-      like ``"Apr-1"``. Treating these as wildcards keeps the existing
-      single-year and unit-test paths working unchanged.
-
-    Out-of-bounds ``row_index_1based`` (years_by_row shorter than
-    all_values) also wildcards — see ``fetch_row_years`` padding logic.
-    Callers in production should keep both lists aligned; the
-    out-of-bounds path is a safety net, not a contract.
-    """
-    # ``_check_year_args_paired`` (called by every public matcher above
-    # before reaching here) guarantees ``target_year is None ↔ years_by_row
-    # is None``, so testing one suffices for the legacy-mode short-circuit.
     if target_year is None:
         return True
-    assert years_by_row is not None  # noqa: S101  -- enforced by caller pairing check
+    assert years_by_row is not None  # noqa: S101 — enforced by _check_year_args_paired
     idx = row_index_1based - 1
     if idx < 0 or idx >= len(years_by_row):
         return True
@@ -342,22 +148,13 @@ def find_category_row(
     target_year: int | None = None,
     years_by_row: list[int | None] | None = None,
 ) -> int | None:
-    """Find the 1-indexed row for a (year?, month, category, group) tuple.
-
-    When ``target_year`` and ``years_by_row`` are both provided, only a
-    row whose column-A year matches ``target_year`` (or is unknown) can
-    be selected. This is what lets the sheet-logging path target the
-    correct yearly block in a multi-year spreadsheet.
-    """
+    """Return the 1-indexed row for ``(year?, month, category, group)``, or None."""
     _check_year_args_paired(target_year, years_by_row)
     for i, row in enumerate(all_values[HEADER_ROWS:], start=HEADER_ROWS + 1):
-        month_val = _cell(row, COL_MONTH)
-        cat_val = _cell(row, COL_CATEGORY)
-        grp_val = _cell(row, COL_GROUP)
         if (
-            month_val == str(target_month)
-            and cat_val == category
-            and grp_val == group
+            _cell(row, COL_MONTH) == str(target_month)
+            and _cell(row, COL_CATEGORY) == category
+            and _cell(row, COL_GROUP) == group
             and _row_year_matches(i, target_year, years_by_row)
         ):
             return i
@@ -371,20 +168,12 @@ def find_month_range(
     target_year: int | None = None,
     years_by_row: list[int | None] | None = None,
 ) -> tuple[int, int] | None:
-    """Return (first_row, last_row) 1-indexed for a contiguous month block.
-
-    With year-aware arguments, the block is constrained to rows whose
-    column-A year matches ``target_year`` (or is unknown).
-    """
+    """Return ``(first_row, last_row)`` 1-indexed for a contiguous month block."""
     _check_year_args_paired(target_year, years_by_row)
     first: int | None = None
     last: int | None = None
     for i, row in enumerate(all_values[HEADER_ROWS:], start=HEADER_ROWS + 1):
-        if _cell(row, COL_MONTH) == str(month) and _row_year_matches(
-            i,
-            target_year,
-            years_by_row,
-        ):
+        if _cell(row, COL_MONTH) == str(month) and _row_year_matches(i, target_year, years_by_row):
             if first is None:
                 first = i
             last = i
@@ -402,22 +191,11 @@ def _find_insertion_row(
     target_year: int | None = None,
     years_by_row: list[int | None] | None = None,
 ) -> int:
-    """Return the 1-indexed row where a new ``(year?, month, cat, grp)`` row should go.
+    """Return the 1-indexed position for a new ``(year?, month, cat, grp)`` row.
 
-    Within an existing matching block (same year + month, or just same
-    month in legacy mode), the new row is placed to maintain ascending
-    ``(category, group)`` order.
-
-    Year-aware mode (``target_year`` + ``years_by_row``):
-        when no block exists yet for ``(target_year, target_month)`` we
-        walk top-to-bottom and stop at the first existing row whose
-        ``(year, month)`` is **strictly older** than the target. This
-        keeps the file's "newer years/months on top" convention. If
-        nothing older is found, the row goes at the bottom — which is
-        what we want when the new entry is the oldest.
-
-    Legacy mode (no year info):
-        unchanged — new month blocks land right after the header.
+    Inserts within an existing month block to maintain ascending (category, group)
+    order. When no block exists yet and year-aware mode is on, walks top-to-bottom
+    and stops at the first row strictly older than the target (newer months on top).
     """
     _check_year_args_paired(target_year, years_by_row)
     month_range = find_month_range(
@@ -430,262 +208,18 @@ def _find_insertion_row(
         first, last = month_range
         for i in range(first, last + 1):
             row = all_values[i - 1]
-            row_cat = _cell(row, COL_CATEGORY)
-            row_grp = _cell(row, COL_GROUP)
-            if (row_cat, row_grp) > (category, group):
+            if (_cell(row, COL_CATEGORY), _cell(row, COL_GROUP)) > (category, group):
                 return i
         return last + 1
 
     if target_year is not None and years_by_row is not None:
-        # ``years_by_row`` is sized off ``len(all_values)`` by
-        # ``fetch_row_years``, so indices ``HEADER_ROWS..len(all_values)``
-        # are always in bounds.
         for i, row in enumerate(all_values[HEADER_ROWS:], start=HEADER_ROWS + 1):
             row_year = years_by_row[i - 1]
             month_str = _cell(row, COL_MONTH)
             if row_year is None or not month_str.isdigit():
                 continue
-            row_month = int(month_str)
-            if (row_year, row_month) < (target_year, target_month):
+            if (row_year, int(month_str)) < (target_year, target_month):
                 return i
         return len(all_values) + 1
 
     return HEADER_ROWS + 1
-
-
-def insert_logging_row(
-    ws: gspread.Worksheet,
-    insert_at: int,
-    expense_date: date,
-    month: int,
-    category: str,
-    group: str,
-    *,
-    rate: str | None = None,
-) -> None:
-    """Insert a single blank row at *insert_at* and populate its cells.
-
-    Cell values written:
-      * A — first day of month (``YYYY-MM-DD``)
-      * B — empty (filled later by ``append_expense_atomic``)
-      * C — conversion formula ``=IF(H{r}="","",B{r}/H{r})`` (relative per row)
-      * D — *category*
-      * E — *group*
-      * F — empty (comment, filled by ``append_expense_atomic``)
-      * G — *month* number
-      * H — *rate* (if provided) — written on every row, not only the
-        first row of a month, so the column-C formula stays stable. If
-        *rate* is ``None`` we write an explicit empty string rather
-        than skipping the cell; the first subsequent
-        ``append_expense_atomic`` on this row will then see an empty H
-        and backfill the rate via its set-if-missing guard. Skipping
-        H entirely would break that guard because ``batch_get`` on an
-        unset cell and on an empty-string cell both come back as ``""``
-        — the placeholder is what lets a caller tell "H was never
-        touched" apart from "H was touched and intentionally blank".
-      * J — empty (last-key-only ``client_expense_id`` marker, filled by
-        ``append_expense_atomic``)
-    """
-    ws.insert_rows([[]], row=insert_at)
-
-    date_str = expense_date.replace(day=1).strftime("%Y-%m-%d")
-    r = insert_at
-    ws.batch_update(
-        [
-            {"range": f"A{r}", "values": [[date_str]]},
-            {"range": f"B{r}", "values": [[""]]},
-            {"range": f"C{r}", "values": [[f'=IF(H{r}="","",B{r}/H{r})']]},
-            {"range": f"D{r}", "values": [[category]]},
-            {"range": f"E{r}", "values": [[group]]},
-            {"range": f"F{r}", "values": [[""]]},
-            {"range": f"G{r}", "values": [[str(month)]]},
-            {"range": f"H{r}", "values": [[rate or ""]]},
-            {"range": f"J{r}", "values": [[""]]},
-        ],
-        value_input_option=ValueInputOption.user_entered,
-    )
-    logger.info(
-        "Inserted logging row at %d for month %d (%s/%s)",
-        r,
-        month,
-        category,
-        group,
-    )
-
-
-def ensure_category_row(
-    ws: gspread.Worksheet,
-    all_values: list[list[str]],
-    target_month: int,
-    category: str,
-    group: str,
-    expense_date: date,
-    *,
-    years_by_row: list[int | None] | None = None,
-    rate: str | None = None,
-) -> tuple[int, list[list[str]]]:
-    """Return ``(row_index, refreshed_values)`` for ``(year?, month, cat, grp)``.
-
-    If the row already exists, return it and the unchanged grid.
-    Otherwise insert a single new row at the position that maintains
-    ``(year, month, category, group)`` sort order, and return the
-    refreshed grid.
-
-    When ``years_by_row`` is provided, ``expense_date.year`` is the
-    target year; otherwise the helper falls back to month-only matching
-    so existing single-year tests and callers keep working.
-    """
-    target_year = expense_date.year if years_by_row is not None else None
-
-    target_row = find_category_row(
-        all_values,
-        target_month,
-        category,
-        group,
-        target_year=target_year,
-        years_by_row=years_by_row,
-    )
-    if target_row is not None:
-        return target_row, all_values
-
-    insert_at = _find_insertion_row(
-        all_values,
-        target_month,
-        category,
-        group,
-        target_year=target_year,
-        years_by_row=years_by_row,
-    )
-    insert_logging_row(
-        ws,
-        insert_at,
-        expense_date,
-        target_month,
-        category,
-        group,
-        rate=rate,
-    )
-    refreshed = ws.get_all_values()
-    return insert_at, refreshed
-
-
-def extend_amount_formula(existing: str, amount_app: float) -> str:
-    """Pure function — return the new B-cell formula after appending *amount_app*.
-
-    Inputs the live string in column B as rendered with
-    ``ValueRenderOption.formula`` (so a formula cell looks like
-    ``"=460+373"`` and a literal-number cell looks like ``"460"`` or
-    ``"460.5"``). Empty / non-numeric / unrecognised values restart the
-    formula from scratch.
-    """
-    amount_str = fmt_amount(amount_app)
-    if existing.startswith("="):
-        return f"{existing}+{amount_str}"
-    if existing and _is_numeric(existing):
-        return f"={existing}+{amount_str}"
-    return f"={amount_str}"
-
-
-def extend_comment(existing: str, new_comment: str) -> str:
-    """Pure function — return the new F-cell value after appending *new_comment*.
-
-    ``new_comment`` is appended verbatim with a ``"; "`` separator if
-    *existing* is non-empty, or stored alone otherwise. An empty
-    *new_comment* leaves *existing* unchanged.
-    """
-    if not new_comment:
-        return existing
-    separator = "; " if existing else ""
-    return f"{existing}{separator}{new_comment}"
-
-
-def _first_cell(batch_get_result: list[list[str]]) -> str:
-    """Pull a single cell value out of a ``ws.batch_get`` per-range result.
-
-    ``ws.batch_get`` returns ``[]`` for an empty cell, ``[[value]]`` for
-    a single non-empty cell, and similarly nested lists for larger
-    ranges. We only ever ask for single cells here, so flatten and
-    default to ``""``.
-    """
-    if not batch_get_result:
-        return ""
-    first_row = batch_get_result[0]
-    if not first_row:
-        return ""
-    return str(first_row[0]) if first_row[0] is not None else ""
-
-
-def append_expense_atomic(
-    ws: gspread.Worksheet,
-    row: int,
-    *,
-    marker_key: str,
-    amount_app: float,
-    comment: str,
-    rate: str | None = None,
-) -> bool:
-    """Idempotently record one expense at *row*.
-
-    Reads the live B (formula) / F (comment) / J (marker) cells in a
-    single ``batch_get`` call, then either:
-
-    * returns ``False`` immediately when J already equals *marker_key* —
-      the previous attempt for this expense reached the server even if
-      we never saw the response;
-    * issues a single ``batch_update`` writing the new B, F (only when
-      *comment* is non-empty), J (overwriting any previous marker with
-      *marker_key* — "last-key-only" semantics), and H (when *rate* is
-      provided) in one HTTP request, and returns ``True``.
-
-    Combining the writes into one request is what closes the
-    timeout-after-success duplicate hole: the marker is written together
-    with the formula it accounts for, so the only two observable states
-    are "all updated" and "none updated", both of which the next attempt
-    handles correctly.
-
-    The J column stores only the most recent ``client_expense_id`` that
-    was appended to this row; older markers are overwritten. This bounds
-    the cell size to a single UUID regardless of how many expenses a
-    row aggregates.
-    """
-    formula_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_APP)
-    comment_addr = gspread.utils.rowcol_to_a1(row, COL_COMMENT)
-    marker_addr = gspread.utils.rowcol_to_a1(row, COL_EXPENSE_IDS)
-    rate_addr = gspread.utils.rowcol_to_a1(row, COL_RATE)
-
-    fetched = ws.batch_get(
-        [formula_addr, comment_addr, marker_addr, rate_addr],
-        value_render_option=ValueRenderOption.formula,
-    )
-    existing_formula = _first_cell(fetched[0])
-    existing_comment = _first_cell(fetched[1])
-    existing_marker = _first_cell(fetched[2])
-    existing_rate = _first_cell(fetched[3])
-
-    if existing_marker == marker_key:
-        logger.info(
-            "Expense %s already recorded at row %d (J marker equal); skipping",
-            marker_key,
-            row,
-        )
-        return False
-
-    new_formula = extend_amount_formula(existing_formula, amount_app)
-
-    updates = [
-        {"range": formula_addr, "values": [[new_formula]]},
-        {"range": marker_addr, "values": [[marker_key]]},
-    ]
-    if comment:
-        new_comment = extend_comment(existing_comment, comment)
-        updates.append({"range": comment_addr, "values": [[new_comment]]})
-    # Set-if-missing: only backfill H when the cell is empty, so a user's
-    # manual rate edit (or an earlier importer-written rate) survives the
-    # next append. This matches architecture.md's column-H contract; a
-    # stale rate in an already-populated cell is the operator's problem,
-    # not the drain's.
-    if rate is not None and not existing_rate:
-        updates.append({"range": rate_addr, "values": [[rate]]})
-
-    ws.batch_update(updates, value_input_option=ValueInputOption.user_entered)
-    return True

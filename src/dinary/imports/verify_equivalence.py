@@ -29,11 +29,8 @@ from dinary.imports.expense_import import (
     resolve_currency,
 )
 from dinary.services import storage
-from dinary.services.sheets import (
-    HEADER_ROWS,
-    _cell,
-    get_sheet,
-)
+from dinary.services.sheets import HEADER_ROWS, _cell
+from dinary.services.sheets_client import get_sheet
 
 logger = logging.getLogger(__name__)
 

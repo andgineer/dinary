@@ -1,32 +1,162 @@
-"""Events and tags CRUD — split from catalog_writer to keep file sizes manageable.
+"""Events and tags CRUD.
 
-All shared helpers, exception classes, and state-hashing utilities live in
-``services.catalog_writer`` and are imported from there.
+Shared write primitives live in ``catalog_writer``.
+Exception types and result dataclasses live in ``catalog_writer_errors``.
 """
 
 import json
+import re
 import sqlite3
 from datetime import date
 
 from dinary.services import storage
-from dinary.services.catalog_writer import (
+from dinary.services.catalog_writer import _commit_with_bump, _hash_state, _next_id
+from dinary.services.catalog_writer_errors import (
     AddResult,
     AddStatus,
     CatalogConflictError,
     CatalogNotFoundError,
     CatalogWriteError,
     DeleteResult,
-    _commit_with_bump,
-    _event_mapping_reference_count,
-    _event_usage_count,
-    _hash_state,
-    _next_id,
-    _require_known_tag_names,
-    _tag_mapping_reference_count,
-    _tag_usage_count,
-    _validate_tag_name,
 )
 from dinary.services.sheet_mapping import decode_auto_tags_value
+
+# ---------------------------------------------------------------------------
+# Tag-name validation
+# ---------------------------------------------------------------------------
+
+#: Characters rejected inside tag names. Tag names flow through the
+#: ``map`` tab's comma/whitespace-separated tags cell and through
+#: ``events.auto_tags`` (a JSON array of bare names), so whitespace
+#: would split a single tag into two lookups and a comma would do
+#: the same; both look like honest typos but silently route expenses
+#: into the wrong envelope. Reject them at write time.
+_DISALLOWED_TAG_NAME_RE = re.compile(r"[,\s]")
+
+
+def _validate_tag_name(name: str) -> None:
+    if _DISALLOWED_TAG_NAME_RE.search(name):
+        raise CatalogWriteError(
+            f"tag name {name!r} contains whitespace or ','; the map tab uses "
+            "these as separators so they cannot appear inside a single name",
+            http_status=422,
+        )
+
+
+def _require_known_tag_names(
+    con: sqlite3.Connection,
+    names: list[str] | tuple[str, ...],
+) -> None:
+    """422 if any name is not present in the ``tags`` table at all.
+
+    ``events.auto_tags`` is a denormalised name array (keeping a
+    ``tag_id`` array would require a second catalog table just for
+    events). We validate at write time that every name resolves to
+    a ``tags`` row so typos don't silently route to the "unknown tag"
+    drop path in ``resolve_event_auto_tag_ids``. The ``is_active``
+    flag is deliberately not checked — it means "hide from the
+    ручной пикер", and events must keep auto-attaching tags that the
+    operator has retired from the picker (e.g. the "отпуск" tag is
+    only set automatically when a vacation event is picked, so it is
+    hidden from the manual picker while still being a valid auto-tag
+    name).
+    """
+    unique = sorted({str(n) for n in names})
+    if not unique:
+        return
+    placeholders = ",".join(["?"] * len(unique))
+    rows = con.execute(
+        f"SELECT name FROM tags WHERE name IN ({placeholders})",  # noqa: S608
+        unique,
+    ).fetchall()
+    found = {str(r[0]) for r in rows}
+    missing = [n for n in unique if n not in found]
+    if missing:
+        raise CatalogWriteError(
+            f"auto_tags references unknown tag name(s) {missing}; create the tag first",
+            http_status=422,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Usage-count and mapping-reference helpers
+# ---------------------------------------------------------------------------
+
+
+def _event_usage_count(con: sqlite3.Connection, event_id: int) -> int:
+    row = con.execute(
+        "SELECT COUNT(*) FROM expenses WHERE event_id = ?",
+        [event_id],
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _tag_usage_count(con: sqlite3.Connection, tag_id: int) -> int:
+    row = con.execute(
+        "SELECT COUNT(*) FROM expense_tags WHERE tag_id = ?",
+        [tag_id],
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _event_mapping_reference_count(con: sqlite3.Connection, event_id: int) -> int:
+    row = con.execute(
+        "SELECT "
+        " (SELECT COUNT(*) FROM sheet_mapping WHERE event_id = ?) "
+        " + (SELECT COUNT(*) FROM import_mapping WHERE event_id = ?)",
+        [event_id, event_id],
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _events_auto_tags_reference_count(con: sqlite3.Connection, tag_name: str) -> int:
+    """Count events whose ``auto_tags`` JSON array contains ``tag_name``.
+
+    SQLite does not enforce JSON-array semantics, so we load + decode
+    every non-empty ``auto_tags`` payload and check membership in
+    Python. The table is small (one row per historical year plus a
+    handful of explicit events) so scanning is cheap.
+    """
+    rows = con.execute(
+        "SELECT id, auto_tags FROM events"
+        " WHERE auto_tags IS NOT NULL AND auto_tags != '' AND auto_tags != '[]'",
+    ).fetchall()
+    count = 0
+    for event_id, raw in rows:
+        decoded = decode_auto_tags_value(raw, context=f"event_id={int(event_id)}")
+        if tag_name in decoded:
+            count += 1
+    return count
+
+
+def _tag_mapping_reference_count(con: sqlite3.Connection, tag_id: int) -> int:
+    """Mapping-table reference count for a tag.
+
+    Includes ``sheet_mapping_tags`` + ``import_mapping_tags`` (both FK
+    into ``tags``) **and** ``events.auto_tags`` — which is denormalised
+    JSON of tag *names*, not ids, so SQLite's FK engine won't catch it.
+    Counting the name reference here means hard-delete refuses while
+    any event still lists the tag, keeping the runtime auto-attach
+    contract ("event carrying this tag in ``auto_tags`` unions it
+    into every attached expense") well-defined.
+    """
+    tag_name_row = con.execute(
+        "SELECT name FROM tags WHERE id = ?",
+        [tag_id],
+    ).fetchone()
+    tag_name = str(tag_name_row[0]) if tag_name_row else None
+    auto_tag_refs = 0
+    if tag_name is not None:
+        auto_tag_refs = _events_auto_tags_reference_count(con, tag_name)
+    row = con.execute(
+        "SELECT "
+        " (SELECT COUNT(*) FROM sheet_mapping_tags WHERE tag_id = ?) "
+        " + (SELECT COUNT(*) FROM import_mapping_tags WHERE tag_id = ?)",
+        [tag_id, tag_id],
+    ).fetchone()
+    mapping_refs = int(row[0]) if row else 0
+    return mapping_refs + auto_tag_refs
+
 
 # ---------------------------------------------------------------------------
 # Events
@@ -222,9 +352,6 @@ def set_event_active(
 
 def add_tag(con: sqlite3.Connection, *, name: str) -> AddResult:
     """Create a new tag, or reactivate-in-place if the name exists."""
-    # Name validation is a pure string check — run it before we open a
-    # transaction so an invalid name does not cost a BEGIN/ROLLBACK
-    # round-trip. Kept consistent with ``edit_tag``.
     _validate_tag_name(name)
     con.execute("BEGIN IMMEDIATE")
     try:
@@ -281,8 +408,6 @@ def edit_tag(
     (active or inactive)" is preserved atomically inside this same
     transaction.
     """
-    # Run the pure-string name check before BEGIN so a malformed name
-    # does not cost a transaction (mirrors ``add_tag``).
     if name is not None:
         _validate_tag_name(name)
     con.execute("BEGIN IMMEDIATE")
@@ -292,7 +417,6 @@ def edit_tag(
         if row is None:
             raise CatalogNotFoundError(f"tag id={tag_id} not found")
         old_name = str(row[1])
-        # --- DB-state validations ---
         if name is not None:
             conflict = con.execute(
                 "SELECT id FROM tags WHERE name = ? AND id != ?",
@@ -302,7 +426,6 @@ def edit_tag(
                 raise CatalogConflictError(
                     f"tag name {name!r} already in use by id={int(conflict[0])}",
                 )
-        # --- then apply ---
         if name is not None:
             con.execute("UPDATE tags SET name = ? WHERE id = ?", [name, tag_id])
             if name != old_name:
@@ -330,8 +453,7 @@ def _rename_tag_in_events_auto_tags(
     Preserves array order (so authoring order semantics from
     ``resolve_event_auto_tag_ids`` stay intact) and idempotently
     dedups ``new_name`` if it already happened to be in the same
-    array. Empty / malformed payloads are left alone — the generic
-    reader (``decode_auto_tags_value``) already treats them as empty.
+    array. Empty / malformed payloads are left alone.
     """
     rows = con.execute(
         "SELECT id, auto_tags FROM events"
@@ -367,9 +489,6 @@ def delete_event(
 ) -> DeleteResult:
     """Hard-delete iff nothing references this event; otherwise flip
     ``is_active=FALSE``.
-
-    See ``delete_category`` for the expanded "nothing references"
-    definition — mapping rows must also be absent.
     """
     con.execute("BEGIN IMMEDIATE")
     try:

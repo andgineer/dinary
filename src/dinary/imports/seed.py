@@ -36,8 +36,9 @@ from dinary.imports.seed_derivation import (
     event_name_for_source,
     tags_for_source,
 )
-from dinary.services import catalog_writer, sheet_mapping, storage
+from dinary.services import sheet_mapping, storage
 from dinary.services.catalog import get_catalog_version
+from dinary.services.catalog_writer import hash_catalog_state
 from dinary.services.seed_config import (
     HISTORICAL_YEAR_FROM,
     HISTORICAL_YEAR_TO,
@@ -45,7 +46,8 @@ from dinary.services.seed_config import (
     _bump_catalog_version,
     seed_classification_catalog,
 )
-from dinary.services.sheets import HEADER_ROWS, _cell, get_sheet
+from dinary.services.sheets import HEADER_ROWS, _cell
+from dinary.services.sheets_client import get_sheet
 
 logger = logging.getLogger(__name__)
 
@@ -574,14 +576,14 @@ def rebuild_config_from_sheets() -> dict:
     try:
         # Snapshot the catalog hash BEFORE ``seed_from_sheet`` mutates
         # the catalog tables. We use the same canonical state that
-        # ``catalog_writer._commit_with_bump`` hashes, so the two
+        # ``_commit_with_bump`` hashes, so the two
         # write paths share a single definition of "observable
         # catalog change". If a rebuild from the sheet is a genuine
         # no-op (same hardcoded groups, same remote mappings), the
         # hash survives unchanged and we skip the bump — this keeps
         # PWA clients' ETag-validated ``GET /api/catalog`` returning
         # 304 Not Modified across idempotent reseeds.
-        before_hash = catalog_writer.hash_catalog_state(con)
+        before_hash = hash_catalog_state(con)
     finally:
         con.close()
 
@@ -597,7 +599,7 @@ def rebuild_config_from_sheets() -> dict:
         latest_year = _validate_latest_import_source()
         _validate_import_coverage(write_con, latest_year)
         effective_previous = max(previous_version, get_catalog_version(write_con))
-        after_hash = catalog_writer.hash_catalog_state(write_con)
+        after_hash = hash_catalog_state(write_con)
         if before_hash == after_hash:
             # No observable catalog change — skip the bump. The
             # PWA's cached snapshot is still valid; 304s on the

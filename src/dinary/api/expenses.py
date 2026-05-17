@@ -1,25 +1,7 @@
-"""POST /api/expenses endpoint (idempotent on client_expense_id).
+"""POST /api/expenses — idempotent on client_expense_id.
 
-Phase 2 API: the PWA sends a 3D payload using catalog primary keys
-(``category_id``, optional ``event_id``, list of ``tag_ids``). The
-server stores the raw IDs on the ledger; 3D->2D resolution for the
-sheet happens lazily in the drain loop from ``sheet_mapping``, so a
-change to the ``map`` worksheet retroactively affects unlogged
-expenses (but never rewrites already-logged rows).
-
-When ``event_id`` is supplied, any tag names listed on
-``events.auto_tags`` are resolved to live tag ids and **unioned** into
-the expense's stored ``tag_ids`` — so vacation events auto-tag every
-attached expense with ``отпуск`` and ``путешествия`` (routing the
-expense into the "путешествия" envelope via the ``map`` tab) without
-the PWA having to replicate that logic client-side.
-
-Errors:
-
-* 422 — unknown / inactive ``category_id``, ``event_id``, or any
-  ``tag_ids``; FX convert failure; date out of range.
-* 409 — ``client_expense_id`` already present with different stored
-  body (different amount / date / tag_ids / etc).
+event_id supplied → events.auto_tags names are resolved and unioned into
+tag_ids at insert time (server-side, not replicated in PWA).
 """
 
 import asyncio

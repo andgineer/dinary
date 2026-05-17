@@ -1,33 +1,9 @@
-"""Bootstrap historical Google Sheets import (one-time, destructive).
+"""Bootstrap historical Google Sheets import — one-time, destructive per year.
 
-This is the only path that reads from sheets and writes expenses. Once a
-year has been imported into ``data/dinary.db``, runtime traffic
-(``POST /api/expenses`` plus the async sheet-append worker) takes over and
-the sheet becomes append-only.
-
-The importer:
-
-  * resolves ``(sheet_category, sheet_group, year)`` against
-    ``import_mapping`` (year-scoped first, year=0 fallback) — the
-    runtime catalog is pre-baked by
-    ``services.seed_config.seed_classification_catalog`` and the
-    per-year ``import_mapping`` rows are rebuilt by
-    ``imports.seed._rebuild_import_mapping``;
-  * applies a small set of per-row heuristics that depend on data only
-    available at import time (housing keywords, DIY routing, RUB→EUR
-    fallback, "kto" beneficiary column);
-  * unions ``events.auto_tags`` into the row's ``tag_ids`` once an event
-    has been attached — same invariant as ``POST /api/expenses``, so
-    every historical vacation row ends up carrying both ``отпуск`` and
-    ``путешествия`` without relying on the legacy sheet tag columns;
-  * inserts one expense row + tags + provenance pair into
-    ``data/dinary.db`` with ``enqueue_logging=False`` (rows are
-    already in the sheet — re-uploading them is a bug) and
-    ``client_expense_id=None`` (legacy rows have no PWA-generated
-    idempotency key; ``UNIQUE`` allows multiple NULLs).
-
-It does not touch the runtime queue (``sheet_logging_jobs``) and does not
-bump ``catalog_version``.
+Resolves rows via import_mapping (year-scoped first, year=0 fallback), applies
+housing/DIY heuristics, unions events.auto_tags. Inserts with
+enqueue_logging=False (rows already in sheet) and client_expense_id=None.
+See ``.plans/sheets.md``.
 """
 
 import dataclasses
@@ -59,11 +35,8 @@ from dinary.services.seed_config import (
     SYNTHETIC_EVENT_PREFIX,
     VACATION_EVENT_YEAR_TO,
 )
-from dinary.services.sheets import (
-    HEADER_ROWS,
-    _cell,
-    get_sheet,
-)
+from dinary.services.sheets import HEADER_ROWS, _cell
+from dinary.services.sheets_client import get_sheet
 
 logger = logging.getLogger(__name__)
 

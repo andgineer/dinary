@@ -18,7 +18,7 @@ from datetime import date
 
 import allure
 
-from dinary.services.sheets import ensure_category_row
+from dinary.services.sheets_write import ensure_category_row
 
 from _sheets_helpers import HEADER, SAMPLE_SHEET, _make_worksheet
 

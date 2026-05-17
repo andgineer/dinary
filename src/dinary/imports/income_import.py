@@ -20,7 +20,7 @@ from dinary.config import IMPORT_SOURCES_DOC_HINT, ImportSourceRow, get_import_s
 from dinary.imports.expense_import import MONTHS_IN_YEAR
 from dinary.services import storage
 from dinary.services.exchange_rates import get_rate
-from dinary.services.sheets import get_sheet
+from dinary.services.sheets_client import get_sheet
 
 logger = logging.getLogger(__name__)
 

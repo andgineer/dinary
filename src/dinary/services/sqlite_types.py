@@ -1,48 +1,8 @@
-"""SQLite adapter/converter registration for dinary's domain types.
+"""SQLite adapter/converter registration for Decimal/date/datetime. Import for side effects.
 
-Imported for side effects: merely importing this module installs
-sqlite3 adapters (Python -> SQLite storage) and converters
-(SQLite storage -> Python) for the types this codebase cares about.
-
-Rationale: our schema uses ``DECIMAL(12,2)``/``DECIMAL(18,6)`` columns
-for amounts and rates, ``DATE`` for day-granular dates, and
-``TIMESTAMP`` for expense datetimes. We want Python sites to keep
-receiving ``Decimal`` / ``date`` / ``datetime`` instead of the raw
-strings SQLite stores. Without these hooks, the rest of the code
-would need a coerce-per-call layer; with them, every connection
-opened with ``detect_types=PARSE_DECLTYPES`` round-trips the right
-Python type for free.
-
-Python 3.12 deprecated sqlite3's built-in ``date`` / ``datetime``
-adapters and converters, so we register explicit ones.
-
-Register-once semantics: ``sqlite3.register_adapter`` /
-``register_converter`` are process-global and idempotent. Re-importing
-this module is a no-op; callers should simply import it from any
-module that opens a sqlite3 connection (``db``, ``tools.sql``,
-``tasks``).
-
-Caveat — ``PARSE_DECLTYPES`` only fires for **bare column references**.
-That is: ``SELECT amount FROM expenses`` round-trips ``amount`` back
-as ``Decimal`` because the column has a ``DECIMAL(12,2)`` DECLTYPE;
-but aggregates like ``SUM(amount)``, ``COALESCE(SUM(amount), 0)``, or
-explicit casts like ``CAST(amount AS REAL)`` produce a result column
-with **no** DECLTYPE, so the registered ``DECIMAL`` converter is not
-invoked and the value comes back as whatever SQLite chose — typically
-``str`` (for an exact-integer sum of ``Decimal`` values) or ``float``
-(if an arithmetic operation collapsed to a REAL).
-
-Mitigation policy: every call site that consumes an aggregate of a
-``DECIMAL`` column must coerce explicitly via ``Decimal(str(row[i]))``
-(``str`` before ``Decimal`` to avoid inheriting ``float`` precision
-error when SQLite returned a REAL). The two production aggregate
-consumers today — ``src/dinary/reports/expenses.py`` and
-``src/dinary/reports/income.py`` — already follow this pattern. New
-reporting / verification code that aggregates ``DECIMAL`` columns must
-do the same, or use ``PARSE_COLNAMES`` + ``AS "total [DECIMAL]"``
-aliases (not enabled here because it requires changing every
-aggregate-producing SQL query, and the call-site coercion already
-covers every live consumer).
+PARSE_DECLTYPES caveat: converters only fire for bare column references, not
+aggregates. ``SUM(amount)`` returns ``str`` or ``float``, not ``Decimal``.
+Aggregate call sites must coerce explicitly: ``Decimal(str(row[i]))``.
 """
 
 import sqlite3

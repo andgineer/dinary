@@ -1,31 +1,9 @@
-"""Admin HTTP surface: catalog CRUD + sheet-mapping reload.
+"""Admin HTTP veneer: catalog CRUD + sheet-mapping reload.
 
-Authentication is a **deliberate TODO**. The prior ``DINARY_ADMIN_API_TOKEN``
-gate was removed because it was shared across every operator and bypassed
-by the PWA on every request anyway (the UI stored it in localStorage and
-replayed it verbatim). A proper authorization layer (OAuth / session /
-per-user API key — to be decided) will land alongside multi-user support;
-until then every admin endpoint is reachable by any caller that can reach
-the server. Deployments must put the service behind a private network or
-reverse-proxy ACL.
-
-Write helpers live in ``catalog_writer.py``; this module is a thin
-HTTP veneer that:
-
-* Validates request bodies.
-* Opens a SQLite connection.
-* Delegates to ``catalog_writer`` in a single call per request (PATCH
-  is atomic: if a body carries both ``name`` and ``is_active``, the
-  catalog_writer runs them in one transaction).
-* Returns the *full* catalog snapshot + fresh ETag so the PWA can
-  swap its cached catalog in one round-trip, without a follow-up
-  ``GET /api/catalog``.
-
-DELETE endpoints apply soft/hard semantics: the row is physically
-removed iff no ledger rows reference it; otherwise it is flipped to
-``is_active=FALSE`` and the response carries ``delete_status="soft"``
-plus ``usage_count`` so the PWA can tell the operator "still available
-under Show inactive (N historical references)".
+No authentication yet — deployments must sit behind a private network or ACL.
+Each write delegates to catalog_writer_* in one transaction and returns the
+full catalog snapshot so the PWA can refresh in one round-trip.
+See ``.plans/catalog-api.md``.
 """
 
 import logging
@@ -37,7 +15,22 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from dinary.config import settings, spreadsheet_id_from_setting
-from dinary.services import catalog_writer, sheet_mapping
+from dinary.services import sheet_mapping
+from dinary.services.catalog_writer_categories import (
+    add_category,
+    delete_category,
+    edit_category,
+)
+from dinary.services.catalog_writer_errors import AddResult, CatalogWriteError, DeleteResult
+from dinary.services.catalog_writer_events import (
+    add_event,
+    add_tag,
+    delete_event,
+    delete_tag,
+    edit_event,
+    edit_tag,
+)
+from dinary.services.catalog_writer_groups import add_group, delete_group, edit_group
 from dinary.services.storage import get_db
 
 from .catalog import (
@@ -152,15 +145,15 @@ class AdminCatalogResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _wrap_catalog_error(exc: catalog_writer.CatalogWriteError) -> HTTPException:
+def _wrap_catalog_error(exc: CatalogWriteError) -> HTTPException:
     return HTTPException(status_code=exc.http_status, detail=str(exc))
 
 
 def _snapshot_response(
     con,
     response: Response,
-    add_result: "catalog_writer.AddResult | None" = None,
-    delete_result: "catalog_writer.DeleteResult | None" = None,
+    add_result: AddResult | None = None,
+    delete_result: DeleteResult | None = None,
 ) -> AdminCatalogResponse:
     """Build the full catalog snapshot response every admin write returns.
 
@@ -184,51 +177,47 @@ def _snapshot_response(
 
 
 @router.post("/api/admin/catalog/groups", response_model=AdminCatalogResponse)
-def add_group(
+def add_group_endpoint(
     body: GroupAddBody,
     response: Response,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
     try:
-        result = catalog_writer.add_group(
-            con,
-            name=body.name,
-            sort_order=body.sort_order,
-        )
-    except catalog_writer.CatalogWriteError as exc:
+        result = add_group(con, name=body.name, sort_order=body.sort_order)
+    except CatalogWriteError as exc:
         raise _wrap_catalog_error(exc) from None
     return _snapshot_response(con, response, add_result=result)
 
 
 @router.patch("/api/admin/catalog/groups/{group_id}", response_model=AdminCatalogResponse)
-def edit_group(
+def edit_group_endpoint(
     group_id: int,
     body: GroupPatchBody,
     response: Response,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
     try:
-        catalog_writer.edit_group(
+        edit_group(
             con,
             group_id,
             name=body.name,
             sort_order=body.sort_order,
             is_active=body.is_active,
         )
-    except catalog_writer.CatalogWriteError as exc:
+    except CatalogWriteError as exc:
         raise _wrap_catalog_error(exc) from None
     return _snapshot_response(con, response)
 
 
 @router.delete("/api/admin/catalog/groups/{group_id}", response_model=AdminCatalogResponse)
-def delete_group(
+def delete_group_endpoint(
     group_id: int,
     response: Response,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
     try:
-        result = catalog_writer.delete_group(con, group_id)
-    except catalog_writer.CatalogWriteError as exc:
+        result = delete_group(con, group_id)
+    except CatalogWriteError as exc:
         raise _wrap_catalog_error(exc) from None
     return _snapshot_response(con, response, delete_result=result)
 
@@ -239,33 +228,33 @@ def delete_group(
 
 
 @router.post("/api/admin/catalog/categories", response_model=AdminCatalogResponse)
-def add_category(
+def add_category_endpoint(
     body: CategoryAddBody,
     response: Response,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
     try:
-        result = catalog_writer.add_category(
+        result = add_category(
             con,
             name=body.name,
             group_id=body.group_id,
             sheet_name=body.sheet_name,
             sheet_group=body.sheet_group,
         )
-    except catalog_writer.CatalogWriteError as exc:
+    except CatalogWriteError as exc:
         raise _wrap_catalog_error(exc) from None
     return _snapshot_response(con, response, add_result=result)
 
 
 @router.patch("/api/admin/catalog/categories/{category_id}", response_model=AdminCatalogResponse)
-def edit_category(
+def edit_category_endpoint(
     category_id: int,
     body: CategoryPatchBody,
     response: Response,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
     try:
-        catalog_writer.edit_category(
+        edit_category(
             con,
             category_id,
             name=body.name,
@@ -274,7 +263,7 @@ def edit_category(
             sheet_group=body.sheet_group,
             is_active=body.is_active,
         )
-    except catalog_writer.CatalogWriteError as exc:
+    except CatalogWriteError as exc:
         raise _wrap_catalog_error(exc) from None
     return _snapshot_response(con, response)
 
@@ -283,14 +272,14 @@ def edit_category(
     "/api/admin/catalog/categories/{category_id}",
     response_model=AdminCatalogResponse,
 )
-def delete_category(
+def delete_category_endpoint(
     category_id: int,
     response: Response,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
     try:
-        result = catalog_writer.delete_category(con, category_id)
-    except catalog_writer.CatalogWriteError as exc:
+        result = delete_category(con, category_id)
+    except CatalogWriteError as exc:
         raise _wrap_catalog_error(exc) from None
     return _snapshot_response(con, response, delete_result=result)
 
@@ -301,13 +290,13 @@ def delete_category(
 
 
 @router.post("/api/admin/catalog/events", response_model=AdminCatalogResponse)
-def add_event(
+def add_event_endpoint(
     body: EventAddBody,
     response: Response,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
     try:
-        result = catalog_writer.add_event(
+        result = add_event(
             con,
             name=body.name,
             date_from=body.date_from,
@@ -315,20 +304,20 @@ def add_event(
             auto_attach_enabled=body.auto_attach_enabled,
             auto_tags=body.auto_tags,
         )
-    except catalog_writer.CatalogWriteError as exc:
+    except CatalogWriteError as exc:
         raise _wrap_catalog_error(exc) from None
     return _snapshot_response(con, response, add_result=result)
 
 
 @router.patch("/api/admin/catalog/events/{event_id}", response_model=AdminCatalogResponse)
-def edit_event(
+def edit_event_endpoint(
     event_id: int,
     body: EventPatchBody,
     response: Response,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
     try:
-        catalog_writer.edit_event(
+        edit_event(
             con,
             event_id,
             name=body.name,
@@ -338,20 +327,20 @@ def edit_event(
             auto_tags=body.auto_tags,
             is_active=body.is_active,
         )
-    except catalog_writer.CatalogWriteError as exc:
+    except CatalogWriteError as exc:
         raise _wrap_catalog_error(exc) from None
     return _snapshot_response(con, response)
 
 
 @router.delete("/api/admin/catalog/events/{event_id}", response_model=AdminCatalogResponse)
-def delete_event(
+def delete_event_endpoint(
     event_id: int,
     response: Response,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
     try:
-        result = catalog_writer.delete_event(con, event_id)
-    except catalog_writer.CatalogWriteError as exc:
+        result = delete_event(con, event_id)
+    except CatalogWriteError as exc:
         raise _wrap_catalog_error(exc) from None
     return _snapshot_response(con, response, delete_result=result)
 
@@ -362,46 +351,41 @@ def delete_event(
 
 
 @router.post("/api/admin/catalog/tags", response_model=AdminCatalogResponse)
-def add_tag(
+def add_tag_endpoint(
     body: TagAddBody,
     response: Response,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
     try:
-        result = catalog_writer.add_tag(con, name=body.name)
-    except catalog_writer.CatalogWriteError as exc:
+        result = add_tag(con, name=body.name)
+    except CatalogWriteError as exc:
         raise _wrap_catalog_error(exc) from None
     return _snapshot_response(con, response, add_result=result)
 
 
 @router.patch("/api/admin/catalog/tags/{tag_id}", response_model=AdminCatalogResponse)
-def edit_tag(
+def edit_tag_endpoint(
     tag_id: int,
     body: TagPatchBody,
     response: Response,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
     try:
-        catalog_writer.edit_tag(
-            con,
-            tag_id,
-            name=body.name,
-            is_active=body.is_active,
-        )
-    except catalog_writer.CatalogWriteError as exc:
+        edit_tag(con, tag_id, name=body.name, is_active=body.is_active)
+    except CatalogWriteError as exc:
         raise _wrap_catalog_error(exc) from None
     return _snapshot_response(con, response)
 
 
 @router.delete("/api/admin/catalog/tags/{tag_id}", response_model=AdminCatalogResponse)
-def delete_tag(
+def delete_tag_endpoint(
     tag_id: int,
     response: Response,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> AdminCatalogResponse:
     try:
-        result = catalog_writer.delete_tag(con, tag_id)
-    except catalog_writer.CatalogWriteError as exc:
+        result = delete_tag(con, tag_id)
+    except CatalogWriteError as exc:
         raise _wrap_catalog_error(exc) from None
     return _snapshot_response(con, response, delete_result=result)
 
@@ -428,9 +412,6 @@ class ReloadMapResponse(BaseModel):
 
 @router.post("/api/admin/reload-map", response_model=ReloadMapResponse)
 def reload_map() -> ReloadMapResponse:
-    # Normalise first so a whitespace-only or malformed env value fails
-    # the same 503 as an empty one, instead of being passed through to
-    # ``reload_now`` and surfacing as a confusing Drive 404.
     if spreadsheet_id_from_setting(settings.sheet_logging_spreadsheet) is None:
         raise HTTPException(
             status_code=503,

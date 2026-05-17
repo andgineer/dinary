@@ -23,8 +23,16 @@ from datetime import date
 import allure
 import pytest
 
-from dinary.services import catalog_writer, storage
+from dinary.services import storage
 from dinary.services.catalog import get_catalog_version
+from dinary.services.catalog_writer_errors import CatalogConflictError, CatalogWriteError
+from dinary.services.catalog_writer_categories import (
+    add_category,
+    edit_category,
+    set_category_active,
+)
+from dinary.services.catalog_writer_events import add_event
+from dinary.services.catalog_writer_groups import add_group
 from dinary.services.expenses import ExpensePayload, insert_expense
 
 from _catalog_writer_helpers import _DT, _seed_minimal, fresh_db  # noqa: F401
@@ -37,7 +45,7 @@ class TestVersionBump:
         con = storage.get_connection()
         try:
             v0 = get_catalog_version(con)
-            result = catalog_writer.add_group(con, name="new")
+            result = add_group(con, name="new")
             v1 = get_catalog_version(con)
         finally:
             con.close()
@@ -54,7 +62,7 @@ class TestVersionBump:
                 " VALUES (2, 'already_here', 2, TRUE)",
             )
             v1 = get_catalog_version(con)
-            result = catalog_writer.add_group(con, name="already_here")
+            result = add_group(con, name="already_here")
             v2 = get_catalog_version(con)
         finally:
             con.close()
@@ -70,7 +78,7 @@ class TestVersionBump:
                 " VALUES (1, 'retired', 1, FALSE)",
             )
             v0 = get_catalog_version(con)
-            result = catalog_writer.add_group(con, name="retired")
+            result = add_group(con, name="retired")
             v1 = get_catalog_version(con)
             row = con.execute(
                 "SELECT is_active FROM category_groups WHERE id = ?",
@@ -101,7 +109,7 @@ class TestReactivatePreserves:
             )
             # Call add_category without sheet_name/sheet_group --
             # previous values must survive the reactivate.
-            result = catalog_writer.add_category(con, name="food", group_id=1)
+            result = add_category(con, name="food", group_id=1)
             row = con.execute(
                 "SELECT is_active, sheet_name, sheet_group FROM categories WHERE id = 1",
             ).fetchone()
@@ -123,7 +131,7 @@ class TestReactivatePreserves:
             )
             # Re-add with "default" dates; existing dates must not be
             # overwritten because the caller didn't explicitly PATCH them.
-            result = catalog_writer.add_event(
+            result = add_event(
                 con,
                 name="отпуск-2024",
                 date_from=date(2026, 1, 1),
@@ -171,7 +179,7 @@ class TestIntegrityRules:
                 ),
                 enqueue_logging=False,
             )
-            catalog_writer.set_category_active(con, 1, active=False)
+            set_category_active(con, 1, active=False)
             row = con.execute(
                 "SELECT is_active FROM categories WHERE id = 1",
             ).fetchone()
@@ -187,16 +195,16 @@ class TestIntegrityRules:
                 "INSERT INTO categories (id, name, group_id, is_active)"
                 " VALUES (2, 'drink', 1, TRUE)",
             )
-            with pytest.raises(catalog_writer.CatalogConflictError):
-                catalog_writer.edit_category(con, 2, name="food")
+            with pytest.raises(CatalogConflictError):
+                edit_category(con, 2, name="food")
         finally:
             con.close()
 
     def test_event_date_from_must_be_le_date_to(self, fresh_db):
         con = storage.get_connection()
         try:
-            with pytest.raises(catalog_writer.CatalogWriteError):
-                catalog_writer.add_event(
+            with pytest.raises(CatalogWriteError):
+                add_event(
                     con,
                     name="bad",
                     date_from=date(2026, 6, 1),
@@ -226,8 +234,8 @@ class TestIntegrityRules:
                 " (id, name, date_from, date_to, auto_attach_enabled, is_active)"
                 " VALUES (1, 'отпуск-2024', '2024-06-01', '2024-06-30', FALSE, FALSE)",
             )
-            with pytest.raises(catalog_writer.CatalogWriteError):
-                catalog_writer.add_event(
+            with pytest.raises(CatalogWriteError):
+                add_event(
                     con,
                     name="отпуск-2024",
                     date_from=date(2030, 1, 2),
@@ -256,8 +264,8 @@ class TestIntegrityRules:
                 " VALUES (2, 'g2', 2, TRUE)",
             )
             v0 = get_catalog_version(con)
-            with pytest.raises(catalog_writer.CatalogConflictError):
-                catalog_writer.add_category(con, name="food", group_id=2)
+            with pytest.raises(CatalogConflictError):
+                add_category(con, name="food", group_id=2)
             v1 = get_catalog_version(con)
             row = con.execute(
                 "SELECT group_id, is_active FROM categories WHERE id = 1",
@@ -283,7 +291,7 @@ class TestIntegrityRules:
                 "UPDATE categories SET is_active = FALSE WHERE id = 1",
             )
             v0 = get_catalog_version(con)
-            result = catalog_writer.add_category(con, name="food", group_id=2)
+            result = add_category(con, name="food", group_id=2)
             v1 = get_catalog_version(con)
             row = con.execute(
                 "SELECT group_id, is_active FROM categories WHERE id = 1",

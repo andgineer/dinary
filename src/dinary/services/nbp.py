@@ -1,36 +1,10 @@
-"""NBP (Polish National Bank) exchange rate client.
+"""NBP (Polish National Bank) exchange rate client — fallback for NBS.
 
-Used as the fallback for NBS (``kurs.resenje.org``) — same role
-Frankfurter used to play, but with coverage that actually overlaps
-ours: NBP quotes 148 currencies as ``1 X = N PLN``:
-
-* **Table A** (32 majors: USD, EUR, GBP, JPY, CHF, …) — published
-  daily on Polish working days.
-* **Table B** (116 less-common: RSD, BAM, MKD, BYN, RUB, AED, …) —
-  published *weekly*, every Wednesday.
-
-Any pair is resolved by bridging through PLN:
-``X/Y = (X/PLN) / (Y/PLN)``. The two legs are queried independently
-so we transparently mix table A and table B (e.g. ``RSD/EUR`` =
-RSD-from-table-B / EUR-from-table-A).
-
-Why NBP and not "the official NBS SOAP / Frankfurter / CBR / …":
-
-* Free, no auth, REST + JSON.
-* Polish ECB-aligned source — geopolitically neutral for a
-  Belgrade-deployed app.
-* Lists every currency NBS lists (RSD/BAM/MKD/BYN/RUB) **plus** the
-  full ECB roster (USD/EUR/GBP/JPY/...). So when NBS is unavailable
-  the fallback can serve the same pairs we already serve.
-
-Date semantics:
-
-* Table A: any Polish working day → 200; weekend/holiday → 404.
-* Table B: only Wednesdays → 200; other days → 404. Up to 6 days
-  stale data is acceptable for a fallback.
-* When a date-specific lookup 404s we fall back to the no-date form
-  (``rates/{table}/{code}/``) which returns the most recently
-  published rate.
+Bridges any pair through PLN: ``X/Y = (X/PLN) / (Y/PLN)``.
+Table A (32 majors): daily on Polish working days.
+Table B (116 less-common, incl. RSD/RUB): weekly on Wednesdays only.
+Date 404 → falls back to dateless endpoint (most recently published rate).
+See ``.plans/exchange-rates.md``.
 """
 
 import logging

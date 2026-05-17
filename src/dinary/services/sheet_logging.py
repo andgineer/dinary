@@ -31,12 +31,9 @@ from dinary.services.logging_jobs import (
     poison_logging_job,
     release_logging_claim,
 )
-from dinary.services.sheets import (
-    append_expense_atomic,
-    ensure_category_row,
-    fetch_row_years,
-    get_sheet,
-)
+from dinary.services.sheets import fetch_row_years
+from dinary.services.sheets_client import get_sheet
+from dinary.services.sheets_write import append_expense_atomic, ensure_category_row
 
 logger = logging.getLogger(__name__)
 

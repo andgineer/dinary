@@ -1,34 +1,9 @@
-"""Exchange rate service with SQLite storage.
+"""Exchange rate service: NBS primary, NBP fallback, SQLite cache.
 
-Two upstreams with overlapping coverage are wired in:
-
-* **NBS** (``kurs.resenje.org``) — Serbian National Bank, ~40
-  currencies. Always quoted as ``1 X = N RSD``. **Primary** source
-  for any pair: direct NBS lookup for pairs that contain RSD;
-  for non-RSD pairs we bridge through RSD via NBS.
-
-* **NBP** (``api.nbp.pl``) — Polish National Bank, 148 currencies
-  (32 majors daily + 116 less-common weekly). Always quoted as
-  ``1 X = N PLN``. **Fallback** when NBS is unavailable: bridges
-  any pair through PLN.
-
-Both sources are kept in lockstep coverage-wise: NBP lists every
-currency NBS lists (RSD, BAM, MKD, BYN, RUB) plus the full ECB
-roster, so the fallback can serve the same pairs we already serve
-out of NBS without coverage gaps. Frankfurter (ECB) used to live
-here as a fallback but has been removed: it does not list RSD, so
-it could never serve any RSD-bearing pair (which is the bulk of our
-traffic) and was dead code as a fallback.
-
-Resolution policy in :func:`get_rate`:
-
-* Pair containing RSD: NBS direct → NBP bridge through PLN.
-* Pair without RSD:    NBS bridge through RSD → NBP bridge through PLN.
-
-Rates are stored in the ``exchange_rates`` table in
-``data/dinary.db`` as ``1 source_currency * rate = amount in
-target_currency`` (and the inverse leg is written together with it
-by ``_save_db_rate``).
+Resolution: RSD pair → NBS direct → NBP via PLN.
+           Non-RSD pair → NBS via RSD → NBP via PLN.
+Stored as ``1 source * rate = N target``; inverse written alongside.
+See ``.plans/exchange-rates.md``.
 """
 
 import logging

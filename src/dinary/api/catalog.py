@@ -1,46 +1,8 @@
-"""GET /api/catalog — one-shot, ETag-cacheable catalog snapshot.
+"""GET /api/catalog — full 3D taxonomy snapshot with ETag caching.
 
-Single endpoint supplying the PWA's full 3D taxonomy (groups,
-categories, events, tags) on the hot path. Payload:
-
-    {
-      catalog_version: int,
-      categories:       [{id, name, group, group_id, is_active, removable}],
-      category_groups:  [{id, name, sort_order, is_active, removable}],
-      events:           [{id, name, date_from, date_to,
-                          auto_attach_enabled, auto_tags, is_active,
-                          removable}],
-      tags:             [{id, name, is_active, removable}],
-    }
-
-``removable`` is the server-precomputed answer to "would a DELETE
-on this row hard-delete (i.e. succeed and actually drop the row)?".
-The flag is ``true`` only when the row is not referenced by any FK
-into it from ``expenses`` / ``expense_tags`` nor by any mapping
-table (``sheet_mapping`` / ``sheet_mapping_tags`` / ``import_mapping``
-/ ``import_mapping_tags``), and — for tags — no event's
-``auto_tags`` JSON payload contains the tag's name. The PWA uses it
-to hide the "Удалить" button on rows that would soft-delete
-anyway, keeping the management list honest.
-
-ETag is ``W/"catalog-v<N>"`` where N is ``catalog_version``. It rides
-on the HTTP ``ETag`` response header only — the body does **not**
-carry a duplicate ``etag`` field because the value is a pure function
-of ``catalog_version`` and the PWA can derive it client-side. Clients
-send ``If-None-Match`` on subsequent polls; a match returns ``304 Not
-Modified`` with no body. Coupled with the PWA's catalog cache + the
-``catalog_version`` bump emitted from every ``POST /api/expenses``
-response, the steady state is **zero catalog GETs per expense**.
-
-All catalog items — including ``is_active=FALSE`` rows retired from
-the live taxonomy — are returned; every row carries an ``is_active``
-flag. The PWA filters client-side by default but exposes per-picker
-"show inactive" toggles and a reactivate affordance, so soft-deleted
-categories / tags / events never disappear from the UI before the
-operator has a chance to un-retire them. Events additionally carry
-``auto_tags`` (the tag-name list auto-unioned into every expense that
-attaches the event, e.g. ``["отпуск", "путешествия"]`` on vacation
-events).
+ETag is ``W/"catalog-v<N>"``. All rows including ``is_active=FALSE`` are
+returned. ``removable=true`` means a DELETE would hard-delete the row (no
+FK or ``auto_tags`` references). See ``.plans/catalog-api.md``.
 """
 
 import logging
