@@ -15,9 +15,9 @@
 | src/dinary/api/receipt\_review.py                      |       27 |        0 |    100% |           |
 | src/dinary/api/receipts.py                             |       36 |        5 |     86% |     61-66 |
 | src/dinary/background/rate\_prefetch\_task.py          |       56 |        2 |     96% |   86, 117 |
-| src/dinary/background/receipt\_classification\_task.py |      244 |       42 |     83% |119-120, 145-150, 154-156, 160-164, 168-172, 176-180, 223-225, 251, 283, 292-300, 371, 411-413, 460-462, 480-482, 512-514 |
+| src/dinary/background/receipt\_classification\_task.py |      244 |       42 |     83% |109-110, 135-140, 144-146, 150-154, 158-162, 166-170, 213-215, 241, 273, 282-290, 361, 401-403, 450-452, 470-472, 502-504 |
 | src/dinary/background/sheet\_logging\_task.py          |       53 |        7 |     87% |     44-57 |
-| src/dinary/config.py                                   |      152 |       19 |     88% |37, 47, 110-112, 143, 149, 205-209, 211-215, 218-223, 226-230, 293-295 |
+| src/dinary/config.py                                   |      152 |       20 |     87% |37, 47, 110-112, 143, 149, 205-209, 211-215, 218-223, 226-230, 289, 293-295 |
 | src/dinary/imports/expense\_import.py                  |      421 |      132 |     69% |235, 240-241, 255, 257, 259, 286-304, 334, 338, 354-360, 364-372, 383, 385, 402, 404, 409, 430, 435-436, 460, 491-495, 508-512, 514-517, 669-670, 718-720, 723-725, 807-818, 887-930, 943, 953, 976-1012, 1070, 1084, 1087, 1092, 1102, 1160-1166, 1171-1183, 1222-1226, 1228-1232, 1290-1299 |
 | src/dinary/imports/income\_import.py                   |      139 |      139 |      0% |    12-318 |
 | src/dinary/imports/report\_2d\_3d.py                   |      199 |       42 |     79% |170, 226-235, 271, 493-494, 532-563, 567-606, 610 |
@@ -64,8 +64,8 @@
 | src/dinary/tools/backup\_retention.py                  |       55 |       26 |     53% |26-34, 71-91, 95 |
 | src/dinary/tools/backup\_snapshots.py                  |       79 |        7 |     91% |157, 213-218 |
 | src/dinary/tools/report\_helpers.py                    |       30 |       10 |     67% |     44-53 |
-| src/dinary/tools/sql.py                                |       71 |        3 |     96% |86, 176, 183 |
-| **TOTAL**                                              | **5452** | **1076** | **80%** |           |
+| src/dinary/tools/sql.py                                |       71 |        3 |     96% |58, 148, 155 |
+| **TOTAL**                                              | **5452** | **1077** | **80%** |           |
 
 
 ## Setup coverage badge
