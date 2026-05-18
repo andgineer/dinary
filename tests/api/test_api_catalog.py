@@ -82,6 +82,9 @@ class TestCatalogGet:
         assert events[0]["auto_attach_enabled"] is True
         assert events[0]["is_active"] is True
         assert events[0]["auto_tags"] == []
+        # frequent_categories must be present (may be empty when no manual expenses exist)
+        assert "frequent_categories" in data
+        assert isinstance(data["frequent_categories"], list)
 
     def test_304_on_matching_etag(self, client):
         first = client.get("/api/catalog")
@@ -239,3 +242,74 @@ class TestIfNoneMatchUnit:
 
         header = '   W/"catalog-v1"   ,   W/"catalog-v2"   '
         assert _if_none_match_matches(header, 'W/"catalog-v2"') is True
+
+
+@allure.epic("API")
+@allure.feature("Catalog (3D) — frequent_categories")
+class TestFrequentCategories:
+    """frequent_categories must count only manual expenses (receipt_id IS NULL)
+    from the past 3 months, ordered by count descending, capped at 5."""
+
+    def test_receipt_expenses_not_counted(self, client):
+        con = storage.get_connection()
+        try:
+            con.execute(
+                "INSERT INTO receipts (id, client_receipt_id, url) VALUES (1, 'r1', 'https://x')"
+            )
+            con.execute(
+                "INSERT INTO expenses (client_expense_id, datetime, amount, amount_original,"
+                " currency_original, category_id, receipt_id)"
+                " VALUES ('re1', datetime('now'), 10.0, 10.0, 'RSD', 1, 1)"
+            )
+        finally:
+            con.close()
+
+        data = client.get("/api/catalog").json()
+        assert data["frequent_categories"] == [], (
+            "receipt expenses must not appear in frequent_categories"
+        )
+
+    def test_old_expenses_excluded(self, client):
+        con = storage.get_connection()
+        try:
+            con.execute(
+                "INSERT INTO expenses (client_expense_id, datetime, amount, amount_original,"
+                " currency_original, category_id)"
+                " VALUES ('old1', datetime('now', '-4 months'), 10.0, 10.0, 'RSD', 1)"
+            )
+        finally:
+            con.close()
+
+        data = client.get("/api/catalog").json()
+        assert data["frequent_categories"] == [], "expenses older than 3 months must be excluded"
+
+    def test_ordered_by_count_desc(self, client):
+        con = storage.get_connection()
+        try:
+            con.execute(
+                "INSERT INTO category_groups (id, name, sort_order, is_active)"
+                " VALUES (3, 'Extra', 3, TRUE)"
+            )
+            con.execute(
+                "INSERT INTO categories (id, name, group_id, is_active)"
+                " VALUES (5, 'popular', 3, TRUE)"
+            )
+            for i in range(3):
+                con.execute(
+                    f"INSERT INTO expenses (client_expense_id, datetime, amount, amount_original,"  # noqa: S608
+                    f" currency_original, category_id)"
+                    f" VALUES ('pop-{i}', datetime('now'), 10.0, 10.0, 'RSD', 5)"
+                )
+            con.execute(
+                "INSERT INTO expenses (client_expense_id, datetime, amount, amount_original,"
+                " currency_original, category_id)"
+                " VALUES ('cat1-one', datetime('now'), 10.0, 10.0, 'RSD', 1)"
+            )
+        finally:
+            con.close()
+
+        data = client.get("/api/catalog").json()
+        freq = data["frequent_categories"]
+        assert len(freq) >= 2
+        assert freq[0]["id"] == 5, "category with 3 expenses must rank first"
+        assert freq[1]["id"] == 1, "category with 1 expense must rank second"

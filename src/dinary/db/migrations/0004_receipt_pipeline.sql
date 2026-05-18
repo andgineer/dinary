@@ -59,6 +59,12 @@ CREATE UNIQUE INDEX classification_rules_null_item
     ON classification_rules (item_name_normalized)
     WHERE store_id IS NULL;
 
+ALTER TABLE classification_rules ADD COLUMN alternative_category_ids TEXT;
+ALTER TABLE classification_rules ADD COLUMN tag_ids TEXT NOT NULL DEFAULT '[]';
+
+CREATE INDEX IF NOT EXISTS idx_cr_store_name
+    ON classification_rules (store_id, item_name_normalized);
+
 CREATE TABLE receipt_classification_jobs (
     receipt_id   INTEGER PRIMARY KEY REFERENCES receipts(id),
     status       TEXT NOT NULL DEFAULT 'pending',

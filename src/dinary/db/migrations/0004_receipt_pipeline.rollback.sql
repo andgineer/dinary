@@ -1,3 +1,6 @@
+DROP INDEX IF EXISTS idx_cr_store_name;
+ALTER TABLE classification_rules ADD COLUMN IF NOT EXISTS alternative_category_ids TEXT;
+ALTER TABLE classification_rules ADD COLUMN IF NOT EXISTS tag_ids TEXT;
 DROP INDEX IF EXISTS llm_call_log_provider_id;
 DROP INDEX IF EXISTS receipts_store_id;
 DROP INDEX IF EXISTS receipt_items_name_norm;

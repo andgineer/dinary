@@ -54,12 +54,18 @@ class TagItem(BaseModel):
     removable: bool
 
 
+class FrequentCategory(BaseModel):
+    id: int
+    name: str
+
+
 class CatalogResponse(BaseModel):
     catalog_version: int
     category_groups: list[CategoryGroupItem]
     categories: list[CategoryItem]
     events: list[EventItem]
     tags: list[TagItem]
+    frequent_categories: list[FrequentCategory]
 
 
 AddStatusLiteral = Literal["created", "reactivated", "noop"]
@@ -247,6 +253,20 @@ _SQL_GROUP_DEFAULT = (
 )
 
 
+def frequent_categories_sync(con: sqlite3.Connection, limit: int = 5) -> list[FrequentCategory]:
+    rows = con.execute(
+        """
+        SELECT e.category_id, c.name, COUNT(*) AS cnt
+          FROM expenses e JOIN categories c ON c.id = e.category_id
+         WHERE c.is_active = 1 AND e.receipt_id IS NULL
+           AND e.datetime >= datetime('now', '-3 months')
+         GROUP BY e.category_id ORDER BY cnt DESC LIMIT ?
+        """,
+        [limit],
+    ).fetchall()
+    return [FrequentCategory(id=int(r[0]), name=str(r[1])) for r in rows]
+
+
 def most_used_category_per_group(con: sqlite3.Connection) -> dict[int, int]:
     rows = con.execute(_SQL_CAT_DEFAULTS).fetchall()
     result: dict[int, int] = {}
@@ -263,6 +283,7 @@ def most_used_group(con: sqlite3.Connection) -> int | None:
 def build_catalog_snapshot(con: sqlite3.Connection) -> dict[str, Any]:
     version = get_catalog_version(con)
     cat_refs, event_refs, tag_refs, group_children = reference_counts(con)
+    freq_cats = frequent_categories_sync(con)
 
     group_rows = con.execute(
         "SELECT id, name, sort_order, is_active FROM category_groups ORDER BY sort_order, id",
@@ -326,6 +347,7 @@ def build_catalog_snapshot(con: sqlite3.Connection) -> dict[str, Any]:
             }
             for r in tag_rows
         ],
+        "frequent_categories": [{"id": fc.id, "name": fc.name} for fc in freq_cats],
     }
 
 

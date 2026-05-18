@@ -262,3 +262,85 @@ class TestReceiptPipelineE2E:
         finally:
             conn.close()
         assert exp_count == call_count_after_first == 1
+
+    def test_n_items_create_n_expenses(self, client, db):  # noqa: ARG002
+        """3-item receipt → 3 individual expense rows."""
+        _parsed_3 = ParsedReceipt(
+            store_name="Lidl Srbija KD",
+            store_pib="100000001",
+            total_amount=300.0,
+            invoice_number="INV-3ITEMS",
+            items=[
+                ReceiptItem(
+                    name_raw="HLEB",
+                    unit_price=100.0,
+                    quantity=1.0,
+                    total_price=100.0,
+                    tax_label="E",
+                ),
+                ReceiptItem(
+                    name_raw="MLEKO",
+                    unit_price=120.0,
+                    quantity=1.0,
+                    total_price=120.0,
+                    tax_label="E",
+                ),
+                ReceiptItem(
+                    name_raw="SIR",
+                    unit_price=80.0,
+                    quantity=1.0,
+                    total_price=80.0,
+                    tax_label="E",
+                ),
+            ],
+            items_total=300.0,
+            total_ok=True,
+            used_journal_fallback=False,
+        )
+        pool3 = MagicMock()
+        pool3.get_chain_name = AsyncMock(return_value="Lidl")
+        pool3.classify_receipt = AsyncMock(
+            return_value=(
+                [
+                    ClassificationResult("hleb", category_id=1, confidence_level=3),
+                    ClassificationResult("mleko", category_id=1, confidence_level=3),
+                    ClassificationResult("sir", category_id=1, confidence_level=3),
+                ],
+                False,
+            )
+        )
+
+        resp = client.post(
+            "/api/receipts",
+            json={"client_receipt_id": "e2e-3items", "url": "https://suf.purs.gov.rs/v/?vl=3items"},
+        )
+        assert resp.status_code == 200
+        receipt_id = resp.json()["receipt_id"]
+
+        conn = storage.get_connection()
+        try:
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        with (
+            patch(
+                "dinary.background.classification.task.parse_receipt",
+                return_value=_parsed_3,
+            ),
+            patch(
+                "dinary.background.classification.task.ProviderPool",
+                return_value=pool3,
+            ),
+        ):
+            asyncio.run(_process_job(job))
+
+        conn = storage.get_connection()
+        try:
+            exp_count = conn.execute(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert exp_count == 3, f"expected 3 expenses for 3-item receipt, got {exp_count}"

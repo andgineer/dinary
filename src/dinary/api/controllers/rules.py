@@ -1,5 +1,6 @@
 """Rules feed business logic."""
 
+import json
 import sqlite3
 from typing import Any
 
@@ -37,6 +38,29 @@ def count_total(con: sqlite3.Connection) -> int:
     ).fetchone()[0]
 
 
+def _resolve_ids_to_names(
+    con: sqlite3.Connection,
+    table: str,
+    ids_json: str | None,
+) -> list[dict[str, Any]]:
+    """Parse a JSON id-array and resolve each to {id, name} via active rows in table."""
+    if not ids_json:
+        return []
+    try:
+        ids = [int(i) for i in json.loads(ids_json) if isinstance(i, (int, float))]
+    except Exception:  # noqa: BLE001
+        return []
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    rows = con.execute(
+        f"SELECT id, name FROM {table} WHERE id IN ({placeholders}) AND is_active = 1",  # noqa: S608
+        ids,
+    ).fetchall()
+    name_by_id = {int(r[0]): str(r[1]) for r in rows}
+    return [{"id": i, "name": name_by_id[i]} for i in ids if i in name_by_id]
+
+
 def query_rules(con: sqlite3.Connection, limit: int, offset: int) -> list[dict[str, Any]]:
     rows = con.execute(
         """
@@ -46,6 +70,8 @@ def query_rules(con: sqlite3.Connection, limit: int, offset: int) -> list[dict[s
                 cr.item_name_normalized,
                 cr.category_id,
                 cr.confidence_level,
+                cr.alternative_category_ids,
+                cr.tag_ids,
                 s.chain_name                AS store_chain,
                 c.name                      AS category_name,
                 SUM(ri.total_price)         AS amount_at_stake,
@@ -86,6 +112,12 @@ def query_rules(con: sqlite3.Connection, limit: int, offset: int) -> list[dict[s
             "category_name": str(r["category_name"]),
             "expense_id": int(r["expense_id"]) if r["expense_id"] is not None else None,
             "datetime": str(r["last_receipt_date"]) if r["last_receipt_date"] else None,
+            "alternative_categories": _resolve_ids_to_names(
+                con,
+                "categories",
+                r["alternative_category_ids"],
+            ),
+            "tags": _resolve_ids_to_names(con, "tags", r["tag_ids"]),
         }
         for r in rows
     ]

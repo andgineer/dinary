@@ -1,6 +1,6 @@
 # PWA — Review Page & Expense Editing
 
-All client-side work. Implement after `backend.md` is merged.
+All client-side work. Implement after `classification-backend-done.md` is merged.
 
 Sections in implementation order: swipe composable → sheets → row components → stores
 → API clients → views → tests.
@@ -109,11 +109,13 @@ Simple pill row for `ExpenseForm`. No sheet logic of its own.
 Single editor for both doubtful rules and recent expenses.
 
 - [ ] Props: `open: Boolean`, `expense: Object | null`, `suggestions: Array`
-  (alternative categories — populated from rule context, empty for plain expenses)
+  (alternative categories — populated from rule context, empty for plain expenses),
+  `ruleItem: Object | null` (the rule item when opened from `RuleRow`; null for plain expenses)
 - [ ] Emits: `close`
-- [ ] On open: pre-fill `selectedCategoryId` from `expense.category_id`; pre-fill
-  `selectedTagIds: Set<number>` from `expense.tags`; pre-fill `selectedEventId` from
-  `expense.event_id`
+- [ ] On open: pre-fill `selectedCategoryId` from `expense.category_id` (or
+  `ruleItem.category_id` when expense is null); pre-fill
+  `selectedTagIds: Set<number>` from `expense.tags` (or `ruleItem.tags`); pre-fill `selectedEventId` from
+  `expense.event_id` (null when expense is null)
 - [ ] **Category block**: current category name as a tappable chip → opens
   `<CategorySheet :open :suggestions>` on tap; on `select` → update `selectedCategoryId`
 - [ ] **Tags block**: render all active tags from `catalogStore.tags` as toggle chips;
@@ -124,11 +126,12 @@ Single editor for both doubtful rules and recent expenses.
   Last month / This year / All history; default Single
 - [ ] **"Also update rule" checkbox**: visible only when `expense.has_rule === true`
 - [ ] Save: call `reviewStore.updateExpense(expense.id, { category_id: selectedCategoryId,
-  tag_ids: [...selectedTagIds], event_id: selectedEventId ?? -1, scope, update_rule })`
+  tag_ids: [...selectedTagIds], event_id: selectedEventId,
+  clear_event: selectedEventId === null, scope, update_rule })`
   then emit `close`
 - [ ] When opened from a rule row (`expense` is null): save calls
-  `reviewStore.correct(ruleItem, categoryId, "all")` for category, then `editExpense`
-  separately for tags with `update_rule: true`
+  `reviewStore.correct(ruleItem, selectedCategoryId, "all")` (uses the `ruleItem` prop)
+  for category, then `editExpense` separately for tags with `update_rule: true`
 
 ---
 
@@ -141,6 +144,8 @@ Single editor for both doubtful rules and recent expenses.
   - bottom: `{category}` · tag chips · event name (if set)
 - [ ] Swipe-to-act via `useSwipeRow`: single action panel `[✎ Edit]` (84px); long swipe
   fires `emit('tap')` as primary action
+- [ ] On snap-open: call `reviewStore.setOpenRow(expense.id)`; watch `reviewStore.openRowId`
+  — if it changes to a different id, call `close()` to snap this row shut
 - [ ] Tap → `emit('tap')` (via `shouldFireTap()` guard)
 - [ ] Warning left-border (4px `var(--warning)`) when `expense.confidence_level < 4`
 - [ ] Tag chips: small pills, same style as RuleRow tag chips
@@ -170,14 +175,16 @@ Combines the swipe spec, alternative chips, and tag display.
   as `ExpenseRow`; read-only (tap on ✎ to edit)
 - [ ] Approve chips: green `[✓ {llmCategoryName}]` chip + up to 2 `[{alt.name}]` muted
   chips from `item.alternative_categories`; tapping any fires approve with that category id
-- [ ] ✎ icon button (28×28): opens `ExpenseEditSheet` with `expense=null`,
-  `suggestions=item.alternative_categories`, pre-filled category + tags from item
+- [ ] ✎ icon button (28×28): emits `tap`; parent `ReviewView` opens `ExpenseEditSheet`
+  with `expense=null` and `suggestions=item.alternative_categories`
 - [ ] Bottom row (certain): category breadcrumb + chevron `›`; chevron is visual only
 - [ ] Swipe-to-act via `useSwipeRow`:
   - doubtful panel (168px): `[✎ Edit]` (84px) + `[✓ Approve]` (84px); long swipe fires
     Approve
-  - certain panel (92px): `[✎ Edit]` (92px); long swipe fires Edit (opens ExpenseEditSheet)
+  - certain panel (92px): `[✎ Edit]` (92px); long swipe fires `tap` emit (parent handles)
   - commit zone: primary button grows + brightens; secondary collapses
+  - On snap-open: call `reviewStore.setOpenRow(item.id)`; watch `reviewStore.openRowId`
+    — if it changes to a different id, call `close()` to snap this row shut
 - [ ] `defineEmits(['tap', 'approve'])` where `approve` carries `{ item, categoryId }`
 - [ ] `approveFromButton(e, categoryId)`: stop propagation, close swipe, emit approve
 - [ ] Parent `ReviewView`: `approveItem({ item, categoryId })` uses `event.categoryId`
@@ -193,7 +200,9 @@ Combines the swipe spec, alternative chips, and tag display.
 ### `webapp/src/api/expenseCorrections.js`
 
 - [ ] Add `editExpense(expenseId, payload)` → `PATCH /api/expenses/{id}` with
-  `{ category_id, tag_ids, event_id, scope, update_rule }`
+  `{ category_id, tag_ids, event_id, clear_event, scope, update_rule }`; returns
+  `ExpenseEditResponse` (`id`, `category_id`, `category_name`, `tag_ids`, `event_id`,
+  `event_name`)
 
 ---
 
@@ -206,14 +215,18 @@ Combines the swipe spec, alternative chips, and tag display.
 - [ ] Add `openRowId: ref(null)` + `setOpenRow(id)` — shared between RuleRow and
   ExpenseRow so only one row is ever swiped open at a time
 - [ ] Add action `loadRecentExpenses()`: call `getRecentExpenses()`, populate `expenses`
-- [ ] Add action `updateExpense(id, payload)`: call `editExpense`, update matching entry in
-  `expenses` optimistically (category, tags, event); toast on success/error
+- [ ] Add action `updateExpense(id, payload)`: call `editExpense`; on success replace the
+  matching entry in `expenses` with the returned fields (`category_id`, `category_name`,
+  `tag_ids`, `event_id`, `event_name`); toast on error
 
 ### `webapp/src/stores/frequentCategories.js` (new)
 
+**Requires backend §7** — `catalogStore.frequentCategories` will be empty until
+`GET /api/catalog` returns the `frequent_categories` field.
+
 - [ ] State: `categories: ref([])`, `lastFetched: ref(null)`
-- [ ] `ensureLoaded(catalogStore)`: if empty or `lastFetched` older than 24 h, read
-  `catalogStore.frequentCategories`; otherwise no-op. Called on `ExpenseForm` mount.
+- [ ] `ensureLoaded()`: if empty or `lastFetched` older than 24 h, call `useCatalogStore()`
+  internally and read `frequentCategories`; otherwise no-op. Called on `ExpenseForm` mount.
 - [ ] `refresh(responseData)`: called after every successful POST /api/expenses with the
   full response body; overwrites `categories` + bumps `lastFetched`
 
@@ -230,7 +243,7 @@ Combines the swipe spec, alternative chips, and tag display.
 - [ ] Add `<CategoryQuickPicks :categories="frequentCategoriesStore.categories"
   @select="onQuickPick" @search="categorySheetOpen = true" />` below amount row,
   above group→category block
-- [ ] Call `frequentCategoriesStore.ensureLoaded(catalogStore)` on mount
+- [ ] Call `frequentCategoriesStore.ensureLoaded()` on mount
 - [ ] After successful POST: call `frequentCategoriesStore.refresh(response)`
 - [ ] `onQuickPick(id)`: set `categoryId` + resolve `groupId` from catalog store
 - [ ] Add `<CategorySheet :open="categorySheetOpen" :suggestions="[]"
@@ -245,13 +258,13 @@ Combines the swipe spec, alternative chips, and tag display.
 - [ ] On mount: call `reviewStore.loadRecentExpenses()` in parallel with
   `reviewStore.loadIfNeeded()`
 - [ ] Add `expenseEditOpen: ref(false)`, `editingExpense: ref(null)`,
-  `editingSuggestions: ref([])`
-- [ ] `openExpenseEdit(expense, suggestions = [])`: set state, open sheet
-- [ ] `closeExpenseEdit()`: clear state, close sheet
-- [ ] Rule rows: `@tap="openExpenseEdit(null, item.alternative_categories, item)"` (pass
-  rule item for the rule-context save path in `ExpenseEditSheet`)
-- [ ] Replace `<CorrectionSheet>` with `<ExpenseEditSheet :open :expense :suggestions
-  @close="closeExpenseEdit" />`; remove `CorrectionSheet` import if unused
+  `editingSuggestions: ref([])`, `editingRuleItem: ref(null)`
+- [ ] `openExpenseEdit(expense, suggestions = [], ruleItem = null)`: set all four state refs, open sheet
+- [ ] `closeExpenseEdit()`: clear all four refs, close sheet
+- [ ] Rule rows: `@tap="openExpenseEdit(null, item.alternative_categories, item)"`
+- [ ] Replace `<CorrectionSheet>` with `<ExpenseEditSheet :open :expense :suggestions :ruleItem
+  @close="closeExpenseEdit" />`; grep `webapp/src` for remaining `CorrectionSheet` usages
+  and remove component + import only if no other file references it
 - [ ] Add "RECENT EXPENSES" section header below rule list (or below the "All caught up"
   empty state)
 - [ ] Render `<ExpenseRow v-for="expense in reviewStore.expenses" :expense @tap="openExpenseEdit(expense)" />`
@@ -298,7 +311,7 @@ Combines the swipe spec, alternative chips, and tag display.
   - `ensureLoaded` populates from catalog on empty cache
   - `ensureLoaded` no-op when fresh (< 24 h); re-reads when stale (> 24 h)
   - `refresh` overwrites categories + bumps `lastFetched`
-- [ ] `webapp/tests/store-review.test.js`: `updateExpense` updates matching entry
-  optimistically; `setOpenRow` closes previously open row
+- [ ] `webapp/tests/store-review.test.js`: `updateExpense` replaces matching entry from
+  response data; `setOpenRow` closes previously open row
 - [ ] `webapp/tests/component-review-view.test.js`: both sections render; tapping
   ExpenseRow opens ExpenseEditSheet; tapping RuleRow opens ExpenseEditSheet with suggestions

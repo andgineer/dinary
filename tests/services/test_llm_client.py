@@ -26,18 +26,27 @@ _CATEGORIES = {1: "Еда: еда", 2: "Жильё: хозтовары", 3: "К�
 @allure.feature("LLM Client")
 class TestBuildUserMessage:
     def test_contains_store_name(self):
-        msg = _build_user_message(["hleb"], "Lidl", _CATEGORIES)
+        msg = _build_user_message(["hleb"], "Lidl", _CATEGORIES, {})
         assert "Lidl" in msg
 
     def test_contains_all_items(self):
-        msg = _build_user_message(["hleb", "mleko"], "Lidl", _CATEGORIES)
+        msg = _build_user_message(["hleb", "mleko"], "Lidl", _CATEGORIES, {})
         assert "hleb" in msg
         assert "mleko" in msg
 
     def test_contains_category_ids_and_names(self):
-        msg = _build_user_message(["hleb"], "Lidl", _CATEGORIES)
+        msg = _build_user_message(["hleb"], "Lidl", _CATEGORIES, {})
         assert "1:" in msg
         assert "Еда: еда" in msg
+
+    def test_tags_block_included_when_tags_provided(self):
+        msg = _build_user_message(["hleb"], "Lidl", _CATEGORIES, {1: "собака"})
+        assert "Tags:" in msg
+        assert "собака" in msg
+
+    def test_tags_block_omitted_when_empty(self):
+        msg = _build_user_message(["hleb"], "Lidl", _CATEGORIES, {})
+        assert "Tags:" not in msg
 
 
 @allure.epic("Services")
@@ -50,7 +59,7 @@ class TestParseResponse:
                 {"item": "pasta", "category_id": None, "confidence": 1},
             ]
         )
-        results = _parse_response(raw, ["hleb", "pasta"])
+        results = _parse_response(raw, ["hleb", "pasta"], set())
         assert len(results) == 2
         assert results[0].category_id == 1
         assert results[0].confidence_level == 3
@@ -59,7 +68,7 @@ class TestParseResponse:
         assert results[1].confidence_level == 1
 
     def test_malformed_json_fallback(self):
-        results = _parse_response("not json at all", ["hleb", "mleko"])
+        results = _parse_response("not json at all", ["hleb", "mleko"], set())
         assert len(results) == 2
         assert all(r.confidence_level == 1 for r in results)
         assert all(r.category_id is None for r in results)
@@ -67,19 +76,54 @@ class TestParseResponse:
         assert results[1].item_name_normalized == "mleko"
 
     def test_not_list_fallback(self):
-        results = _parse_response('{"item": "hleb"}', ["hleb"])
+        results = _parse_response('{"item": "hleb"}', ["hleb"], set())
         assert results[0].confidence_level == 1
         assert results[0].category_id is None
 
     def test_missing_key_fallback(self):
         raw = json.dumps([{"item": "hleb"}])  # missing confidence
-        results = _parse_response(raw, ["hleb"])
+        results = _parse_response(raw, ["hleb"], set())
         assert results[0].confidence_level == 1
 
     def test_category_id_null_parsed_as_none(self):
         raw = json.dumps([{"item": "hleb", "category_id": None, "confidence": 1}])
-        results = _parse_response(raw, ["hleb"])
+        results = _parse_response(raw, ["hleb"], set())
         assert results[0].category_id is None
+
+    def test_extracts_alternatives_caps_at_3(self):
+        raw = json.dumps(
+            [{"item": "x", "category_id": 1, "confidence": 3, "alternatives": [2, 3, 4, 5, 6]}]
+        )
+        results = _parse_response(raw, ["x"], set())
+        assert results[0].alternative_category_ids == [2, 3, 4]
+
+    def test_alternatives_ignores_non_int(self):
+        raw = json.dumps(
+            [{"item": "x", "category_id": 1, "confidence": 3, "alternatives": [1, "bad", 2.5, 3]}]
+        )
+        results = _parse_response(raw, ["x"], set())
+        # 2.5 is float but float(2.5) != int(2.5)==2, so dropped; "bad" dropped; 1 and 3 kept
+        assert results[0].alternative_category_ids == [1, 3]
+
+    def test_alternatives_missing_key(self):
+        raw = json.dumps([{"item": "x", "category_id": 1, "confidence": 3}])
+        results = _parse_response(raw, ["x"], set())
+        assert results[0].alternative_category_ids == []
+
+    def test_tags_filtered_to_provided_set(self):
+        raw = json.dumps([{"item": "x", "category_id": 1, "confidence": 3, "tags": [1, 2, 5]}])
+        results = _parse_response(raw, ["x"], {1, 2, 3})
+        assert sorted(results[0].tag_ids) == [1, 2]
+
+    def test_tags_ignores_non_int(self):
+        raw = json.dumps([{"item": "x", "category_id": 1, "confidence": 3, "tags": [1, "x", 2]}])
+        results = _parse_response(raw, ["x"], {1, 2})
+        assert sorted(results[0].tag_ids) == [1, 2]
+
+    def test_tags_missing_key(self):
+        raw = json.dumps([{"item": "x", "category_id": 1, "confidence": 3}])
+        results = _parse_response(raw, ["x"], {1, 2})
+        assert results[0].tag_ids == []
 
 
 @allure.epic("Services")

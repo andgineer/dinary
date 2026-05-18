@@ -24,6 +24,8 @@ class ClassificationResult:
     item_name_normalized: str
     category_id: int | None
     confidence_level: int
+    alternative_category_ids: list[int] = field(default_factory=list)
+    tag_ids: list[int] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,24 +42,44 @@ class LLMClient(Protocol):
         items: list[str],
         store_name_raw: str,
         categories: dict[int, str],
+        tags: dict[int, str],
     ) -> list[ClassificationResult]: ...
 
 
-_SYSTEM_PROMPT = """\
-You are a receipt classifier for a personal expense tracker in Serbia.
-Classify each item into one of the provided categories.
-Reply with a JSON array only — no explanation, no markdown fences.
-Each element: {"item": "<item name>", "category_id": <int or null>, "confidence": <1-4>}
-Confidence scale: 1=cannot classify, 2=rough guess, 3=likely correct, 4=certain"""
+_SYSTEM_PROMPT = (
+    "You are a receipt classifier for a personal expense tracker in Serbia.\n"
+    "Classify each item into one of the provided categories.\n"
+    "Reply with a JSON array only — no explanation, no markdown fences.\n"
+    'Each element: {"item": "<item name>", "category_id": <int or null>, "confidence": <1-4>}\n'
+    "Confidence scale: 1=cannot classify, 2=rough guess, 3=likely correct, 4=certain\n"
+    'When confidence < 4, add "alternatives": [<cat_id>, ...] with 2-3 next-best category IDs'
+    " ordered by likelihood; omit when confidence=4.\n"
+    'If tags are provided, add "tags": [<tag_id>, ...] with tag IDs that clearly apply to the'
+    " item; omit if none clearly fit; do not guess."
+)
 
 
-def _build_user_message(items: list[str], store_name_raw: str, categories: dict[int, str]) -> str:
+def _build_user_message(
+    items: list[str],
+    store_name_raw: str,
+    categories: dict[int, str],
+    tags: dict[int, str],
+) -> str:
     cat_lines = "\n".join(f"{cat_id}: {name}" for cat_id, name in sorted(categories.items()))
     item_lines = "\n".join(f"- {item}" for item in items)
-    return f"Store: {store_name_raw}\n\nCategories:\n{cat_lines}\n\nItems:\n{item_lines}"
+    msg = f"Store: {store_name_raw}\n\nCategories:\n{cat_lines}"
+    if tags:
+        tag_lines = "\n".join(f"{tag_id}: {name}" for tag_id, name in sorted(tags.items()))
+        msg += f"\n\nTags:\n{tag_lines}"
+    msg += f"\n\nItems:\n{item_lines}"
+    return msg
 
 
-def _parse_response(raw: str, items: list[str]) -> list[ClassificationResult]:
+def _parse_response(
+    raw: str,
+    items: list[str],
+    tag_id_set: set[int],
+) -> list[ClassificationResult]:
     try:
         parsed = json.loads(raw)
         if not isinstance(parsed, list):
@@ -69,6 +91,16 @@ def _parse_response(raw: str, items: list[str]) -> list[ClassificationResult]:
                 if entry.get("category_id") is not None
                 else None,
                 confidence_level=int(entry.get("confidence", 1)),
+                alternative_category_ids=[
+                    int(a)
+                    for a in entry.get("alternatives", [])
+                    if isinstance(a, (int, float)) and float(a) == int(a)
+                ][:3],
+                tag_ids=[
+                    int(t)
+                    for t in entry.get("tags", [])
+                    if isinstance(t, (int, float)) and int(t) in tag_id_set
+                ],
             )
             for entry in parsed
         ]
@@ -91,8 +123,11 @@ class OpenAICompatibleClient:
         items: list[str],
         store_name_raw: str,
         categories: dict[int, str],
+        tags: dict[int, str] | None = None,
     ) -> list[ClassificationResult]:
-        user_msg = _build_user_message(items, store_name_raw, categories)
+        if tags is None:
+            tags = {}
+        user_msg = _build_user_message(items, store_name_raw, categories, tags)
         payload = {
             "model": self._model,
             "messages": [
@@ -108,7 +143,7 @@ class OpenAICompatibleClient:
             )
             resp.raise_for_status()
         content = resp.json()["choices"][0]["message"]["content"]
-        return _parse_response(content, items)
+        return _parse_response(content, items, set(tags.keys()))
 
     async def get_chain_name(self, store_name_raw: str) -> str:
         prompt = _CHAIN_NAME_PROMPT.format(store_name_raw=store_name_raw)
@@ -248,9 +283,10 @@ async def _call_provider_classify(
     items: list[str],
     store_name_raw: str,
     categories: dict[int, str],
+    tags: dict[int, str],
 ) -> list[ClassificationResult]:
     client = OpenAICompatibleClient(provider.base_url, provider.api_key, provider.model)
-    return await client.classify_receipt(items, store_name_raw, categories)
+    return await client.classify_receipt(items, store_name_raw, categories, tags)
 
 
 async def _call_provider_chain_name(provider: _ProviderRow, store_name_raw: str) -> str:
@@ -297,12 +333,13 @@ def _on_provider_success(
 class ProviderPool:
     """Round-robin LLM provider pool with failover, rate-limit tracking, and DB audit."""
 
-    async def classify_receipt(
+    async def classify_receipt(  # noqa: C901
         self,
         conn: sqlite3.Connection,
         items: list[str],
         store_name_raw: str,
         categories: dict[int, str],
+        tags: dict[int, str] | None = None,
         ctx: ReceiptContext | None = None,
     ) -> tuple[list[ClassificationResult], bool]:
         """Return (results, used_failover).
@@ -313,6 +350,8 @@ class ProviderPool:
         """
         if ctx is None:
             ctx = ReceiptContext()
+        if tags is None:
+            tags = {}
         providers = _load_providers(conn)
         if not providers:
             raise AllProvidersExhausted("No enabled LLM providers configured")
@@ -332,7 +371,13 @@ class ProviderPool:
 
             t0 = time.monotonic()
             try:
-                results = await _call_provider_classify(provider, items, store_name_raw, categories)
+                results = await _call_provider_classify(
+                    provider,
+                    items,
+                    store_name_raw,
+                    categories,
+                    tags,
+                )
                 latency_ms = int((time.monotonic() - t0) * 1000)
                 _log_call(conn, provider.id, ctx.receipt_id, "ok", latency_ms)
                 _on_provider_success(conn, providers, idx, used_failover)

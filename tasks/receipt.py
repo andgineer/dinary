@@ -2,7 +2,6 @@
 
 import asyncio
 import sys
-from collections import defaultdict
 
 from invoke import task
 from sr_invoice_parser.exceptions import ParserParseException, ParserRequestException
@@ -43,19 +42,22 @@ def classify_receipt(c, url):  # noqa: ARG001
     con = get_connection()
     try:
         cats = list_categories(con)
+        tag_rows = con.execute("SELECT id, name FROM tags WHERE is_active = 1").fetchall()
+        tags = {int(r[0]): str(r[1]) for r in tag_rows}
     finally:
         con.close()
     categories = {row.id: f"{row.group_name}: {row.name}" for row in cats}
 
     for receipt_url in url:
         print(f"\n{'=' * 70}")
-        _run_receipt(receipt_url, llm, categories)
+        _run_receipt(receipt_url, llm, categories, tags)
 
 
 def _run_receipt(
     url: str,
     llm: OpenAICompatibleClient,
     categories: dict[int, str],
+    tags: dict[int, str],
 ) -> None:
     print(f"URL: {url[:80]}{'...' if len(url) > 80 else ''}")
     try:
@@ -79,14 +81,29 @@ def _run_receipt(
     normalized = [normalize_item_name(item.name_raw) for item in receipt.items]
 
     try:
-        results = asyncio.run(llm.classify_receipt(normalized, receipt.store_name, categories))
+        results = asyncio.run(
+            llm.classify_receipt(normalized, receipt.store_name, categories, tags),
+        )
     except Exception as exc:  # noqa: BLE001
         print(f"  LLM error: {exc}")
         return
 
-    print(f"\n{'Item raw':<38} {'qty':>6} {'total':>8}  {'Normalized':<28} {'Category':<35} Conf")
-    print("-" * 125)
-    totals: dict[str, float] = defaultdict(float)
+    col_item = 36
+    col_qty = 6
+    col_total = 8
+    col_norm = 26
+    col_cat = 32
+    col_conf = 4
+    col_alt = 38
+    header = (
+        f"{'Item raw':<{col_item}} {'qty':>{col_qty}} {'total':>{col_total}}  "
+        f"{'Normalized':<{col_norm}} {'Category':<{col_cat}} {'C':>{col_conf}}  "
+        f"{'Alternatives':<{col_alt}} Tags"
+    )
+    print(f"\n{header}")
+    print("-" * len(header))
+
+    totals: dict[str, float] = {}
     for item, norm, result in zip(receipt.items, normalized, results, strict=False):
         cat_name = (
             categories.get(result.category_id, "Unclassified")
@@ -99,12 +116,24 @@ def _run_receipt(
             if item.quantity != int(item.quantity)
             else str(int(item.quantity))
         )
+
+        if result.alternative_category_ids and result.confidence_level < 4:
+            alt_parts = [categories.get(aid, f"?{aid}") for aid in result.alternative_category_ids]
+            alt_str = " / ".join(p.split(": ", 1)[-1] for p in alt_parts)
+        else:
+            alt_str = ""
+
+        tag_str = (
+            ", ".join(tags.get(tid, f"?{tid}") for tid in result.tag_ids) if result.tag_ids else ""
+        )
+
         print(
-            f"{item.name_raw:<38} {qty_str:>6} {item.total_price:>8.2f}  "
-            f"{norm:<28} {cat_name:<35} {conf_str}",
+            f"{item.name_raw:<{col_item}} {qty_str:>{col_qty}} {item.total_price:>{col_total}.2f}  "
+            f"{norm:<{col_norm}} {cat_name:<{col_cat}} {conf_str:>{col_conf}}  "
+            f"{alt_str:<{col_alt}} {tag_str}",
         )
         if result.category_id is not None and result.confidence_level > 1:
-            totals[cat_name] += item.total_price
+            totals[cat_name] = totals.get(cat_name, 0) + item.total_price
 
     print(f"\n{'Expense totals by category':}")
     print("-" * 55)
@@ -115,14 +144,19 @@ def _run_receipt(
 
 
 @task(name="reclassify-receipts", iterable=["receipt_id"])
-def reclassify_receipts(c, receipt_id=None, from_date=None, clear_rules=False, yes=False):  # noqa: ARG001
+def reclassify_receipts(
+    _c,
+    receipt_id=None,
+    from_date=None,
+    clear_rules=False,
+    yes=False,
+):
     """Re-run classification for receipts (resets expenses and re-queues drain jobs).
 
     Examples:
         inv reclassify-receipts                          # all receipts
         inv reclassify-receipts --from-date 2026-05-01  # receipts from date
         inv reclassify-receipts --receipt-id 42         # single receipt
-        inv reclassify-receipts --clear-rules           # also delete classification rules
 
     Requires --yes when scope > 1 receipt.
     """

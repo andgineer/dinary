@@ -102,10 +102,15 @@ CREATE TABLE categories (
 );
 
 -- Events stay first-class for trips/camps/relocation.
--- `auto_attach_enabled` opts the event into the PWA's "auto-select
--- the active event for this expense's date" affordance (the PWA
--- picks the shortest matching active event and the operator can
--- override). `auto_tags` is a denormalised JSON array of tag names
+-- `auto_attach_enabled` opts the event into automatic date-based
+-- attachment. Two paths attach events:
+--   1. Receipt classification task: picks the active auto-attach event
+--      whose date range covers the receipt date and writes event_id
+--      directly (no user interaction). User can override via PATCH later.
+--   2. PWA manual entry: the user chooses the event explicitly from a
+--      date-filtered dropdown; the server never auto-selects for manual
+--      expenses (client is in control of when and whether to attach).
+-- `auto_tags` is a denormalised JSON array of tag names
 -- the runtime and the bootstrap importer union into the expense's
 -- effective tag set whenever the expense is attached to the event;
 -- tags referenced from `auto_tags` are prevented from being
@@ -427,13 +432,10 @@ Examples:
 - `event` is an optional single-valued dimension for trips, camps, business trips, relocation, and other bounded contexts.
 - Each event has `date_from`, `date_to`, and `auto_attach_enabled`.
 - **Attachment is decided before insert; stored rows are never auto-re-attached.** `expenses` is the committed ledger, not a staging area.
-- Phase 2: the PWA surfaces a date-filtered event dropdown (±30 days of the expense date) and `POST /api/expenses` accepts an optional `event_id`. The historical sheet import still populates `event_id` from `import_mapping`. The sheet-logging drain worker does not originate `event_id`; it reads `expense.event_id` directly when projecting an expense through `sheet_mapping`.
-- Events carry an `auto_tags` JSON array: tags attached to the event automatically flow into the expense's `tag_ids` (both at `POST /api/expenses` time and during historical import). Vacation events seed `auto_tags = ["отпуск", "путешествия"]` so either tag alone still routes the expense to the "путешествия" envelope via the default `map` tab's tag-driven rows (the module-private `_TAG_RULES` list in `src/dinary/sheets/sheet_mapping.py`).
-- Future receipt-processing pipeline (out of scope for Phase 1) will use `auto_attach_enabled` and overlap rules:
-  - exactly one auto-attach-enabled event covers the date → suggest/attach;
-  - more than one covers the date → user or rule must pick;
-  - zero cover the date → no event unless explicit override;
-  - manual override allowed in either direction.
+- The PWA surfaces a date-filtered event dropdown and `POST /api/expenses` accepts an optional `event_id`. The server never auto-selects an event for manually entered expenses — the client is in full control of whether and which event to attach.
+- The receipt classification task (`background/classification/task.py`) attaches events automatically based solely on date: it queries for the active `auto_attach_enabled` event whose `date_from ≤ receipt_date ≤ date_to` (most-specific match wins by `date_from DESC`) and writes `event_id` directly into every expense row created for that receipt. If no event covers the date, `event_id` stays NULL. The user can override via `PATCH /api/expenses/{id}` afterwards.
+- Events carry an `auto_tags` JSON array: when an event is attached (by either path), its tag names are resolved to tag IDs and merged into the expense's `expense_tags` rows. Vacation events seed `auto_tags = ["отпуск", "путешествия"]` so either tag alone still routes the expense to the "путешествия" envelope via the default `map` tab's tag-driven rows (the module-private `_TAG_RULES` list in `src/dinary/sheets/sheet_mapping.py`).
+- The historical sheet import still populates `event_id` from `import_mapping`. The sheet-logging drain worker does not originate `event_id`; it reads `expense.event_id` directly when projecting an expense through `sheet_mapping`.
 
 ### Tag Semantics
 

@@ -8,7 +8,6 @@ import contextlib
 import logging
 import sqlite3
 import uuid
-from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -44,6 +43,7 @@ from dinary.db.receipts import (
     trim_llm_call_log,
     update_receipt_item,
 )
+from dinary.sheets.sheet_mapping import resolve_event_auto_tag_ids
 
 logger = logging.getLogger(__name__)
 
@@ -302,13 +302,33 @@ def _load_categories(conn: sqlite3.Connection) -> dict[int, str]:
     return {int(r[0]): f"{r[1]}: {r[2]}" if r[1] else str(r[2]) for r in rows}
 
 
+def _find_auto_attach_event(conn: sqlite3.Connection, receipt_dt: str) -> int | None:
+    """Return id of the active auto-attach event covering receipt_dt, or None."""
+    row = conn.execute(
+        """
+        SELECT id FROM events
+         WHERE auto_attach_enabled = 1 AND is_active = 1
+           AND date_from <= date(?) AND date_to >= date(?)
+         ORDER BY date_from DESC
+         LIMIT 1
+        """,
+        [receipt_dt, receipt_dt],
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
+def _load_tags(conn: sqlite3.Connection) -> dict[int, str]:
+    rows = conn.execute("SELECT id, name FROM tags WHERE is_active = 1").fetchall()
+    return {int(r[0]): str(r[1]) for r in rows}
+
+
 def _run_rules_pass(
     conn: sqlite3.Connection,
     items: list[ReceiptItemRow],
     store_id: int | None,
-) -> tuple[dict[int, tuple[int, int]], list[tuple[int, str]]]:
+) -> tuple[dict[int, tuple[int, int, list[int]]], list[tuple[int, str]]]:
     """Classify items by rules; return (rule_hits, llm_queue) for remaining items."""
-    rule_hits: dict[int, tuple[int, int]] = {}
+    rule_hits: dict[int, tuple[int, int, list[int]]] = {}
     llm_queue: list[tuple[int, str]] = []
     for item in items:
         norm = normalize_item_name(item.name_raw)
@@ -326,6 +346,7 @@ async def _run_llm_pass(
     job: ReceiptJobRow,
     llm_queue: list[tuple[int, str]],
     categories: dict[int, str],
+    tags: dict[int, str],
 ) -> tuple[dict[int, ClassificationResult], bool]:
     """Call LLM for queued items; return (results keyed by item_id, used_failover)."""
     if not llm_queue:
@@ -336,6 +357,7 @@ async def _run_llm_pass(
         items=normalized_names,
         store_name_raw=job.store_name_raw or "Unknown Store",
         categories=categories,
+        tags=tags,
         ctx=ReceiptContext(receipt_id=job.receipt_id, invoice_number=job.invoice_number),
     )
     return (
@@ -346,7 +368,7 @@ async def _run_llm_pass(
 
 def _compute_classifications(
     items: list[ReceiptItemRow],
-    rule_hits: dict[int, tuple[int, int]],
+    rule_hits: dict[int, tuple[int, int, list[int]]],
     llm_results: dict[int, ClassificationResult],
     total_penalty: int,
 ) -> dict[int, tuple[int | None, int]]:
@@ -354,7 +376,8 @@ def _compute_classifications(
     result: dict[int, tuple[int | None, int]] = {}
     for item in items:
         if item.id in rule_hits:
-            result[item.id] = rule_hits[item.id]
+            cat_id, conf, _ = rule_hits[item.id]
+            result[item.id] = (cat_id, conf)
         else:
             llm = llm_results.get(item.id)
             if llm is None:
@@ -370,18 +393,11 @@ def _persist_classification_results(
     job: ReceiptJobRow,
     items: list[ReceiptItemRow],
     classifications: dict[int, tuple[int | None, int]],
+    rule_hits: dict[int, tuple[int, int, list[int]]],
+    llm_results: dict[int, ClassificationResult],
     store_id: int | None,
 ) -> None:
     """Write classification results atomically; handles idempotency inside the transaction."""
-    by_category: defaultdict[int, list[tuple[ReceiptItemRow, int]]] = defaultdict(list)
-    unresolved_items: list[tuple[ReceiptItemRow, int]] = []
-    for item in items:
-        cat_id, conf = classifications.get(item.id, (None, 1))
-        if cat_id is None or conf <= 1:
-            unresolved_items.append((item, conf if cat_id is None else 1))
-        else:
-            by_category[cat_id].append((item, conf))
-
     receipt_dt_row = conn.execute(
         "SELECT COALESCE(purchase_datetime, created_at) FROM receipts WHERE id = ?",
         [job.receipt_id],
@@ -390,6 +406,11 @@ def _persist_classification_results(
         receipt_dt_row[0]
         if receipt_dt_row
         else datetime.now(UTC).replace(microsecond=0).isoformat()
+    )
+
+    auto_event_id = _find_auto_attach_event(conn, receipt_dt)
+    event_auto_tag_ids: list[int] = (
+        resolve_event_auto_tag_ids(conn, auto_event_id) if auto_event_id is not None else []
     )
 
     conn.execute("BEGIN IMMEDIATE")
@@ -402,47 +423,80 @@ def _persist_classification_results(
             conn.execute("COMMIT")
             return
 
-        for item, _ in unresolved_items:
-            update_receipt_item(
-                conn,
-                item.id,
-                normalize_item_name(item.name_raw),
-                ItemClassification(None, 1, None),
-            )
+        for item in items:
+            cat_id, conf = classifications.get(item.id, (None, 1))
+            norm = normalize_item_name(item.name_raw)
 
-        for cat_id, cat_items in by_category.items():
-            total = round(sum(i.total_price for i, _ in cat_items), 2)
-            min_conf = min(conf for _, conf in cat_items)
-            conn.execute(
-                """
-                INSERT INTO expenses
-                       (client_expense_id, datetime, amount, amount_original, currency_original,
-                        category_id, confidence_level, receipt_id, store_id)
-                VALUES (?, ?, ?, ?, 'RSD', ?, ?, ?, ?)
-                """,
-                [
-                    str(uuid.uuid4()),
-                    receipt_dt,
-                    total,
-                    total,
-                    cat_id,
-                    min_conf,
-                    job.receipt_id,
-                    store_id,
-                ],
-            )
-            expense_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
-            enqueue_for_logging(conn, expense_id)
-            for item, conf in cat_items:
-                norm = normalize_item_name(item.name_raw)
+            if cat_id is None or conf <= 1:
                 update_receipt_item(
                     conn,
                     item.id,
                     norm,
-                    ItemClassification(cat_id, conf, expense_id),
+                    ItemClassification(None, 1, None),
                 )
-                if norm and conf >= 2:
-                    create_or_update_rule(conn, store_id, norm, RuleSpec(cat_id, conf, "llm"))
+                continue
+
+            conn.execute(
+                """
+                INSERT INTO expenses
+                       (client_expense_id, datetime, amount, amount_original, currency_original,
+                        category_id, confidence_level, receipt_id, store_id, event_id)
+                VALUES (?, ?, ?, ?, 'RSD', ?, ?, ?, ?, ?)
+                """,
+                [
+                    str(uuid.uuid4()),
+                    receipt_dt,
+                    item.total_price,
+                    item.total_price,
+                    cat_id,
+                    conf,
+                    job.receipt_id,
+                    store_id,
+                    auto_event_id,
+                ],
+            )
+            expense_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+            enqueue_for_logging(conn, expense_id)
+            update_receipt_item(
+                conn,
+                item.id,
+                norm,
+                ItemClassification(cat_id, conf, expense_id),
+            )
+
+            # Merge classification tags with event auto-tags (deduped, event tags appended)
+            if item.id in rule_hits:
+                _, _, tag_ids_for_item = rule_hits[item.id]
+            else:
+                llm_r = llm_results.get(item.id)
+                tag_ids_for_item = llm_r.tag_ids if llm_r else []
+
+            seen: set[int] = set()
+            for tag_id in [*tag_ids_for_item, *event_auto_tag_ids]:
+                if tag_id not in seen:
+                    seen.add(tag_id)
+                    conn.execute(
+                        "INSERT OR IGNORE INTO expense_tags (expense_id, tag_id) VALUES (?, ?)",
+                        [expense_id, tag_id],
+                    )
+
+            # Create/update classification rule only for LLM-classified items
+            if item.id not in rule_hits and norm and conf >= 2:
+                llm_r = llm_results.get(item.id)
+                alt_ids = llm_r.alternative_category_ids if llm_r else []
+                tag_ids_for_rule = llm_r.tag_ids if llm_r else []
+                create_or_update_rule(
+                    conn,
+                    store_id,
+                    norm,
+                    RuleSpec(
+                        cat_id,
+                        conf,
+                        "llm",
+                        alternative_category_ids=tuple(alt_ids),
+                        tag_ids=tuple(tag_ids_for_rule),
+                    ),
+                )
 
         trim_llm_call_log(conn)
         complete_job(conn, job.receipt_id)
@@ -473,10 +527,19 @@ async def _classify_and_persist(
         return
     rule_hits, llm_queue = _run_rules_pass(conn, items, store_id)
     categories = _load_categories(conn)
-    llm_results, used_failover = await _run_llm_pass(pool, conn, job, llm_queue, categories)
+    tags = _load_tags(conn)
+    llm_results, used_failover = await _run_llm_pass(pool, conn, job, llm_queue, categories, tags)
     total_penalty = (1 if job.used_journal_fallback else 0) + (1 if used_failover else 0)
     classifications = _compute_classifications(items, rule_hits, llm_results, total_penalty)
-    _persist_classification_results(conn, job, items, classifications, store_id)
+    _persist_classification_results(
+        conn,
+        job,
+        items,
+        classifications,
+        rule_hits,
+        llm_results,
+        store_id,
+    )
 
 
 def _write_fetch_fallback_metadata(

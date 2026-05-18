@@ -5,6 +5,10 @@ All server-side work. Deployable independently before any PWA changes.
 Sections in implementation order: ungroup → migration → LLM → rules model → task wiring
 → rules feed → catalog/expense API additions → new expense endpoints → POC → tests.
 
+IMPORTANT:
+1) Migration 0004 never riched production and can be modified
+2) POC will be done on dev machine - we will run all the migrations and have the latest app version.
+
 ---
 
 ## 1. Ungroup — one expense per receipt item
@@ -45,6 +49,8 @@ the existing migration is safe).
 - [ ] Add `alternative_category_ids TEXT` (nullable JSON array) to `classification_rules`
 - [ ] Add `tag_ids TEXT NOT NULL DEFAULT '[]'` (JSON array of tag IDs) to
   `classification_rules`
+- [ ] Add `CREATE INDEX IF NOT EXISTS idx_cr_store_name ON classification_rules(store_id, name_normalized)`
+  (needed for the `has_rule` subquery in §8b)
 - [ ] In `0004_receipt_pipeline.rollback.sql`: add `ALTER TABLE … ADD COLUMN` stubs that
   reset both columns to NULL / empty array (SQLite cannot drop columns; acceptable since
   rollback only runs in dev)
@@ -102,7 +108,8 @@ All changes in `src/dinary/adapters/llm_client.py`.
 ## 6. Rules feed — `src/dinary/api/controllers/rules.py`
 
 - [ ] Include `cr.alternative_category_ids` and `cr.tag_ids` in the `rule_stats` CTE SELECT
-- [ ] Resolve alternative IDs to names (join or subquery); include in each row:
+- [ ] Resolve alternative IDs to names joined to `categories WHERE is_active = 1`
+  (silently drop any ID whose category is inactive); include in each row:
   `"alternative_categories": [{"id": <int>, "name": <str>}, ...]`  — empty list when certain
 - [ ] Resolve tag IDs to names; include in each row:
   `"tags": [{"id": <int>, "name": <str>}, ...]`  — empty list when no tags
@@ -149,7 +156,9 @@ All changes in `src/dinary/adapters/llm_client.py`.
     (`stores.chain_name`), `receipt_id`, `confidence_level`,
     `tags: [{id, name}]`, `has_rule: bool`
   - `has_rule`: true when a `classification_rules` row exists for the
-    `(store_id, name_normalized)` of the linked `receipt_items` row
+    `(store_id, name_normalized)` of the linked `receipt_items` row; always false for
+    expenses where `receipt_id IS NULL` (no receipt item to check). Requires an index on
+    `classification_rules(store_id, name_normalized)` — add it in the §2 migration if missing.
 
 ### 8c. `PATCH /api/expenses/{id}`
 
@@ -159,16 +168,23 @@ All changes in `src/dinary/adapters/llm_client.py`.
   class ExpenseEditRequest(BaseModel):
       category_id: int | None = None
       tag_ids: list[int] = Field(default_factory=list)
-      event_id: int | None = None   # -1 = explicitly clear
+      event_id: int | None = None
+      clear_event: bool = False
       scope: CorrectionScope = CorrectionScope.single
       update_rule: bool = False
   ```
+- [ ] Response model `ExpenseEditResponse(BaseModel)`: `id: int`, `category_id: int`,
+  `category_name: str`, `tag_ids: list[int]`, `event_id: int | None`,
+  `event_name: str | None` — returned by the PATCH endpoint
 - [ ] `edit_expense_sync(expense_id, req, con)` in `src/dinary/api/controllers/expenses.py`:
-  - If `category_id` provided: reuse `correct_category_sync` scope/batch logic
-  - Replace `expense_tags` rows for this expense with `req.tag_ids`
-  - Update `event_id` if provided (`None` = keep current, `-1` = set NULL)
+  - If `category_id` provided: call `correct_category_sync(expense_id, req.category_id, req.scope, con)` directly
+  - Replace `expense_tags` rows **for this expense only** with `req.tag_ids`; other
+    expenses updated by the scope correction retain their existing tags
+  - Update `event_id`: if `clear_event=True` set NULL; else if `event_id` is non-None
+    update to that value; otherwise keep current
   - If `update_rule=True` and expense has a linked rule: call `create_or_update_rule`
     with `source='user_correction'`, new `category_id`, new `tag_ids`
+  - Return `ExpenseEditResponse` populated from the updated row
 
 ---
 

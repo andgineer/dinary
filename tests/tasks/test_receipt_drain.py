@@ -1,6 +1,7 @@
 """Tests for the receipt classification drain loop and circuit breaker."""
 
 import asyncio
+import json
 import shutil
 import sqlite3
 import unittest.mock
@@ -16,11 +17,13 @@ from dinary.db.receipts import ReceiptJobRow
 from dinary.background.classification.task import (
     _activate_llm_backoff,
     _drain_one,
+    _process_job,
     _reset_llm_backoff,
     notify_new_receipt,
     receipt_classification_task,
 )
-from dinary.adapters.llm_client import AllProvidersExhausted
+from dinary.adapters.llm_client import AllProvidersExhausted, ClassificationResult
+from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 
 
 @pytest.fixture(autouse=True)
@@ -769,7 +772,7 @@ class TestReceiptSheetLogging:
         )
         pool = MagicMock()
         pool.get_chain_name = AsyncMock(return_value="")
-        # Two items → two different categories → two expenses
+        # Two items → two individual expenses (one per item)
         pool.classify_receipt = AsyncMock(
             return_value=(
                 [
@@ -840,8 +843,458 @@ class TestReceiptSheetLogging:
         finally:
             conn.close()
 
-        assert len(exp_ids) == 1, "two items in same category → one aggregated expense"
+        assert len(exp_ids) == 2, "two items → two individual expenses (one per item)"
         assert set(queued) == set(exp_ids), "every receipt expense must be queued for sheet logging"
+
+
+# ---------------------------------------------------------------------------
+# Per-item expense creation tests
+# ---------------------------------------------------------------------------
+
+
+def _make_pool_for_items(results_list):
+    """Return a mock ProviderPool that yields the given ClassificationResult list."""
+    pool = MagicMock()
+    pool.get_chain_name = AsyncMock(return_value="")
+    pool.classify_receipt = AsyncMock(return_value=(results_list, False))
+    return pool
+
+
+def _seed_drain_db_with_tags(conn):
+    """Seed minimal catalog + two active tags."""
+    _seed_drain_db(conn)
+    conn.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'собака', 1)")
+    conn.execute("INSERT INTO tags (id, name, is_active) VALUES (2, 'аня', 1)")
+
+
+@allure.epic("Background Tasks")
+@allure.feature("Receipt drain — per-item expenses")
+class TestPerItemExpenses:
+    def _setup_receipt(self, conn, client_receipt_id="pi-r1", created_at=None):
+        _seed_drain_db(conn)
+        if created_at:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url, created_at)"
+                " VALUES (?, 'https://x', ?)",
+                [client_receipt_id, created_at],
+            )
+        else:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES (?, 'https://x')",
+                [client_receipt_id],
+            )
+        receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+        )
+        return receipt_id
+
+    def test_three_items_two_categories_creates_three_expenses(self, drain_db):  # noqa: ARG002
+        """Each receipt item gets its own expense row even when two share the same category."""
+        parsed = ParsedReceipt(
+            store_name="",
+            store_pib="",
+            total_amount=300.0,
+            invoice_number="INV-PI-1",
+            items=[
+                ReceiptItem(
+                    name_raw="A", unit_price=100.0, quantity=1.0, total_price=100.0, tax_label="E"
+                ),
+                ReceiptItem(
+                    name_raw="B", unit_price=120.0, quantity=1.0, total_price=120.0, tax_label="E"
+                ),
+                ReceiptItem(
+                    name_raw="C", unit_price=80.0, quantity=1.0, total_price=80.0, tax_label="E"
+                ),
+            ],
+            items_total=300.0,
+            total_ok=True,
+            used_journal_fallback=False,
+        )
+        pool = _make_pool_for_items(
+            [
+                ClassificationResult("a", category_id=1, confidence_level=3),
+                ClassificationResult("b", category_id=1, confidence_level=3),
+                ClassificationResult("c", category_id=1, confidence_level=3),
+            ]
+        )
+
+        conn = storage.get_connection()
+        try:
+            receipt_id = self._setup_receipt(conn)
+        finally:
+            conn.close()
+
+        job = ReceiptJobRow(
+            receipt_id=receipt_id,
+            url="https://x",
+            store_name_raw="",
+            store_pib_raw="",
+            invoice_number="INV-PI-1",
+            parsed_at=None,
+            used_journal_fallback=False,
+            claim_token="tok",
+        )
+
+        with (
+            patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
+            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+        ):
+            asyncio.run(_process_job(job))
+
+        conn = storage.get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT amount FROM expenses WHERE receipt_id = ? ORDER BY amount",
+                [receipt_id],
+            ).fetchall()
+        finally:
+            conn.close()
+
+        assert len(rows) == 3, f"expected 3 expenses (one per item), got {len(rows)}"
+        amounts = sorted(r[0] for r in rows)
+        assert amounts == pytest.approx([80.0, 100.0, 120.0])
+
+    def test_expense_tags_inserted_from_llm_tag_ids(self, drain_db):  # noqa: ARG002
+        """LLM tag_ids on a ClassificationResult become expense_tags rows."""
+        parsed = ParsedReceipt(
+            store_name="",
+            store_pib="",
+            total_amount=50.0,
+            invoice_number="INV-TAGS-1",
+            items=[
+                ReceiptItem(
+                    name_raw="X", unit_price=50.0, quantity=1.0, total_price=50.0, tax_label="E"
+                ),
+            ],
+            items_total=50.0,
+            total_ok=True,
+            used_journal_fallback=False,
+        )
+        pool = _make_pool_for_items(
+            [
+                ClassificationResult("x", category_id=1, confidence_level=3, tag_ids=[1]),
+            ]
+        )
+
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'собака', 1)")
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('tag-r1', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+        finally:
+            conn.close()
+
+        job = ReceiptJobRow(
+            receipt_id=receipt_id,
+            url="https://x",
+            store_name_raw="",
+            store_pib_raw="",
+            invoice_number="INV-TAGS-1",
+            parsed_at=None,
+            used_journal_fallback=False,
+            claim_token="tok",
+        )
+
+        with (
+            patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
+            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+        ):
+            asyncio.run(_process_job(job))
+
+        conn = storage.get_connection()
+        try:
+            exp_id = conn.execute(
+                "SELECT id FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()
+            assert exp_id is not None
+            tag_rows = conn.execute(
+                "SELECT tag_id FROM expense_tags WHERE expense_id = ?", [exp_id[0]]
+            ).fetchall()
+        finally:
+            conn.close()
+
+        assert len(tag_rows) == 1
+        assert tag_rows[0][0] == 1
+
+    def test_expense_tags_empty_when_no_tags(self, drain_db):  # noqa: ARG002
+        """When LLM returns no tag_ids, no expense_tags rows are created."""
+        parsed = ParsedReceipt(
+            store_name="",
+            store_pib="",
+            total_amount=50.0,
+            invoice_number="INV-NOTAG",
+            items=[
+                ReceiptItem(
+                    name_raw="Y", unit_price=50.0, quantity=1.0, total_price=50.0, tax_label="E"
+                ),
+            ],
+            items_total=50.0,
+            total_ok=True,
+            used_journal_fallback=False,
+        )
+        pool = _make_pool_for_items(
+            [
+                ClassificationResult("y", category_id=1, confidence_level=3),
+            ]
+        )
+
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('notag-r1', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+        finally:
+            conn.close()
+
+        job = ReceiptJobRow(
+            receipt_id=receipt_id,
+            url="https://x",
+            store_name_raw="",
+            store_pib_raw="",
+            invoice_number="INV-NOTAG",
+            parsed_at=None,
+            used_journal_fallback=False,
+            claim_token="tok",
+        )
+
+        with (
+            patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
+            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+        ):
+            asyncio.run(_process_job(job))
+
+        conn = storage.get_connection()
+        try:
+            tag_count = conn.execute("SELECT COUNT(*) FROM expense_tags").fetchone()[0]
+        finally:
+            conn.close()
+
+        assert tag_count == 0
+
+    def test_auto_event_attached_when_event_covers_receipt_date(self, drain_db):  # noqa: ARG002
+        """When an auto-attach event covers the receipt date, expenses get event_id set."""
+        parsed = ParsedReceipt(
+            store_name="",
+            store_pib="",
+            total_amount=100.0,
+            invoice_number="INV-EVT",
+            items=[
+                ReceiptItem(
+                    name_raw="Z", unit_price=100.0, quantity=1.0, total_price=100.0, tax_label="E"
+                ),
+            ],
+            items_total=100.0,
+            total_ok=True,
+            used_journal_fallback=False,
+        )
+        pool = _make_pool_for_items(
+            [
+                ClassificationResult("z", category_id=1, confidence_level=3),
+            ]
+        )
+
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
+                " VALUES (1, 'Test', '2026-01-01', '2026-12-31', 1, 1, '[]')"
+            )
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url, created_at)"
+                " VALUES ('evt-r1', 'https://x', '2026-06-01 12:00:00')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+        finally:
+            conn.close()
+
+        job = ReceiptJobRow(
+            receipt_id=receipt_id,
+            url="https://x",
+            store_name_raw="",
+            store_pib_raw="",
+            invoice_number="INV-EVT",
+            parsed_at=None,
+            used_journal_fallback=False,
+            claim_token="tok",
+        )
+
+        with (
+            patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
+            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+        ):
+            asyncio.run(_process_job(job))
+
+        conn = storage.get_connection()
+        try:
+            exp = conn.execute(
+                "SELECT event_id FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert exp is not None
+        assert exp[0] == 1, f"expected event_id=1, got {exp[0]}"
+
+    def test_no_auto_event_when_no_covering_event(self, drain_db):  # noqa: ARG002
+        """When no auto-attach event covers the receipt date, expenses get event_id = NULL."""
+        parsed = ParsedReceipt(
+            store_name="",
+            store_pib="",
+            total_amount=50.0,
+            invoice_number="INV-NOEVT",
+            items=[
+                ReceiptItem(
+                    name_raw="W", unit_price=50.0, quantity=1.0, total_price=50.0, tax_label="E"
+                ),
+            ],
+            items_total=50.0,
+            total_ok=True,
+            used_journal_fallback=False,
+        )
+        pool = _make_pool_for_items(
+            [
+                ClassificationResult("w", category_id=1, confidence_level=3),
+            ]
+        )
+
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            # Event does NOT cover 2020 dates
+            conn.execute(
+                "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled, is_active)"
+                " VALUES (1, 'Future', '2027-01-01', '2027-12-31', 1, 1)"
+            )
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url, created_at)"
+                " VALUES ('noevt-r1', 'https://x', '2020-06-01 12:00:00')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+        finally:
+            conn.close()
+
+        job = ReceiptJobRow(
+            receipt_id=receipt_id,
+            url="https://x",
+            store_name_raw="",
+            store_pib_raw="",
+            invoice_number="INV-NOEVT",
+            parsed_at=None,
+            used_journal_fallback=False,
+            claim_token="tok",
+        )
+
+        with (
+            patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
+            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+        ):
+            asyncio.run(_process_job(job))
+
+        conn = storage.get_connection()
+        try:
+            exp = conn.execute(
+                "SELECT event_id FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert exp is not None
+        assert exp[0] is None, f"expected event_id=NULL, got {exp[0]}"
+
+    def test_auto_event_auto_tags_merged_into_expense_tags(self, drain_db):  # noqa: ARG002
+        """Event auto_tags are merged into expense_tags for auto-attached expenses."""
+        parsed = ParsedReceipt(
+            store_name="",
+            store_pib="",
+            total_amount=100.0,
+            invoice_number="INV-AUTOTAG",
+            items=[
+                ReceiptItem(
+                    name_raw="Q", unit_price=100.0, quantity=1.0, total_price=100.0, tax_label="E"
+                ),
+            ],
+            items_total=100.0,
+            total_ok=True,
+            used_journal_fallback=False,
+        )
+        pool = _make_pool_for_items(
+            [
+                ClassificationResult("q", category_id=1, confidence_level=3),
+            ]
+        )
+
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'собака', 1)")
+            conn.execute(
+                "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
+                " VALUES (1, 'Dog Year', '2026-01-01', '2026-12-31', 1, 1, ?)",
+                [json.dumps(["собака"])],
+            )
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url, created_at)"
+                " VALUES ('autotag-r1', 'https://x', '2026-06-01 12:00:00')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+        finally:
+            conn.close()
+
+        job = ReceiptJobRow(
+            receipt_id=receipt_id,
+            url="https://x",
+            store_name_raw="",
+            store_pib_raw="",
+            invoice_number="INV-AUTOTAG",
+            parsed_at=None,
+            used_journal_fallback=False,
+            claim_token="tok",
+        )
+
+        with (
+            patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
+            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+        ):
+            asyncio.run(_process_job(job))
+
+        conn = storage.get_connection()
+        try:
+            exp_id = conn.execute(
+                "SELECT id FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()
+            assert exp_id is not None
+            tag_ids = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT tag_id FROM expense_tags WHERE expense_id = ?", [exp_id[0]]
+                ).fetchall()
+            ]
+        finally:
+            conn.close()
+
+        assert 1 in tag_ids, f"tag 'собака' (id=1) must be in expense_tags, got {tag_ids}"
 
 
 # ---------------------------------------------------------------------------

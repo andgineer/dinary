@@ -1,5 +1,6 @@
-"""Expense creation business logic."""
+"""Expense creation and editing business logic."""
 
+import json
 import sqlite3
 from datetime import date, datetime
 from decimal import Decimal
@@ -9,15 +10,27 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from dinary.adapters.exchange_rates import get_rate
-from dinary.api.controllers.catalog import most_used_category_per_group, most_used_group
+from dinary.api.controllers.catalog import (
+    FrequentCategory,
+    frequent_categories_sync,
+    most_used_category_per_group,
+    most_used_group,
+)
+from dinary.api.controllers.expense_corrections import (
+    CategoryCorrectionRequest,
+    CorrectionScope,
+    correct_category_sync,
+)
 from dinary.config import settings
 from dinary.db.catalog import get_catalog_version
+from dinary.db.classification_rules import RuleSpec, create_or_update_rule
 from dinary.db.expenses import (
     ExpensePayload,
     describe_expense_conflict,
     insert_expense,
     lookup_existing_expense,
 )
+from dinary.db.storage import transaction
 from dinary.sheets import sheet_mapping
 
 
@@ -41,6 +54,47 @@ class ExpenseResponse(BaseModel):
     catalog_version: int
     default_group_id: int | None = None
     default_category_ids: dict[str, int] = Field(default_factory=dict)
+    frequent_categories: list[FrequentCategory] = Field(default_factory=list)
+
+
+class ExpenseEditRequest(BaseModel):
+    category_id: int | None = None
+    tag_ids: list[int] = Field(default_factory=list)
+    event_id: int | None = None
+    clear_event: bool = False
+    scope: CorrectionScope = CorrectionScope.single
+    update_rule: bool = False
+
+
+class ExpenseEditResponse(BaseModel):
+    id: int
+    category_id: int
+    category_name: str
+    tag_ids: list[int]
+    event_id: int | None
+    event_name: str | None
+
+
+class RecentExpenseTag(BaseModel):
+    id: int
+    name: str
+
+
+class RecentExpenseItem(BaseModel):
+    id: int
+    datetime: str
+    amount: float
+    currency_original: str
+    category_id: int
+    category_name: str
+    event_id: int | None
+    event_name: str | None
+    store_id: int | None
+    store_name: str | None
+    receipt_id: int | None
+    confidence_level: int | None
+    tags: list[RecentExpenseTag]
+    has_rule: bool
 
 
 def create_expense_sync(req: ExpenseRequest, con: sqlite3.Connection) -> ExpenseResponse:
@@ -112,6 +166,7 @@ def create_expense_sync(req: ExpenseRequest, con: sqlite3.Connection) -> Expense
     catalog_version = get_catalog_version(con)
     default_group_id = most_used_group(con)
     category_defaults = most_used_category_per_group(con)
+    freq_cats = frequent_categories_sync(con)
 
     return ExpenseResponse(
         status="ok" if result == "created" else "duplicate",
@@ -122,6 +177,168 @@ def create_expense_sync(req: ExpenseRequest, con: sqlite3.Connection) -> Expense
         catalog_version=catalog_version,
         default_group_id=default_group_id,
         default_category_ids={str(k): v for k, v in category_defaults.items()},
+        frequent_categories=freq_cats,
+    )
+
+
+def list_recent_expenses_sync(con: sqlite3.Connection) -> list[RecentExpenseItem]:
+    rows = con.execute(
+        """
+        SELECT
+            e.id,
+            e.datetime,
+            e.amount,
+            e.currency_original,
+            e.category_id,
+            c.name          AS category_name,
+            e.event_id,
+            ev.name         AS event_name,
+            e.store_id,
+            s.chain_name    AS store_name,
+            e.receipt_id,
+            e.confidence_level,
+            COALESCE((
+                SELECT json_group_array(json_object('id', t.id, 'name', t.name))
+                  FROM expense_tags et JOIN tags t ON t.id = et.tag_id
+                 WHERE et.expense_id = e.id
+            ), '[]') AS tags_json,
+            CASE WHEN e.receipt_id IS NULL THEN 0 ELSE COALESCE((
+                SELECT 1
+                  FROM receipt_items ri
+                 WHERE ri.expense_id = e.id
+                   AND EXISTS (
+                       SELECT 1 FROM classification_rules cr
+                        WHERE cr.item_name_normalized = ri.name_normalized
+                          AND (cr.store_id IS NULL OR cr.store_id = rec.store_id)
+                   )
+                 LIMIT 1
+            ), 0) END AS has_rule
+        FROM expenses e
+        JOIN categories c ON c.id = e.category_id
+        LEFT JOIN events ev ON ev.id = e.event_id
+        LEFT JOIN stores s ON s.id = e.store_id
+        LEFT JOIN receipts rec ON rec.id = e.receipt_id
+        ORDER BY e.datetime DESC, e.id DESC
+        LIMIT 30
+        """,
+    ).fetchall()
+
+    result = []
+    for r in rows:
+        try:
+            raw_tags = json.loads(r[12]) if r[12] else []
+            tags = [RecentExpenseTag(id=int(t["id"]), name=str(t["name"])) for t in raw_tags]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            tags = []
+        result.append(
+            RecentExpenseItem(
+                id=int(r[0]),
+                datetime=str(r[1]),
+                amount=float(r[2]),
+                currency_original=str(r[3]),
+                category_id=int(r[4]),
+                category_name=str(r[5]),
+                event_id=int(r[6]) if r[6] is not None else None,
+                event_name=str(r[7]) if r[7] is not None else None,
+                store_id=int(r[8]) if r[8] is not None else None,
+                store_name=str(r[9]) if r[9] is not None else None,
+                receipt_id=int(r[10]) if r[10] is not None else None,
+                confidence_level=int(r[11]) if r[11] is not None else None,
+                tags=tags,
+                has_rule=bool(r[13]),
+            ),
+        )
+    return result
+
+
+def edit_expense_sync(
+    expense_id: int,
+    req: ExpenseEditRequest,
+    con: sqlite3.Connection,
+) -> ExpenseEditResponse:
+    row = con.execute(
+        "SELECT id FROM expenses WHERE id = ?",
+        [expense_id],
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Expense not found")
+
+    if req.category_id is not None:
+        correct_category_sync(
+            expense_id,
+            CategoryCorrectionRequest(category_id=req.category_id, scope=req.scope),
+            con,
+            skip_rule=req.update_rule,
+        )
+
+    with transaction(con):
+        con.execute("DELETE FROM expense_tags WHERE expense_id = ?", [expense_id])
+        for tag_id in req.tag_ids:
+            con.execute(
+                "INSERT OR IGNORE INTO expense_tags (expense_id, tag_id) VALUES (?, ?)",
+                [expense_id, tag_id],
+            )
+
+        if req.clear_event:
+            con.execute("UPDATE expenses SET event_id = NULL WHERE id = ?", [expense_id])
+        elif req.event_id is not None:
+            con.execute(
+                "UPDATE expenses SET event_id = ? WHERE id = ?",
+                [req.event_id, expense_id],
+            )
+
+        if req.update_rule:
+            ri_row = con.execute(
+                """
+                SELECT ri.name_normalized, rec.store_id
+                  FROM receipt_items ri
+                  JOIN receipts rec ON rec.id = ri.receipt_id
+                 WHERE ri.expense_id = ?
+                 LIMIT 1
+                """,
+                [expense_id],
+            ).fetchone()
+            if ri_row and ri_row[0]:
+                exp_row = con.execute(
+                    "SELECT category_id FROM expenses WHERE id = ?",
+                    [expense_id],
+                ).fetchone()
+                if exp_row:
+                    create_or_update_rule(
+                        con,
+                        ri_row[1],
+                        ri_row[0],
+                        RuleSpec(
+                            int(exp_row[0]),
+                            4,
+                            "user_correction",
+                            tag_ids=tuple(req.tag_ids),
+                        ),
+                    )
+
+    updated = con.execute(
+        """
+        SELECT e.id, e.category_id, c.name, e.event_id, ev.name
+          FROM expenses e
+          JOIN categories c ON c.id = e.category_id
+          LEFT JOIN events ev ON ev.id = e.event_id
+         WHERE e.id = ?
+        """,
+        [expense_id],
+    ).fetchone()
+
+    tag_rows = con.execute(
+        "SELECT tag_id FROM expense_tags WHERE expense_id = ? ORDER BY tag_id",
+        [expense_id],
+    ).fetchall()
+
+    return ExpenseEditResponse(
+        id=int(updated[0]),
+        category_id=int(updated[1]),
+        category_name=str(updated[2]),
+        tag_ids=[int(r[0]) for r in tag_rows],
+        event_id=int(updated[3]) if updated[3] is not None else None,
+        event_name=str(updated[4]) if updated[4] is not None else None,
     )
 
 

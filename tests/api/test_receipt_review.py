@@ -1,5 +1,6 @@
 """Receipt review API tests."""
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import allure
@@ -642,10 +643,12 @@ class TestBatchPropagationNullStore:
 
 @allure.epic("API")
 @allure.feature("Receipt Review")
-class TestExpenseSplitMerge:
+class TestCategoryBatchCorrection:
+    """scope=all updates each matched expense directly — no rows created or split."""
+
     def _seed(self, conn):
         conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
-        # receipt1: two items ("hleb" + "mleko") → single expense
+        # receipt1: one "hleb" item → one expense (per-item model)
         conn.execute(
             "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
             " VALUES (1, 'r1', 'https://x', 1)"
@@ -653,7 +656,7 @@ class TestExpenseSplitMerge:
         conn.execute(
             "INSERT INTO expenses (id, datetime, amount, amount_original, currency_original,"
             "                      category_id, confidence_level, receipt_id, store_id)"
-            " VALUES (1, '2026-05-01T10:00:00', 150.0, 150.0, 'RSD', 1, 3, 1, 1)"
+            " VALUES (1, '2026-05-01T10:00:00', 100.0, 100.0, 'RSD', 1, 3, 1, 1)"
         )
         conn.execute(
             "INSERT INTO receipt_items"
@@ -662,15 +665,8 @@ class TestExpenseSplitMerge:
             " VALUES (1, 1, 'hleb raw', 'hleb', 100.0, 1, 100.0, 1, 3)"
         )
         conn.execute("UPDATE receipt_items SET expense_id = 1 WHERE id = 1")
-        conn.execute(
-            "INSERT INTO receipt_items"
-            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-            "  category_id, confidence_level)"
-            " VALUES (2, 1, 'mleko raw', 'mleko', 50.0, 1, 50.0, 1, 3)"
-        )
-        conn.execute("UPDATE receipt_items SET expense_id = 1 WHERE id = 2")
 
-        # receipt2: only "hleb" → separate expense
+        # receipt2: one "hleb" item → separate expense
         conn.execute(
             "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
             " VALUES (2, 'r2', 'https://y', 1)"
@@ -684,88 +680,53 @@ class TestExpenseSplitMerge:
             "INSERT INTO receipt_items"
             " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
             "  category_id, confidence_level)"
-            " VALUES (3, 2, 'hleb raw', 'hleb', 80.0, 1, 80.0, 1, 3)"
+            " VALUES (2, 2, 'hleb raw', 'hleb', 80.0, 1, 80.0, 1, 3)"
         )
-        conn.execute("UPDATE receipt_items SET expense_id = 2 WHERE id = 3")
+        conn.execute("UPDATE receipt_items SET expense_id = 2 WHERE id = 2")
 
-    def test_split_subtracts_moved_amount_from_source_expense(
-        self,
-        client,
-        db,  # noqa: ARG002
-    ):
+    def test_scope_all_updates_other_expense_in_place(self, client, db):  # noqa: ARG002
+        """scope=all updates matching expenses directly — no new rows created."""
         conn = storage.get_connection()
         try:
             self._seed(conn)
         finally:
             conn.close()
 
-        # Correcting expense2 ("hleb" only) → cat2 triggers batch on expense1 ("hleb"+"mleko")
         resp = client.patch("/api/expenses/2/category", json={"category_id": 2})
         assert resp.status_code == 200
         assert resp.json()["batch_updated_count"] == 1
 
         conn = storage.get_connection()
         try:
-            exp1 = conn.execute("SELECT amount, category_id FROM expenses WHERE id = 1").fetchone()
-            # expense1 keeps only "mleko" (50.0); "hleb" (100.0) is split out
-            assert exp1[0] == pytest.approx(50.0)
-            assert exp1[1] == 1  # still cat1 (mleko)
-
-            # A new expense must exist for the split-out "hleb" on receipt1
-            new_exp = conn.execute(
-                "SELECT id, amount, category_id FROM expenses"
-                " WHERE receipt_id = 1 AND category_id = 2 AND id != 2"
+            exp1 = conn.execute(
+                "SELECT amount, category_id, confidence_level FROM expenses WHERE id = 1"
             ).fetchone()
-            assert new_exp is not None
-            assert new_exp[1] == pytest.approx(100.0)
+            # expense1 updated in-place: category changed, amount unchanged, no new rows
+            assert exp1[1] == 2
+            assert exp1[2] == 4
+            assert float(exp1[0]) == pytest.approx(100.0)
 
-            # item1 ("hleb" in receipt1) must point to the new expense
-            item1 = conn.execute(
-                "SELECT expense_id, category_id, confidence_level FROM receipt_items WHERE id = 1"
-            ).fetchone()
-            assert item1[0] == new_exp[0]  # expense_id → new split expense
-            assert item1[1] == 2
-            assert item1[2] == 4
-
-            # item2 ("mleko") is unchanged
-            item2 = conn.execute(
-                "SELECT category_id, confidence_level, expense_id FROM receipt_items WHERE id = 2"
-            ).fetchone()
-            assert item2[0] == 1
-            assert item2[2] == 1
+            total_expenses = conn.execute("SELECT COUNT(*) FROM expenses").fetchone()[0]
+            assert total_expenses == 2  # no new rows created
         finally:
             conn.close()
 
-    def test_all_items_moving_reclassifies_expense_without_split(
-        self,
-        client,
-        db,  # noqa: ARG002
-    ):
+    def test_scope_all_no_new_rows_created(self, client, db):  # noqa: ARG002
+        """Batch correction never inserts expense rows."""
         conn = storage.get_connection()
         try:
             self._seed(conn)
         finally:
             conn.close()
 
-        # receipt1 has "hleb"(id=1) and "mleko"(id=2); correct "mleko"-only scenario:
-        # For an all-items-moving test, we need an expense where ALL items are batch-matched.
-        # Correct expense1 (hleb+mleko) to cat2 → no batch (expense2's "hleb" gets batch-updated)
-        # → expense2 has only "hleb", so all items move → just update its category
-        resp = client.patch("/api/expenses/1/category", json={"category_id": 2})
-        assert resp.status_code == 200
+        before = storage.get_connection().execute("SELECT COUNT(*) FROM expenses").fetchone()[0]
+        storage.get_connection().close()
 
-        conn = storage.get_connection()
-        try:
-            exp2 = conn.execute("SELECT amount, category_id FROM expenses WHERE id = 2").fetchone()
-            # expense2 had only "hleb"; all items moved → category updated in place
-            assert exp2[1] == 2
-            assert exp2[0] == pytest.approx(80.0)  # amount unchanged (no split)
+        client.patch("/api/expenses/1/category", json={"category_id": 2})
 
-            # No extra expense rows for receipt2
-            extra = conn.execute("SELECT COUNT(*) FROM expenses WHERE receipt_id = 2").fetchone()[0]
-            assert extra == 1
-        finally:
-            conn.close()
+        after = storage.get_connection().execute("SELECT COUNT(*) FROM expenses").fetchone()[0]
+        storage.get_connection().close()
+        assert after == before
 
 
 @allure.epic("API")
@@ -918,3 +879,126 @@ class TestScopedCorrections:
 
         assert exp2[0] == 2, "this-year expense must be batch-updated"
         assert exp3[0] == 1, "last-year expense must not be updated"
+
+
+@allure.epic("API")
+@allure.feature("Receipt Review")
+class TestRulesFeedAlternativesAndTags:
+    """Rules feed items must include alternative_categories and tags fields."""
+
+    def _seed_rule_with_alternatives_and_tags(self, conn):
+        conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+        conn.execute(
+            "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
+            " VALUES (1, 'alt-r1', 'https://x', 1)"
+        )
+        conn.execute("INSERT INTO tags (id, name, is_active) VALUES (10, 'special', 1)")
+        conn.execute(
+            "INSERT INTO classification_rules"
+            " (store_id, item_name_normalized, category_id, confidence_level, source,"
+            "  alternative_category_ids, tag_ids)"
+            " VALUES (1, 'keks', 1, 3, 'llm', ?, ?)",
+            [json.dumps([2]), json.dumps([10])],
+        )
+        conn.execute(
+            "INSERT INTO expenses"
+            " (id, datetime, amount, amount_original, currency_original,"
+            "  category_id, confidence_level, receipt_id, store_id)"
+            " VALUES (1, '2026-05-01T10:00:00', 50.0, 50.0, 'RSD', 1, 3, 1, 1)"
+        )
+        conn.execute(
+            "INSERT INTO receipt_items"
+            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
+            " VALUES (1, 1, 'keks raw', 'keks', 50.0, 1, 50.0, 1)"
+        )
+
+    def test_feed_items_include_alternative_categories_field(self, client, db):  # noqa: ARG002
+        conn = storage.get_connection()
+        try:
+            self._seed_rule_with_alternatives_and_tags(conn)
+        finally:
+            conn.close()
+
+        resp = client.get("/api/rules/feed")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) >= 1
+        item = items[0]
+        assert "alternative_categories" in item
+        assert isinstance(item["alternative_categories"], list)
+
+    def test_feed_items_include_tags_field(self, client, db):  # noqa: ARG002
+        conn = storage.get_connection()
+        try:
+            self._seed_rule_with_alternatives_and_tags(conn)
+        finally:
+            conn.close()
+
+        resp = client.get("/api/rules/feed")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) >= 1
+        item = items[0]
+        assert "tags" in item
+        assert isinstance(item["tags"], list)
+
+    def test_alternative_categories_resolved_to_name_id_objects(self, client, db):  # noqa: ARG002
+        conn = storage.get_connection()
+        try:
+            self._seed_rule_with_alternatives_and_tags(conn)
+        finally:
+            conn.close()
+
+        resp = client.get("/api/rules/feed")
+        item = resp.json()["items"][0]
+        alt_cats = item["alternative_categories"]
+        # category id=2 (транспорт) is in the alternatives; should be resolved
+        assert len(alt_cats) == 1
+        assert alt_cats[0]["id"] == 2
+        assert isinstance(alt_cats[0]["name"], str)
+
+    def test_tags_resolved_to_name_id_objects(self, client, db):  # noqa: ARG002
+        conn = storage.get_connection()
+        try:
+            self._seed_rule_with_alternatives_and_tags(conn)
+        finally:
+            conn.close()
+
+        resp = client.get("/api/rules/feed")
+        item = resp.json()["items"][0]
+        tags = item["tags"]
+        assert len(tags) == 1
+        assert tags[0]["id"] == 10
+        assert tags[0]["name"] == "special"
+
+    def test_alternative_categories_empty_when_not_set(self, client, db):  # noqa: ARG002
+        conn = storage.get_connection()
+        try:
+            conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+            conn.execute(
+                "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
+                " VALUES (1, 'noalt-r1', 'https://x', 1)"
+            )
+            conn.execute(
+                "INSERT INTO classification_rules"
+                " (store_id, item_name_normalized, category_id, confidence_level, source)"
+                " VALUES (1, 'voda', 1, 3, 'llm')"
+            )
+            conn.execute(
+                "INSERT INTO expenses"
+                " (id, datetime, amount, amount_original, currency_original,"
+                "  category_id, confidence_level, receipt_id, store_id)"
+                " VALUES (1, '2026-05-01T10:00:00', 30.0, 30.0, 'RSD', 1, 3, 1, 1)"
+            )
+            conn.execute(
+                "INSERT INTO receipt_items"
+                " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
+                " VALUES (1, 1, 'voda raw', 'voda', 30.0, 1, 30.0, 1)"
+            )
+        finally:
+            conn.close()
+
+        resp = client.get("/api/rules/feed")
+        item = resp.json()["items"][0]
+        assert item["alternative_categories"] == []
+        assert item["tags"] == []
