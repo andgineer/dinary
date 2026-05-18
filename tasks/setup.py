@@ -101,20 +101,13 @@ def _setup_tunnel(c, setup_tunnel: str, tailscale: bool) -> None:
 
 @task(name="setup-server")
 def setup_server(c, no_swap=False, tailscale=False):
-    """One-time VM1 setup: install deps, clone repo, create services, upload creds.
+    """One-time VM1 setup: system packages, repo clone, service, credentials. Idempotent.
 
-    To seed categories to the DB call `inv bootstrap-catalog --yes`.
+    --no-swap: skip swap provisioning.
+    --tailscale: rebind sshd to Tailscale IP after joining tailnet (CAUTION).
 
-    Flags:
-        --no-swap          Skip swap provisioning (already allocated on re-run).
-        --tailscale        After joining the tailnet (requires
-            ``DINARY_TUNNEL=tailscale``), rebind ``sshd`` to the
-            Tailscale IP + loopback only, closing public TCP/22.
-            Off by default so a first-time operator is never locked out.
-            Break-glass if locked out: Oracle Cloud → VM Instance page →
-            Console connection → Launch Cloud Shell, then delete
-            ``/etc/ssh/sshd_config.d/10-tailscale-only.conf`` and
-            ``systemctl reload ssh``.
+    See https://andgineer.github.io/dinary/deploy-oracle for the full setup guide.
+    Break-glass if locked out: https://andgineer.github.io/dinary/operations#tailscale-sshd-break-glass
     """
     setup_host = host()
     setup_tunnel = tunnel()

@@ -72,22 +72,7 @@ def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> Non
 
 @task(name="report-expenses")
 def report_expenses(c, year="", month="", csv=False, remote=False):  # noqa: A002
-    """Show expenses aggregated by unique (category, event, tags) coord.
-
-    Flags (all optional):
-        --year YYYY        restrict to a single calendar year
-        --month YYYY-MM    restrict to a single month (mutex with --year)
-        --csv              emit CSV to stdout instead of a rich table
-        --remote           query the production DB over SSH. Default
-                           runs locally against ``data/dinary.db``
-                           — useful after ``inv backup`` or during
-                           local development.
-
-    The aggregation key is the project's 3D coord: the expense's
-    category name, its event name (blank when the expense has no
-    event), and the deterministic join of its tag names. Rows sort
-    by descending total so the biggest spend lines surface at the top.
-    """
+    """Show expenses by (category, event, tags). Flags: --year, --month, --csv, --remote."""
     if year and month:
         print("--year and --month are mutually exclusive", file=sys.stderr)
         sys.exit(1)
@@ -104,16 +89,7 @@ def report_expenses(c, year="", month="", csv=False, remote=False):  # noqa: A00
 
 @task(name="report-income")
 def report_income(c, csv=False, remote=False):  # noqa: A002
-    """Show income aggregated by year.
-
-    Flags (all optional):
-        --csv      emit CSV to stdout instead of a rich table
-        --remote   query the production DB over SSH. Default runs
-                   locally against ``data/dinary.db``.
-
-    One row per calendar year, with per-year total, count of
-    months-with-data, and average per data-month.
-    """
+    """Show income by year. Flags: --csv, --remote."""
     flags: list[str] = []
     if csv:
         flags.append("--csv")
@@ -165,49 +141,16 @@ def _run_remote_sql(sql_text: str, csv: bool, json_mode: bool) -> None:
     },
 )
 def sql_query(c, query="", file="", csv=False, json=False, write=False, remote=False):  # noqa: A002
-    """Run a SQL query against ``data/dinary.db``.
+    """Run a SQL query against data/dinary.db (read-only by default).
 
-    By default the connection is opened ``mode=ro`` via the SQLite
-    URI form — typoing ``UPDATE`` / ``DELETE`` errors out at the
-    SQLite layer instead of quietly mutating the ledger. Pass
-    ``--write`` to explicitly opt into mutations for one-off fixups.
-    For free-form inspection of the ``app_metadata`` anchor,
-    per-currency totals in ``expenses``, sheet-logging job state,
-    etc. Report-shaped queries should still live in
-    ``tasks.reports.*``.
-
-    Examples::
-
+    Examples:
         inv sql -q "SELECT * FROM app_metadata ORDER BY key"
-        inv sql -q "SELECT currency_original, COUNT(*) FROM expenses GROUP BY 1"
-        inv sql -f scripts/monthly_summary.sql --csv > out.csv
-        inv sql -q "SELECT * FROM app_metadata" --remote
         inv sql -q "DELETE FROM expenses WHERE id = 999" --write
+        inv sql -f scripts/summary.sql --csv > out.csv
+        inv sql -q "SELECT * FROM app_metadata" --remote
 
-    ``--write`` is rejected together with ``--remote``: mutating
-    prod through an SSH pipe into a ``/tmp`` snapshot would silently
-    discard the writes when the snapshot is torn down on exit, which
-    is a far worse failure mode than a clear "not allowed" error.
-    Use ``ssh`` + ``inv sql --write`` on the host for real prod fixups,
-    or better — write a proper migration.
-
-    Local concurrency: SQLite in WAL mode lets an ``inv sql --`` run
-    read concurrently with a live ``inv dev`` uvicorn writer, so
-    you don't need to stop the dev server first. ``--write`` locally
-    still needs exclusive file access to the page it writes, so
-    running ``--write`` concurrently with the dev server may either
-    block briefly (busy_timeout) or surface a ``database is locked``
-    error — stop the dev server first for anything non-trivial.
-
-    ``--remote`` follows the same JSON-over-SSH snapshot pattern as
-    ``inv report-*`` (see :func:`_remote_snapshot_cmd`): a
-    transactionally consistent SQLite snapshot is taken on the
-    server via ``sqlite3 .backup``, the module emits a JSON
-    envelope, and the local process either forwards those bytes
-    (``--csv`` / ``--json``) or renders a rich table.
-
-    ``--file`` + ``--remote`` reads the SQL file locally and ships
-    its contents as ``--query`` over SSH — no SCP round-trip.
+    --write enables mutations (rejected with --remote).
+    See https://andgineer.github.io/dinary/operations#reporting-and-data-access
     """
 
     if csv and json:

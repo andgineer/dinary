@@ -25,22 +25,15 @@ through SQLite's `.backup` API must stop the `dinary` service first.
 Schema changes are managed with `yoyo` migrations living in
 `src/dinary/migrations/`.
 
-### When migrations run automatically
+### When migrations run
 
-- On application startup, the SQLite DB is opened and `yoyo` applies
-  every outstanding migration against the live file before any
-  request is served.
-- During `inv deploy`, the deploy script calls `inv migrate` before
-  restarting the service so a broken migration fails the deploy
-  instead of a running server.
+Migrations run automatically on every server start — yoyo applies any
+outstanding migration before the first request is served. No manual
+step is needed: `inv deploy --ref=<version>` restarts the service, and
+yoyo handles the rest.
 
-For a fresh installation no manual migration step is required.
-
-### Manual migration
-
-Migrations run automatically on every server start (yoyo tracks applied
-migrations and only applies new ones).  No manual step is needed — just
-deploy and restart.
+For local development, `inv dev` triggers the same path on startup.
+Use `inv migrate` to apply migrations without restarting the server.
 
 ## Integrity check
 
@@ -66,30 +59,19 @@ is mid-checkpoint.
 
 ## Backups
 
-SQLite is a single-file database, so every backup ultimately boils
-down to "produce a transactionally consistent copy of
-`data/dinary.db`". `dinary` offers two mechanisms depending on how
-fresh and how tolerant of latency the copy needs to be.
+`dinary` uses three backup layers paired to their failure modes.
 
-### Cold backup: `inv backup`
+### Pre-deploy snapshot (automatic)
+
+`inv deploy` always takes a `sqlite3 .backup` snapshot before touching
+the server and writes it to `data/backups/pre-deploy-<timestamp>/dinary.db`
+on your workstation. No manual step needed.
+
+To pull a live snapshot manually for local debugging:
 
 ```bash
-inv backup                        # copy to ./backups/<timestamp>/
-inv backup --dest=./my-backups
+inv restore-primary          # download prod DB to data/dinary.db
 ```
-
-This SSHes to the server, runs `sqlite3 .backup` on the live DB to
-produce a consistent snapshot in `/tmp`, streams the bytes locally,
-and writes `./backups/<timestamp>/dinary.db`. The snapshot is
-atomic even while the service is writing — SQLite's online backup
-API copies pages under a brief lock and retries torn reads.
-
-Use `inv backup` before:
-
-- `inv deploy` (the deploy wrapper also runs its own pre-deploy
-  snapshot automatically)
-- any manual schema migration
-- any ad-hoc DB surgery
 
 ### Hot replica: Litestream
 
@@ -460,16 +442,86 @@ sqlite3 data/dinary.db 'SELECT COUNT(*) FROM expense'
 4. Start the service: `inv restart-server`.
 5. Optionally run `inv verify-db` to check integrity.
 
+## Deploy + restore flow
+
+To deploy a specific version with a DB restore (e.g. rollback after a bad deploy):
+
+```bash
+inv deploy --ref=v0.4.0 --no-start   # deploy code but skip service start
+inv restore-cloud-backup              # restore DB from Yandex.Disk
+inv restart-server                    # start; yoyo applies forward migrations
+```
+
+## Coordinated import reset
+
+To rebuild the full DB from Google Sheets (e.g. after restoring a backup that predates recent sheet edits):
+
+```bash
+inv import-catalog --yes
+inv import-budget-all --yes
+inv import-income-all --yes
+inv import-verify-bootstrap-all
+inv import-verify-income-all
+```
+
+## VM2 host-key refresh
+
+After VM2 is reprovisioned, refresh trust from the operator machine:
+
+```bash
+inv setup-reset-trust
+```
+
+This wipes the old VM2 entry from VM1's `known_hosts`, re-scans, and re-installs VM1's pubkey in VM2's `authorized_keys`. Do **not** use this to resolve an unexpected host-key mismatch without physically confirming VM2 was reprovisioned — an unexpected mismatch is a security signal.
+
+## Tailscale sshd break-glass
+
+If `--tailscale` was passed to `inv setup-server` (rebinds sshd to Tailscale-only) and you are locked out:
+
+1. Oracle Cloud console → VM Instance → **Console connection** → **Launch Cloud Shell**
+2. `sudo rm /etc/ssh/sshd_config.d/10-tailscale-only.conf`
+3. `sudo systemctl reload ssh`
+
+## Monitoring
+
+```bash
+inv healthcheck            # local data/dinary.db
+inv healthcheck --remote   # prod over SSH
+```
+
+Checks: systemd services active, replica page count matches primary, yesterday's exchange rate
+cached, last expense logged to Google Sheets. Exits non-zero on first failure.
+
+```bash
+inv backup-cloud-status                    # newest Yandex.Disk snapshot age (exits non-zero if stale)
+inv backup-cloud-status --max-age-hours 3  # tighten threshold
+inv backup-cloud-status --json-output      # machine-readable
+```
+
+## Reporting and data access
+
+```bash
+inv report-expenses                   # expenses by (category, event, tags)
+inv report-expenses --year 2025       # filter to a year
+inv report-expenses --month 2025-03   # filter to a month
+inv report-expenses --csv             # CSV to stdout
+inv report-expenses --remote          # query prod DB over SSH
+
+inv report-income --remote            # income by year
+
+inv sql -q "SELECT * FROM app_metadata ORDER BY key"            # read-only by default
+inv sql -q "DELETE FROM expenses WHERE id = 999" --write        # opt into mutations
+inv sql -f my_query.sql --csv > out.csv
+inv sql -q "SELECT COUNT(*) FROM expenses" --remote             # prod snapshot over SSH
+```
+
 ## Practical guidance
 
 - Three layers of redundancy, paired to their failure modes:
-  `inv backup` covers "oops I nuked the DB during a manual repair";
+  the pre-deploy snapshot covers "oops I nuked the DB during a manual repair";
   Litestream to VM 2 covers "oops I lost VM 1"; Yandex.Disk
   (`inv setup-replica`) covers "oops I lost both VMs / lost the
   whole cloud provider".
 - Treat `data/dinary.db` as the source of truth. Do not edit it
   while the service is running, and never hand-edit the
   `-wal`/`-shm` sidecars at all.
-- The laptop-side DuckDB-over-SQLite analytics workflow (Phase 5 of
-  `.plans/storage-migration.md`) consumes the same Litestream
-  replica — no second backup pipeline is needed for analytics.

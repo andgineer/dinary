@@ -31,11 +31,9 @@ def open_local_db() -> Generator[sqlite3.Connection]:
 
 @task(name="migrate")
 def migrate(c):
-    """Apply pending yoyo migrations to the local ``data/dinary.db``.
+    """Apply pending yoyo migrations to local data/dinary.db (local dev only).
 
-    For local development only — the server applies migrations automatically
-    on every start via the FastAPI lifespan.  Use ``inv dev`` or ``inv deploy``
-    on the server; no separate migrate step is needed there.
+    The server applies migrations automatically on start — no manual step needed there.
     """
     c.run(
         "uv run python -c 'from dinary.db import storage; "
@@ -45,23 +43,10 @@ def migrate(c):
 
 @task(name="verify-db")
 def verify_db(c, remote=False):  # noqa: ARG001
-    """Check DB structural integrity and foreign key consistency.
+    """Check DB structural integrity and foreign-key consistency.
 
-    Both pragmas are read-only and cheap for a DB on the order of a
-    few hundred MB. ``integrity_check`` walks every btree page and
-    reports structural damage (torn pages, index/table mismatches,
-    orphan freelist entries); ``foreign_key_check`` lists every row
-    that violates a declared FK. A healthy DB prints ``ok`` for the
-    first and zero rows for the second.
-
-    Flags:
-        --remote   run against a ``/tmp`` snapshot of the prod DB
-                   over SSH. Default runs locally against
-                   ``data/dinary.db``.
-
-    Exits non-zero when ``integrity_check`` prints anything other
-    than ``ok`` or when ``foreign_key_check`` reports at least one
-    offending row.
+    --remote runs against a prod snapshot over SSH (default: local data/dinary.db).
+    Exits non-zero on any issue.
     """
     if remote:
         remote_cmd = (
@@ -86,14 +71,10 @@ def verify_db(c, remote=False):  # noqa: ARG001
 
 @task(name="restore-primary")
 def restore_primary(c, output=None, yes=False):  # noqa: ARG001
-    """Download a live consistent snapshot from VM1 and write to data/dinary.db.
+    """Download a live consistent snapshot from VM1 to data/dinary.db.
 
-    Uses SQLite's online-backup API so the production service keeps writing
-    while the snapshot is taken — no server shutdown needed.
-
-    Flags:
-        -o / --output PATH   Write to PATH (default: data/dinary.db).
-        --yes                Skip the "type yes to proceed" gate.
+    Uses SQLite online-backup API — no service shutdown needed.
+    Flags: -o PATH (default data/dinary.db), --yes to skip confirmation.
     """
     target = Path(output) if output else Path("data/dinary.db")
     if target.exists() and target.stat().st_size > 0:

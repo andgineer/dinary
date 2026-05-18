@@ -59,22 +59,7 @@ def _require_year(year) -> int:
 
 @task(name="import-catalog")
 def import_catalog(c, yes=False):
-    """FK-safe in-place catalog sync: re-seed taxonomy without deleting the DB.
-
-    Never deletes ``data/dinary.db``. Ledger tables
-    (``expenses``/``expense_tags``/``sheet_logging_jobs``/``income``)
-    stay intact; catalog rows are upserted by natural key so existing
-    integer ids are preserved. Vocabulary no longer present in the
-    seed files is marked ``is_active=FALSE``. The ``import_mapping``
-    table is rebuilt from scratch against the current active taxonomy
-    ids; the runtime ``sheet_mapping`` table is owned by the
-    ``map`` worksheet tab and is not touched here.
-
-    Bumps ``app_metadata.catalog_version`` by +1 only when the
-    rebuild observably changed the catalog (hash-gated); the PWA
-    picks up the new value via ``GET /api/catalog`` and
-    ``POST /api/expenses``.
-    """
+    """Re-seed taxonomy from Google Sheets without touching expense/income data. Requires --yes."""
     if not _require_yes(
         yes,
         "WARNING: import-catalog will re-sync the taxonomy from Google Sheets. "
@@ -94,12 +79,7 @@ def import_catalog(c, yes=False):
 
 @task(name="import-budget")
 def import_budget(c, year="", yes=False):
-    """DESTRUCTIVE: Delete every expense for the given year and re-import from Sheet.
-
-    Operates on the single ``data/dinary.db`` file: the year's rows in
-    ``expenses``/``expense_tags``/``sheet_logging_jobs`` are removed and
-    re-imported from Google Sheets. Other years stay untouched.
-    """
+    """DESTRUCTIVE: Delete and re-import expenses for --year from Google Sheet. Requires --yes."""
     year_int = _require_year(year)
     if not _require_yes(
         yes,
@@ -119,13 +99,9 @@ def import_budget(c, year="", yes=False):
 
 @task(name="import-budget-all")
 def import_budget_all(c, yes=False):
-    """DESTRUCTIVE: Re-import every year registered in ``.deploy/import_sources.json``.
+    """DESTRUCTIVE: Re-import expenses for all years from Google Sheets. Requires --yes.
 
-    Iterates positive-year entries from the server-side
-    ``.deploy/import_sources.json`` (in ascending order) and
-    re-imports each one via ``import_year``, which deletes just that
-    year's expense rows before re-importing. Intended for use inside
-    the coordinated reset flow after ``import-catalog --yes``.
+    See https://andgineer.github.io/dinary/operations for the full coordinated reset flow.
     """
     if not _require_yes(
         yes,
@@ -148,13 +124,9 @@ def import_budget_all(c, yes=False):
 
 @task(name="import-verify-bootstrap")
 def verify_bootstrap_import(c, year="", json=False):  # noqa: A002
-    """Verify that bootstrap-imported budget DB reproduces sheet aggregates (on server).
+    """Verify server expense DB matches Google Sheet for --year. Exits non-zero on diffs.
 
-    Renders a rich summary panel with drill-down tables for
-    missing / extra / amount / comment diffs. Exits non-zero iff
-    ``ok=False`` on the verifier payload. Pass ``--json`` to emit
-    the raw ``json.dumps(..., indent=2)`` blob instead of the rich
-    view (back-compat for scripted consumers).
+    --json for raw output.
     """
     year_int = _require_year(year)
     result = ssh_json(
@@ -173,14 +145,7 @@ def verify_bootstrap_import(c, year="", json=False):  # noqa: A002
 
 @task(name="import-verify-bootstrap-all")
 def verify_bootstrap_import_all(c, json=False):  # noqa: A002
-    """Run import-verify-bootstrap for every positive-year entry in ``.deploy/import_sources.json``.
-
-    Used by the coordinated reset flow so verification covers every rebuilt
-    year, not just the current calendar year. Renders a rich summary
-    table across all years with per-failing-year drill-downs. Exits
-    non-zero if any single year fails. Pass ``--json`` to emit the
-    raw JSON array (back-compat for scripted consumers).
-    """
+    """Verify server expenses match Google Sheets for every registered year. --json for raw output."""
     results = ssh_json(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
@@ -241,12 +206,9 @@ def import_income_all(c, yes=False):
 
 @task(name="import-verify-income")
 def verify_income_equivalence(c, year="", json=False):  # noqa: A002
-    """Verify that imported income matches the source Google Sheet (on server).
+    """Verify server income matches Google Sheet for --year. Exits non-zero on diffs.
 
-    Renders a rich summary panel with per-month diff table when
-    diffs are present. Exits non-zero on ``ok=False`` (including
-    the early-exit error branches, e.g. missing ``import_sources``
-    entry). Pass ``--json`` for the raw JSON escape hatch.
+    --json for raw output.
     """
     year_int = _require_year(year)
     result = ssh_json(
@@ -265,14 +227,7 @@ def verify_income_equivalence(c, year="", json=False):  # noqa: A002
 
 @task(name="import-verify-income-all")
 def verify_income_equivalence_all(c, json=False):  # noqa: A002
-    """Run import-verify-income for every year that has an income worksheet.
-
-    Used by the coordinated reset flow so verification covers every rebuilt
-    income year. Renders a rich summary table with per-failing-year
-    drill-downs. Exits non-zero if any single year fails. Pass
-    ``--json`` for the raw JSON array (back-compat for scripted
-    consumers).
-    """
+    """Verify server income matches Google Sheets for every income year. --json for raw output."""
     results = ssh_json(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
@@ -318,22 +273,9 @@ def import_report_2d_3d(
     year="",
     remote=False,
 ):
-    """Show the 2D->3D resolution report over the imported sheets.
+    """Show 2D→3D category resolution report over the imported sheets.
 
-    Flags (all optional):
-        --detail   per-row output instead of aggregated summary
-        --csv      emit CSV to stdout instead of a rich table
-        --json     emit a JSON envelope to stdout (mutex with --csv)
-        --year Y   restrict to a single calendar year
-        --remote   run the report on the server over SSH (default:
-                   runs locally against ``data/dinary.db``)
-
-    ``--remote`` uses the same JSON-over-SSH transport as
-    ``inv report-*`` (see :func:`_run_report_module`): the server
-    always emits ``--json`` against a consistent SQLite snapshot of
-    the live DB and the local process renders. That is the only way
-    to keep Cyrillic / box-drawing glyphs intact across the SSH
-    pipe.
+    Flags: --detail, --csv, --json, --year Y, --remote.
     """
     if csv and json:
         print("--csv and --json are mutually exclusive", file=sys.stderr)

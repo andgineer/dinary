@@ -107,7 +107,8 @@ def deploy(c, ref="", no_start=False):
     Pipeline: backup → downgrade DB if needed (with confirmation) →
     git checkout → uv sync → restart → health check.
 
-    Pass --no-start to skip the final restart (use before inv restore-cloud-backup).
+    Pass --no-start to skip restart (use before inv restore-cloud-backup).
+    See https://andgineer.github.io/dinary/operations for deploy+restore runbooks.
     """
     if not ref:
         print("--ref is required: specify a git tag, commit hash, or branch.", file=sys.stderr)
@@ -215,16 +216,9 @@ def deploy(c, ref="", no_start=False):
 
 @task(name="bootstrap-catalog")
 def bootstrap_catalog(c, yes=False):
-    """Populate runtime catalog (groups/categories/tags/events) from hardcoded taxonomy.
+    """Seed catalog (groups/categories/tags/events) from hardcoded taxonomy. Requires --yes.
 
-    WARNING: overwrites any manual changes to groups, categories, tags, and
-    events with the hardcoded taxonomy. Pass ``--yes`` to confirm.
-
-    Required for every fresh deployment. The import flow (``inv import-catalog``)
-    implicitly re-runs the same logic as its first step.
-
-    Does NOT touch Google Sheets, ``import_mapping``, or ``sheet_mapping``.
-    Does NOT bump ``catalog_version`` unless the taxonomy actually changed.
+    WARNING: overwrites any manual catalog edits. Use inv import-catalog for a Sheet-based sync.
     """
     if not yes:
         print(
@@ -244,13 +238,7 @@ def bootstrap_catalog(c, yes=False):
 
 @task(name="import-config")
 def import_config(c):
-    """Seed the catalog from the configured source sheets (non-destructive).
-
-    Requires ``.deploy/import_sources.json`` to exist locally AND on
-    the server (uploaded via ``sync_remote_import_sources`` during
-    ``inv deploy`` / ``inv setup-server``). Fails loud with a pointer to the
-    repo-root ``imports/`` directory when the file is missing or empty.
-    """
+    """Seed catalog from configured Google Sheets source (non-destructive)."""
     ssh_run(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"

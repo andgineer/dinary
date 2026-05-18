@@ -307,13 +307,8 @@ def ensure_local_yandex_rclone_configured() -> None:
 def setup_yadisk(c):  # noqa: ARG001
     """Configure the yandex: WebDAV rclone remote on this machine.
 
-    Run directly on the machine that needs Yandex.Disk access — VM1 for
-    ``inv restore-cloud-backup``, or the operator laptop for local use.
-    Prompts for Yandex login + app-password; re-running is safe (skips
-    the prompt when the remote already works).
-
-    ``inv restore-cloud-backup`` calls this automatically when the remote
-    is absent, so manual pre-flight is optional.
+    Prompts for Yandex login + app-password. Idempotent; skips prompt when already configured.
+    restore-cloud-backup calls this automatically if the remote is absent.
     """
     ensure_local_yandex_rclone_configured()
 

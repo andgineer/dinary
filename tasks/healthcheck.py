@@ -156,20 +156,11 @@ def _healthcheck_receipt_fetch(results: dict[str, str]) -> bool:
 
 @task(name="healthcheck")
 def healthcheck(c, remote=False):  # noqa: ARG001
-    """Check the health of the dinary server: systemd services, background tasks, and DB state.
+    """Check systemd services, background tasks, and DB state.
 
-    Verifies:
-      1. (remote only) systemd services are active: dinary, litestream, tunnel.
-      2. (remote only) replica DB page count matches primary (WAL-sync check).
-      3. Exchange rate for yesterday exists in the cache (rate prefetch task).
-      4. Last expense has been logged to Google Sheets (sheet logging task),
-         when sheet logging is enabled.
-
-    Flags:
-        --remote   check the production server over SSH.
-                   Default runs locally against ``data/dinary.db``.
-
-    Exits non-zero on the first failed check and prints what is broken.
+    --remote checks prod over SSH (default: local data/dinary.db).
+    Exits non-zero on first failed check.
+    See https://andgineer.github.io/dinary/operations#monitoring
     """
     if remote:
         tun = tunnel()

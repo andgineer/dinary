@@ -47,12 +47,7 @@ def uv(c):
 
 @task
 def test(c):
-    """Run all tests (Python + JavaScript) with Allure results.
-
-    Both suites always run (so npm test is not skipped on a pytest
-    failure), but the task exits non-zero if either failed so CI can
-    distinguish "all green" from "partial green".
-    """
+    """Run all tests (Python + JavaScript). Both suites run; exits non-zero if either fails."""
     c.run("rm -rf allure-results")
     py_result = c.run("uv run pytest tests/ -v --alluredir=allure-results", warn=True)
     js_result = c.run("npm --prefix webapp test", warn=True)
@@ -114,44 +109,13 @@ def _tailscale_serve_stop() -> None:
     },
 )
 def dev(c, port=8000, sheet_logging=False, reset=False, rebuild=False):
-    """Run the FastAPI server locally with auto-reload for PWA debugging.
+    """Run the FastAPI server locally with uvicorn --reload (http://127.0.0.1:<port>).
 
-    - Listens on http://127.0.0.1:<port> — open that URL in your
-      browser instead of pushing to Oracle Cloud on every iteration.
-    - ``uvicorn --reload`` watches ``src/`` and re-imports on Python
-      changes.
-    - The PWA source lives in ``webapp/`` (Vue 3 + Pinia + Vite +
-      ``vite-plugin-pwa``); FastAPI serves the **built** assets from
-      ``_static/``. **Run ``inv build-static`` explicitly after any
-      change under ``webapp/``** — uvicorn does not rebuild the PWA
-      on file changes. As a safety net, this task auto-runs
-      ``inv build-static`` if ``_static/index.html`` is missing, but
-      it will NOT auto-rebuild a stale ``_static/`` (one whose
-      ``index.html`` already exists from a previous build). For HMR
-      while iterating on Vue, run ``npm --prefix webapp run dev`` in
-      a separate terminal — it serves on :5173 and proxies ``/api``
-      to this server.
-    - Sheet-logging is **disabled** by default
-      (``DINARY_SHEET_LOGGING_SPREADSHEET=`` overrides the value
-      from ``.deploy/.env``), so test expenses you create in dev
-      do NOT show up in the prod Google Sheet. Pass
-      ``--sheet-logging`` to opt in (rare; for debugging the drain
-      loop itself).
-    - Uses ``data/dinary.db`` as the local DB (SQLite in WAL mode).
-      Schema migrations run automatically on server startup via the
-      FastAPI lifespan (``_lifespan -> ledger_repo.init_db``), so
-      editing a migration and restarting ``inv dev`` is enough — no
-      separate ``migrate`` step. For a clean slate use ``--reset``.
-    - To work against real prod data: run ``inv backup`` first to
-      fetch a consistent snapshot into ``~/Library/dinary/<ts>/``,
-      then copy the resulting ``dinary.db`` into ``data/``.
+    --reset    wipe data/dinary.db and re-seed catalog before starting.
+    --rebuild  rebuild the PWA from webapp/ before starting.
+    --sheet-logging  opt into Google Sheets logging (off by default).
 
-    PWA caching tip: once the service worker is registered the
-    browser will serve cached assets even after you edit them. In
-    Chrome DevTools open ``Application -> Service Workers`` and
-    tick ``Update on reload`` (or ``Bypass for network``) for fast
-    iteration. Hard-refresh (Cmd-Shift-R) also bypasses the SW
-    for that one navigation.
+    See https://andgineer.github.io/dinary/development/
     """
     if rebuild:
         _run_build(c, dev_mode=True)
@@ -264,18 +228,5 @@ def _ensure_static_built(c) -> None:
 
 @task(name="build-static")
 def build_static(c):
-    """Build the Vue 3 PWA into ``_static/`` and write the deployed version.
-
-    The Vue source is in ``webapp/``. The Vite config writes to
-    ``_static/`` at the repo root; ``vite-plugin-pwa`` regenerates the
-    service worker on every build, and the build version (git tag /
-    short hash) is injected via ``__APP_VERSION__`` at build time.
-
-    This task additionally writes ``data/.deployed_version`` so that
-    ``GET /api/version`` keeps reporting the deployed git ref the way
-    the older copy-only pipeline did.
-
-    Run it after editing anything under ``webapp/``.
-    ``npm ci`` runs automatically only when ``webapp/node_modules`` is absent.
-    """
+    """Build the Vue 3 PWA from webapp/ into _static/. Run after any webapp/ change."""
     _run_build(c)

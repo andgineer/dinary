@@ -28,4 +28,4 @@ docker compose up -d
 
 ## Local development (without Docker)
 
-See the [README](https://github.com/andgineer/dinary#local-development) for local development setup with `uv`.
+See the [Local Development](development.md) page.

@@ -28,4 +28,4 @@ docker compose up -d
 
 ## Локальная разработка (без Docker)
 
-См. [README](https://github.com/andgineer/dinary#local-development) для настройки локальной разработки с `uv`.
+См. страницу [Локальная разработка](development.md).

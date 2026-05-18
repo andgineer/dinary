@@ -20,15 +20,7 @@ def restart_server(c):
 
 @task
 def logs(c, follow=False, lines=100, remote=False):
-    """Show dinary service logs.
-
-    Flags:
-        --remote      Fetch logs from the production server over SSH.
-                      Default runs locally (prints a hint since local dev
-                      logs appear in the ``inv dev`` terminal).
-        -f            Follow log output (remote only).
-        -l N          Number of lines to show (default 100, remote only).
-    """
+    """Show dinary service logs. --remote fetches from prod over SSH. -f to follow. -l N lines."""
     if not remote:
         print("Local dev logs appear in the terminal when running `inv dev`.")
         return
@@ -38,12 +30,7 @@ def logs(c, follow=False, lines=100, remote=False):
 
 @task
 def status(c, remote=False):
-    """Show dinary service status and Litestream replicator state.
-
-    Flags:
-        --remote   Check the production server over SSH.
-                   Default checks local dev server at localhost:8000.
-    """
+    """Show service status and Litestream replicator state. --remote for prod over SSH."""
     if not remote:
         c.run("curl -sf http://localhost:8000/api/health || echo 'Server not responding'")
         return

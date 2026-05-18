@@ -42,15 +42,9 @@ def replica_list_snapshots():
 
 @task(name="backup-cloud-status")
 def backup_status(_c, max_age_hours=None, json_output=False):
-    """Check freshness of the newest Yandex.Disk backup.
+    """Check freshness of the newest Yandex.Disk backup. Exits non-zero if stale.
 
-    Prints a one-line summary and exits 0 when the newest snapshot
-    is within ``--max-age-hours`` (default :data:`BACKUP_STALE_HOURS`),
-    non-zero otherwise.
-
-    Flags:
-        --max-age-hours N   Freshness threshold in hours.
-        --json-output       Emit a JSON object instead of the human summary.
+    --max-age-hours N (default 26), --json-output for machine-readable result.
     """
     threshold = float(max_age_hours) if max_age_hours is not None else float(BACKUP_STALE_HOURS)
     snapshots = replica_list_snapshots()

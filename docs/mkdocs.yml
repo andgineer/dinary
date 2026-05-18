@@ -50,9 +50,10 @@ extra:
 nav:
   - index.md
   - installation.md
-  - operations.md
   - google-sheets-setup.md
   - pwa-install.md
-  - cloudflare-setup.md
   - deploy-oracle.md
   - deploy-selfhost.md
+  - cloudflare-setup.md
+  - operations.md
+  - development.md

@@ -102,24 +102,10 @@ def _download_and_verify(c, picked, workpath: Path) -> Path:
 
 @task(name="restore-cloud-backup")
 def restore_from_yadisk(c, snapshot="latest", list_only=False, yes=False, no_resync=False):
-    """Loads snapshot from Yandex.Disk and write to data/dinary.db
+    """Restore a snapshot from Yandex.Disk to data/dinary.db.
 
-    The snapshots are written by DB replica (VM2).
-
-    The replica continuously pushes compressed SQLite snapshots to Yandex.Disk
-    via ``rclone``.  This task downloads and restores from that same remote,
-    making it the DR counterpart of the replica's backup job.
-
-    Writes to ``./data/dinary.db`` relative to the cwd.
-
-    When run on VM1 (litestream.service is active), automatically resyncs
-    the replica so VM2's WAL position matches the restored DB.
-
-    Flags:
-        --snapshot DATE   pick by date prefix (e.g. ``2026-04-22``). Default ``latest``.
-        --list-only       enumerate snapshots and exit without writing.
-        --yes             skip the "type yes to proceed" gate.
-        --no-resync       skip replica resync even when litestream is active.
+    Flags: --snapshot DATE (default latest), --list-only, --yes, --no-resync.
+    See https://andgineer.github.io/dinary/operations for restore runbooks.
     """
     assert_local_binaries(["rclone", "sqlite3", "zstd"])
     ensure_local_yandex_rclone_configured()

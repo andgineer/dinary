@@ -260,34 +260,12 @@ def _build_backup_timer_unit() -> str:
 
 @task(name="setup-replica")
 def setup_replica(c, swap_size_gb=1, no_swap=False):
-    """Bootstrap VM2 (Litestream SFTP replica) and configure VM1 to replicate to it.
+    """Bootstrap VM2 (Litestream SFTP replica) and configure VM1 replication. Idempotent.
 
-    VM2 is intentionally minimal: no Python app, no dinary service. Its only
-    job is to accept WAL segments over SFTP from VM1's ``litestream.service``.
+    Requires DINARY_REPLICA_HOST in .deploy/.env. Also installs daily Yandex.Disk backup on VM2.
+    See https://andgineer.github.io/dinary/operations for the full replica setup guide.
 
-    Preconditions:
-
-    * ``DINARY_REPLICA_HOST`` is set in ``.deploy/.env`` — VM2's public
-      SSH endpoint.  All other Litestream config values (key path, replica
-      dir, snapshot interval, retention) are derived from constants and
-      ``DINARY_LITESTREAM_RETENTION``; no local ``litestream.yml`` file
-      is needed or written.
-
-    Idempotent: all VM2 steps short-circuit on re-apply. VM1→VM2 SSH
-    trust (``authorized_keys``, ``known_hosts``) is installed once
-    and *not* auto-refreshed — a VM re-provision is an explicit
-    operator decision, handled by ``inv setup-reset-trust``.
-
-    VM2's sshd stays bound to the public interface so the operator
-    can ``ssh ubuntu@<public-ip>`` without a Tailscale hop; hardening
-    (X11 off, root login off, fail2ban) is applied, but
-    ``ssh-tailscale-only`` is intentionally NOT, because the replica
-    must remain reachable from operator workstations even when the
-    primary VM (which owns the tailnet relay) is offline.
-
-    Flags:
-        --swap-size-gb N   Swap size in gigabytes (default 1).
-        --no-swap          Skip swap provisioning.
+    --swap-size-gb N (default 1), --no-swap to skip.
     """
     size = int(swap_size_gb)
     print(f"=== Installing baseline packages on {replica_host()} ===")
@@ -350,26 +328,10 @@ def setup_replica(c, swap_size_gb=1, no_swap=False):
 
 @task(name="setup-reset-trust")
 def replica_reset_trust(c):
-    """Force-refresh VM1→VM2 SSH trust after an intentional VM reinstall.
+    """Refresh VM1→VM2 SSH trust after an intentional VM2 reinstall.
 
-    ``inv setup-replica`` installs trust once and refuses to
-    auto-heal a host-key mismatch — an unexpected mismatch is a
-    security signal, not a routine case. This task is the explicit
-    operator statement "yes, VM2 was re-provisioned, the new host
-    key is legitimate": it wipes VM2's entry from VM1's
-    ``~/.ssh/known_hosts``, re-scans, and re-installs VM1's pubkey
-    in ``~ubuntu/.ssh/authorized_keys`` on VM2 (idempotent — the
-    old entry, if it remained from before reinstall, is left alone;
-    a new one is appended if missing).
-
-    Run after:
-      * VM2 re-created from a fresh image
-      * VM1 re-created (new ``id_ed25519``)
-      * ``inv primary-rollback`` that materially changed VM1 state
-
-    Does NOT touch the DB — pair with ``inv setup-resync`` when
-    you also need to wipe VM2's ``/var/lib/litestream/dinary`` and
-    re-seed from the primary.
+    Run after VM2 is reprovisioned. Do not use for unexpected host-key mismatches.
+    See https://andgineer.github.io/dinary/operations for the full procedure.
     """
     lite_host = _replica_sftp_host()
     print(f"=== Resetting VM2 host key ({lite_host}) in VM1 known_hosts ===")
@@ -404,21 +366,10 @@ def _build_replica_restore_script(timestamp: str | None) -> str:
 
 @task(name="replica-resync")
 def replica_resync(c):
-    """Resync the replica after a DB restore or WAL txid mismatch.
+    """Resync VM2 replica after a DB restore or WAL txid mismatch.
 
-    Litestream runs on VM1 (not VM2). A resync stops the replicator on
-    VM1, wipes the stale LTX tree on VM2 so litestream starts with a
-    clean slate, then restarts the replicator on VM1 — it will push a
-    fresh full snapshot to VM2 on the next WAL commit.
-
-    Run after:
-      * ``inv restore-cloud-backup`` restores a snapshot from Yadisk
-        (primary DB now ahead/behind the replica txid counter).
-      * The litestream journal shows "detected database behind replica"
-        or repeated compaction failures that don't self-heal.
-
-    Run automatically by ``inv restore-cloud-backup`` unless
-    ``--no-resync`` is passed.
+    Runs automatically after restore tasks unless --no-resync is passed.
+    See https://andgineer.github.io/dinary/operations for when to run manually.
     """
     print("=== Stopping litestream on VM1 ===")
     ssh_run(c, "sudo systemctl stop litestream")
@@ -436,21 +387,11 @@ def replica_resync(c):
 
 @task(name="restore-replica")
 def restore_replica(c, output=None, yes=False, timestamp=None, no_resync=False):
-    """Restore a snapshot from VM2's Litestream LTX archive and write to data/dinary.db.
+    """Restore a snapshot from VM2's Litestream LTX archive to data/dinary.db.
 
-    VM2 holds a continuous WAL stream pushed by VM1. This gives a more
-    current snapshot than ``inv restore-cloud`` (which uses daily
-    Yandex.Disk snapshots).
-
-    When run on VM1 (litestream.service is active), automatically resyncs
-    the replica so VM2's WAL position matches the restored DB.
-
-    Flags:
-        -o / --output PATH      Write to PATH (default: data/dinary.db).
-        --yes                   Skip the "type yes to proceed" gate.
-        --timestamp ISO8601     Restore to a specific point in time
-                                (e.g. ``2026-04-27T12:00:00Z``). Default: latest.
-        --no-resync             Skip replica resync even when litestream is active.
+    More current than restore-cloud-backup (WAL-level vs daily Yandex.Disk).
+    Flags: -o PATH, --yes, --timestamp ISO8601 (default: latest), --no-resync.
+    See https://andgineer.github.io/dinary/operations for restore runbooks.
     """
     target = Path(output) if output else Path("data/dinary.db")
     incoming_desc = (
