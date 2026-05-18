@@ -14,6 +14,7 @@ from tasks.ssh_utils import (
     build_data_dir_permissions_script,
     render_service,
     sqlite_backup_prologue,
+    ssh_capture,
     ssh_run,
     ssh_sudo,
     sync_remote_env,
@@ -21,60 +22,99 @@ from tasks.ssh_utils import (
 )
 
 
+def _target_migration_head(ref: str) -> str | None:
+    """Return the last migration ID present in ``ref`` via git ls-tree."""
+    result = subprocess.run(
+        ["git", "ls-tree", "--name-only", ref, "src/dinary/db/migrations/"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    stems = sorted(
+        Path(line).stem
+        for line in result.stdout.splitlines()
+        if line.endswith(".sql") and not line.endswith(".rollback.sql")
+    )
+    return stems[-1] if stems else None
+
+
+def _migrations_to_rollback(applied: list[str], target_head: str) -> list[str]:
+    """Return applied migration IDs that sort after target_head."""
+    return sorted(m for m in applied if m > target_head)
+
+
+def _server_applied_migrations(c) -> list[str]:
+    """Return migration IDs currently tracked in the server's _yoyo_migration table."""
+    raw = ssh_capture(
+        c,
+        f"sqlite3 {_REMOTE_DB_PATH}"  # noqa: S608
+        ' "SELECT id FROM _yoyo_migration ORDER BY id" 2>/dev/null || true',
+    )
+    return [line.strip() for line in raw.splitlines() if line.strip()]
+
+
+def _downgrade_if_needed(c, ref: str, backup_dir: Path) -> None:
+    """Detect schema downgrade requirement and run yoyo rollback before checkout.
+
+    Must be called while the server still has its *current* code checked out so
+    the .rollback.sql files for any extra migrations are still on disk.
+    """
+    target_head = _target_migration_head(ref)
+    if target_head is None:
+        return
+
+    applied = _server_applied_migrations(c)
+    to_roll_back = _migrations_to_rollback(applied, target_head)
+    if not to_roll_back:
+        return
+
+    server_head = applied[-1] if applied else "(none)"
+    print(
+        f"\n=== WARNING: DB DOWNGRADE REQUIRED ===\n"
+        f"Server applied migrations up to:     {server_head}\n"
+        f"Target version has migrations up to: {target_head}\n"
+        f"\nMigrations to be rolled back: {', '.join(to_roll_back)}\n"
+        f"This will PERMANENTLY DESTROY any data in columns/tables\n"
+        f"added by those migrations.\n"
+        f"\nPre-deploy backup saved to: {backup_dir / 'dinary.db'}\n",
+    )
+    answer = input('Type "yes" to proceed with rollback, or Ctrl-C to abort: ').strip()
+    if answer != "yes":
+        print("Aborted.", file=sys.stderr)
+        sys.exit(1)
+
+    first_extra = to_roll_back[0]
+    print(f"=== Rolling back to {target_head} ===")
+    ssh_run(
+        c,
+        f"cd ~/dinary && source ~/.local/bin/env && "
+        f"uv run yoyo rollback --batch -r {first_extra} "
+        f"--database 'sqlite:///{_REMOTE_DB_PATH}' "
+        f"src/dinary/db/migrations",
+    )
+
+
 @task
 def deploy(c, ref="", no_start=False):
-    """Deploy latest code to the server: pull, sync deps, migrate, restart.
+    """Deploy a specific version to the server.
 
-    Options:
-      --ref REF      Git tag, commit hash, or branch to deploy.
-                     Without ``--ref`` the server does ``git pull`` on the
-                     currently checked-out branch.
-      --no-start     Deploy code but skip the final ``systemctl start``.
-                     Use for DB restore flows where you need to swap the DB
-                     before the service reads it.
+    --ref is required (tag, commit, or branch)::
 
-    **Pinning a version**
-
-    Pass ``--ref`` to deploy a specific git tag, commit hash, or branch::
-
+        inv deploy --ref=main
         inv deploy --ref=v0.4.0
         inv deploy --ref=ee1dbf5d
 
-    Without ``--ref`` the server does ``git pull`` on the currently checked-out
-    branch.  After ``--ref`` the server is in detached HEAD; a subsequent
-    ``inv deploy`` without ``--ref`` will pull on that detached commit (no-op).
+    Pipeline: backup → downgrade DB if needed (with confirmation) →
+    git checkout → uv sync → restart → health check.
 
-    **DB restore flow (--no-start)**
-
-    By default deploy stops the service, deploys code, and starts it back up
-    (migrations run automatically on start).  Pass ``--no-start`` to skip the final start
-    so you can replace the DB before the service sees it (e.g. after
-    ``inv restore-cloud-backup``)::
-
-        inv deploy --ref=v0.4.0 --no-start
-        inv restore-cloud-backup
-        inv restart-server
-
-    **Catalog changes**
-
-    Run ``inv bootstrap-catalog --yes`` separately when the hardcoded taxonomy
-    changes.  Omit it on routine deploys — the seeder overwrites any manually
-    edited names and sort order.
-
-    **What the pipeline does**
-
-    1. Pre-deploy safety backup via ``sqlite3 .backup`` (consistent snapshot).
-    2. ``git pull`` (or ``git checkout <ref>``) + ``uv sync --no-dev``.
-    3. Sync ``.deploy/.env`` and ``import_sources.json`` to the server.
-    4. Re-render ``/etc/systemd/system/dinary.service`` (keeps ``EnvironmentFile=`` current).
-    5. Build ``_static/`` with the version string.
-    6. ``systemctl restart dinary`` + health check (skipped with ``--no-start``).
-
-    Schema migrations (yoyo) run automatically when the server starts.
+    Pass --no-start to skip the final restart (use before inv restore-cloud-backup).
     """
+    if not ref:
+        print("--ref is required: specify a git tag, commit hash, or branch.", file=sys.stderr)
+        sys.exit(1)
     print("=== Pre-deploy backup ===")
     ts = _dt.now().strftime("%Y%m%d-%H%M%S")
-    backup_dir = Path(f"backups/pre-deploy-{ts}")
+    backup_dir = Path(f"data/backups/pre-deploy-{ts}")
     backup_dir.mkdir(parents=True, exist_ok=True)
     deploy_host = host()
     deploy_tunnel = tunnel()
@@ -108,20 +148,15 @@ def deploy(c, ref="", no_start=False):
     if need_cleanup:
         local_db.unlink(missing_ok=True)
 
+    if not need_cleanup:
+        _downgrade_if_needed(c, ref, backup_dir)
+
     print("=== Deploying dinary ===")
-    if ref:
-        ssh_run(
-            c,
-            f"cd ~/dinary && git fetch --tags && git checkout {ref} "
-            "&& source ~/.local/bin/env && uv sync --no-dev",
-        )
-        print(
-            f"=== WARNING: Remote is in detached HEAD at '{ref}'. "
-            "Future `inv deploy` without --ref will `git pull` on whatever branch is "
-            "checked out. ===",
-        )
-    else:
-        ssh_run(c, "cd ~/dinary && git pull && source ~/.local/bin/env && uv sync --no-dev")
+    ssh_run(
+        c,
+        f"cd ~/dinary && git fetch --tags && git checkout {ref} "
+        "&& source ~/.local/bin/env && uv sync --no-dev",
+    )
 
     print("=== Ensuring data/ directory (0700) ===")
     ssh_run(c, "mkdir -p ~/dinary/data && " + build_data_dir_permissions_script())
