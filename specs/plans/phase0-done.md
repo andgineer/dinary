@@ -140,7 +140,7 @@ Structured logging to stdout via Python `logging` (JSON format for production). 
 
 **Deployment options (all free, always-on):**
 
-- **Oracle Cloud Free Tier** — AMD Micro VM (1 OCPU, 1 GB RAM, always available) or ARM A1 (if capacity exists). Run with `uvicorn` as a systemd service (no Docker in production — saves RAM on 1 GB instances). Docker remains available for local development.
+- **Oracle Cloud Free Tier** — AMD Micro VM (1 OCPU, 1 GB RAM, always available) or ARM A1 (if capacity exists). Run with `uvicorn` as a systemd service (no Docker in production — saves RAM on 1 GB instances). Docker remains available for development.
 - **Self-hosted (Mac/PC)** — run locally, expose via Tailscale Serve or Cloudflare Tunnel. Aligns with Phase 4 architecture (desktop AI agent on the same machine).
 
 **PWA serving:** FastAPI `StaticFiles` mount at `/`, source in `static/`. Single tunnel covers both API and PWA.

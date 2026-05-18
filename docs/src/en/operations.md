@@ -32,7 +32,7 @@ outstanding migration before the first request is served. No manual
 step is needed: `inv deploy --ref=<version>` restarts the service, and
 yoyo handles the rest.
 
-For local development, `inv dev` triggers the same path on startup.
+For development, `inv dev` triggers the same path on startup.
 Use `inv migrate` to apply migrations without restarting the server.
 
 ## Integrity check

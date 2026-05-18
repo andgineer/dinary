@@ -1,6 +1,6 @@
 [![Build Status](https://github.com/andgineer/dinary/workflows/CI/badge.svg)](https://github.com/andgineer/dinary/actions)
 [![Coverage](https://raw.githubusercontent.com/andgineer/dinary/python-coverage-comment-action-data/badge.svg)](https://htmlpreview.github.io/?https://github.com/andgineer/dinary/blob/python-coverage-comment-action-data/htmlcov/index.html)
-# Dinary - Your dinar diary
+# Dinary - Your Dinar Diary
 
 Track expenses, scan receipts, analyze spending with AI
 
@@ -8,9 +8,9 @@ Track expenses, scan receipts, analyze spending with AI
 
 [Dinary](https://andgineer.github.io/dinary/)
 
-# Local development
+# Development
 
-See [Local Development](https://andgineer.github.io/dinary/development/) in the docs.
+See [Development](https://andgineer.github.io/dinary/development/) in the docs.
 
 ```bash
 uv sync

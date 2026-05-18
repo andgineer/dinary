@@ -1,6 +1,6 @@
 # Установка
 
-## Быстрый старт (Docker, локальная разработка)
+## Быстрый старт
 
 Простейший способ запустить dinary локально — через Docker:
 
@@ -26,6 +26,6 @@ docker compose up -d
 - [Oracle Cloud Free Tier](deploy-oracle.md) — $0/месяц, всегда включённая VM
 - [Свой компьютер](deploy-selfhost.md) — $0, Tailscale Funnel или Cloudflare Tunnel
 
-## Локальная разработка (без Docker)
+## Локальный запуск (без Docker)
 
 См. страницу [Локальная разработка](development.md).

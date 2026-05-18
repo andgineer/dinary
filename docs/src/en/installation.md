@@ -1,6 +1,6 @@
 # Installation
 
-## Quick start (Docker, local development)
+## Quick start
 
 The simplest way to run dinary locally is with Docker:
 
@@ -26,6 +26,6 @@ docker compose up -d
 - [Oracle Cloud Free Tier](deploy-oracle.md) — $0/month, always-on VM
 - [Your own computer](deploy-selfhost.md) — $0, Tailscale Funnel or Cloudflare Tunnel
 
-## Local development (without Docker)
+## Local run (without Docker)
 
-See the [Local Development](development.md) page.
+See the [Development](development.md) page.

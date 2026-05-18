@@ -1,4 +1,4 @@
-"""Local development tasks: version, test, dev, build-static, backup."""
+"""Development tasks: version, test, dev, build-static, backup."""
 
 import re
 import shutil
