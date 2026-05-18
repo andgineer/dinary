@@ -2,8 +2,8 @@
 
 import allure
 
-from dinary.services.receipts import requeue_receipts
-from dinary.services import storage
+from dinary.db.receipts import requeue_receipts
+from dinary.db import storage
 
 
 def _seed(conn):

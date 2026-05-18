@@ -10,16 +10,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import allure
 import pytest
 
-import dinary.background.receipt_classification_task as drain_mod
-from dinary.services import db_migrations, storage
-from dinary.background.receipt_classification_task import (
+import dinary.background.classification.task as drain_mod
+from dinary.db import db_migrations, storage
+from dinary.db.receipts import ReceiptJobRow
+from dinary.background.classification.task import (
     _activate_llm_backoff,
     _drain_one,
     _reset_llm_backoff,
     notify_new_receipt,
     receipt_classification_task,
 )
-from dinary.services.llm_client import AllProvidersExhausted
+from dinary.adapters.llm_client import AllProvidersExhausted
 
 
 @pytest.fixture(autouse=True)
@@ -206,8 +207,7 @@ class TestProcessJobEdgeCases:
         """Drain logs a warning and removes the job when parsed but receipt_items is empty."""
         import logging
 
-        from dinary.background.receipt_classification_task import _process_job
-        from dinary.services.receipts import ReceiptJobRow
+        from dinary.background.classification.task import _process_job
 
         conn = storage.get_connection()
         try:
@@ -233,9 +233,7 @@ class TestProcessJobEdgeCases:
             used_journal_fallback=False,
             claim_token="tok",
         )
-        with caplog.at_level(
-            logging.WARNING, logger="dinary.background.receipt_classification_task"
-        ):
+        with caplog.at_level(logging.WARNING, logger="dinary.background.classification.task"):
             asyncio.run(_process_job(job))
 
         assert any("no items" in r.message.lower() for r in caplog.records)
@@ -259,10 +257,9 @@ class TestProcessJobEdgeCases:
         """When the pool returns used_failover=True, expense confidence is reduced by 1."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from dinary.background.receipt_classification_task import _process_job
-        from dinary.services.llm_client import ClassificationResult
-        from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-        from dinary.services.receipts import ReceiptJobRow
+        from dinary.background.classification.task import _process_job
+        from dinary.adapters.llm_client import ClassificationResult
+        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 
         parsed = ParsedReceipt(
             store_name="Lidl",
@@ -322,11 +319,11 @@ class TestProcessJobEdgeCases:
 
         with (
             patch(
-                "dinary.background.receipt_classification_task.parse_receipt",
+                "dinary.background.classification.task.parse_receipt",
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.receipt_classification_task.ProviderPool",
+                "dinary.background.classification.task.ProviderPool",
                 return_value=pool,
             ),
         ):
@@ -347,10 +344,9 @@ class TestProcessJobEdgeCases:
         """Expenses use the receipt's created_at as their datetime, not classification time."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from dinary.background.receipt_classification_task import _process_job
-        from dinary.services.llm_client import ClassificationResult
-        from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-        from dinary.services.receipts import ReceiptJobRow
+        from dinary.background.classification.task import _process_job
+        from dinary.adapters.llm_client import ClassificationResult
+        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 
         parsed = ParsedReceipt(
             store_name="",
@@ -408,11 +404,11 @@ class TestProcessJobEdgeCases:
 
         with (
             patch(
-                "dinary.background.receipt_classification_task.parse_receipt",
+                "dinary.background.classification.task.parse_receipt",
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.receipt_classification_task.ProviderPool",
+                "dinary.background.classification.task.ProviderPool",
                 return_value=pool,
             ),
         ):
@@ -431,8 +427,8 @@ class TestProcessJobEdgeCases:
 
     def test_fallback_metadata_cleared_on_successful_parse(self, drain_db):  # noqa: ARG002
         """_save_parsed clears fallback metadata when /specifications succeeds."""
-        from dinary.background.receipt_classification_task import _save_parsed
-        from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
+        from dinary.background.classification.task import _save_parsed
+        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 
         conn = storage.get_connection()
         try:
@@ -486,10 +482,9 @@ class TestProcessJobEdgeCases:
         """Expenses use purchase_datetime from the receipt when present, not created_at."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from dinary.background.receipt_classification_task import _process_job
-        from dinary.services.llm_client import ClassificationResult
-        from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-        from dinary.services.receipts import ReceiptJobRow
+        from dinary.background.classification.task import _process_job
+        from dinary.adapters.llm_client import ClassificationResult
+        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 
         purchase_dt = "2026-01-10T09:15:00+01:00"
         parsed = ParsedReceipt(
@@ -547,11 +542,11 @@ class TestProcessJobEdgeCases:
 
         with (
             patch(
-                "dinary.background.receipt_classification_task.parse_receipt",
+                "dinary.background.classification.task.parse_receipt",
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.receipt_classification_task.ProviderPool",
+                "dinary.background.classification.task.ProviderPool",
                 return_value=pool,
             ),
         ):
@@ -573,10 +568,9 @@ class TestProcessJobEdgeCases:
 
     def test_conf1_items_do_not_create_rules(self, drain_db):  # noqa: ARG002
         """Items penalised to conf=1 do not store a rule; the LLM is called again next pass."""
-        from dinary.background.receipt_classification_task import _process_job
-        from dinary.services.llm_client import ClassificationResult
-        from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-        from dinary.services.receipts import ReceiptJobRow
+        from dinary.background.classification.task import _process_job
+        from dinary.adapters.llm_client import ClassificationResult
+        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 
         parsed = ParsedReceipt(
             store_name="Lidl",
@@ -636,10 +630,8 @@ class TestProcessJobEdgeCases:
         )
 
         with (
-            patch(
-                "dinary.background.receipt_classification_task.parse_receipt", return_value=parsed
-            ),
-            patch("dinary.background.receipt_classification_task.ProviderPool", return_value=pool),
+            patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
+            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
         ):
             asyncio.run(_process_job(job))
 
@@ -672,10 +664,9 @@ class TestReceiptSheetLogging:
 
     def test_expense_has_client_expense_id(self, drain_db):  # noqa: ARG002
         """Each receipt expense gets a non-null UUID client_expense_id."""
-        from dinary.background.receipt_classification_task import _process_job
-        from dinary.services.llm_client import ClassificationResult
-        from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-        from dinary.services.receipts import ReceiptJobRow
+        from dinary.background.classification.task import _process_job
+        from dinary.adapters.llm_client import ClassificationResult
+        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 
         parsed = ParsedReceipt(
             store_name="",
@@ -727,11 +718,11 @@ class TestReceiptSheetLogging:
 
         with (
             patch(
-                "dinary.background.receipt_classification_task.parse_receipt",
+                "dinary.background.classification.task.parse_receipt",
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.receipt_classification_task.ProviderPool",
+                "dinary.background.classification.task.ProviderPool",
                 return_value=pool,
             ),
         ):
@@ -751,10 +742,9 @@ class TestReceiptSheetLogging:
 
     def test_expense_enqueued_for_sheet_logging(self, drain_db):  # noqa: ARG002
         """Each receipt expense is inserted into sheet_logging_jobs as pending."""
-        from dinary.background.receipt_classification_task import _process_job
-        from dinary.services.llm_client import ClassificationResult
-        from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-        from dinary.services.receipts import ReceiptJobRow
+        from dinary.background.classification.task import _process_job
+        from dinary.adapters.llm_client import ClassificationResult
+        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 
         parsed = ParsedReceipt(
             store_name="",
@@ -816,11 +806,11 @@ class TestReceiptSheetLogging:
 
         with (
             patch(
-                "dinary.background.receipt_classification_task.parse_receipt",
+                "dinary.background.classification.task.parse_receipt",
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.receipt_classification_task.ProviderPool",
+                "dinary.background.classification.task.ProviderPool",
                 return_value=pool,
             ),
         ):

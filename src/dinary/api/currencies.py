@@ -1,4 +1,4 @@
-"""Currency picker HTTP surface. See specs/reference/currencies.md."""
+"""Currencies API: /api/currencies"""
 
 import logging
 import sqlite3
@@ -7,8 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from dinary.config import settings
-from dinary.services import currencies
-from dinary.services.storage import get_db
+from dinary.db import currencies
+from dinary.db.storage import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

@@ -14,9 +14,9 @@ from datetime import datetime
 import allure
 import pytest
 
-from dinary.services import storage
-from dinary.services.expenses import ExpensePayload, insert_expense
-from dinary.services import expenses as expenses_mod
+from dinary.db import storage
+from dinary.db.expenses import ExpensePayload, insert_expense
+from dinary.db import expenses as expenses_mod
 
 from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
     data_dir,

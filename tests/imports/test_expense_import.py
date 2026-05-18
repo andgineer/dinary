@@ -9,10 +9,10 @@ import pytest
 
 from dinary import config
 from dinary.config import ImportSourceRow
-from dinary.imports import expense_import
-from dinary.imports.expense_import import import_year
-from dinary.services import storage
-from dinary.services.logging_jobs import list_logging_jobs
+from tasks.imports import expense_import
+from tasks.imports.expense_import import import_year
+from dinary.db import storage
+from dinary.background.sheet_logging.logging_jobs import list_logging_jobs
 
 
 @pytest.fixture(autouse=True)
@@ -127,10 +127,10 @@ def _mock_prefetch_rates(_year, _layout, *, con=None):
 @allure.feature("Bootstrap (3D)")
 class TestImportYear:
     @patch(
-        "dinary.imports.expense_import._prefetch_monthly_rates",
+        "tasks.imports.expense_import._prefetch_monthly_rates",
         side_effect=_mock_prefetch_rates,
     )
-    @patch("dinary.imports.expense_import.get_sheet")
+    @patch("tasks.imports.expense_import.get_sheet")
     def test_imports_rows_with_3d_dimensions(self, mock_sheet, _mr, blank_db):
         _seed_catalog(blank_db)
         mock_sheet.return_value = _mock_sheet()
@@ -157,10 +157,10 @@ class TestImportYear:
             assert client_id is None
 
     @patch(
-        "dinary.imports.expense_import._prefetch_monthly_rates",
+        "tasks.imports.expense_import._prefetch_monthly_rates",
         side_effect=_mock_prefetch_rates,
     )
-    @patch("dinary.imports.expense_import.get_sheet")
+    @patch("tasks.imports.expense_import.get_sheet")
     def test_attaches_tags_from_mapping(self, mock_sheet, _mr, blank_db):
         _seed_catalog(blank_db)
         mock_sheet.return_value = _mock_sheet()
@@ -178,10 +178,10 @@ class TestImportYear:
         assert {r[0] for r in tag_rows} == {1}
 
     @patch(
-        "dinary.imports.expense_import._prefetch_monthly_rates",
+        "tasks.imports.expense_import._prefetch_monthly_rates",
         side_effect=_mock_prefetch_rates,
     )
-    @patch("dinary.imports.expense_import.get_sheet")
+    @patch("tasks.imports.expense_import.get_sheet")
     def test_does_not_enqueue_logging_jobs(self, mock_sheet, _mr, blank_db):
         _seed_catalog(blank_db)
         mock_sheet.return_value = _mock_sheet()
@@ -194,10 +194,10 @@ class TestImportYear:
             con.close()
 
     @patch(
-        "dinary.imports.expense_import._prefetch_monthly_rates",
+        "tasks.imports.expense_import._prefetch_monthly_rates",
         side_effect=_mock_prefetch_rates,
     )
-    @patch("dinary.imports.expense_import.get_sheet")
+    @patch("tasks.imports.expense_import.get_sheet")
     def test_re_import_is_destructive(self, mock_sheet, _mr, blank_db):
         _seed_catalog(blank_db)
         mock_sheet.return_value = _mock_sheet()
@@ -218,10 +218,10 @@ class TestImportYear:
         assert total == 4
 
     @patch(
-        "dinary.imports.expense_import._prefetch_monthly_rates",
+        "tasks.imports.expense_import._prefetch_monthly_rates",
         side_effect=_mock_prefetch_rates,
     )
-    @patch("dinary.imports.expense_import.get_sheet")
+    @patch("tasks.imports.expense_import.get_sheet")
     def test_re_import_with_pending_logging_jobs_does_not_violate_fk(
         self,
         mock_sheet,
@@ -257,10 +257,10 @@ class TestImportYear:
             con.close()
 
     @patch(
-        "dinary.imports.expense_import._prefetch_monthly_rates",
+        "tasks.imports.expense_import._prefetch_monthly_rates",
         side_effect=_mock_prefetch_rates,
     )
-    @patch("dinary.imports.expense_import.get_sheet")
+    @patch("tasks.imports.expense_import.get_sheet")
     def test_resolve_dimensions_raise_skips_row_instead_of_aborting(
         self,
         mock_sheet,

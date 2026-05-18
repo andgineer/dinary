@@ -8,8 +8,8 @@ import allure
 import pytest
 
 from dinary.config import settings
-from dinary.services import db_migrations, storage
-from dinary.services.llm_bootstrap import _providers_from_toml, seed_llm_provider_if_empty
+from dinary.db import db_migrations, storage
+from dinary.adapters.llm_bootstrap import _providers_from_toml, seed_llm_provider_if_empty
 
 
 @pytest.fixture

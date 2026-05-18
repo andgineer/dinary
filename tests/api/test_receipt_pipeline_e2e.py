@@ -1,7 +1,7 @@
 """End-to-end receipt pipeline tests.
 
 QR URL → POST /api/receipts → drain (_process_job with mocks)
-→ GET /api/receipts/review/feed → PATCH /api/expenses/{id}/category.
+→ GET /api/rules/feed → PATCH /api/expenses/{id}/category.
 """
 
 import asyncio
@@ -9,11 +9,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import allure
 
-from dinary.background.receipt_classification_task import _process_job
-from dinary.services import storage
-from dinary.services.llm_client import ClassificationResult
-from dinary.services.receipt_parser import ParsedReceipt, ReceiptItem
-from dinary.services.receipts import claim_next_job
+from dinary.background.classification.task import _process_job
+from dinary.db import storage
+from dinary.adapters.llm_client import ClassificationResult
+from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
+from dinary.db.receipts import claim_next_job
 
 from _api_helpers import db  # noqa: F401
 
@@ -59,11 +59,11 @@ def _run_drain(job, pool=None):
         pool = _mock_pool()
     with (
         patch(
-            "dinary.background.receipt_classification_task.parse_receipt",
+            "dinary.background.classification.task.parse_receipt",
             return_value=_PARSED,
         ),
         patch(
-            "dinary.background.receipt_classification_task.ProviderPool",
+            "dinary.background.classification.task.ProviderPool",
             return_value=pool,
         ),
     ):
@@ -120,7 +120,7 @@ class TestReceiptPipelineE2E:
             conn.close()
         _run_drain(job)
 
-        resp = client.get("/api/receipts/review/feed")
+        resp = client.get("/api/rules/feed")
         assert resp.status_code == 200
         data = resp.json()
         doubtful = [i for i in data["items"] if i["is_doubtful"]]
@@ -237,7 +237,7 @@ class TestReceiptPipelineE2E:
         call_count_after_first = pool.classify_receipt.call_count
 
         # Simulate re-claim (stale job re-entry) by reconstructing the job
-        from dinary.services.receipts import ReceiptJobRow
+        from dinary.db.receipts import ReceiptJobRow
 
         stale_job = ReceiptJobRow(
             receipt_id=receipt_id,

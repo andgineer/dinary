@@ -10,9 +10,9 @@ import datetime
 
 import allure
 
-import tasks.constants
-from dinary.tools.backup_retention import _make_pattern, pick_keepers
-from dinary.tools.backup_snapshots import (
+import tasks.devtools.constants
+from tasks.backups.backup_retention import _make_pattern, pick_keepers
+from tasks.backups.backup_snapshots import (
     BACKUP_FILENAME_PREFIX,
     BACKUP_FILENAME_SUFFIX,
 )
@@ -27,9 +27,9 @@ class TestBackupRetentionScript:
     ``dinary.tools.backup_retention``.
     """
 
-    _D = tasks.constants.BACKUP_RETENTION_DAILY
-    _W = tasks.constants.BACKUP_RETENTION_WEEKLY
-    _M = tasks.constants.BACKUP_RETENTION_MONTHLY
+    _D = tasks.devtools.constants.BACKUP_RETENTION_DAILY
+    _W = tasks.devtools.constants.BACKUP_RETENTION_WEEKLY
+    _M = tasks.devtools.constants.BACKUP_RETENTION_MONTHLY
 
     def _pk(self, snaps):
         return pick_keepers(snaps, daily=self._D, weekly=self._W, monthly=self._M)

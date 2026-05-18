@@ -5,9 +5,9 @@ from datetime import datetime, timedelta
 
 import allure
 
-from dinary.services import storage
-from dinary.services.expenses import ExpensePayload, insert_expense
-from dinary.services.logging_jobs import (
+from dinary.db import storage
+from dinary.db.expenses import ExpensePayload, insert_expense
+from dinary.background.sheet_logging.logging_jobs import (
     claim_logging_job,
     clear_logging_job,
     count_logging_jobs,

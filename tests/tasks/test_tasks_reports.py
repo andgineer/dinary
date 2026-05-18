@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import allure
 import pytest
 
-import tasks.reports
+import tasks.reports.report_tasks
 
 
 @allure.epic("Deploy")
@@ -45,7 +45,7 @@ class TestRunReportModuleRemote:
             spy.last_cmd = cmd
             return spy.payload
 
-        monkeypatch.setattr(tasks.reports, "ssh_capture_bytes", fake)
+        monkeypatch.setattr(tasks.reports.report_tasks, "ssh_capture_bytes", fake)
         return spy
 
     def test_income_remote_uses_json_transport_regardless_of_user_format(
@@ -58,7 +58,7 @@ class TestRunReportModuleRemote:
         """
         _fake_ssh_bytes.payload = b"[]\n"
         c = MagicMock()
-        tasks.reports._run_report_module(c, "income", [], remote=True)
+        tasks.reports.report_tasks._run_report_module(c, "income", [], remote=True)
         # The remote cmd must ask for ``--json`` so we get structured
         # data back, not a rendered rich table.
         assert "--json" in _fake_ssh_bytes.last_cmd
@@ -73,7 +73,7 @@ class TestRunReportModuleRemote:
             [{"year": 2026, "months": 3, "total": "1779756.00", "avg_month": "593252.00"}],
         ).encode()
         c = MagicMock()
-        tasks.reports._run_report_module(c, "income", ["--csv"], remote=True)
+        tasks.reports.report_tasks._run_report_module(c, "income", ["--csv"], remote=True)
         out = capsys.readouterr().out
         assert out.splitlines()[0] == "year,months,total,avg_month"
         assert "1779756.00" in out
@@ -94,7 +94,7 @@ class TestRunReportModuleRemote:
         payload = b'[{"year": 2025, "tags": "\xd0\xbf\xd1\x83"}]\n'
         _fake_ssh_bytes.payload = payload
         c = MagicMock()
-        tasks.reports._run_report_module(c, "income", ["--json"], remote=True)
+        tasks.reports.report_tasks._run_report_module(c, "income", ["--json"], remote=True)
         out = capsysbinary.readouterr().out
         assert out == payload
 
@@ -119,7 +119,7 @@ class TestRunReportModuleRemote:
             ],
         ).encode()
         c = MagicMock()
-        tasks.reports._run_report_module(c, "income", [], remote=True)
+        tasks.reports.report_tasks._run_report_module(c, "income", [], remote=True)
         out = capsys.readouterr().out
         # No replacement characters anywhere in the rendered output.
         assert "\ufffd" not in out
@@ -144,7 +144,7 @@ class TestRunReportModuleRemote:
             ensure_ascii=False,
         ).encode()
         c = MagicMock()
-        tasks.reports._run_report_module(c, "expenses", [], remote=True)
+        tasks.reports.report_tasks._run_report_module(c, "expenses", [], remote=True)
         out = capsys.readouterr().out
         assert "\ufffd" not in out
         assert "путешествия" in out
@@ -156,7 +156,7 @@ class TestRunReportModuleRemote:
     ):
         _fake_ssh_bytes.payload = b"[]\n"
         c = MagicMock()
-        tasks.reports._run_report_module(
+        tasks.reports.report_tasks._run_report_module(
             c,
             "expenses",
             ["--year", "2026", "--csv"],

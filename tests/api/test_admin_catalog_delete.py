@@ -1,4 +1,4 @@
-"""DELETE /api/admin/catalog/<kind>/<id> tests.
+"""DELETE /api/catalog/<kind>/<id> tests.
 
 Pin the soft-vs-hard delete decision and the ``delete_status``
 field that surfaces it. Soft-delete is triggered by *any*
@@ -22,8 +22,8 @@ from datetime import datetime
 
 import allure
 
-from dinary.services import storage
-from dinary.services.expenses import ExpensePayload, insert_expense
+from dinary.db import storage
+from dinary.db.expenses import ExpensePayload, insert_expense
 
 from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 
@@ -32,9 +32,9 @@ from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 @allure.feature("Admin catalog — delete")
 class TestAdminDelete:
     def test_delete_unused_tag_is_hard(self, client):
-        add = client.post("/api/admin/catalog/tags", json={"name": "drop-me"})
+        add = client.post("/api/catalog/tags", json={"name": "drop-me"})
         tid = add.json()["new_id"]
-        resp = client.delete(f"/api/admin/catalog/tags/{tid}")
+        resp = client.delete(f"/api/catalog/tags/{tid}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["delete_status"] == "hard"
@@ -42,10 +42,10 @@ class TestAdminDelete:
         assert not any(t["id"] == tid for t in data["tags"])
 
     def test_delete_used_tag_is_soft(self, client):
-        add = client.post("/api/admin/catalog/tags", json={"name": "pinned-tag"})
+        add = client.post("/api/catalog/tags", json={"name": "pinned-tag"})
         tid = add.json()["new_id"]
         cat = client.post(
-            "/api/admin/catalog/categories",
+            "/api/catalog/categories",
             json={"name": "cat-for-tag", "group_id": 1},
         )
         cid = cat.json()["new_id"]
@@ -70,7 +70,7 @@ class TestAdminDelete:
             )
         finally:
             con.close()
-        resp = client.delete(f"/api/admin/catalog/tags/{tid}")
+        resp = client.delete(f"/api/catalog/tags/{tid}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["delete_status"] == "soft"
@@ -80,7 +80,7 @@ class TestAdminDelete:
 
     def test_delete_category_soft_when_used(self, client):
         cat = client.post(
-            "/api/admin/catalog/categories",
+            "/api/catalog/categories",
             json={"name": "pinned-cat", "group_id": 1},
         )
         cid = cat.json()["new_id"]
@@ -105,7 +105,7 @@ class TestAdminDelete:
             )
         finally:
             con.close()
-        resp = client.delete(f"/api/admin/catalog/categories/{cid}")
+        resp = client.delete(f"/api/catalog/categories/{cid}")
         assert resp.status_code == 200
         data = resp.json()
         assert data["delete_status"] == "soft"
@@ -113,11 +113,11 @@ class TestAdminDelete:
 
     def test_delete_group_hard_when_empty(self, client):
         group = client.post(
-            "/api/admin/catalog/groups",
+            "/api/catalog/groups",
             json={"name": "EmptyGroup"},
         )
         gid = group.json()["new_id"]
-        resp = client.delete(f"/api/admin/catalog/groups/{gid}")
+        resp = client.delete(f"/api/catalog/groups/{gid}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["delete_status"] == "hard"
@@ -125,15 +125,15 @@ class TestAdminDelete:
 
     def test_delete_group_refuses_while_it_has_categories(self, client):
         group = client.post(
-            "/api/admin/catalog/groups",
+            "/api/catalog/groups",
             json={"name": "Blocked"},
         )
         gid = group.json()["new_id"]
         client.post(
-            "/api/admin/catalog/categories",
+            "/api/catalog/categories",
             json={"name": "tenant", "group_id": gid},
         )
-        resp = client.delete(f"/api/admin/catalog/groups/{gid}")
+        resp = client.delete(f"/api/catalog/groups/{gid}")
         # A group that still contains any category (active or not) can't be
         # deleted; the operator must first soft/hard-delete every category.
         assert resp.status_code == 409
@@ -147,7 +147,7 @@ class TestAdminDelete:
         place responsible for sheet_mapping churn.
         """
         cat = client.post(
-            "/api/admin/catalog/categories",
+            "/api/catalog/categories",
             json={"name": "mapped-only", "group_id": 1},
         )
         cid = cat.json()["new_id"]
@@ -161,7 +161,7 @@ class TestAdminDelete:
             )
         finally:
             con.close()
-        resp = client.delete(f"/api/admin/catalog/categories/{cid}")
+        resp = client.delete(f"/api/catalog/categories/{cid}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["delete_status"] == "soft"
@@ -172,7 +172,7 @@ class TestAdminDelete:
         assert any(c["id"] == cid and c["is_active"] is False for c in data["categories"])
 
     def test_delete_tag_referenced_by_sheet_mapping_tags_is_soft(self, client):
-        tag = client.post("/api/admin/catalog/tags", json={"name": "mapped-tag"})
+        tag = client.post("/api/catalog/tags", json={"name": "mapped-tag"})
         tid = tag.json()["new_id"]
         con = storage.get_connection()
         try:
@@ -187,7 +187,7 @@ class TestAdminDelete:
             )
         finally:
             con.close()
-        resp = client.delete(f"/api/admin/catalog/tags/{tid}")
+        resp = client.delete(f"/api/catalog/tags/{tid}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["delete_status"] == "soft"
@@ -204,10 +204,10 @@ class TestAdminDelete:
         (logging a WARN), which is a data-loss footgun operators
         can't recover from via the admin UI.
         """
-        tag = client.post("/api/admin/catalog/tags", json={"name": "auto-only"})
+        tag = client.post("/api/catalog/tags", json={"name": "auto-only"})
         tid = tag.json()["new_id"]
         ev = client.post(
-            "/api/admin/catalog/events",
+            "/api/catalog/events",
             json={
                 "name": "trip-with-auto-tag",
                 "date_from": "2026-01-01",
@@ -216,7 +216,7 @@ class TestAdminDelete:
             },
         )
         eid = ev.json()["new_id"]
-        resp = client.delete(f"/api/admin/catalog/tags/{tid}")
+        resp = client.delete(f"/api/catalog/tags/{tid}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         # Only events.auto_tags references the tag — not sheet_mapping_tags,
@@ -241,7 +241,7 @@ class TestAdminDelete:
 
     def test_delete_event_referenced_by_sheet_mapping_is_soft(self, client):
         ev = client.post(
-            "/api/admin/catalog/events",
+            "/api/catalog/events",
             json={
                 "name": "mapped-event",
                 "date_from": "2026-01-01",
@@ -259,7 +259,7 @@ class TestAdminDelete:
             )
         finally:
             con.close()
-        resp = client.delete(f"/api/admin/catalog/events/{eid}")
+        resp = client.delete(f"/api/catalog/events/{eid}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["delete_status"] == "soft"

@@ -1,6 +1,6 @@
 """Tests for ``inv setup-replica`` orchestration and its scripts.
 
-Four layers, all routed through :mod:`tasks.backups_replica`:
+Four layers, all routed through :mod:`tasks.backups.backups_replica`:
 
 * :class:`TestLitestreamSetupPermissions` pins the ``sudo`` scope of
   the ``/etc/litestream.yml`` chown/chmod step (regression for a
@@ -20,8 +20,8 @@ import allure
 import pytest
 
 import tasks
-import tasks.backups_replica
-import tasks.constants
+import tasks.backups.backups_replica
+import tasks.devtools.constants
 import tasks.ssh_utils
 
 
@@ -82,21 +82,27 @@ class TestLitestreamSetupPermissions:
         def fake_write_remote_replica_file(_c, _path: str, _content: str) -> None:
             pass
 
-        monkeypatch.setattr(tasks.backups_replica, "ssh_run", fake_ssh)
-        monkeypatch.setattr(tasks.backups_replica, "ssh_sudo", fake_ssh_sudo)
-        monkeypatch.setattr(tasks.backups_replica, "ssh_replica", fake_ssh_replica)
-        monkeypatch.setattr(tasks.backups_replica, "ssh_capture", fake_ssh_capture)
-        monkeypatch.setattr(tasks.backups_replica, "write_remote_file", fake_write_remote_file)
+        monkeypatch.setattr(tasks.backups.backups_replica, "ssh_run", fake_ssh)
+        monkeypatch.setattr(tasks.backups.backups_replica, "ssh_sudo", fake_ssh_sudo)
+        monkeypatch.setattr(tasks.backups.backups_replica, "ssh_replica", fake_ssh_replica)
+        monkeypatch.setattr(tasks.backups.backups_replica, "ssh_capture", fake_ssh_capture)
         monkeypatch.setattr(
-            tasks.backups_replica, "write_remote_replica_file", fake_write_remote_replica_file
+            tasks.backups.backups_replica, "write_remote_file", fake_write_remote_file
         )
-        monkeypatch.setattr(tasks.backups_replica, "create_service", fake_create_service)
         monkeypatch.setattr(
-            tasks.backups_replica,
+            tasks.backups.backups_replica,
+            "write_remote_replica_file",
+            fake_write_remote_replica_file,
+        )
+        monkeypatch.setattr(tasks.backups.backups_replica, "create_service", fake_create_service)
+        monkeypatch.setattr(
+            tasks.backups.backups_replica,
             "ensure_yandex_rclone_configured",
             lambda _c: calls.append(("yandex", "configured")),
         )
-        monkeypatch.setattr(tasks.backups_replica, "replica_host", lambda: "ubuntu@dinary-replica")
+        monkeypatch.setattr(
+            tasks.backups.backups_replica, "replica_host", lambda: "ubuntu@dinary-replica"
+        )
         return calls
 
     def test_chown_and_chmod_run_inside_a_single_sudo_bash_c(self, _spy):
@@ -134,7 +140,7 @@ class TestLitestreamSetupPermissions:
             None,
         )
         assert perm_call is not None
-        assert tasks.constants.REMOTE_LITESTREAM_CONFIG_PATH in perm_call
+        assert tasks.devtools.constants.REMOTE_LITESTREAM_CONFIG_PATH in perm_call
 
 
 @allure.epic("Deploy")
@@ -156,7 +162,7 @@ class TestSetupReplicaScripts:
         refactor that dropped it would reintroduce a class of
         "inv setup-replica hangs forever" incidents.
         """
-        script = tasks.backups_replica._build_setup_replica_packages_script()
+        script = tasks.backups.backups_replica._build_setup_replica_packages_script()
         assert "export DEBIAN_FRONTEND=noninteractive" in script
 
     def test_apt_installs_unattended_upgrades(self):
@@ -165,7 +171,7 @@ class TestSetupReplicaScripts:
         on the replica. Pin the package name so a rename in the apt
         step doesn't quietly remove the patch cadence.
         """
-        script = tasks.backups_replica._build_setup_replica_packages_script()
+        script = tasks.backups.backups_replica._build_setup_replica_packages_script()
         assert "apt-get install -y -qq unattended-upgrades" in script
 
     def test_apt_refreshes_package_index_before_install(self):
@@ -174,7 +180,7 @@ class TestSetupReplicaScripts:
         ``install`` with ``Unable to locate package`` on any
         newly-mirrored dependency.
         """
-        script = tasks.backups_replica._build_setup_replica_packages_script()
+        script = tasks.backups.backups_replica._build_setup_replica_packages_script()
         update_idx = script.index("apt-get update -qq")
         install_idx = script.index("apt-get install -y -qq unattended-upgrades")
         assert update_idx < install_idx
@@ -186,7 +192,7 @@ class TestSetupReplicaScripts:
         only elevate the first command and the install would fail
         with EACCES.
         """
-        script = tasks.backups_replica._build_setup_replica_packages_script()
+        script = tasks.backups.backups_replica._build_setup_replica_packages_script()
         assert script.startswith("sudo bash <<'DINARY_REPLICA_PKG_EOF'\n")
         assert script.rstrip().endswith("DINARY_REPLICA_PKG_EOF")
 
@@ -198,9 +204,9 @@ class TestSetupReplicaScripts:
         bootstrap succeed and the first WAL push fail with "No such
         file or directory" on the remote end.
         """
-        script = tasks.backups_replica._build_setup_replica_litestream_dir_script()
-        assert tasks.constants.REPLICA_LITESTREAM_DIR == "/var/lib/litestream"
-        assert f"mkdir -p {tasks.constants.REPLICA_LITESTREAM_DIR}" in script
+        script = tasks.backups.backups_replica._build_setup_replica_litestream_dir_script()
+        assert tasks.devtools.constants.REPLICA_LITESTREAM_DIR == "/var/lib/litestream"
+        assert f"mkdir -p {tasks.devtools.constants.REPLICA_LITESTREAM_DIR}" in script
 
     def test_litestream_dir_mode_is_0750_not_world_readable(self):
         """The replica stream contains full pre-compaction row data
@@ -208,8 +214,8 @@ class TestSetupReplicaScripts:
         on a shared VM. ``0750`` lets the ``ubuntu`` group members
         read for diagnostics while keeping "other" out.
         """
-        script = tasks.backups_replica._build_setup_replica_litestream_dir_script()
-        assert f"chmod 750 {tasks.constants.REPLICA_LITESTREAM_DIR}" in script
+        script = tasks.backups.backups_replica._build_setup_replica_litestream_dir_script()
+        assert f"chmod 750 {tasks.devtools.constants.REPLICA_LITESTREAM_DIR}" in script
         assert "chmod 755" not in script
         assert "chmod 777" not in script
 
@@ -219,8 +225,8 @@ class TestSetupReplicaScripts:
         first WAL segment write fails with EPERM. Pin ``ubuntu:ubuntu``
         so a refactor to ``root:root`` is caught at review time.
         """
-        script = tasks.backups_replica._build_setup_replica_litestream_dir_script()
-        assert f"chown ubuntu:ubuntu {tasks.constants.REPLICA_LITESTREAM_DIR}" in script
+        script = tasks.backups.backups_replica._build_setup_replica_litestream_dir_script()
+        assert f"chown ubuntu:ubuntu {tasks.devtools.constants.REPLICA_LITESTREAM_DIR}" in script
 
     def test_litestream_dir_script_elevates_whole_block(self):
         """``mkdir -p /var/lib/litestream`` and ``chown ubuntu:ubuntu``
@@ -228,7 +234,7 @@ class TestSetupReplicaScripts:
         single elevation boundary; a bare ``mkdir`` would fail with
         EACCES on ``/var/lib/``.
         """
-        script = tasks.backups_replica._build_setup_replica_litestream_dir_script()
+        script = tasks.backups.backups_replica._build_setup_replica_litestream_dir_script()
         assert script.startswith("sudo bash <<'DINARY_REPLICA_DIR_EOF'\n")
         assert script.rstrip().endswith("DINARY_REPLICA_DIR_EOF")
 
@@ -239,8 +245,8 @@ class TestSetupReplicaScripts:
         drift immediately instead of discovering it later when the
         first SFTP write fails.
         """
-        script = tasks.backups_replica._build_setup_replica_litestream_dir_script()
-        assert f"ls -ld {tasks.constants.REPLICA_LITESTREAM_DIR}" in script
+        script = tasks.backups.backups_replica._build_setup_replica_litestream_dir_script()
+        assert f"ls -ld {tasks.devtools.constants.REPLICA_LITESTREAM_DIR}" in script
 
 
 @allure.epic("Deploy")
@@ -319,22 +325,26 @@ class TestSetupReplicaTask:
         def fake_write_remote_replica_file(_c, _path: str, _content: str) -> None:
             pass
 
-        monkeypatch.setattr(tasks.backups_replica, "ssh_replica", fake_ssh_replica)
-        monkeypatch.setattr(tasks.backups_replica, "ssh_run", fake_ssh_run)
-        monkeypatch.setattr(tasks.backups_replica, "ssh_sudo", fake_ssh_sudo)
-        monkeypatch.setattr(tasks.backups_replica, "ssh_capture", fake_ssh_capture)
-        monkeypatch.setattr(tasks.backups_replica, "write_remote_file", fake_write_remote_file)
+        monkeypatch.setattr(tasks.backups.backups_replica, "ssh_replica", fake_ssh_replica)
+        monkeypatch.setattr(tasks.backups.backups_replica, "ssh_run", fake_ssh_run)
+        monkeypatch.setattr(tasks.backups.backups_replica, "ssh_sudo", fake_ssh_sudo)
+        monkeypatch.setattr(tasks.backups.backups_replica, "ssh_capture", fake_ssh_capture)
         monkeypatch.setattr(
-            tasks.backups_replica, "write_remote_replica_file", fake_write_remote_replica_file
+            tasks.backups.backups_replica, "write_remote_file", fake_write_remote_file
         )
-        monkeypatch.setattr(tasks.backups_replica, "create_service", fake_create_service)
         monkeypatch.setattr(
-            tasks.backups_replica,
+            tasks.backups.backups_replica,
+            "write_remote_replica_file",
+            fake_write_remote_replica_file,
+        )
+        monkeypatch.setattr(tasks.backups.backups_replica, "create_service", fake_create_service)
+        monkeypatch.setattr(
+            tasks.backups.backups_replica,
             "ensure_yandex_rclone_configured",
             fake_ensure_yandex,
         )
         monkeypatch.setattr(
-            tasks.backups_replica,
+            tasks.backups.backups_replica,
             "replica_host",
             lambda: "ubuntu@dinary-replica",
         )
@@ -381,12 +391,14 @@ class TestSetupReplicaTask:
             function returns and the VM1-side steps run.
         """
         tasks.setup_replica.body(MagicMock())
-        pkg_script = tasks.backups_replica._build_setup_replica_packages_script()
+        pkg_script = tasks.backups.backups_replica._build_setup_replica_packages_script()
         harden_script = tasks.ssh_utils.build_harden_sshd_script()
         f2b_script = tasks.ssh_utils.build_install_fail2ban_script()
-        dir_script = tasks.backups_replica._build_setup_replica_litestream_dir_script()
+        dir_script = tasks.backups.backups_replica._build_setup_replica_litestream_dir_script()
         swap_script = tasks.ssh_utils.build_setup_swap_script(size_gb=1)
-        backup_pkg_script = tasks.backups_replica._build_setup_replica_backup_packages_script()
+        backup_pkg_script = (
+            tasks.backups.backups_replica._build_setup_replica_backup_packages_script()
+        )
         litestream_script = tasks.ssh_utils.litestream_install_script()
         trust_script = tasks.ssh_utils.build_install_authorized_key_script(_FAKE_PUBKEY)
         assert _spy.replica_calls == [
@@ -397,8 +409,8 @@ class TestSetupReplicaTask:
             swap_script,
             backup_pkg_script,
             litestream_script,
-            f"sudo chmod 0755 {tasks.constants.BACKUP_SCRIPT_PATH}",
-            f"sudo chmod 0755 {tasks.constants.BACKUP_RETENTION_SCRIPT_PATH}",
+            f"sudo chmod 0755 {tasks.devtools.constants.BACKUP_SCRIPT_PATH}",
+            f"sudo chmod 0755 {tasks.devtools.constants.BACKUP_RETENTION_SCRIPT_PATH}",
             "sudo systemctl daemon-reload",
             "sudo systemctl enable --now dinary-backup.timer",
             trust_script,
@@ -498,7 +510,7 @@ class TestSetupReplicaTask:
         def observe_create(*_a, **_kw) -> None:
             call_log.append("create_service")
 
-        import tasks.backups_replica as br
+        import tasks.backups.backups_replica as br
 
         br_module = br
         orig_create = br_module.create_service
@@ -563,11 +575,11 @@ class TestReplicaResetTrustTask:
             spy.capture_calls.append(cmd)
             return _FAKE_PUBKEY + "\n"
 
-        monkeypatch.setattr(tasks.backups_replica, "ssh_replica", fake_ssh_replica)
-        monkeypatch.setattr(tasks.backups_replica, "ssh_run", fake_ssh_run)
-        monkeypatch.setattr(tasks.backups_replica, "ssh_capture", fake_ssh_capture)
+        monkeypatch.setattr(tasks.backups.backups_replica, "ssh_replica", fake_ssh_replica)
+        monkeypatch.setattr(tasks.backups.backups_replica, "ssh_run", fake_ssh_run)
+        monkeypatch.setattr(tasks.backups.backups_replica, "ssh_capture", fake_ssh_capture)
         monkeypatch.setattr(
-            tasks.backups_replica,
+            tasks.backups.backups_replica,
             "replica_host",
             lambda: "ubuntu@dinary-replica",
         )
@@ -630,12 +642,16 @@ class TestSetupResyncTask:
         spy = Spy()
 
         monkeypatch.setattr(
-            tasks.backups_replica, "ssh_replica", lambda _c, cmd: spy.replica_calls.append(cmd)
+            tasks.backups.backups_replica,
+            "ssh_replica",
+            lambda _c, cmd: spy.replica_calls.append(cmd),
         )
         monkeypatch.setattr(
-            tasks.backups_replica, "ssh_run", lambda _c, cmd: spy.ssh_calls.append(cmd)
+            tasks.backups.backups_replica, "ssh_run", lambda _c, cmd: spy.ssh_calls.append(cmd)
         )
-        monkeypatch.setattr(tasks.backups_replica, "replica_host", lambda: "ubuntu@dinary-replica")
+        monkeypatch.setattr(
+            tasks.backups.backups_replica, "replica_host", lambda: "ubuntu@dinary-replica"
+        )
         return spy
 
     def test_stops_litestream_on_vm1_not_vm2(self, _spy):
@@ -663,8 +679,8 @@ class TestSetupResyncTask:
             None,
         )
         assert wipe_call is not None, "must wipe LTX tree on VM2 via ssh_replica"
-        assert tasks.constants.REPLICA_LITESTREAM_DIR in wipe_call
-        assert tasks.constants.REPLICA_DB_NAME in wipe_call
+        assert tasks.devtools.constants.REPLICA_LITESTREAM_DIR in wipe_call
+        assert tasks.devtools.constants.REPLICA_DB_NAME in wipe_call
 
     def test_starts_litestream_on_vm1_after_wipe(self, _spy):
         """Litestream must restart on VM1 AFTER the LTX tree is wiped —
@@ -705,12 +721,12 @@ class TestRestoreReplicaResync:
         )
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(
-            tasks.backups_replica,
+            tasks.backups.backups_replica,
             "ssh_replica_capture_bytes",
             lambda script: b"SQLite format 3\x00" + b"\x00" * 96,
         )
         monkeypatch.setattr(
-            tasks.backups_replica,
+            tasks.backups.backups_replica,
             "apply_restore",
             lambda db_bytes, target: target.write_bytes(db_bytes),
         )
@@ -719,9 +735,9 @@ class TestRestoreReplicaResync:
     def test_resync_triggered_when_litestream_active(self, _patched):
         """On VM1 (litestream.service active), resync must fire after restore."""
         resync_calls = []
-        _patched.setattr(tasks.backups_replica, "litestream_active", lambda: True)
+        _patched.setattr(tasks.backups.backups_replica, "litestream_active", lambda: True)
         _patched.setattr(
-            tasks.backups_replica, "local_replica_resync", lambda c: resync_calls.append(c)
+            tasks.backups.backups_replica, "local_replica_resync", lambda c: resync_calls.append(c)
         )
         tasks.restore_replica.body(MagicMock(), yes=True)
         assert len(resync_calls) == 1
@@ -729,9 +745,9 @@ class TestRestoreReplicaResync:
     def test_resync_skipped_when_litestream_inactive(self, _patched):
         """On a developer laptop, resync must be skipped silently."""
         resync_calls = []
-        _patched.setattr(tasks.backups_replica, "litestream_active", lambda: False)
+        _patched.setattr(tasks.backups.backups_replica, "litestream_active", lambda: False)
         _patched.setattr(
-            tasks.backups_replica, "local_replica_resync", lambda c: resync_calls.append(c)
+            tasks.backups.backups_replica, "local_replica_resync", lambda c: resync_calls.append(c)
         )
         tasks.restore_replica.body(MagicMock(), yes=True)
         assert resync_calls == []
@@ -739,9 +755,9 @@ class TestRestoreReplicaResync:
     def test_resync_skipped_when_no_resync_flag(self, _patched):
         """``--no-resync`` suppresses resync even when litestream is active."""
         resync_calls = []
-        _patched.setattr(tasks.backups_replica, "litestream_active", lambda: True)
+        _patched.setattr(tasks.backups.backups_replica, "litestream_active", lambda: True)
         _patched.setattr(
-            tasks.backups_replica, "local_replica_resync", lambda c: resync_calls.append(c)
+            tasks.backups.backups_replica, "local_replica_resync", lambda c: resync_calls.append(c)
         )
         tasks.restore_replica.body(MagicMock(), yes=True, no_resync=True)
         assert resync_calls == []

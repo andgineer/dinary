@@ -11,13 +11,13 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from dinary.background.receipt_classification_task import notify_new_receipt
-from dinary.services.receipts import (
+from dinary.background.classification.task import notify_new_receipt
+from dinary.db.receipts import (
     get_receipt_by_client_id,
     insert_job,
     insert_receipt,
 )
-from dinary.services.storage import get_db, transaction
+from dinary.db.storage import get_db, transaction
 
 router = APIRouter()
 

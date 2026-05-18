@@ -12,7 +12,7 @@ import pytest
 
 import tasks  # noqa: F401 — loads tasks/__init__.py which imports tasks.dev
 
-_dev = sys.modules["tasks.dev"]
+_dev = sys.modules["tasks.devtools.dev"]
 
 
 @allure.epic("Deploy")

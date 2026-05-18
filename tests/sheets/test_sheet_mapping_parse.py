@@ -11,7 +11,7 @@ import logging
 import allure
 import pytest
 
-from dinary.services import sheet_mapping
+from dinary.sheets import sheet_mapping
 
 from _sheet_mapping_helpers import (  # noqa: F401  (autouse + helpers)
     _catalog,
@@ -235,7 +235,7 @@ class TestDefaultTemplateRows:
             assert not is_identity, f"identity row leaked into template: {r}"
 
     def test_inactive_envelope_override_is_dropped(self, caplog):
-        caplog.set_level(logging.WARNING, logger="dinary.services.sheet_mapping")
+        caplog.set_level(logging.WARNING, logger="dinary.sheets.sheet_mapping")
         # ``гигиена`` is an envelope override but absent from the
         # active catalog — the row must be skipped with a WARN rather
         # than emitted (the parser would reject it as unknown anyway).

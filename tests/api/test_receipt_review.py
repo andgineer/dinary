@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import allure
 import pytest
 
-from dinary.services import storage
+from dinary.db import storage
 
 from _api_helpers import db  # noqa: F401
 
@@ -60,7 +60,7 @@ def _seed_certain_rule(conn):
 @allure.feature("Receipt Review")
 class TestReviewFeed:
     def test_empty_feed(self, client, db):  # noqa: ARG002
-        resp = client.get("/api/receipts/review/feed")
+        resp = client.get("/api/rules/feed")
         assert resp.status_code == 200
         data = resp.json()
         assert data["items"] == []
@@ -75,7 +75,7 @@ class TestReviewFeed:
         finally:
             conn.close()
 
-        resp = client.get("/api/receipts/review/feed")
+        resp = client.get("/api/rules/feed")
         data = resp.json()
         assert data["doubtful_count"] == 1
         assert len(data["items"]) >= 1
@@ -93,11 +93,11 @@ class TestReviewFeed:
         assert "id" in d
 
     def test_pagination(self, client, db):  # noqa: ARG002
-        resp = client.get("/api/receipts/review/feed?page=1&page_size=5")
+        resp = client.get("/api/rules/feed?page=1&page_size=5")
         assert resp.status_code == 200
 
     def test_page_size_limit(self, client, db):  # noqa: ARG002
-        resp = client.get("/api/receipts/review/feed?page_size=101")
+        resp = client.get("/api/rules/feed?page_size=101")
         assert resp.status_code == 422
 
     def test_two_block_pagination_uses_sql_limit_not_memory_slice(self, client, db):  # noqa: ARG002
@@ -148,8 +148,8 @@ class TestReviewFeed:
         finally:
             conn.close()
 
-        p1 = client.get("/api/receipts/review/feed?page=1&page_size=1").json()
-        p2 = client.get("/api/receipts/review/feed?page=2&page_size=1").json()
+        p1 = client.get("/api/rules/feed?page=1&page_size=1").json()
+        p2 = client.get("/api/rules/feed?page=2&page_size=1").json()
 
         assert len(p1["items"]) == 1
         assert p1["has_more"] is True
@@ -169,7 +169,7 @@ class TestReviewFeedCertainRules:
         finally:
             conn.close()
 
-        resp = client.get("/api/receipts/review/feed")
+        resp = client.get("/api/rules/feed")
         data = resp.json()
         certain = [i for i in data["items"] if not i["is_doubtful"]]
         assert len(certain) == 1
@@ -190,7 +190,7 @@ class TestReviewFeedCertainRules:
         finally:
             conn.close()
 
-        resp = client.get("/api/receipts/review/feed")
+        resp = client.get("/api/rules/feed")
         assert resp.json()["doubtful_count"] == 0
 
     def test_rule_name_comes_from_classification_rules(self, client, db):  # noqa: ARG002
@@ -200,7 +200,7 @@ class TestReviewFeedCertainRules:
         finally:
             conn.close()
 
-        resp = client.get("/api/receipts/review/feed")
+        resp = client.get("/api/rules/feed")
         certain = [i for i in resp.json()["items"] if not i["is_doubtful"]]
         assert len(certain) == 1
         assert certain[0]["name"] == "mleko"
@@ -233,7 +233,7 @@ class TestReviewFeedCertainRules:
         finally:
             conn.close()
 
-        resp = client.get("/api/receipts/review/feed")
+        resp = client.get("/api/rules/feed")
         data = resp.json()
         doubtful = [i for i in data["items"] if i["is_doubtful"]]
         assert len(doubtful) == 1
@@ -245,7 +245,7 @@ class TestReviewFeedCertainRules:
 @allure.feature("Receipt Review")
 class TestReviewCounts:
     def test_counts_empty(self, client, db):  # noqa: ARG002
-        resp = client.get("/api/receipts/review/counts")
+        resp = client.get("/api/rules/counts")
         assert resp.status_code == 200
         assert resp.json()["doubtful_rules"] == 0
 
@@ -256,11 +256,11 @@ class TestReviewCounts:
         finally:
             conn.close()
 
-        resp = client.get("/api/receipts/review/counts")
+        resp = client.get("/api/rules/counts")
         assert resp.json()["doubtful_rules"] == 1
 
     def test_counts_includes_pending_receipts_zero_when_empty(self, client, db):  # noqa: ARG002
-        resp = client.get("/api/receipts/review/counts")
+        resp = client.get("/api/rules/counts")
         assert resp.status_code == 200
         assert "pending_receipts" in resp.json()
         assert resp.json()["pending_receipts"] == 0
@@ -282,7 +282,7 @@ class TestReviewCounts:
         finally:
             conn.close()
 
-        resp = client.get("/api/receipts/review/counts")
+        resp = client.get("/api/rules/counts")
         assert resp.json()["pending_receipts"] == 1
 
     def test_orphaned_rule_not_counted(self, client, db):  # noqa: ARG002
@@ -299,7 +299,7 @@ class TestReviewCounts:
         finally:
             conn.close()
 
-        resp = client.get("/api/receipts/review/counts")
+        resp = client.get("/api/rules/counts")
         assert resp.json()["doubtful_rules"] == 0
 
 

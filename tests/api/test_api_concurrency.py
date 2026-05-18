@@ -17,8 +17,8 @@ import allure
 import httpx
 
 from dinary.main import create_app
-from dinary.services import storage
-from dinary.services.expenses import lookup_existing_expense
+from dinary.db import storage
+from dinary.db.expenses import lookup_existing_expense
 
 from _api_helpers import (  # noqa: F401  (autouse + helpers)
     _count_race_recoveries,
@@ -30,7 +30,7 @@ from _api_helpers import (  # noqa: F401  (autouse + helpers)
 @allure.epic("API")
 @allure.feature("Expenses (3D) — concurrency")
 class TestPostExpenseConcurrency:
-    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
     def test_concurrent_post_with_same_client_expense_id_is_atomic(
         self,
         _mock_convert_fn,
@@ -115,7 +115,7 @@ class TestPostExpenseConcurrency:
                 )
 
         with (
-            patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate),
+            patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate),
             _count_race_recoveries() as race_counter,
         ):
             responses = asyncio.run(_run())
@@ -209,7 +209,7 @@ class TestPostExpenseConcurrency:
                 )
 
         with (
-            patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate),
+            patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate),
             _count_race_recoveries() as race_counter,
         ):
             responses = asyncio.run(_run())
@@ -283,8 +283,8 @@ class TestPostExpenseFailurePropagation:
             raise RuntimeError(msg)
 
         with (
-            patch("dinary.api.expenses.insert_expense", side_effect=boom),
-            patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate),
+            patch("dinary.api.controllers.expenses.insert_expense", side_effect=boom),
+            patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate),
         ):
             resp = client.post(
                 "/api/expenses",
@@ -301,7 +301,7 @@ class TestPostExpenseFailurePropagation:
         # No ledger row: a legitimate retry must be allowed to succeed.
         assert lookup_existing_expense("e_boom") is None
 
-    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
     def test_unexpected_constraint_exception_propagates(
         self,
         _mock_convert_fn,
@@ -317,7 +317,7 @@ class TestPostExpenseFailurePropagation:
             msg = "simulated constraint"
             raise sqlite3.IntegrityError(msg)
 
-        with patch("dinary.api.expenses.insert_expense", side_effect=bad_insert):
+        with patch("dinary.api.controllers.expenses.insert_expense", side_effect=bad_insert):
             resp = client.post(
                 "/api/expenses",
                 json={

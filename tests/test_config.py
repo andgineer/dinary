@@ -12,7 +12,7 @@ import allure
 import pytest
 
 from dinary import config
-from dinary.imports import expense_import
+from tasks.imports import expense_import
 
 
 @allure.epic("Config")

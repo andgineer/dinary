@@ -21,9 +21,10 @@ from unittest.mock import MagicMock, patch
 import allure
 
 from dinary.config import settings
-from dinary.services import storage, sheet_logging
-from dinary.services.logging_jobs import claim_logging_job, list_logging_jobs
-from dinary.services.expenses import ExpensePayload, insert_expense
+from dinary.db import storage
+from dinary.background.sheet_logging import sheet_logging
+from dinary.background.sheet_logging.logging_jobs import claim_logging_job, list_logging_jobs
+from dinary.db.expenses import ExpensePayload, insert_expense
 
 from _sheet_logging_helpers import (  # noqa: F401  (autouse + fixtures)
     _reset_backoff,
@@ -39,10 +40,12 @@ class TestIdempotencyMarker:
     present on the row), the drain must count it as ``ALREADY_LOGGED``
     and still clear the queue row."""
 
-    @patch("dinary.services.sheet_logging.get_sheet")
-    @patch("dinary.services.sheet_logging.get_rate", return_value="117.0")
-    @patch("dinary.services.sheet_logging.ensure_category_row")
-    @patch("dinary.services.sheet_logging.append_expense_atomic", return_value=False)
+    @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
+    @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
+    @patch("dinary.background.sheet_logging.sheet_logging.ensure_category_row")
+    @patch(
+        "dinary.background.sheet_logging.sheet_logging.append_expense_atomic", return_value=False
+    )
     def test_marker_present_returns_already_logged_and_clears_queue(
         self,
         _aea,
@@ -164,7 +167,7 @@ class TestDrainRateLimit:
         finally:
             con.close()
 
-    @patch("dinary.services.sheet_logging._drain_one_job")
+    @patch("dinary.background.sheet_logging.sheet_logging._drain_one_job")
     def test_cap_honored(self, mock_drain_one, setup, monkeypatch):
         """Hard cap stops the sweep after ``max_attempts``."""
         monkeypatch.setattr(settings, "sheet_logging_drain_max_attempts_per_iteration", 5)
@@ -179,7 +182,7 @@ class TestDrainRateLimit:
         assert summary["cap_reached"] is True
         assert summary["attempted"] == 5
 
-    @patch("dinary.services.sheet_logging._drain_one_job")
+    @patch("dinary.background.sheet_logging.sheet_logging._drain_one_job")
     def test_inter_row_sleep_observed(self, mock_drain_one, setup, monkeypatch):
         """Sleep is called between attempts (before each except the first)."""
         monkeypatch.setattr(settings, "sheet_logging_drain_max_attempts_per_iteration", 10)

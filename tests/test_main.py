@@ -8,7 +8,8 @@ import pytest
 
 from dinary.config import settings
 from dinary.main import _lifespan, create_app
-from dinary.services import storage, sheet_logging
+from dinary.db import storage
+from dinary.background.sheet_logging import sheet_logging
 from dinary import __version__
 
 
@@ -50,6 +51,7 @@ def test_version():
 def test_periodic_drain_runs(monkeypatch):
     """Drain runs immediately + on each tick when enabled."""
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0.05)
+    monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "fake-spreadsheet-id")
     app = create_app()
     mock_drain = Mock(
         return_value={
@@ -66,13 +68,7 @@ def test_periodic_drain_runs(monkeypatch):
     )
 
     async def _go():
-        with (
-            patch(
-                "dinary.background.sheet_logging_task.sheet_logging.is_sheet_logging_enabled",
-                return_value=True,
-            ),
-            patch("dinary.background.sheet_logging_task.sheet_logging.drain_pending", mock_drain),
-        ):
+        with patch("dinary.background.sheet_logging.task.sheet_logging.drain_pending", mock_drain):
             async with _lifespan(app):
                 await asyncio.sleep(0.2)
 
@@ -86,17 +82,12 @@ def test_periodic_drain_runs(monkeypatch):
 def test_disabled_by_interval(monkeypatch):
     """No-op when interval=0."""
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0)
+    monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "fake-spreadsheet-id")
     app = create_app()
     mock_drain = Mock()
 
     async def _go():
-        with (
-            patch(
-                "dinary.background.sheet_logging_task.sheet_logging.is_sheet_logging_enabled",
-                return_value=True,
-            ),
-            patch("dinary.background.sheet_logging_task.sheet_logging.drain_pending", mock_drain),
-        ):
+        with patch("dinary.background.sheet_logging.task.sheet_logging.drain_pending", mock_drain):
             async with _lifespan(app):
                 await asyncio.sleep(0.1)
 
@@ -110,17 +101,12 @@ def test_disabled_by_interval(monkeypatch):
 def test_disabled_by_sheet_logging(monkeypatch):
     """No-op when sheet logging is not enabled."""
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0.05)
+    monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "")
     app = create_app()
     mock_drain = Mock()
 
     async def _go():
-        with (
-            patch(
-                "dinary.background.sheet_logging_task.sheet_logging.is_sheet_logging_enabled",
-                return_value=False,
-            ),
-            patch("dinary.background.sheet_logging_task.sheet_logging.drain_pending", mock_drain),
-        ):
+        with patch("dinary.background.sheet_logging.task.sheet_logging.drain_pending", mock_drain):
             async with _lifespan(app):
                 await asyncio.sleep(0.15)
 
@@ -134,6 +120,7 @@ def test_disabled_by_sheet_logging(monkeypatch):
 def test_failing_sweep_does_not_kill_loop(monkeypatch):
     """Loop survives a failing sweep."""
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0.05)
+    monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "fake-spreadsheet-id")
     app = create_app()
     call_count = 0
 
@@ -155,15 +142,9 @@ def test_failing_sweep_does_not_kill_loop(monkeypatch):
         }
 
     async def _go():
-        with (
-            patch(
-                "dinary.background.sheet_logging_task.sheet_logging.is_sheet_logging_enabled",
-                return_value=True,
-            ),
-            patch(
-                "dinary.background.sheet_logging_task.sheet_logging.drain_pending",
-                side_effect=_side_effect,
-            ),
+        with patch(
+            "dinary.background.sheet_logging.task.sheet_logging.drain_pending",
+            side_effect=_side_effect,
         ):
             async with _lifespan(app):
                 await asyncio.sleep(0.25)
@@ -178,6 +159,7 @@ def test_failing_sweep_does_not_kill_loop(monkeypatch):
 def test_cancel_on_shutdown_is_clean(monkeypatch):
     """Task ends cleanly after lifespan exit, with no leaked warnings."""
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0.05)
+    monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "fake-spreadsheet-id")
     app = create_app()
     mock_drain = Mock(
         return_value={
@@ -196,13 +178,7 @@ def test_cancel_on_shutdown_is_clean(monkeypatch):
 
     async def _go():
         nonlocal task_ref
-        with (
-            patch(
-                "dinary.background.sheet_logging_task.sheet_logging.is_sheet_logging_enabled",
-                return_value=True,
-            ),
-            patch("dinary.background.sheet_logging_task.sheet_logging.drain_pending", mock_drain),
-        ):
+        with patch("dinary.background.sheet_logging.task.sheet_logging.drain_pending", mock_drain):
             async with _lifespan(app):
                 for t in asyncio.all_tasks():
                     if t.get_name() == "sheet-logging-task":
@@ -227,6 +203,7 @@ def test_notify_new_work_wakes_drain_immediately(monkeypatch):
     immediately when notified, not after the timer fires.
     """
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 1.0)
+    monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "fake-spreadsheet-id")
     app = create_app()
     call_count = 0
     done = asyncio.Event()
@@ -251,15 +228,9 @@ def test_notify_new_work_wakes_drain_immediately(monkeypatch):
         }
 
     async def _go():
-        with (
-            patch(
-                "dinary.background.sheet_logging_task.sheet_logging.is_sheet_logging_enabled",
-                return_value=True,
-            ),
-            patch(
-                "dinary.background.sheet_logging_task.sheet_logging.drain_pending",
-                side_effect=_side_effect,
-            ),
+        with patch(
+            "dinary.background.sheet_logging.task.sheet_logging.drain_pending",
+            side_effect=_side_effect,
         ):
             async with _lifespan(app):
                 # Give the startup sweep a moment to complete.

@@ -6,7 +6,7 @@ import allure
 import sqlite3
 import pytest
 
-from dinary.services.sql_loader import _cache, fetchall_as, fetchone_as, load_sql
+from dinary.db.sql_loader import _cache, fetchall_as, fetchone_as, load_sql
 
 ALL_SQL_FILES = [
     "get_existing_expense.sql",

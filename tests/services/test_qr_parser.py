@@ -4,13 +4,13 @@ from unittest.mock import MagicMock, patch
 import allure
 import pytest
 
-from dinary.services.qr_parser import parse_receipt_url
+from dinary.api.controllers.qr_parser import parse_receipt_url
 
 
 @allure.epic("Services")
 @allure.feature("QR Parser")
 class TestQrParser:
-    @patch("dinary.services.qr_parser.InvoiceParser")
+    @patch("dinary.api.controllers.qr_parser.InvoiceParser")
     def test_parse_receipt(self, mock_parser_cls):
         mock_parser = MagicMock()
         mock_parser.get_total_amount.return_value = 2500.00
@@ -21,7 +21,7 @@ class TestQrParser:
         assert result.amount == 2500.00
         assert result.date == date(2026, 4, 10)
 
-    @patch("dinary.services.qr_parser.InvoiceParser")
+    @patch("dinary.api.controllers.qr_parser.InvoiceParser")
     def test_parse_receipt_no_amount(self, mock_parser_cls):
         mock_parser = MagicMock()
         mock_parser.get_total_amount.return_value = None

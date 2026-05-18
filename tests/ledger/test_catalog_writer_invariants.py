@@ -23,17 +23,17 @@ from datetime import date
 import allure
 import pytest
 
-from dinary.services import storage
-from dinary.services.catalog import get_catalog_version
-from dinary.services.catalog_writer_errors import CatalogConflictError, CatalogWriteError
-from dinary.services.catalog_writer_categories import (
+from dinary.db import storage
+from dinary.db.catalog import get_catalog_version
+from dinary.api.controllers.catalog_writer_errors import CatalogConflictError, CatalogWriteError
+from dinary.api.controllers.catalog_writer_categories import (
     add_category,
     edit_category,
     set_category_active,
 )
-from dinary.services.catalog_writer_events import add_event
-from dinary.services.catalog_writer_groups import add_group
-from dinary.services.expenses import ExpensePayload, insert_expense
+from dinary.api.controllers.catalog_writer_events import add_event
+from dinary.api.controllers.catalog_writer_groups import add_group
+from dinary.db.expenses import ExpensePayload, insert_expense
 
 from _catalog_writer_helpers import _DT, _seed_minimal, fresh_db  # noqa: F401
 

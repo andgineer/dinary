@@ -61,7 +61,7 @@ full schema and workflow documentation.
 
 ## Layouts
 
-`IncomeLayout` dataclass in `src/dinary/imports/income_import.py` maps sheet columns:
+`IncomeLayout` dataclass in `tasks/imports/income_import.py` maps sheet columns:
 
 | Layout key | col_date | col_amount | currency | transition |
 |------------|----------|------------|----------|------------|

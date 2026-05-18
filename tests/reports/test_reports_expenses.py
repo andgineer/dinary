@@ -9,8 +9,8 @@ from decimal import Decimal
 import allure
 import pytest
 
-from dinary.reports import expenses as expenses_report
-from dinary.services import storage
+from tasks.reports import expenses as expenses_report
+from dinary.db import storage
 
 
 @pytest.fixture(autouse=True)

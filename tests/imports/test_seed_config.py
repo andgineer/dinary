@@ -17,14 +17,14 @@ import pytest
 
 from dinary import config
 from dinary.config import ImportSourceRow, settings
-from dinary.imports.seed import (
+from tasks.imports.seed import (
     Category,
     rebuild_config_from_sheets,
     seed_from_sheet,
 )
-from dinary.services import storage
-from dinary.services.expenses import ExpensePayload, insert_expense
-from dinary.services.seed_config import (
+from dinary.db import storage
+from dinary.db.expenses import ExpensePayload, insert_expense
+from tasks.imports.seed_config import (
     ENTRY_GROUPS,
     EXPLICIT_EVENTS,
     PHASE1_TAGS,
@@ -79,7 +79,7 @@ def _stub_settings(monkeypatch):
 
 def _patched_seed(year=2026):
     with patch(
-        "dinary.imports.seed._load_categories_for_sheet",
+        "tasks.imports.seed._load_categories_for_sheet",
         return_value=SAMPLE_CATEGORIES,
     ):
         return seed_from_sheet(year=year)
@@ -232,7 +232,7 @@ class TestRebuildConfigFromSheets:
         Multi-rebuild coverage lives in TestSeedFromSheet.
         """
         with patch(
-            "dinary.imports.seed._load_categories_for_sheet",
+            "tasks.imports.seed._load_categories_for_sheet",
             return_value=SAMPLE_CATEGORIES,
         ):
             first = rebuild_config_from_sheets()
@@ -247,7 +247,7 @@ class TestRebuildConfigFromSheets:
         redownload the full catalog on the next fetch for no reason.
         """
         with patch(
-            "dinary.imports.seed._load_categories_for_sheet",
+            "tasks.imports.seed._load_categories_for_sheet",
             return_value=SAMPLE_CATEGORIES,
         ):
             first = rebuild_config_from_sheets()
@@ -305,11 +305,11 @@ class TestRebuildConfigFromSheets:
         reduced_groups = [(title, [c for c in cats if c != "кафе"]) for title, cats in ENTRY_GROUPS]
         with (
             patch(
-                "dinary.imports.seed._load_categories_for_sheet",
+                "tasks.imports.seed._load_categories_for_sheet",
                 return_value=reduced_sheet,
             ),
             patch(
-                "dinary.services.seed_config.ENTRY_GROUPS",
+                "tasks.imports.seed_config.ENTRY_GROUPS",
                 reduced_groups,
             ),
         ):

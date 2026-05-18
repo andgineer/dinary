@@ -24,8 +24,8 @@ lifecycle, ``catalog_version``, ``list_categories``, sheet-mapping
 import allure
 import pytest
 
-from dinary.services import storage
-from dinary.services.catalog import logging_projection
+from dinary.db import storage
+from dinary.db.catalog import logging_projection
 
 from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
     data_dir,

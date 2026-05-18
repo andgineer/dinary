@@ -14,7 +14,7 @@ import pytest
 
 from dinary import config
 from dinary.config import ImportSourceRow
-from dinary.services import storage
+from dinary.db import storage
 
 
 @pytest.fixture(autouse=True)

@@ -9,6 +9,7 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
+from pydantic import computed_field
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -376,6 +377,12 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = "info"
     log_json: bool = False
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def sheet_logging_enabled(self) -> bool:
+        """True when sheet logging is configured (DINARY_SHEET_LOGGING_SPREADSHEET is set)."""
+        return bool(self.sheet_logging_spreadsheet)
 
 
 settings = Settings()

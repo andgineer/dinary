@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import allure
 
 from dinary.config import settings
-from dinary.services import sheet_mapping
+from dinary.sheets import sheet_mapping
 
 from _sheet_mapping_helpers import (  # noqa: F401  (autouse + helpers)
     _fake_sheet,

@@ -8,9 +8,9 @@ from pathlib import Path
 
 from invoke import task
 
-from .constants import _REMOTE_DB_PATH, DINARY_SERVICE
-from .env import bind_host, host, tunnel
-from .ssh_utils import (
+from tasks.devtools.constants import _REMOTE_DB_PATH, DINARY_SERVICE
+from tasks.devtools.env import bind_host, host, tunnel
+from tasks.ssh_utils import (
     build_data_dir_permissions_script,
     render_service,
     sqlite_backup_prologue,
@@ -202,7 +202,7 @@ def bootstrap_catalog(c, yes=False):
     ssh_run(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.services.seed_config import bootstrap_catalog; "
+        "from tasks.imports.seed_config import bootstrap_catalog; "
         "import json; print(json.dumps(bootstrap_catalog()))'",
     )
 
@@ -219,6 +219,6 @@ def import_config(c):
     ssh_run(
         c,
         "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
-        "from dinary.imports.seed import seed_from_sheet; "
+        "from tasks.imports.seed import seed_from_sheet; "
         "import json; print(json.dumps(seed_from_sheet()))'",
     )

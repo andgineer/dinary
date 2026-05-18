@@ -2,12 +2,12 @@
 
 from invoke import task
 
-from .constants import (
+from tasks.devtools.constants import (
     DINARY_SERVICE,
     REPO_URL,
 )
-from .env import bind_host, host, tunnel
-from .ssh_utils import (
+from tasks.devtools.env import bind_host, host, tunnel
+from tasks.ssh_utils import (
     build_data_dir_permissions_script,
     build_harden_sshd_script,
     build_install_fail2ban_script,

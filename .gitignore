@@ -8,7 +8,6 @@ dist/
 data/
 build/
 _static/
-backups/
 local/
 **/__pycache__
 **/.pytest_cache

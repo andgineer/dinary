@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import allure
 import pytest
 
-import tasks.restore_utils as ru
+import tasks.backups.restore_utils as ru
 
 
 _SAMPLE_CONFIG = """\

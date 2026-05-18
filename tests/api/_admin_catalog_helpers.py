@@ -14,7 +14,7 @@ import shutil
 
 import pytest
 
-from dinary.services import storage
+from dinary.db import storage
 
 
 @pytest.fixture(autouse=True)

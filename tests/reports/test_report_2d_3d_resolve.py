@@ -8,8 +8,8 @@ fix path. Aggregation, rendering and CLI dispatch live in sibling
 
 import allure
 
-from dinary.imports.expense_import import ResolutionContext, resolve_row_to_3d
-from dinary.services import storage
+from tasks.imports.expense_import import ResolutionContext, resolve_row_to_3d
+from dinary.db import storage
 
 from _report_2d_3d_helpers import (  # noqa: F401  (autouse + helper)
     _seed_catalog,

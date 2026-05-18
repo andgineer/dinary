@@ -8,8 +8,8 @@ from decimal import Decimal
 import allure
 import pytest
 
-from dinary.reports import income as income_report
-from dinary.services import storage
+from tasks.reports import income as income_report
+from dinary.db import storage
 
 
 @pytest.fixture(autouse=True)

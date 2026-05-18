@@ -31,7 +31,7 @@
   `POST /api/expenses` (`category_id`, optional `event_id`, `tag_ids[]`),
   caches the catalog by `catalog_version`, and supports inactive-row
   management plus inline add/edit flows for groups, categories, events,
-  and tags through `/api/admin/catalog/*`.
+  and tags through `/api/catalog/*`.
 - **Currency model:** the PWA owns its own currency picker state via
   `useCurrencyStore` (saved codes + last-used). It talks to
   `GET / POST / DELETE /api/currencies` and exposes a `CurrencyPicker`

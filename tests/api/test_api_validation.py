@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import allure
 
-from dinary.services import storage
-from dinary.services.expenses import lookup_existing_expense
+from dinary.db import storage
+from dinary.db.expenses import lookup_existing_expense
 
 from _api_helpers import _mock_get_rate, db  # noqa: F401  (autouse + helper)
 
@@ -98,7 +98,7 @@ class TestPostExpenseValidation:
 @allure.epic("API")
 @allure.feature("Expenses (3D) — reseed / inactive carve-outs")
 class TestPostExpenseInactiveCarveout:
-    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
     def test_reseed_deactivation_allows_idempotent_replay_but_rejects_new_posts(
         self,
         _mock_convert_fn,
@@ -170,7 +170,7 @@ class TestPostExpenseInactiveCarveout:
         )
         assert mismatch.status_code == 409
 
-    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
     def test_inactive_tag_replay_carveout(
         self,
         _mock_convert_fn,
@@ -216,7 +216,7 @@ class TestPostExpenseInactiveCarveout:
         assert replay.status_code == 200, replay.text
         assert replay.json()["status"] == "duplicate"
 
-    @patch("dinary.api.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
     def test_inactive_tag_replay_with_mismatched_body_returns_409(
         self,
         _mock_convert_fn,

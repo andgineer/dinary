@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 import allure
 import pytest
 
-from dinary.background.receipt_classification_task import _classify_and_persist
-from dinary.services import db_migrations, storage
-from dinary.services.llm_client import AllProvidersExhausted, ClassificationResult, ProviderPool
-from dinary.services.receipts import (
+from dinary.background.classification.task import _classify_and_persist
+from dinary.db import db_migrations, storage
+from dinary.adapters.llm_client import AllProvidersExhausted, ClassificationResult, ProviderPool
+from dinary.db.receipts import (
     ReceiptJobRow,
     claim_next_job,
     get_receipt_items,

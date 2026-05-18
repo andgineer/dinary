@@ -1,4 +1,4 @@
-"""POST /api/qr/parse endpoint."""
+"""QR parse API: POST /api/qr/parse"""
 
 import logging
 from datetime import date
@@ -6,7 +6,7 @@ from datetime import date
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, HttpUrl
 
-from dinary.services.qr_parser import parse_receipt_url
+from dinary.api.controllers.qr_parser import parse_receipt_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -28,5 +28,4 @@ def parse_qr(req: QrParseRequest) -> QrParseResponse:
     except Exception:
         logger.exception("QR parse failed for %s", req.url)
         raise HTTPException(status_code=502, detail="Could not parse receipt from URL") from None
-
     return QrParseResponse(amount=result.amount, date=result.date)

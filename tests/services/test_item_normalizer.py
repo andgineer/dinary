@@ -1,6 +1,6 @@
 import allure
 
-from dinary.services.item_normalizer import normalize_item_name
+from dinary.background.classification.item_normalizer import normalize_item_name
 
 
 @allure.epic("Services")

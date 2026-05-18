@@ -17,7 +17,7 @@ from unittest.mock import call
 
 import allure
 
-from dinary.services.nbs import _resolve_from_nbs
+from dinary.adapters.nbs import _resolve_from_nbs
 
 from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
     _CON,

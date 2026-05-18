@@ -17,7 +17,7 @@ from unittest.mock import patch
 import allure
 
 from dinary.config import settings
-from dinary.services import sheet_logging
+from dinary.background.sheet_logging import sheet_logging
 
 from _sheet_logging_helpers import (  # noqa: F401  (autouse + helper)
     _expense_row,
@@ -46,7 +46,7 @@ class TestDeriveRsdForSheet:
             amount_original=Decimal("1500.00"),
             currency_original="RSD",
         )
-        with patch("dinary.services.sheet_logging.get_rate") as mock_rate:
+        with patch("dinary.background.sheet_logging.sheet_logging.get_rate") as mock_rate:
             out = sheet_logging._derive_app_currency_amount_for_sheet(
                 con=None,
                 expense=row,
@@ -72,7 +72,7 @@ class TestDeriveRsdForSheet:
             amount_original=Decimal("12.00"),
             currency_original="USD",
         )
-        with patch("dinary.services.sheet_logging.get_rate") as mock_rate:
+        with patch("dinary.background.sheet_logging.sheet_logging.get_rate") as mock_rate:
             out = sheet_logging._derive_app_currency_amount_for_sheet(
                 con=None,
                 expense=row,
@@ -93,7 +93,7 @@ class TestDeriveRsdForSheet:
             currency_original="USD",
         )
         with patch(
-            "dinary.services.sheet_logging.get_rate",
+            "dinary.background.sheet_logging.sheet_logging.get_rate",
             side_effect=ValueError("no rate"),
         ):
             out = sheet_logging._derive_app_currency_amount_for_sheet(
@@ -115,7 +115,7 @@ class TestDeriveRsdForSheet:
             amount_original=Decimal("12.00"),
             currency_original="EUR",
         )
-        with patch("dinary.services.sheet_logging.get_rate") as mock_rate:
+        with patch("dinary.background.sheet_logging.sheet_logging.get_rate") as mock_rate:
             out = sheet_logging._derive_app_currency_amount_for_sheet(
                 con=None,
                 expense=row,
@@ -140,7 +140,7 @@ class TestDeriveRsdForSheet:
             currency_original="USD",
         )
         with patch(
-            "dinary.services.sheet_logging.get_rate",
+            "dinary.background.sheet_logging.sheet_logging.get_rate",
             return_value=Decimal("108.50"),
         ) as mock_rate:
             out = sheet_logging._derive_app_currency_amount_for_sheet(
@@ -171,7 +171,7 @@ class TestDeriveRsdForSheet:
             currency_original="USD",
         )
         with patch(
-            "dinary.services.sheet_logging.get_rate",
+            "dinary.background.sheet_logging.sheet_logging.get_rate",
             side_effect=ValueError("no rate"),
         ):
             out = sheet_logging._derive_app_currency_amount_for_sheet(

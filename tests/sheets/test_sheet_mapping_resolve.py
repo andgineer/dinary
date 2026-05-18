@@ -21,7 +21,8 @@ Parsing lives in :file:`test_sheet_mapping_parse.py`; the reload /
 
 import allure
 
-from dinary.services import storage, sheet_mapping
+from dinary.db import storage
+from dinary.sheets import sheet_mapping
 
 from _sheet_mapping_helpers import (  # noqa: F401  (autouse + helpers)
     _catalog,

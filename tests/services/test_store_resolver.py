@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 import allure
 import pytest
 
-from dinary.services import db_migrations, storage
-from dinary.services.llm_client import ProviderPool
-from dinary.services.store_resolver import resolve_store
+from dinary.db import db_migrations, storage
+from dinary.adapters.llm_client import ProviderPool
+from dinary.background.classification.store_resolver import resolve_store
 
 
 @pytest.fixture

@@ -21,8 +21,8 @@ import shutil
 import allure
 import pytest
 
-from dinary.api.catalog import _if_none_match_matches
-from dinary.services import storage
+from dinary.api.controllers.catalog import if_none_match_matches as _if_none_match_matches
+from dinary.db import storage
 
 
 @pytest.fixture(autouse=True)

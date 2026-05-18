@@ -9,8 +9,9 @@ from fastapi.testclient import TestClient
 
 from dinary.config import settings
 from dinary.main import create_app
-from dinary.services import db_migrations, rate_helpers, sheet_mapping
-from dinary.services import storage
+from dinary.db import db_migrations, storage
+from dinary.adapters import rate_helpers
+from dinary.sheets import sheet_mapping
 
 # Tests that need the built Vue PWA must depend on ``built_static_dir``;
 # the fixture FAILS LOUDLY when ``_static/`` is absent (instead of

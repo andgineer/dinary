@@ -49,7 +49,7 @@ Tested the most challenging receipt (19 items: dairy × 10, KG produce, KG deli 
 
 `suf.purs.gov.rs` consumer portal exposes a structured item endpoint used by their own website. It is not in the official TaxCore documentation (which covers the B2B POS API requiring certificate auth), but it is the canonical structured source used by the tax authority's own UI.
 
-**Flow** (`src/dinary/services/receipt_parser.py`):
+**Flow** (`src/dinary/adapters/serbian_receipt_parser.py`):
 1. `GET ?vl=... Accept: application/json` → store metadata (businessName, taxId, totalAmount, invoiceNumber)
 2. `GET ?vl=...` HTML → extract session token from embedded JS (`viewModel.Token(...)`)
 3. `POST /specifications {invoiceNumber, token}` → JSON array of items with decimal quantities
@@ -59,9 +59,9 @@ Tested the most challenging receipt (19 items: dairy × 10, KG produce, KG deli 
 **Total validation**: `items_total = sum(item.total)` must match `totalAmount` within 0.02 RSD. Mismatch logged as warning; classification proceeds.
 
 ### `inv classify-receipt` — completed (experiment baseline)
-- [x] `src/dinary/services/item_normalizer.py` — `normalize_item_name()`
-- [x] `src/dinary/services/receipt_parser.py` — `parse_receipt()` via `/specifications`
-- [x] `src/dinary/services/llm_client.py` — `LLMClient` protocol + `OpenAICompatibleClient`
+- [x] `src/dinary/background/classification/item_normalizer.py` — `normalize_item_name()`
+- [x] `src/dinary/adapters/serbian_receipt_parser.py` — `parse_receipt()` via `/specifications`
+- [x] `src/dinary/adapters/llm_client.py` — `LLMClient` protocol + `OpenAICompatibleClient`
 - [x] `tasks/receipt.py` — `inv classify-receipt --url ...`
 - [x] Full test suite (65 tests, all passing)
 
@@ -99,27 +99,27 @@ Tested the most challenging receipt (19 items: dairy × 10, KG produce, KG deli 
 All four levels implemented as specified. Penalties (journal fallback: −1, failover: −1, floor=1) applied in `receipt_classification_task.py`. Expense `confidence_level = MIN(item confidence)`.
 
 ### 4. Item Name Normalisation — ✅ Done
-- `src/dinary/services/item_normalizer.py` — `normalize_item_name()`
+- `src/dinary/background/classification/item_normalizer.py` — `normalize_item_name()`
 - Strips trailing weight/volume/pack tokens, barcode suffixes, VAT codes; lowercases; collapses whitespace
 
 ### 4. Classification Rules Engine — ✅ Done
-- `src/dinary/services/classification_rules.py`
+- `src/dinary/taxonomy/classification_rules.py`
 - `RuleSpec(category_id, confidence_level, source)` dataclass
 - `classify_by_rules(conn, store_id, item_name_normalized)` → chain-specific beats generic
 - `create_or_update_rule(conn, store_id, item_name_normalized, spec: RuleSpec)` — upsert; user_correction always sets conf=4
 - Tests: `tests/services/test_classification_rules.py`
 
 ### 5. LLM Provider Abstraction — ✅ Done
-- `src/dinary/services/llm_client.py`
+- `src/dinary/adapters/llm_client.py`
 - `LLMClient` protocol, `OpenAICompatibleClient`, `ProviderPool`, `AllProvidersExhausted`, `ReceiptContext`
 - Round-robin failover on 429/503; `rate_limited_until` tracked per provider
 - `app_metadata` keys written: `llm_provider_switch_last`, `llm_provider_switch_count`, `llm_all_exhausted_last`; both switch keys cleared on primary-provider success
 - `llm_call_log` written on every call (provider_id, receipt_id, status, latency_ms)
-- Env bootstrap: `src/dinary/services/llm_bootstrap.py` — `seed_llm_provider_if_empty()` called from `init_db()` if `DINARY_LLM_BASE_URL` + `DINARY_LLM_API_KEY` set and table is empty
+- Env bootstrap: `src/dinary/adapters/llm_bootstrap.py` — `seed_llm_provider_if_empty()` called from `init_db()` if `DINARY_LLM_BASE_URL` + `DINARY_LLM_API_KEY` set and table is empty
 - Tests: `tests/services/test_llm_client.py`
 
 ### 6. Store Resolution — ✅ Done
-- `src/dinary/services/store_resolver.py` — `async resolve_store(conn, pool, store_pib, store_name_raw) → int | None`
+- `src/dinary/background/classification/store_resolver.py` — `async resolve_store(conn, pool, store_pib, store_name_raw) → int | None`
 - PIB cache → LLM chain-name call → chain lookup (UPDATE pib if match) → INSERT new store
 
 ### 7. Classification Drain — ✅ Done
@@ -131,13 +131,13 @@ All four levels implemented as specified. Penalties (journal fallback: −1, fai
 - Tests: `tests/tasks/test_receipt_drain.py`, `tests/services/test_receipt_classification.py`, `tests/api/test_receipt_pipeline_e2e.py`
 
 ### 8. LLM Admin API — ✅ Done
-- `src/dinary/api/admin_llm.py`
-- `GET /api/admin/llm-providers` — list all
-- `POST /api/admin/llm-providers` — add provider
-- `PATCH /api/admin/llm-providers/{id}` — update label / model / api_key / priority / is_enabled
-- `DELETE /api/admin/llm-providers/{id}` — refuse if only enabled provider
-- `POST /api/admin/llm-providers/{id}/test` — test classification call
-- `GET /api/admin/llm-status` — usage stats + `rate_limited_until`
+- `src/dinary/api/llm.py + src/dinary/api/controllers/llm.py`
+- `GET /api/llm/providers` — list all
+- `POST /api/llm/providers` — add provider
+- `PATCH /api/llm/providers/{id}` — update label / model / api_key / priority / is_enabled
+- `DELETE /api/llm/providers/{id}` — refuse if only enabled provider
+- `POST /api/llm/providers/{id}/test` — test classification call
+- `GET /api/llm/status` — usage stats + `rate_limited_until`
 - Tests: `tests/api/test_admin_llm.py`
 
 ### 9. User Correction API — ✅ Done
@@ -152,12 +152,12 @@ All four levels implemented as specified. Penalties (journal fallback: −1, fai
 - Tests: `tests/api/test_receipt_pipeline_e2e.py`
 
 ### 10. Review API — ✅ Done
-- `src/dinary/api/receipt_review.py`
-- `GET /api/receipts/review/feed?page=N&page_size=20` — two-block paginated feed:
+- `src/dinary/api/rules.py + src/dinary/api/controllers/rules.py`
+- `GET /api/rules/feed?page=N&page_size=20` — two-block paginated feed:
   - Block 1 (doubtful, conf < 4): deduplicated by `(store_id, item_name_normalized)`, sorted by `SUM(total_price) DESC`
   - Block 2 (certain, conf = 4): all receipt expenses, sorted by receipt datetime DESC
   - Response: `{doubtful_count, items: [...], has_more}` with `is_doubtful: bool` per item
-- `GET /api/receipts/review/counts` — `{doubtful_rules: int}` for PWA badge
+- `GET /api/rules/counts` — `{doubtful_rules: int}` for PWA badge
 - Tests: `tests/api/test_receipt_review.py`
 
 ### 11. PWA Changes — ⚠️ Partial
@@ -169,7 +169,7 @@ All four levels implemented as specified. Penalties (journal fallback: −1, fai
   - Infinite-scroll feed component (doubtful items highlighted, visual separator, badge on nav)
   - Correction UX: tap item → category picker → `PATCH /api/expenses/{id}/category` → refresh + badge decrement
   - Vitest tests for review/correction components
-- [ ] **LLM status screen** — not yet built. Backend API (`/api/admin/llm-status`, full CRUD) is done. Frontend: provider list, usage bars, add/edit/test, enable/disable.
+- [ ] **LLM status screen** — not yet built. Backend API (`/api/llm/status`, full CRUD) is done. Frontend: provider list, usage bars, add/edit/test, enable/disable.
 
 ### 12. `inv reclassify-receipts` — ✅ Done
 - `tasks/receipt.py` — `reclassify_receipts(c, receipt_id=None, from_date=None, clear_rules=False, yes=False)`

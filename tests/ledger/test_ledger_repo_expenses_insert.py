@@ -12,9 +12,9 @@ from datetime import datetime
 import allure
 import pytest
 
-from dinary.services import storage
-from dinary.services.expenses import ExpensePayload, insert_expense
-from dinary.services.logging_jobs import list_logging_jobs
+from dinary.db import storage
+from dinary.db.expenses import ExpensePayload, insert_expense
+from dinary.background.sheet_logging.logging_jobs import list_logging_jobs
 
 from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
     data_dir,

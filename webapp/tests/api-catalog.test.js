@@ -18,6 +18,15 @@ import {
 
 let originalFetch;
 
+function okResponse(body = {}) {
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => body,
+  };
+}
+
 beforeEach(() => {
   originalFetch = globalThis.fetch;
 });
@@ -92,16 +101,14 @@ describe("fetchCatalog", () => {
 
 describe("admin POST helpers", () => {
   it("adminAddGroup posts name and sort_order with null defaults", async () => {
-    globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ new_id: 1, status: "added", catalog_version: 2 }),
-    }));
+    globalThis.fetch = vi.fn(async () =>
+      okResponse({ new_id: 1, status: "added", catalog_version: 2 }),
+    );
 
     await adminAddGroup({ name: "food" });
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/admin/catalog/groups",
+      "/api/catalog/groups",
       expect.objectContaining({ method: "POST" }),
     );
     expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({
@@ -111,11 +118,7 @@ describe("admin POST helpers", () => {
   });
 
   it("adminAddCategory normalises optional fields", async () => {
-    globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({}),
-    }));
+    globalThis.fetch = vi.fn(async () => okResponse());
     await adminAddCategory({ name: "cafe", group_id: 3 });
     expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({
       name: "cafe",
@@ -126,11 +129,7 @@ describe("admin POST helpers", () => {
   });
 
   it("adminAddEvent defaults auto_attach_enabled to false and auto_tags to null", async () => {
-    globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({}),
-    }));
+    globalThis.fetch = vi.fn(async () => okResponse());
     await adminAddEvent({
       name: "trip",
       date_from: "2026-05-01",
@@ -146,11 +145,7 @@ describe("admin POST helpers", () => {
   });
 
   it("adminAddTag posts only the name", async () => {
-    globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({}),
-    }));
+    globalThis.fetch = vi.fn(async () => okResponse());
     await adminAddTag({ name: "vacation" });
     expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({
       name: "vacation",
@@ -160,24 +155,16 @@ describe("admin POST helpers", () => {
 
 describe("admin PATCH / DELETE helpers", () => {
   it("adminPatchGroup PATCHes the right path with the body", async () => {
-    globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({}),
-    }));
+    globalThis.fetch = vi.fn(async () => okResponse());
     await adminPatchGroup(7, { name: "renamed" });
     const [url, init] = globalThis.fetch.mock.calls[0];
-    expect(url).toBe("/api/admin/catalog/groups/7");
+    expect(url).toBe("/api/catalog/groups/7");
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(init.body)).toEqual({ name: "renamed" });
   });
 
   it("reactivate / deactivate helpers flip is_active flag", async () => {
-    globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({}),
-    }));
+    globalThis.fetch = vi.fn(async () => okResponse());
     await adminReactivateGroup(1);
     expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({
       is_active: true,
@@ -190,11 +177,7 @@ describe("admin PATCH / DELETE helpers", () => {
   });
 
   it("adminDeleteGroup uses DELETE method", async () => {
-    globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({}),
-    }));
+    globalThis.fetch = vi.fn(async () => okResponse());
     await adminDeleteGroup(9);
     expect(globalThis.fetch.mock.calls[0][1].method).toBe("DELETE");
   });
@@ -212,19 +195,15 @@ describe("admin PATCH / DELETE helpers", () => {
   });
 
   it("category/event/tag PATCH+DELETE share the same shape", async () => {
-    globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({}),
-    }));
+    globalThis.fetch = vi.fn(async () => okResponse());
     await adminPatchCategory(11, { name: "x" });
     await adminPatchEvent(22, { date_to: "2026-05-12" });
     await adminPatchTag(33, { name: "y" });
     const urls = globalThis.fetch.mock.calls.map((c) => c[0]);
     expect(urls).toEqual([
-      "/api/admin/catalog/categories/11",
-      "/api/admin/catalog/events/22",
-      "/api/admin/catalog/tags/33",
+      "/api/catalog/categories/11",
+      "/api/catalog/events/22",
+      "/api/catalog/tags/33",
     ]);
   });
 });

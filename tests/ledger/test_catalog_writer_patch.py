@@ -15,12 +15,12 @@ from datetime import date
 import allure
 import pytest
 
-from dinary.services import storage
-from dinary.services.catalog import get_catalog_version
-from dinary.services.catalog_writer_errors import CatalogConflictError, CatalogWriteError
-from dinary.services.catalog_writer_categories import edit_category
-from dinary.services.catalog_writer_events import edit_event, set_tag_active
-from dinary.services.expenses import ExpensePayload, insert_expense
+from dinary.db import storage
+from dinary.db.catalog import get_catalog_version
+from dinary.api.controllers.catalog_writer_errors import CatalogConflictError, CatalogWriteError
+from dinary.api.controllers.catalog_writer_categories import edit_category
+from dinary.api.controllers.catalog_writer_events import edit_event, set_tag_active
+from dinary.db.expenses import ExpensePayload, insert_expense
 
 from _catalog_writer_helpers import _DT, _seed_minimal, fresh_db  # noqa: F401
 

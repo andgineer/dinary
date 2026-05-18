@@ -17,7 +17,7 @@ import allure
 import pytest
 
 from dinary.config import settings
-from dinary.services import storage
+from dinary.db import storage
 
 
 @pytest.fixture(autouse=True)

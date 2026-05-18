@@ -3,8 +3,8 @@ import shutil
 import allure
 import pytest
 
-from dinary.services.classification_rules import RuleSpec, classify_by_rules, create_or_update_rule
-from dinary.services import db_migrations, storage
+from dinary.db.classification_rules import RuleSpec, classify_by_rules, create_or_update_rule
+from dinary.db import db_migrations, storage
 
 
 @pytest.fixture

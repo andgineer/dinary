@@ -2,7 +2,7 @@
 
 import allure
 
-from dinary.services import storage
+from dinary.db import storage
 
 from _api_helpers import db  # noqa: F401 (autouse fixture)
 

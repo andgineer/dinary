@@ -14,8 +14,8 @@ import allure
 import pytest
 
 import tasks
-import tasks.backups_status
-from dinary.tools.backup_snapshots import (
+import tasks.backups.backups_status
+from tasks.backups.backup_snapshots import (
     BACKUP_RCLONE_PATH,
     BACKUP_RCLONE_REMOTE,
     check_backup_freshness,
@@ -179,7 +179,7 @@ class TestBackupStatusTask:
             def now(cls, tz=None):
                 return frozen
 
-        monkeypatch.setattr(tasks.backups_status, "datetime", _FrozenDateTime)
+        monkeypatch.setattr(tasks.backups.backups_status, "datetime", _FrozenDateTime)
 
     def test_ok_prints_summary_and_does_not_exit(self, monkeypatch, capsys, _mock_now):
         """Happy path: fresh snapshot → one-line summary on stdout,
@@ -188,7 +188,7 @@ class TestBackupStatusTask:
         would false-alert the operator every hour.
         """
         monkeypatch.setattr(
-            tasks.backups_status,
+            tasks.backups.backups_status,
             "replica_list_snapshots",
             lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
         )
@@ -203,7 +203,7 @@ class TestBackupStatusTask:
         ``send_fail_email``.
         """
         monkeypatch.setattr(
-            tasks.backups_status,
+            tasks.backups.backups_status,
             "replica_list_snapshots",
             lambda: [("dinary-2026-04-20T0317Z.db.zst", 200)],
         )
@@ -216,7 +216,7 @@ class TestBackupStatusTask:
         always-empty backup bucket is the worst-case silent failure
         we're protecting against.
         """
-        monkeypatch.setattr(tasks.backups_status, "replica_list_snapshots", lambda: [])
+        monkeypatch.setattr(tasks.backups.backups_status, "replica_list_snapshots", lambda: [])
         with pytest.raises(SystemExit) as exc:
             tasks.backup_status.body(MagicMock())
         assert exc.value.code == 1
@@ -227,7 +227,7 @@ class TestBackupStatusTask:
         without scraping the human line.
         """
         monkeypatch.setattr(
-            tasks.backups_status,
+            tasks.backups.backups_status,
             "replica_list_snapshots",
             lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
         )
@@ -245,7 +245,7 @@ class TestBackupStatusTask:
         7h-old backup with a 3h threshold must flip to ``stale``.
         """
         monkeypatch.setattr(
-            tasks.backups_status,
+            tasks.backups.backups_status,
             "replica_list_snapshots",
             lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
         )

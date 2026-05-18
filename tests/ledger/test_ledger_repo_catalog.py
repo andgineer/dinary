@@ -12,8 +12,8 @@ sibling module :file:`test_ledger_repo_logging_projection.py`.
 import allure
 import pytest
 
-from dinary.services import storage
-from dinary.services.catalog import (
+from dinary.db import storage
+from dinary.db.catalog import (
     get_catalog_version,
     get_category_name,
     get_mapping_tag_ids,

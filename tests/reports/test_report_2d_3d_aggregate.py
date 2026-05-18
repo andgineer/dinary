@@ -10,15 +10,15 @@ import shutil
 
 import allure
 
-from dinary.imports import report_2d_3d as report_module
-from dinary.imports.expense_import import ParsedSheetRow
-from dinary.imports.report_2d_3d import (
+from tasks.imports import report_2d_3d as report_module
+from tasks.imports.expense_import import ParsedSheetRow
+from tasks.imports.report_2d_3d import (
     CollectStats,
     DetailRow,
     build_summary,
     collect_detail_rows,
 )
-from dinary.services import storage
+from dinary.db import storage
 
 from _report_2d_3d_helpers import (  # noqa: F401  (autouse + helper)
     _seed_catalog,

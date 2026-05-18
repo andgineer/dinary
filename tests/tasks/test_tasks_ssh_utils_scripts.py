@@ -13,8 +13,8 @@ Sibling :file:`test_tasks_ssh_utils.py` covers the smaller helpers
 import allure
 import pytest
 
-import tasks.constants
-import tasks.env
+import tasks.devtools.constants
+import tasks.devtools.env
 import tasks.ssh_utils
 
 
@@ -37,8 +37,10 @@ class TestLitestreamInstallScript:
 
     def test_default_version_matches_pinned_constant(self):
         script = tasks.ssh_utils.litestream_install_script()
-        assert f"litestream-{tasks.constants.LITESTREAM_VERSION}-linux-x86_64.deb" in script
-        assert f"litestream-{tasks.constants.LITESTREAM_VERSION}-linux-arm64.deb" in script
+        assert (
+            f"litestream-{tasks.devtools.constants.LITESTREAM_VERSION}-linux-x86_64.deb" in script
+        )
+        assert f"litestream-{tasks.devtools.constants.LITESTREAM_VERSION}-linux-arm64.deb" in script
 
     def test_x86_64_and_amd64_both_map_to_x86_64_asset(self):
         """``uname -m`` historically varies: Linux kernels on Intel
@@ -48,7 +50,7 @@ class TestLitestreamInstallScript:
         """
         script = tasks.ssh_utils.litestream_install_script()
         assert (
-            f"x86_64|amd64) ASSET=litestream-{tasks.constants.LITESTREAM_VERSION}-linux-x86_64.deb"
+            f"x86_64|amd64) ASSET=litestream-{tasks.devtools.constants.LITESTREAM_VERSION}-linux-x86_64.deb"
             in script
         )
 
@@ -59,7 +61,7 @@ class TestLitestreamInstallScript:
         """
         script = tasks.ssh_utils.litestream_install_script()
         assert (
-            f"aarch64|arm64) ASSET=litestream-{tasks.constants.LITESTREAM_VERSION}-linux-arm64.deb"
+            f"aarch64|arm64) ASSET=litestream-{tasks.devtools.constants.LITESTREAM_VERSION}-linux-arm64.deb"
             in script
         )
 
@@ -70,7 +72,8 @@ class TestLitestreamInstallScript:
         """
         script = tasks.ssh_utils.litestream_install_script()
         assert (
-            f"Unsupported arch $ARCH for litestream {tasks.constants.LITESTREAM_VERSION}" in script
+            f"Unsupported arch $ARCH for litestream {tasks.devtools.constants.LITESTREAM_VERSION}"
+            in script
         )
         assert "*) echo" in script
         assert "exit 1" in script
@@ -83,7 +86,7 @@ class TestLitestreamInstallScript:
         script = tasks.ssh_utils.litestream_install_script()
         assert (
             "https://github.com/benbjohnson/litestream/releases/download/"
-            f"v{tasks.constants.LITESTREAM_VERSION}/$ASSET" in script
+            f"v{tasks.devtools.constants.LITESTREAM_VERSION}/$ASSET" in script
         )
 
     def test_script_is_idempotent_when_litestream_already_installed(self):
@@ -107,7 +110,7 @@ class TestLitestreamInstallScript:
         assert "/releases/download/v0.6.0/$ASSET" in script
         # Sanity: the pinned-default version is NOT leaking into a
         # caller-overridden script.
-        assert f"litestream-{tasks.constants.LITESTREAM_VERSION}" not in script
+        assert f"litestream-{tasks.devtools.constants.LITESTREAM_VERSION}" not in script
 
 
 @allure.epic("Deploy")
@@ -607,13 +610,13 @@ class TestDinaryServiceBindHost:
     """
 
     def test_tailscale_binds_to_loopback(self):
-        assert tasks.env.bind_host("tailscale") == "127.0.0.1"
+        assert tasks.devtools.env.bind_host("tailscale") == "127.0.0.1"
 
     def test_cloudflare_binds_to_loopback(self):
-        assert tasks.env.bind_host("cloudflare") == "127.0.0.1"
+        assert tasks.devtools.env.bind_host("cloudflare") == "127.0.0.1"
 
     def test_none_binds_to_all_interfaces(self):
-        assert tasks.env.bind_host("none") == "0.0.0.0"
+        assert tasks.devtools.env.bind_host("none") == "0.0.0.0"
 
     def test_tailscale_service_unit_uses_loopback_not_tailscale_ip(self):
         """The rendered unit must NOT contain ``tailscale ip`` in ExecStart.
@@ -622,7 +625,9 @@ class TestDinaryServiceBindHost:
         HTTPS breaks silently — the service starts fine but the tunnel
         proxy gets connection-refused.
         """
-        unit = tasks.constants.DINARY_SERVICE.format(host=tasks.env.bind_host("tailscale"))
+        unit = tasks.devtools.constants.DINARY_SERVICE.format(
+            host=tasks.devtools.env.bind_host("tailscale")
+        )
         exec_start = next(l for l in unit.splitlines() if l.startswith("ExecStart="))
         assert "--host 127.0.0.1" in exec_start
         assert "tailscale ip" not in exec_start
@@ -634,11 +639,15 @@ class TestDinaryServiceBindHost:
         starts — without it the HTTPS proxy accepts connections but the
         backend isn't ready.
         """
-        unit = tasks.constants.DINARY_SERVICE.format(host=tasks.env.bind_host("tailscale"))
+        unit = tasks.devtools.constants.DINARY_SERVICE.format(
+            host=tasks.devtools.env.bind_host("tailscale")
+        )
         assert "ExecStartPre=" in unit
         assert "tailscale ip -4" in unit
 
     def test_none_service_unit_binds_to_all_interfaces(self):
-        unit = tasks.constants.DINARY_SERVICE.format(host=tasks.env.bind_host("none"))
+        unit = tasks.devtools.constants.DINARY_SERVICE.format(
+            host=tasks.devtools.env.bind_host("none")
+        )
         exec_start = next(l for l in unit.splitlines() if l.startswith("ExecStart="))
         assert "--host 0.0.0.0" in exec_start

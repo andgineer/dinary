@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import allure
 from gspread.utils import ValueRenderOption
 
-from dinary.services.sheets import (
+from dinary.sheets.sheets import (
     _is_numeric,
     _year_from_a_value,
     fetch_row_years,

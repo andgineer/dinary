@@ -6,7 +6,7 @@ import json
 import allure
 import pytest
 
-from dinary.reports import verify_income
+from tasks.reports import verify_income
 
 
 def _passing_result(year: int = 2024, *, total: float = 1200.0) -> dict:

@@ -11,8 +11,8 @@ import allure
 import pytest
 
 from dinary.config import settings
-from dinary.services import db_migrations, storage
-from dinary.services.catalog import get_catalog_version
+from dinary.db import db_migrations, storage
+from dinary.db.catalog import get_catalog_version
 
 
 @pytest.fixture

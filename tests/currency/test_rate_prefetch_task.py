@@ -1,4 +1,4 @@
-"""Tests for dinary.background.rate_prefetch_task."""
+"""Tests for dinary.background.rate_prefetch.task."""
 
 import asyncio
 from datetime import date, datetime, timedelta
@@ -9,7 +9,7 @@ import allure
 import pytest
 
 from dinary.config import settings
-from dinary.background.rate_prefetch_task import (
+from dinary.background.rate_prefetch.task import (
     _BELGRADE,
     _RETRY_INTERVAL_SEC,
     _seconds_until_prefetch_hour,
@@ -36,20 +36,20 @@ class TestSecondsUntilPrefetchHour:
     """Calculates sleep duration until next prefetch window."""
 
     def test_before_prefetch_hour_returns_hours_until(self):
-        with patch("dinary.background.rate_prefetch_task.datetime") as mock_dt:
+        with patch("dinary.background.rate_prefetch.task.datetime") as mock_dt:
             mock_dt.now.return_value = _belgrade_dt(6)
             secs = _seconds_until_prefetch_hour()
             assert 7100 < secs < 7300  # ~2 hours
 
     def test_after_prefetch_hour_returns_until_tomorrow(self):
-        with patch("dinary.background.rate_prefetch_task.datetime") as mock_dt:
+        with patch("dinary.background.rate_prefetch.task.datetime") as mock_dt:
             mock_dt.now.return_value = _belgrade_dt(10)
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             secs = _seconds_until_prefetch_hour()
             assert 78000 < secs < 80000  # ~22 hours
 
     def test_never_less_than_retry_interval(self):
-        with patch("dinary.background.rate_prefetch_task.datetime") as mock_dt:
+        with patch("dinary.background.rate_prefetch.task.datetime") as mock_dt:
             # Just before 08:00 — raw delta is tiny but floor is _RETRY_INTERVAL_SEC
             mock_dt.now.return_value = _belgrade_dt(8).replace(second=0) - timedelta(seconds=10)
             secs = _seconds_until_prefetch_hour()
@@ -67,20 +67,20 @@ class TestBeforePublicationHour:
 
         with (
             patch(
-                "dinary.background.rate_prefetch_task.datetime",
+                "dinary.background.rate_prefetch.task.datetime",
             ) as mock_dt,
             patch(
-                "dinary.background.rate_prefetch_task.storage",
+                "dinary.background.rate_prefetch.task.storage",
             ) as mock_repo,
             patch(
-                "dinary.background.rate_prefetch_task.get_rate",
+                "dinary.background.rate_prefetch.task.get_rate",
             ) as mock_get_rate,
             patch(
-                "dinary.background.rate_prefetch_task._seconds_until_prefetch_hour",
+                "dinary.background.rate_prefetch.task._seconds_until_prefetch_hour",
                 return_value=7200,
             ),
             patch(
-                "dinary.background.rate_prefetch_task.asyncio.sleep",
+                "dinary.background.rate_prefetch.task.asyncio.sleep",
                 new_callable=AsyncMock,
                 side_effect=[None, asyncio.CancelledError],
             ) as mock_sleep,
@@ -108,26 +108,26 @@ class TestWorkingDayFetch:
 
         with (
             patch(
-                "dinary.background.rate_prefetch_task.datetime",
+                "dinary.background.rate_prefetch.task.datetime",
             ) as mock_dt,
             patch(
-                "dinary.background.rate_prefetch_task.storage",
+                "dinary.background.rate_prefetch.task.storage",
             ) as mock_repo,
             patch(
-                "dinary.background.rate_prefetch_task._get_db_rate",
+                "dinary.background.rate_prefetch.task._get_db_rate",
                 # first call: no existing rate; second call: verify write succeeded
                 side_effect=[None, _RATE],
             ),
             patch(
-                "dinary.background.rate_prefetch_task.get_rate",
+                "dinary.background.rate_prefetch.task.get_rate",
                 return_value=_RATE,
             ) as mock_get_rate,
             patch(
-                "dinary.background.rate_prefetch_task._seconds_until_prefetch_hour",
+                "dinary.background.rate_prefetch.task._seconds_until_prefetch_hour",
                 return_value=80000,
             ),
             patch(
-                "dinary.background.rate_prefetch_task.asyncio.sleep",
+                "dinary.background.rate_prefetch.task.asyncio.sleep",
                 new_callable=AsyncMock,
                 side_effect=asyncio.CancelledError,
             ),
@@ -161,25 +161,25 @@ class TestWeekendFetch:
 
         with (
             patch(
-                "dinary.background.rate_prefetch_task.datetime",
+                "dinary.background.rate_prefetch.task.datetime",
             ) as mock_dt,
             patch(
-                "dinary.background.rate_prefetch_task.storage",
+                "dinary.background.rate_prefetch.task.storage",
             ) as mock_repo,
             patch(
-                "dinary.background.rate_prefetch_task._get_db_rate",
+                "dinary.background.rate_prefetch.task._get_db_rate",
                 side_effect=[None, _RATE],
             ),
             patch(
-                "dinary.background.rate_prefetch_task.get_rate",
+                "dinary.background.rate_prefetch.task.get_rate",
                 return_value=_RATE,
             ) as mock_get_rate,
             patch(
-                "dinary.background.rate_prefetch_task._seconds_until_prefetch_hour",
+                "dinary.background.rate_prefetch.task._seconds_until_prefetch_hour",
                 return_value=80000,
             ),
             patch(
-                "dinary.background.rate_prefetch_task.asyncio.sleep",
+                "dinary.background.rate_prefetch.task.asyncio.sleep",
                 new_callable=AsyncMock,
                 side_effect=asyncio.CancelledError,
             ),
@@ -211,24 +211,24 @@ class TestAlreadyCached:
 
         with (
             patch(
-                "dinary.background.rate_prefetch_task.datetime",
+                "dinary.background.rate_prefetch.task.datetime",
             ) as mock_dt,
             patch(
-                "dinary.background.rate_prefetch_task.storage",
+                "dinary.background.rate_prefetch.task.storage",
             ) as mock_repo,
             patch(
-                "dinary.background.rate_prefetch_task._get_db_rate",
+                "dinary.background.rate_prefetch.task._get_db_rate",
                 return_value=_RATE,
             ),
             patch(
-                "dinary.background.rate_prefetch_task.get_rate",
+                "dinary.background.rate_prefetch.task.get_rate",
             ) as mock_get_rate,
             patch(
-                "dinary.background.rate_prefetch_task._seconds_until_prefetch_hour",
+                "dinary.background.rate_prefetch.task._seconds_until_prefetch_hour",
                 return_value=80000,
             ),
             patch(
-                "dinary.background.rate_prefetch_task.asyncio.sleep",
+                "dinary.background.rate_prefetch.task.asyncio.sleep",
                 new_callable=AsyncMock,
                 side_effect=asyncio.CancelledError,
             ) as mock_sleep,
@@ -256,21 +256,21 @@ class TestFetchError:
 
         with (
             patch(
-                "dinary.background.rate_prefetch_task.datetime",
+                "dinary.background.rate_prefetch.task.datetime",
             ) as mock_dt,
             patch(
-                "dinary.background.rate_prefetch_task.storage",
+                "dinary.background.rate_prefetch.task.storage",
             ) as mock_repo,
             patch(
-                "dinary.background.rate_prefetch_task._get_db_rate",
+                "dinary.background.rate_prefetch.task._get_db_rate",
                 return_value=None,
             ),
             patch(
-                "dinary.background.rate_prefetch_task.get_rate",
+                "dinary.background.rate_prefetch.task.get_rate",
                 side_effect=ValueError("no rate"),
             ),
             patch(
-                "dinary.background.rate_prefetch_task.asyncio.sleep",
+                "dinary.background.rate_prefetch.task.asyncio.sleep",
                 new_callable=AsyncMock,
                 side_effect=asyncio.CancelledError,
             ) as mock_sleep,
@@ -304,22 +304,22 @@ class TestStaleFallback:
 
         with (
             patch(
-                "dinary.background.rate_prefetch_task.datetime",
+                "dinary.background.rate_prefetch.task.datetime",
             ) as mock_dt,
             patch(
-                "dinary.background.rate_prefetch_task.storage",
+                "dinary.background.rate_prefetch.task.storage",
             ) as mock_repo,
             patch(
-                "dinary.background.rate_prefetch_task._get_db_rate",
+                "dinary.background.rate_prefetch.task._get_db_rate",
                 # first call: no existing rate; second call: still None (not written)
                 return_value=None,
             ),
             patch(
-                "dinary.background.rate_prefetch_task.get_rate",
+                "dinary.background.rate_prefetch.task.get_rate",
                 return_value=_RATE,
             ),
             patch(
-                "dinary.background.rate_prefetch_task.asyncio.sleep",
+                "dinary.background.rate_prefetch.task.asyncio.sleep",
                 new_callable=AsyncMock,
                 side_effect=asyncio.CancelledError,
             ) as mock_sleep,

@@ -1,4 +1,4 @@
-"""PATCH /api/admin/catalog/<kind>/<id> tests.
+"""PATCH /api/catalog/<kind>/<id> tests.
 
 Pin the patch-side surface: combined rename + deactivate atomically,
 soft-retire of referenced rows, the tag-rename cascade into
@@ -16,8 +16,8 @@ from datetime import datetime
 
 import allure
 
-from dinary.services import storage
-from dinary.services.expenses import ExpensePayload, insert_expense
+from dinary.db import storage
+from dinary.db.expenses import ExpensePayload, insert_expense
 
 from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 
@@ -27,7 +27,7 @@ from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 class TestAdminPatch:
     def test_patch_rename_and_deactivate_in_one_call(self, client):
         create = client.post(
-            "/api/admin/catalog/categories",
+            "/api/catalog/categories",
             json={"name": "orig", "group_id": 1},
         )
         assert create.status_code == 200
@@ -35,7 +35,7 @@ class TestAdminPatch:
         v_before = create.json()["catalog_version"]
 
         patch_resp = client.patch(
-            f"/api/admin/catalog/categories/{cid}",
+            f"/api/catalog/categories/{cid}",
             json={"name": "renamed", "is_active": False},
         )
         assert patch_resp.status_code == 200, patch_resp.text
@@ -55,7 +55,7 @@ class TestAdminPatch:
         was removed; operators use PATCH to flip the flag in either
         direction and DELETE to actually try to remove the row."""
         create = client.post(
-            "/api/admin/catalog/categories",
+            "/api/catalog/categories",
             json={"name": "pinned", "group_id": 1},
         )
         cid = create.json()["new_id"]
@@ -82,7 +82,7 @@ class TestAdminPatch:
             con.close()
 
         resp = client.patch(
-            f"/api/admin/catalog/categories/{cid}",
+            f"/api/catalog/categories/{cid}",
             json={"is_active": False},
         )
         assert resp.status_code == 200, resp.text
@@ -105,10 +105,10 @@ class TestAdminPatch:
         from every new expense created under that event. The cascade
         keeps auto-attach behaviour identical across the rename.
         """
-        tag = client.post("/api/admin/catalog/tags", json={"name": "oldname"})
+        tag = client.post("/api/catalog/tags", json={"name": "oldname"})
         tid = tag.json()["new_id"]
         ev = client.post(
-            "/api/admin/catalog/events",
+            "/api/catalog/events",
             json={
                 "name": "evt-with-tag",
                 "date_from": "2026-01-01",
@@ -118,7 +118,7 @@ class TestAdminPatch:
         )
         eid = ev.json()["new_id"]
         resp = client.patch(
-            f"/api/admin/catalog/tags/{tid}",
+            f"/api/catalog/tags/{tid}",
             json={"name": "newname"},
         )
         assert resp.status_code == 200, resp.text
@@ -136,10 +136,10 @@ class TestAdminPatch:
         assert "oldname" not in raw
 
     def test_patch_reactivates_soft_deleted_tag(self, client):
-        add = client.post("/api/admin/catalog/tags", json={"name": "retired"})
+        add = client.post("/api/catalog/tags", json={"name": "retired"})
         tid = add.json()["new_id"]
         client.patch(
-            f"/api/admin/catalog/tags/{tid}",
+            f"/api/catalog/tags/{tid}",
             json={"is_active": False},
         )
         snap = client.get("/api/catalog").json()
@@ -147,7 +147,7 @@ class TestAdminPatch:
 
         # PATCH is_active=True is the PWA's "Активировать" affordance.
         resp = client.patch(
-            f"/api/admin/catalog/tags/{tid}",
+            f"/api/catalog/tags/{tid}",
             json={"is_active": True},
         )
         assert resp.status_code == 200

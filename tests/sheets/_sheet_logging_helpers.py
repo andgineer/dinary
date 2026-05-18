@@ -15,8 +15,9 @@ from decimal import Decimal
 import pytest
 
 from dinary.config import settings
-from dinary.services import storage, sheet_logging
-from dinary.services.expenses import ExpensePayload, ExpenseRow, insert_expense
+from dinary.db import storage
+from dinary.background.sheet_logging import sheet_logging
+from dinary.db.expenses import ExpensePayload, ExpenseRow, insert_expense
 
 
 @pytest.fixture(autouse=True)

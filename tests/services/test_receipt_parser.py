@@ -5,7 +5,7 @@ import allure
 import httpx
 import pytest
 
-from dinary.services.receipt_parser import _parse_journal, _rsd, parse_receipt
+from dinary.adapters.serbian_receipt_parser import _parse_journal, _rsd, parse_receipt
 
 _JOURNAL_WITH_KG = """\
 ========================================
@@ -92,21 +92,21 @@ def _mock_client(json_resp, html_resp, specs_resp):
 class TestParseReceiptPrimary:
     def test_returns_store_info(self):
         ctx, _ = _mock_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.services.receipt_parser.httpx.Client", return_value=ctx):
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.Client", return_value=ctx):
             receipt = parse_receipt("https://suf.purs.gov.rs/v/?vl=test")
         assert receipt.store_name == "LIDL SRBIJA KD"
         assert receipt.store_pib == "106884584"
 
     def test_all_items_from_specs(self):
         ctx, _ = _mock_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.services.receipt_parser.httpx.Client", return_value=ctx):
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.Client", return_value=ctx):
             receipt = parse_receipt("https://suf.purs.gov.rs/v/?vl=test")
         assert len(receipt.items) == 3
         assert receipt.items[0].tax_label == "Е"  # tax_label only from /specifications
 
     def test_kg_decimal_quantity_from_specs(self):
         ctx, _ = _mock_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.services.receipt_parser.httpx.Client", return_value=ctx):
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.Client", return_value=ctx):
             receipt = parse_receipt("https://suf.purs.gov.rs/v/?vl=test")
         grejpfrut = next(i for i in receipt.items if "Grejpfrut" in i.name_raw)
         assert grejpfrut.quantity == pytest.approx(2.6)
@@ -114,7 +114,7 @@ class TestParseReceiptPrimary:
 
     def test_total_ok(self):
         ctx, _ = _mock_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.services.receipt_parser.httpx.Client", return_value=ctx):
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.Client", return_value=ctx):
             receipt = parse_receipt("https://suf.purs.gov.rs/v/?vl=test")
         assert receipt.total_ok is True
 
@@ -124,13 +124,13 @@ class TestParseReceiptPrimary:
             "invoiceResult": {"totalAmount": 999.99, "invoiceNumber": "TEST-TEST-001"},
         }
         ctx, _ = _mock_client(bad, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.services.receipt_parser.httpx.Client", return_value=ctx):
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.Client", return_value=ctx):
             receipt = parse_receipt("https://suf.purs.gov.rs/v/?vl=test")
         assert receipt.total_ok is False
 
     def test_token_and_invoice_number_sent(self):
         ctx, client = _mock_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.services.receipt_parser.httpx.Client", return_value=ctx):
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.Client", return_value=ctx):
             parse_receipt("https://suf.purs.gov.rs/v/?vl=test")
         post_call = client.post.call_args
         assert post_call.kwargs["data"]["token"] == "abc-token-123"
@@ -142,20 +142,20 @@ class TestParseReceiptPrimary:
 class TestParseReceiptFallback:
     def test_falls_back_when_specs_empty(self):
         ctx, _ = _mock_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_EMPTY)
-        with patch("dinary.services.receipt_parser.httpx.Client", return_value=ctx):
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.Client", return_value=ctx):
             receipt = parse_receipt("https://suf.purs.gov.rs/v/?vl=test")
         assert len(receipt.items) == 3
 
     def test_falls_back_when_token_missing(self):
         ctx, _ = _mock_client(_JSON_RESPONSE, "<html>no token</html>", _SPECS_RESPONSE)
-        with patch("dinary.services.receipt_parser.httpx.Client", return_value=ctx):
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.Client", return_value=ctx):
             receipt = parse_receipt("https://suf.purs.gov.rs/v/?vl=test")
         assert len(receipt.items) == 3
         assert all(i.tax_label == "" for i in receipt.items)  # no tax label in journal
 
     def test_fallback_kg_decimal_quantity(self):
         ctx, _ = _mock_client(_JSON_RESPONSE, "<html>no token</html>", _SPECS_RESPONSE)
-        with patch("dinary.services.receipt_parser.httpx.Client", return_value=ctx):
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.Client", return_value=ctx):
             receipt = parse_receipt("https://suf.purs.gov.rs/v/?vl=test")
         grejpfrut = next(i for i in receipt.items if "Grejpfrut" in i.name_raw)
         assert grejpfrut.quantity == pytest.approx(2.6)
@@ -166,7 +166,7 @@ class TestParseReceiptFallback:
 
         no_journal = {**_JSON_RESPONSE, "journal": ""}
         ctx, _ = _mock_client(no_journal, "<html>no token</html>", _SPECS_EMPTY)
-        with patch("dinary.services.receipt_parser.httpx.Client", return_value=ctx):
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.Client", return_value=ctx):
             with pytest.raises(ParserParseException):
                 parse_receipt("https://suf.purs.gov.rs/v/?vl=test")
 
@@ -178,7 +178,7 @@ class TestParseReceiptFallback:
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=client)
         ctx.__exit__ = MagicMock(return_value=False)
-        with patch("dinary.services.receipt_parser.httpx.Client", return_value=ctx):
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.Client", return_value=ctx):
             with pytest.raises(ParserRequestException):
                 parse_receipt("https://suf.purs.gov.rs/v/?vl=test")
 

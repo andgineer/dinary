@@ -14,7 +14,7 @@ import json
 import allure
 import pytest
 
-from dinary.reports import verify_budget
+from tasks.reports import verify_budget
 
 
 def _passing_result(year: int = 2024, *, months: int = 12) -> dict:

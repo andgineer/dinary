@@ -7,7 +7,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from .constants import (
+from tasks.devtools.constants import (
     _REMOTE_DB_PATH,
     _UV,
     LITESTREAM_VERSION,
@@ -17,7 +17,7 @@ from .constants import (
     REMOTE_ENV_PATH,
     REMOTE_IMPORT_SOURCES_PATH,
 )
-from .env import host, replica_host
+from tasks.devtools.env import host, replica_host
 
 # ---------------------------------------------------------------------------
 # Private module-level constants

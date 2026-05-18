@@ -12,8 +12,8 @@ import json
 
 import allure
 
-from dinary.imports import report_2d_3d as report_module
-from dinary.imports.report_2d_3d import (
+from tasks.imports import report_2d_3d as report_module
+from tasks.imports.report_2d_3d import (
     DETAIL_COLUMNS,
     SUMMARY_COLUMNS,
     DetailRow,

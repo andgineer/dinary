@@ -6,8 +6,8 @@ from datetime import datetime
 
 import allure
 
-from dinary.services import storage
-from dinary.services.expenses import (
+from dinary.db import storage
+from dinary.db.expenses import (
     ExpensePayload,
     get_expense_by_id,
     insert_expense,

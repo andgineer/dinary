@@ -1,311 +1,60 @@
-"""GET /api/catalog — full 3D taxonomy snapshot with ETag caching.
-
-ETag is ``W/"catalog-v<N>"``. All rows including ``is_active=FALSE`` are
-returned. ``removable=true`` means a DELETE would hard-delete the row (no
-FK or ``auto_tags`` references). See ``specs/reference/catalog-api.md``.
-"""
+"""Catalog API: /api/catalog + /api/catalog/*"""
 
 import logging
 import sqlite3
-from collections import Counter
 
-from fastapi import APIRouter, Header, HTTPException, Response
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 
-from dinary.services import storage
-from dinary.services.catalog import get_catalog_version
-from dinary.services.sheet_mapping import decode_auto_tags_value
+from dinary.api.controllers.catalog import (
+    AdminCatalogResponse,
+    CatalogResponse,
+    CategoryAddBody,
+    CategoryPatchBody,
+    EventAddBody,
+    EventPatchBody,
+    GroupAddBody,
+    GroupPatchBody,
+    ReloadMapResponse,
+    TagAddBody,
+    TagPatchBody,
+    build_catalog_snapshot,
+    etag_for,
+    handle_catalog_error,
+    if_none_match_matches,
+    snapshot_response,
+)
+from dinary.api.controllers.catalog_writer_categories import (
+    add_category,
+    delete_category,
+    edit_category,
+)
+from dinary.api.controllers.catalog_writer_events import (
+    add_event,
+    add_tag,
+    delete_event,
+    delete_tag,
+    edit_event,
+    edit_tag,
+)
+from dinary.api.controllers.catalog_writer_groups import add_group, delete_group, edit_group
+from dinary.config import settings, spreadsheet_id_from_setting
+from dinary.db import storage
+from dinary.db.storage import get_db
+from dinary.sheets import sheet_mapping
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-class CategoryGroupItem(BaseModel):
-    id: int
-    name: str
-    sort_order: int
-    is_active: bool
-    removable: bool
-
-
-class CategoryItem(BaseModel):
-    id: int
-    name: str
-    group: str
-    group_id: int
-    is_active: bool
-    removable: bool
-
-
-class EventItem(BaseModel):
-    id: int
-    name: str
-    date_from: str
-    date_to: str
-    auto_attach_enabled: bool
-    auto_tags: list[str]
-    is_active: bool
-    removable: bool
-
-
-class TagItem(BaseModel):
-    id: int
-    name: str
-    is_active: bool
-    removable: bool
-
-
-class CatalogResponse(BaseModel):
-    catalog_version: int
-    category_groups: list[CategoryGroupItem]
-    categories: list[CategoryItem]
-    events: list[EventItem]
-    tags: list[TagItem]
-
-
-def _etag_for(catalog_version: int) -> str:
-    """Canonical ETag string for a given ``catalog_version``.
-
-    Mirrored in the PWA (``webapp/src/api/catalog.js::etagFor``) so
-    the client can derive the ETag it needs to send in
-    ``If-None-Match`` without us having to ship the string in the
-    response body. Any change here must stay in lockstep with the
-    client copy.
-    """
-    return f'W/"catalog-v{catalog_version}"'
-
-
-def _if_none_match_matches(header_value: str, etag: str) -> bool:
-    """RFC 7232-compliant ``If-None-Match`` match against a single ETag."""
-    stripped = header_value.strip()
-    if not stripped:
-        return False
-    if stripped == "*":
-        return True
-    return any(token.strip() == etag for token in stripped.split(","))
-
-
-def _sum_counts_by_id(
+def _etag_response(
     con: sqlite3.Connection,
-    tables_and_cols: tuple[tuple[str, str], ...],
-) -> Counter[int]:
-    """Union of ``SELECT col, COUNT(*) ... GROUP BY col`` across tables.
-
-    Each (table, col) pair contributes one aggregate query; results
-    accumulate into a single ``Counter`` keyed by row id. ``col IS
-    NULL`` rows are excluded (they don't reference anything).
-    """
-    out: Counter[int] = Counter()
-    for table, col in tables_and_cols:
-        rows = con.execute(
-            f"SELECT {col}, COUNT(*) FROM {table} WHERE {col} IS NOT NULL GROUP BY {col}",  # noqa: S608
-        ).fetchall()
-        for row_id, n in rows:
-            out[int(row_id)] += int(n)
-    return out
-
-
-def _auto_tag_refs_by_tag_id(con: sqlite3.Connection) -> Counter[int]:
-    """Count events whose ``auto_tags`` JSON array contains each tag name.
-
-    ``events.auto_tags`` stores tag names (not ids), so SQLite's FK
-    engine misses it. Scan once, build a name->count Counter, then
-    translate to ids via the ``tags`` table. Cheap: the events table
-    is small.
-    """
-    name_refs: Counter[str] = Counter()
-    rows = con.execute(
-        "SELECT auto_tags FROM events"
-        " WHERE auto_tags IS NOT NULL AND auto_tags != '' AND auto_tags != '[]'",
-    ).fetchall()
-    for (raw,) in rows:
-        for name in decode_auto_tags_value(raw, context="catalog auto_tags scan"):
-            name_refs[name] += 1
-    if not name_refs:
-        return Counter()
-    id_refs: Counter[int] = Counter()
-    for tag_id, tag_name in con.execute("SELECT id, name FROM tags").fetchall():
-        hits = name_refs.get(str(tag_name), 0)
-        if hits:
-            id_refs[int(tag_id)] = hits
-    return id_refs
-
-
-def _reference_counts(
-    con: sqlite3.Connection,
-) -> tuple[dict[int, int], dict[int, int], dict[int, int], dict[int, int]]:
-    """Aggregate FK/reference counts needed for the ``removable`` flag.
-
-    Returns four dicts keyed by row id: total-refs-per-category-id,
-    total-refs-per-event-id, total-refs-per-tag-id (including
-    ``events.auto_tags`` name matches), and total-child-count-per-
-    group-id. One aggregate query per reference table keeps this at
-    O(tables), not O(rows). The predicates (mapping tables + expense
-    FKs + events.auto_tags scan) mirror
-    ``catalog_writer._*_mapping_reference_count`` /
-    ``_events_auto_tags_reference_count`` so ``removable=true``
-    corresponds exactly to "hard-delete would succeed".
-    """
-    cat_refs = _sum_counts_by_id(
-        con,
-        (
-            ("expenses", "category_id"),
-            ("sheet_mapping", "category_id"),
-            ("import_mapping", "category_id"),
-        ),
-    )
-    event_refs = _sum_counts_by_id(
-        con,
-        (
-            ("expenses", "event_id"),
-            ("sheet_mapping", "event_id"),
-            ("import_mapping", "event_id"),
-        ),
-    )
-    tag_refs = _sum_counts_by_id(
-        con,
-        (
-            ("expense_tags", "tag_id"),
-            ("sheet_mapping_tags", "tag_id"),
-            ("import_mapping_tags", "tag_id"),
-        ),
-    )
-    tag_refs.update(_auto_tag_refs_by_tag_id(con))
-
-    group_child_counts: dict[int, int] = {}
-    for row_id, n in con.execute(
-        "SELECT group_id, COUNT(*) FROM categories GROUP BY group_id",
-    ).fetchall():
-        group_child_counts[int(row_id)] = int(n)
-
-    return dict(cat_refs), dict(event_refs), dict(tag_refs), group_child_counts
-
-
-_MANUAL_RECENCY = " AND e.receipt_id IS NULL AND e.datetime >= datetime('now', '-3 months')"
-
-# Pre-built SQL strings — built once at import time from the shared recency filter.
-_SQL_CAT_DEFAULTS = (
-    "SELECT c.group_id, e.category_id, COUNT(*) AS cnt FROM expenses e"  # noqa: S608
-    " JOIN categories c ON c.id = e.category_id"
-    " WHERE c.is_active = 1"
-    + _MANUAL_RECENCY
-    + " GROUP BY c.group_id, e.category_id ORDER BY c.group_id, cnt DESC"
-)
-_SQL_GROUP_DEFAULT = (
-    "SELECT c.group_id, COUNT(*) AS cnt FROM expenses e"  # noqa: S608
-    " JOIN categories c ON c.id = e.category_id"
-    " JOIN category_groups g ON g.id = c.group_id"
-    " WHERE g.is_active = 1" + _MANUAL_RECENCY + " GROUP BY c.group_id ORDER BY cnt DESC LIMIT 1"
-)
-
-
-def _most_used_category_per_group(con: sqlite3.Connection) -> dict[int, int]:
-    """Return {group_id: category_id} for the most-used active category per group.
-
-    Counts only manually entered expenses (receipt_id IS NULL) from the last
-    3 months. Groups with no qualifying history are absent from the result.
-    """
-    rows = con.execute(_SQL_CAT_DEFAULTS).fetchall()  # noqa: S608
-    result: dict[int, int] = {}
-    for group_id, cat_id, _ in rows:
-        result.setdefault(int(group_id), int(cat_id))
-    return result
-
-
-def _most_used_group(con: sqlite3.Connection) -> int | None:
-    """Return the group_id used most in manual expenses over the last 3 months.
-
-    Returns ``None`` when there are no qualifying expenses.
-    """
-    row = con.execute(_SQL_GROUP_DEFAULT).fetchone()  # noqa: S608
-    return int(row[0]) if row else None
-
-
-def build_catalog_snapshot(con: sqlite3.Connection) -> dict:
-    """Shared by GET /api/catalog and the admin POST/PATCH responses.
-
-    Returns a dict-of-lists suitable for embedding directly in a
-    pydantic response model (``CatalogResponse`` / ``AdminCatalogResponse``).
-    Returns **all** rows regardless of ``is_active``; the flag is
-    surfaced per-row so the PWA can render and reactivate inactive
-    items without hitting a separate endpoint. Each row also carries
-    a ``removable`` boolean indicating whether ``DELETE`` would
-    hard-delete (true) or soft-delete (false) the row today — the
-    PWA uses it to hide the ``Удалить`` button on still-referenced
-    rows.
-    """
-    version = get_catalog_version(con)
-    cat_refs, event_refs, tag_refs, group_children = _reference_counts(con)
-
-    group_rows = con.execute(
-        "SELECT id, name, sort_order, is_active FROM category_groups ORDER BY sort_order, id",
-    ).fetchall()
-
-    category_rows = con.execute(
-        "SELECT c.id, c.name, c.group_id, g.name, c.is_active"
-        " FROM categories c JOIN category_groups g ON g.id = c.group_id"
-        " ORDER BY g.sort_order, c.name",
-    ).fetchall()
-
-    event_rows = con.execute(
-        "SELECT id, name, date_from, date_to, auto_attach_enabled,"
-        " auto_tags, is_active"
-        " FROM events ORDER BY date_from, name",
-    ).fetchall()
-
-    tag_rows = con.execute(
-        "SELECT id, name, is_active FROM tags ORDER BY id",
-    ).fetchall()
-
-    return {
-        "catalog_version": version,
-        "category_groups": [
-            {
-                "id": int(r[0]),
-                "name": str(r[1]),
-                "sort_order": int(r[2]),
-                "is_active": bool(r[3]),
-                "removable": group_children.get(int(r[0]), 0) == 0,
-            }
-            for r in group_rows
-        ],
-        "categories": [
-            {
-                "id": int(r[0]),
-                "name": str(r[1]),
-                "group_id": int(r[2]),
-                "group": str(r[3]),
-                "is_active": bool(r[4]),
-                "removable": cat_refs.get(int(r[0]), 0) == 0,
-            }
-            for r in category_rows
-        ],
-        "events": [
-            {
-                "id": int(r[0]),
-                "name": str(r[1]),
-                "date_from": r[2].isoformat() if hasattr(r[2], "isoformat") else str(r[2]),
-                "date_to": r[3].isoformat() if hasattr(r[3], "isoformat") else str(r[3]),
-                "auto_attach_enabled": bool(r[4]),
-                "auto_tags": decode_auto_tags_value(
-                    r[5],
-                    context=f"event_id={int(r[0])}",
-                ),
-                "is_active": bool(r[6]),
-                "removable": event_refs.get(int(r[0]), 0) == 0,
-            }
-            for r in event_rows
-        ],
-        "tags": [
-            {
-                "id": int(r[0]),
-                "name": str(r[1]),
-                "is_active": bool(r[2]),
-                "removable": tag_refs.get(int(r[0]), 0) == 0,
-            }
-            for r in tag_rows
-        ],
-    }
+    response: Response,
+    add_result=None,
+    delete_result=None,
+) -> AdminCatalogResponse:
+    body, etag = snapshot_response(con, etag_for, add_result, delete_result)
+    response.headers["ETag"] = etag
+    return body
 
 
 @router.get("/api/catalog", response_model=None)
@@ -323,10 +72,196 @@ def get_catalog(
         logger.exception("Failed to load catalog snapshot")
         raise HTTPException(status_code=500, detail="Failed to load catalog") from None
 
-    etag = _etag_for(snapshot["catalog_version"])
-    if if_none_match is not None and _if_none_match_matches(if_none_match, etag):
+    etag = etag_for(snapshot["catalog_version"])
+    if if_none_match is not None and if_none_match_matches(if_none_match, etag):
         return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
 
     response.headers["ETag"] = etag
     response.headers["Cache-Control"] = "no-cache"
     return CatalogResponse(**snapshot)
+
+
+@router.post("/api/catalog/groups", response_model=AdminCatalogResponse)
+def add_group_endpoint(
+    body: GroupAddBody,
+    response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> AdminCatalogResponse:
+    with handle_catalog_error():
+        result = add_group(con, name=body.name, sort_order=body.sort_order)
+    return _etag_response(con, response, add_result=result)
+
+
+@router.patch("/api/catalog/groups/{group_id}", response_model=AdminCatalogResponse)
+def edit_group_endpoint(
+    group_id: int,
+    body: GroupPatchBody,
+    response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> AdminCatalogResponse:
+    with handle_catalog_error():
+        edit_group(
+            con,
+            group_id,
+            name=body.name,
+            sort_order=body.sort_order,
+            is_active=body.is_active,
+        )
+    return _etag_response(con, response)
+
+
+@router.delete("/api/catalog/groups/{group_id}", response_model=AdminCatalogResponse)
+def delete_group_endpoint(
+    group_id: int,
+    response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> AdminCatalogResponse:
+    with handle_catalog_error():
+        result = delete_group(con, group_id)
+    return _etag_response(con, response, delete_result=result)
+
+
+@router.post("/api/catalog/categories", response_model=AdminCatalogResponse)
+def add_category_endpoint(
+    body: CategoryAddBody,
+    response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> AdminCatalogResponse:
+    with handle_catalog_error():
+        result = add_category(
+            con,
+            name=body.name,
+            group_id=body.group_id,
+            sheet_name=body.sheet_name,
+            sheet_group=body.sheet_group,
+        )
+    return _etag_response(con, response, add_result=result)
+
+
+@router.patch("/api/catalog/categories/{category_id}", response_model=AdminCatalogResponse)
+def edit_category_endpoint(
+    category_id: int,
+    body: CategoryPatchBody,
+    response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> AdminCatalogResponse:
+    with handle_catalog_error():
+        edit_category(
+            con,
+            category_id,
+            name=body.name,
+            group_id=body.group_id,
+            sheet_name=body.sheet_name,
+            sheet_group=body.sheet_group,
+            is_active=body.is_active,
+        )
+    return _etag_response(con, response)
+
+
+@router.delete("/api/catalog/categories/{category_id}", response_model=AdminCatalogResponse)
+def delete_category_endpoint(
+    category_id: int,
+    response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> AdminCatalogResponse:
+    with handle_catalog_error():
+        result = delete_category(con, category_id)
+    return _etag_response(con, response, delete_result=result)
+
+
+@router.post("/api/catalog/events", response_model=AdminCatalogResponse)
+def add_event_endpoint(
+    body: EventAddBody,
+    response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> AdminCatalogResponse:
+    with handle_catalog_error():
+        result = add_event(
+            con,
+            name=body.name,
+            date_from=body.date_from,
+            date_to=body.date_to,
+            auto_attach_enabled=body.auto_attach_enabled,
+            auto_tags=body.auto_tags,
+        )
+    return _etag_response(con, response, add_result=result)
+
+
+@router.patch("/api/catalog/events/{event_id}", response_model=AdminCatalogResponse)
+def edit_event_endpoint(
+    event_id: int,
+    body: EventPatchBody,
+    response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> AdminCatalogResponse:
+    with handle_catalog_error():
+        edit_event(
+            con,
+            event_id,
+            name=body.name,
+            date_from=body.date_from,
+            date_to=body.date_to,
+            auto_attach_enabled=body.auto_attach_enabled,
+            auto_tags=body.auto_tags,
+            is_active=body.is_active,
+        )
+    return _etag_response(con, response)
+
+
+@router.delete("/api/catalog/events/{event_id}", response_model=AdminCatalogResponse)
+def delete_event_endpoint(
+    event_id: int,
+    response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> AdminCatalogResponse:
+    with handle_catalog_error():
+        result = delete_event(con, event_id)
+    return _etag_response(con, response, delete_result=result)
+
+
+@router.post("/api/catalog/tags", response_model=AdminCatalogResponse)
+def add_tag_endpoint(
+    body: TagAddBody,
+    response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> AdminCatalogResponse:
+    with handle_catalog_error():
+        result = add_tag(con, name=body.name)
+    return _etag_response(con, response, add_result=result)
+
+
+@router.patch("/api/catalog/tags/{tag_id}", response_model=AdminCatalogResponse)
+def edit_tag_endpoint(
+    tag_id: int,
+    body: TagPatchBody,
+    response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> AdminCatalogResponse:
+    with handle_catalog_error():
+        edit_tag(con, tag_id, name=body.name, is_active=body.is_active)
+    return _etag_response(con, response)
+
+
+@router.delete("/api/catalog/tags/{tag_id}", response_model=AdminCatalogResponse)
+def delete_tag_endpoint(
+    tag_id: int,
+    response: Response,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> AdminCatalogResponse:
+    with handle_catalog_error():
+        result = delete_tag(con, tag_id)
+    return _etag_response(con, response, delete_result=result)
+
+
+@router.post("/api/catalog/reload-map", response_model=ReloadMapResponse)
+def reload_map() -> ReloadMapResponse:
+    if spreadsheet_id_from_setting(settings.sheet_logging_spreadsheet) is None:
+        raise HTTPException(
+            status_code=503,
+            detail="sheet_logging_spreadsheet not configured; reload-map unavailable",
+        )
+    try:
+        summary = sheet_mapping.reload_now(check_after=False)
+    except sheet_mapping.MapTabError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return ReloadMapResponse(**summary)

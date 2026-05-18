@@ -1,0 +1,7 @@
+- `api/` — FastAPI routers and controllers
+- `background/` — async background tasks (classification, rate prefetch, sheet logging)
+- `db/` — SQLite repository layer, migrations, and DB access for business objects
+- `adapters/` — external service clients (Google Sheets, LLM, exchange rate banks)
+- `sheets/` — Google Sheets domain objects shared across api/ and background/
+- `config.py` — pydantic-settings configuration
+- `main.py` — FastAPI application factory and uvicorn entry point

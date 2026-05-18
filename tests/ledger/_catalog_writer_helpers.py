@@ -12,7 +12,7 @@ from datetime import datetime
 
 import pytest
 
-from dinary.services import storage
+from dinary.db import storage
 
 _DT = datetime(2026, 4, 20, 10, 0, 0)
 

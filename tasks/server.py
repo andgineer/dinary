@@ -2,9 +2,9 @@
 
 from invoke import task
 
-from .constants import REMOTE_LITESTREAM_CONFIG_PATH
-from .env import host, replica_host, tunnel
-from .ssh_utils import (
+from tasks.devtools.constants import REMOTE_LITESTREAM_CONFIG_PATH
+from tasks.devtools.env import host, replica_host, tunnel
+from tasks.ssh_utils import (
     ssh_run,
     ssh_sudo,
 )

@@ -14,7 +14,7 @@ import allure
 import pytest
 
 from dinary.config import settings
-from dinary.tools import sql as sql_tool
+from tasks import sql as sql_tool
 
 
 @pytest.fixture

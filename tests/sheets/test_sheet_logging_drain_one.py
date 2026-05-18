@@ -15,8 +15,9 @@ from unittest.mock import MagicMock, patch
 import allure
 import pytest
 
-from dinary.services import storage, sheet_logging
-from dinary.services.logging_jobs import list_logging_jobs
+from dinary.db import storage
+from dinary.background.sheet_logging import sheet_logging
+from dinary.background.sheet_logging.logging_jobs import list_logging_jobs
 
 from _sheet_logging_helpers import (  # noqa: F401  (autouse + fixtures)
     _reset_backoff,
@@ -28,11 +29,11 @@ from _sheet_logging_helpers import (  # noqa: F401  (autouse + fixtures)
 @allure.epic("SheetLogging")
 @allure.feature("_drain_one_job (return contract)")
 class TestDrainOneJobReturnContract:
-    @patch("dinary.services.sheet_logging.get_sheet")
-    @patch("dinary.services.sheet_logging.get_rate", return_value="117.0")
-    @patch("dinary.services.sheet_logging.ensure_category_row")
+    @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
+    @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
+    @patch("dinary.background.sheet_logging.sheet_logging.ensure_category_row")
     @patch(
-        "dinary.services.sheet_logging.append_expense_atomic",
+        "dinary.background.sheet_logging.sheet_logging.append_expense_atomic",
         side_effect=RuntimeError("simulated sheet failure"),
     )
     def test_append_failure_re_raises_and_releases_claim(
@@ -82,10 +83,10 @@ class TestDrainOneJobClaimStolen:
        from "retry pending" apart.
     """
 
-    @patch("dinary.services.sheet_logging.get_sheet")
-    @patch("dinary.services.sheet_logging.get_rate", return_value="117.0")
-    @patch("dinary.services.sheet_logging.ensure_category_row")
-    @patch("dinary.services.sheet_logging.append_expense_atomic", return_value=True)
+    @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
+    @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
+    @patch("dinary.background.sheet_logging.sheet_logging.ensure_category_row")
+    @patch("dinary.background.sheet_logging.sheet_logging.append_expense_atomic", return_value=True)
     def test_force_delete_after_stolen_claim(
         self,
         _aea,
@@ -102,7 +103,9 @@ class TestDrainOneJobClaimStolen:
         mock_ecr.return_value = (3, values)
 
         expense_pk = setup
-        with patch("dinary.services.sheet_logging.clear_logging_job", return_value=False):
+        with patch(
+            "dinary.background.sheet_logging.sheet_logging.clear_logging_job", return_value=False
+        ):
             result = sheet_logging._drain_one_job(
                 expense_pk,
                 spreadsheet_id="test-spreadsheet-id",
@@ -115,10 +118,10 @@ class TestDrainOneJobClaimStolen:
         finally:
             con.close()
 
-    @patch("dinary.services.sheet_logging.get_sheet")
-    @patch("dinary.services.sheet_logging.get_rate", return_value="117.0")
-    @patch("dinary.services.sheet_logging.ensure_category_row")
-    @patch("dinary.services.sheet_logging.append_expense_atomic", return_value=True)
+    @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
+    @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
+    @patch("dinary.background.sheet_logging.sheet_logging.ensure_category_row")
+    @patch("dinary.background.sheet_logging.sheet_logging.append_expense_atomic", return_value=True)
     def test_recovered_when_row_already_gone(
         self,
         _aea,
@@ -142,8 +145,14 @@ class TestDrainOneJobClaimStolen:
 
         expense_pk = setup
         with (
-            patch("dinary.services.sheet_logging.clear_logging_job", return_value=False),
-            patch("dinary.services.sheet_logging.force_clear_logging_job", return_value=False),
+            patch(
+                "dinary.background.sheet_logging.sheet_logging.clear_logging_job",
+                return_value=False,
+            ),
+            patch(
+                "dinary.background.sheet_logging.sheet_logging.force_clear_logging_job",
+                return_value=False,
+            ),
         ):
             result = sheet_logging._drain_one_job(
                 expense_pk,

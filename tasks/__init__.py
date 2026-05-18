@@ -4,30 +4,22 @@ import sys
 
 from invoke import Collection
 
-from .backups_replica import replica_reset_trust, replica_resync, restore_replica, setup_replica
-from .backups_restore import restore_from_yadisk
-from .backups_status import backup_status
-from .backups_yandex import setup_yadisk
-from .build_docs import ALLOWED_DOC_LANGUAGES, build_docs, docs_task_factory
-from .constants import ALLOWED_VERSION_TYPES
+from .backups.backups_replica import (
+    replica_reset_trust,
+    replica_resync,
+    restore_replica,
+    setup_replica,
+)
+from .backups.backups_restore import restore_from_yadisk
+from .backups.backups_status import backup_status
+from .backups.backups_yandex import setup_yadisk
 from .db import migrate, restore_primary, verify_db
-from .deploy import (
-    bootstrap_catalog,
-    deploy,
-    import_config,
-)
-from .dev import (
-    build_static,
-    dev,
-    pre,
-    reqs,
-    test,
-    uv,
-    ver_task_factory,
-    version,
-)
+from .deploy import bootstrap_catalog, deploy, import_config
+from .devtools.build_docs import ALLOWED_DOC_LANGUAGES, build_docs, docs_task_factory
+from .devtools.constants import ALLOWED_VERSION_TYPES
+from .devtools.dev import build_static, dev, pre, reqs, test, uv, ver_task_factory, version
 from .healthcheck import healthcheck
-from .imports import (
+from .imports.import_tasks import (
     import_budget,
     import_budget_all,
     import_catalog,
@@ -40,7 +32,7 @@ from .imports import (
     verify_income_equivalence_all,
 )
 from .receipt import classify_receipt, reclassify_receipts
-from .reports import report_expenses, report_income, sql_query
+from .reports.report_tasks import report_expenses, report_income, sql_query
 from .server import logs, restart_server, ssh, ssh_replica, status
 from .setup import setup_server
 

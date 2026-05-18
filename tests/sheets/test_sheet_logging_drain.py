@@ -18,9 +18,10 @@ import allure
 
 import shutil
 
-from dinary.services import storage, sheet_logging
-from dinary.services.logging_jobs import list_logging_jobs
-from dinary.services.expenses import ExpensePayload, insert_expense
+from dinary.db import storage
+from dinary.background.sheet_logging import sheet_logging
+from dinary.background.sheet_logging.logging_jobs import list_logging_jobs
+from dinary.db.expenses import ExpensePayload, insert_expense
 
 from _sheet_logging_helpers import (  # noqa: F401  (autouse + fixtures)
     _reset_backoff,
@@ -32,10 +33,10 @@ from _sheet_logging_helpers import (  # noqa: F401  (autouse + fixtures)
 @allure.epic("SheetLogging")
 @allure.feature("drain_pending")
 class TestDrainPending:
-    @patch("dinary.services.sheet_logging.get_sheet")
-    @patch("dinary.services.sheet_logging.get_rate", return_value="117.0")
-    @patch("dinary.services.sheet_logging.ensure_category_row")
-    @patch("dinary.services.sheet_logging.append_expense_atomic", return_value=True)
+    @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
+    @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
+    @patch("dinary.background.sheet_logging.sheet_logging.ensure_category_row")
+    @patch("dinary.background.sheet_logging.sheet_logging.append_expense_atomic", return_value=True)
     def test_drains_pending_job(
         self,
         mock_append,
@@ -89,10 +90,10 @@ class TestDrainPendingPoisonsUnresolvedCategory:
     covered.
     """
 
-    @patch("dinary.services.sheet_logging.get_sheet")
-    @patch("dinary.services.sheet_logging.get_rate", return_value="117.0")
-    @patch("dinary.services.sheet_logging.ensure_category_row")
-    @patch("dinary.services.sheet_logging.append_expense_atomic", return_value=True)
+    @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
+    @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
+    @patch("dinary.background.sheet_logging.sheet_logging.ensure_category_row")
+    @patch("dinary.background.sheet_logging.sheet_logging.append_expense_atomic", return_value=True)
     def test_unresolved_category_is_poisoned(
         self,
         _aea,
@@ -109,7 +110,9 @@ class TestDrainPendingPoisonsUnresolvedCategory:
             con.close()
 
         expense_pk = setup
-        with patch("dinary.services.sheet_logging.logging_projection", return_value=None):
+        with patch(
+            "dinary.background.sheet_logging.sheet_logging.logging_projection", return_value=None
+        ):
             result = sheet_logging.drain_pending()
 
         assert result["poisoned"] == 1
@@ -151,10 +154,10 @@ class TestDrainPendingPoisonsNullClientExpenseId:
     same row.
     """
 
-    @patch("dinary.services.sheet_logging.get_sheet")
-    @patch("dinary.services.sheet_logging.get_rate", return_value="117.0")
-    @patch("dinary.services.sheet_logging.ensure_category_row")
-    @patch("dinary.services.sheet_logging.append_expense_atomic", return_value=True)
+    @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
+    @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
+    @patch("dinary.background.sheet_logging.sheet_logging.ensure_category_row")
+    @patch("dinary.background.sheet_logging.sheet_logging.append_expense_atomic", return_value=True)
     def test_null_client_expense_id_is_poisoned(
         self,
         mock_append,
@@ -236,10 +239,10 @@ class TestDrainPendingCategoryFallback:
     category, the worker must fall back to the category name as the
     sheet category, with an empty sheet group."""
 
-    @patch("dinary.services.sheet_logging.get_sheet")
-    @patch("dinary.services.sheet_logging.get_rate", return_value="117.0")
-    @patch("dinary.services.sheet_logging.ensure_category_row")
-    @patch("dinary.services.sheet_logging.append_expense_atomic", return_value=True)
+    @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
+    @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
+    @patch("dinary.background.sheet_logging.sheet_logging.ensure_category_row")
+    @patch("dinary.background.sheet_logging.sheet_logging.append_expense_atomic", return_value=True)
     def test_category_name_fallback_when_no_mapping(
         self,
         _aea,
@@ -284,10 +287,10 @@ class TestDrainPendingCounters:
     scanning the summary can tell "needs retry" from "audit the sheet
     for duplicates"."""
 
-    @patch("dinary.services.sheet_logging.get_sheet")
-    @patch("dinary.services.sheet_logging.get_rate", return_value="117.0")
-    @patch("dinary.services.sheet_logging.ensure_category_row")
-    @patch("dinary.services.sheet_logging.append_expense_atomic", return_value=True)
+    @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
+    @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
+    @patch("dinary.background.sheet_logging.sheet_logging.ensure_category_row")
+    @patch("dinary.background.sheet_logging.sheet_logging.append_expense_atomic", return_value=True)
     def test_recovered_with_duplicate_increments_dedicated_counter(
         self,
         _aea,
@@ -303,7 +306,9 @@ class TestDrainPendingCounters:
         mock_sheet.return_value.sheet1 = ws
         mock_ecr.return_value = (3, values)
 
-        with patch("dinary.services.sheet_logging.clear_logging_job", return_value=False):
+        with patch(
+            "dinary.background.sheet_logging.sheet_logging.clear_logging_job", return_value=False
+        ):
             result = sheet_logging.drain_pending()
 
         assert result["appended"] == 0

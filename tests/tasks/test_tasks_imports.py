@@ -13,7 +13,7 @@ import allure
 import pytest
 
 import tasks
-import tasks.imports
+import tasks.imports.import_tasks
 
 
 @allure.epic("Deploy")
@@ -43,7 +43,7 @@ class TestImportReport2d3dTransport:
             spy.ssh_bytes_cmd = cmd
             return spy.ssh_bytes_payload
 
-        monkeypatch.setattr(tasks.imports, "ssh_capture_bytes", fake_bytes)
+        monkeypatch.setattr(tasks.imports.import_tasks, "ssh_capture_bytes", fake_bytes)
         return spy
 
     @staticmethod
@@ -89,7 +89,7 @@ class TestImportReport2d3dTransport:
         self._run(c)
         c.run.assert_called_once()
         cmd = c.run.call_args[0][0]
-        assert cmd.startswith("uv run python -m dinary.imports.report_2d_3d")
+        assert cmd.startswith("uv run python -m tasks.imports.report_2d_3d")
         assert _spy_transports.ssh_bytes_cmd is None
 
     def test_remote_rich_uses_json_transport_and_preserves_cyrillic(

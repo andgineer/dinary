@@ -1,8 +1,8 @@
-// Pure fetch wrappers around the catalog and admin-catalog APIs.
+// Pure fetch wrappers around the catalog APIs.
 // State (snapshot, ETag-based caching) is owned by stores/catalog.js;
 // these helpers never touch localStorage or the DOM.
 
-// Mirror of ``dinary.api.catalog._etag_for``. The value is a pure
+// Mirror of ``dinary.api.controllers.catalog.etag_for``. The value is a pure
 // function of ``catalog_version`` so callers can build ``If-None-Match``
 // without making an extra request. Any change on the server must stay
 // in lockstep with this helper.
@@ -42,35 +42,20 @@ export async function fetchCatalog({ ifVersion } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Admin catalog mutations
+// Catalog mutations (groups, categories, events, tags)
 // ---------------------------------------------------------------------------
 
-async function adminRequest(path, { method = "GET", body } = {}) {
-  const init = { method, headers: { "Content-Type": "application/json" } };
-  if (body !== undefined) init.body = JSON.stringify(body);
-  const resp = await fetch(path, init);
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    const e = new Error(err.detail || `HTTP ${resp.status}`);
-    e.status = resp.status;
-    throw e;
-  }
-  return resp.json();
-}
-
-// Admin envelope wraps build_catalog_snapshot plus admin-only fields
-// (new_id / status / delete_status / usage_count). The store strips them
-// when it caches the snapshot.
+import { apiRequest } from "./_request.js";
 
 export async function adminAddGroup({ name, sort_order } = {}) {
-  return adminRequest("/api/admin/catalog/groups", {
+  return apiRequest("/api/catalog/groups", {
     method: "POST",
     body: { name, sort_order: sort_order ?? null },
   });
 }
 
 export async function adminAddCategory({ name, group_id, sheet_name, sheet_group } = {}) {
-  return adminRequest("/api/admin/catalog/categories", {
+  return apiRequest("/api/catalog/categories", {
     method: "POST",
     body: {
       name,
@@ -88,7 +73,7 @@ export async function adminAddEvent({
   auto_attach_enabled,
   auto_tags,
 } = {}) {
-  return adminRequest("/api/admin/catalog/events", {
+  return apiRequest("/api/catalog/events", {
     method: "POST",
     body: {
       name,
@@ -101,38 +86,26 @@ export async function adminAddEvent({
 }
 
 export async function adminAddTag({ name } = {}) {
-  return adminRequest("/api/admin/catalog/tags", {
+  return apiRequest("/api/catalog/tags", {
     method: "POST",
     body: { name },
   });
 }
 
 export async function adminPatchGroup(group_id, body) {
-  return adminRequest(`/api/admin/catalog/groups/${group_id}`, {
-    method: "PATCH",
-    body,
-  });
+  return apiRequest(`/api/catalog/groups/${group_id}`, { method: "PATCH", body });
 }
 
 export async function adminPatchCategory(category_id, body) {
-  return adminRequest(`/api/admin/catalog/categories/${category_id}`, {
-    method: "PATCH",
-    body,
-  });
+  return apiRequest(`/api/catalog/categories/${category_id}`, { method: "PATCH", body });
 }
 
 export async function adminPatchEvent(event_id, body) {
-  return adminRequest(`/api/admin/catalog/events/${event_id}`, {
-    method: "PATCH",
-    body,
-  });
+  return apiRequest(`/api/catalog/events/${event_id}`, { method: "PATCH", body });
 }
 
 export async function adminPatchTag(tag_id, body) {
-  return adminRequest(`/api/admin/catalog/tags/${tag_id}`, {
-    method: "PATCH",
-    body,
-  });
+  return apiRequest(`/api/catalog/tags/${tag_id}`, { method: "PATCH", body });
 }
 
 export const adminReactivateGroup = (id) => adminPatchGroup(id, { is_active: true });
@@ -146,17 +119,21 @@ export const adminDeactivateEvent = (id) => adminPatchEvent(id, { is_active: fal
 export const adminDeactivateTag = (id) => adminPatchTag(id, { is_active: false });
 
 export async function adminDeleteGroup(group_id) {
-  return adminRequest(`/api/admin/catalog/groups/${group_id}`, { method: "DELETE" });
+  return apiRequest(`/api/catalog/groups/${group_id}`, { method: "DELETE" });
 }
 
 export async function adminDeleteCategory(category_id) {
-  return adminRequest(`/api/admin/catalog/categories/${category_id}`, { method: "DELETE" });
+  return apiRequest(`/api/catalog/categories/${category_id}`, { method: "DELETE" });
 }
 
 export async function adminDeleteEvent(event_id) {
-  return adminRequest(`/api/admin/catalog/events/${event_id}`, { method: "DELETE" });
+  return apiRequest(`/api/catalog/events/${event_id}`, { method: "DELETE" });
 }
 
 export async function adminDeleteTag(tag_id) {
-  return adminRequest(`/api/admin/catalog/tags/${tag_id}`, { method: "DELETE" });
+  return apiRequest(`/api/catalog/tags/${tag_id}`, { method: "DELETE" });
+}
+
+export async function adminReloadMap() {
+  return apiRequest("/api/catalog/reload-map", { method: "POST" });
 }

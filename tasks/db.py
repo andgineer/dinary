@@ -10,9 +10,9 @@ from pathlib import Path
 
 from invoke import task
 
-from .env import host
-from .restore_utils import apply_restore, confirm_overwrite
-from .ssh_utils import sqlite_backup_prologue, ssh_capture_bytes
+from tasks.backups.restore_utils import apply_restore, confirm_overwrite
+from tasks.devtools.env import host
+from tasks.ssh_utils import sqlite_backup_prologue, ssh_capture_bytes
 
 _LOCAL_DB_PATH = Path("data/dinary.db")
 
@@ -38,7 +38,7 @@ def migrate(c):
     on the server; no separate migrate step is needed there.
     """
     c.run(
-        "uv run python -c 'from dinary.services import storage; "
+        "uv run python -c 'from dinary.db import storage; "
         'storage.init_db(); print("Migrated data/dinary.db")\'',
     )
 
