@@ -3,6 +3,7 @@ import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import RuleRow from "../src/components/RuleRow.vue";
 import { useCatalogStore } from "../src/stores/catalog.js";
+import { useFrequentCategoriesStore } from "../src/stores/frequentCategories.js";
 
 const CATALOG = {
   catalog_version: 1,
@@ -144,12 +145,12 @@ describe("RuleRow — doubtful row", () => {
     expect(w.find('[data-testid="doubtful-row"]').exists()).toBe(true);
   });
 
-  it("shows confidence pill", () => {
+  it("does not show a confidence text pill (colour border is enough)", () => {
     const w = mount(RuleRow, { props: { item: makeDoubtful({ confidence_level: 3 }) } });
-    expect(w.find(".confidence-pill").text()).toBe("maybe");
+    expect(w.find(".confidence-pill").exists()).toBe(false);
   });
 
-  it("has warning left border on row-wrap", () => {
+  it("has warning class on row-wrap", () => {
     const w = mount(RuleRow, { props: { item: makeDoubtful() } });
     expect(w.find(".row-wrap--warning").exists()).toBe(true);
   });
@@ -158,5 +159,76 @@ describe("RuleRow — doubtful row", () => {
     const w = mount(RuleRow, { props: { item: makeDoubtful() } });
     expect(w.text()).toContain("Chocolate bar");
     expect(w.text()).toContain("Lidl");
+  });
+});
+
+describe("RuleRow — confidence-coloured borders", () => {
+  it("confidence 1 gets row-wrap--c1 class", () => {
+    const w = mount(RuleRow, { props: { item: makeDoubtful({ confidence_level: 1 }) } });
+    expect(w.find(".row-wrap--c1").exists()).toBe(true);
+    expect(w.find(".row-wrap--c2").exists()).toBe(false);
+  });
+
+  it("confidence 2 gets row-wrap--c2 class", () => {
+    const w = mount(RuleRow, { props: { item: makeDoubtful({ confidence_level: 2 }) } });
+    expect(w.find(".row-wrap--c2").exists()).toBe(true);
+    expect(w.find(".row-wrap--c1").exists()).toBe(false);
+  });
+
+  it("confidence 3 gets row-wrap--c3 class", () => {
+    const w = mount(RuleRow, { props: { item: makeDoubtful({ confidence_level: 3 }) } });
+    expect(w.find(".row-wrap--c3").exists()).toBe(true);
+    expect(w.find(".row-wrap--c1").exists()).toBe(false);
+  });
+
+  it("certain rows do not get a confidence class", () => {
+    const w = mount(RuleRow, { props: { item: makeCertain() } });
+    expect(w.find(".row-wrap--c1").exists()).toBe(false);
+    expect(w.find(".row-wrap--c2").exists()).toBe(false);
+    expect(w.find(".row-wrap--c3").exists()).toBe(false);
+  });
+});
+
+describe("RuleRow — frequent-category quick picks", () => {
+  function mountWithFrequent(item, freqCats) {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const freqStore = useFrequentCategoriesStore(pinia);
+    freqStore.categories = freqCats;
+    return mount(RuleRow, { global: { plugins: [pinia] }, props: { item } });
+  }
+
+  it("renders freq-chip pills for frequent categories", () => {
+    const item = makeDoubtful({ category_id: 10, suggested_category_id: 10, alternative_categories: [] });
+    const w = mountWithFrequent(item, [
+      { id: 20, name: "taxi" },
+      { id: 11, name: "cafe" },
+    ]);
+    expect(w.find('[data-testid="freq-chip-20"]').exists()).toBe(true);
+    expect(w.find('[data-testid="freq-chip-11"]').exists()).toBe(true);
+  });
+
+  it("deduplicates: does not show freq pick if same id as approve chip", () => {
+    const item = makeDoubtful({ category_id: 10, suggested_category_id: 11, alternative_categories: [] });
+    const w = mountWithFrequent(item, [{ id: 11, name: "cafe" }]);
+    expect(w.find('[data-testid="freq-chip-11"]').exists()).toBe(false);
+  });
+
+  it("deduplicates: does not show freq pick if same id as alt chip", () => {
+    const item = makeDoubtful({
+      category_id: 10,
+      suggested_category_id: 10,
+      alternative_categories: [{ id: 20, name: "taxi" }],
+    });
+    const w = mountWithFrequent(item, [{ id: 20, name: "taxi" }]);
+    expect(w.find('[data-testid="freq-chip-20"]').exists()).toBe(false);
+  });
+
+  it("freq-chip click emits approve with that categoryId", async () => {
+    const item = makeDoubtful({ category_id: 10, suggested_category_id: 10, alternative_categories: [] });
+    const w = mountWithFrequent(item, [{ id: 20, name: "taxi" }]);
+    await w.find('[data-testid="freq-chip-20"]').trigger("click");
+    expect(w.emitted("approve")?.[0]).toEqual([{ item, categoryId: 20 }]);
   });
 });

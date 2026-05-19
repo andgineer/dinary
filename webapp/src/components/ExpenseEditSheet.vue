@@ -60,7 +60,9 @@ const activeTags = computed(() => catalog.tags);
 const activeEvents = computed(() => catalog.events());
 
 const showScope = computed(() => props.expense?.receipt_id != null);
-const showUpdateRule = computed(() => props.expense?.has_rule === true);
+const showUpdateRule = computed(() =>
+  props.expense?.receipt_id != null && props.expense?.has_rule === true,
+);
 
 function toggleTag(tagId) {
   const id = Number(tagId);
@@ -133,7 +135,6 @@ async function save() {
         <div class="drag-handle" />
 
         <div class="sheet-header">
-          <div class="sheet-eyebrow">EDIT</div>
           <button type="button" class="sheet-close" aria-label="Close" @click="emit('close')">
             <X :size="16" />
           </button>

@@ -1,19 +1,18 @@
-"""Expenses API: POST /api/expenses, GET /api/expenses/recent, PATCH /api/expenses/{id}"""
+"""Expenses API: POST /api/expenses, GET /api/expenses, PATCH /api/expenses/{id}"""
 
 import asyncio
 import sqlite3
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from dinary.api.controllers.expenses import (
     ExpenseEditRequest,
     ExpenseEditResponse,
     ExpenseRequest,
     ExpenseResponse,
-    RecentExpenseItem,
     create_expense_sync,
     edit_expense_sync,
-    list_recent_expenses_sync,
+    list_expenses_sync,
 )
 from dinary.background.sheet_logging.sheet_logging import notify_new_work
 from dinary.config import settings
@@ -33,11 +32,13 @@ async def create_expense(
     return resp
 
 
-@router.get("/api/expenses/recent", response_model=list[RecentExpenseItem])
-async def get_recent_expenses(
+@router.get("/api/expenses")
+async def get_expenses(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> list[RecentExpenseItem]:
-    return await asyncio.to_thread(list_recent_expenses_sync, con)
+) -> dict:
+    return await asyncio.to_thread(list_expenses_sync, con, page, page_size)
 
 
 @router.patch("/api/expenses/{expense_id}", response_model=ExpenseEditResponse)

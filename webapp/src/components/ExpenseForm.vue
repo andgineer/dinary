@@ -1,21 +1,20 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Calendar, Hash } from "lucide-vue-next";
+import { Calendar, Hash, ChevronRight } from "lucide-vue-next";
 import TagPicker from "./TagPicker.vue";
 import ManageList from "./ManageList.vue";
-import CatalogSelectField from "./CatalogSelectField.vue";
 import CurrencyPicker from "./CurrencyPicker.vue";
 import IconBtn from "./IconBtn.vue";
 import EditModal from "../modals/EditModal.vue";
 import InlineCreateRow from "./InlineCreateRow.vue";
 import InlineCreateEvent from "./InlineCreateEvent.vue";
+import CatalogSelectField from "./CatalogSelectField.vue";
 import CategoryQuickPicks from "./CategoryQuickPicks.vue";
 import CategorySheet from "./CategorySheet.vue";
 import { useCatalogStore } from "../stores/catalog.js";
 import { useQueueStore } from "../stores/queue.js";
 import { useToastStore } from "../stores/toast.js";
 import { useCurrencyStore } from "../stores/currency.js";
-import { useFrequentCategoriesStore } from "../stores/frequentCategories.js";
 import { flushQueue } from "../composables/flushQueue.js";
 import { useCatalogManage } from "../composables/catalogManage.js";
 import { addResultMessage, validateTagName } from "../composables/addResult.js";
@@ -25,7 +24,6 @@ const catalog = useCatalogStore();
 const queue = useQueueStore();
 const toast = useToastStore();
 const currency = useCurrencyStore();
-const frequentCategoriesStore = useFrequentCategoriesStore();
 const {
   manageMode,
   pendingManageId,
@@ -150,11 +148,9 @@ async function init() {
     applyDefaultGroupAndCategory();
     applyAutoAttachEventForDate();
     selectedCurrency.value = currency.preferredCode;
-    frequentCategoriesStore.ensureLoaded();
     return;
   }
   await catalog.loadIfNeeded();
-  frequentCategoriesStore.ensureLoaded();
   if (catalog.lastError) {
     toast.show(`Catalog: ${catalog.lastError.message}`, "error");
   }
@@ -297,68 +293,22 @@ defineExpose({ save, reset });
 
     <!-- Quick category picks -->
     <CategoryQuickPicks
-      :categories="frequentCategoriesStore.categories"
+      :categories="catalog.frequentCategories"
       @select="onQuickPick"
-      @search="categorySheetOpen = true"
     />
 
-    <!-- Group → Category hierarchy -->
-    <div class="group-category-block">
-      <CatalogSelectField
-        kind="group"
-        label="Group"
-        v-model="groupId"
-        :options="activeGroups"
-        :inactive="inactiveGroupsList"
-        :manage-open="manageMode.group"
-        :pending-id="pendingManageId.group"
-        @add="requestAdd('group')"
-        @manage-toggle="toggleManage('group')"
-        @deactivate="runCatalogAction('group', $event, 'deactivate')"
-        @reactivate="runCatalogAction('group', $event, 'reactivate')"
-        @delete="runCatalogAction('group', $event, 'remove')"
-        @edit="onEdit('group', $event)"
-      />
-      <InlineCreateRow
-        v-if="newing === 'group'"
-        placeholder="New group name…"
-        @save="handleCreate('group', $event)"
-        @cancel="newing = null"
-      />
-
-      <div class="category-connector">
-        <div class="connector-line" />
-        <div class="connector-indent">
-          <CatalogSelectField
-            kind="category"
-            label="Category"
-            v-model="categoryId"
-            :options="activeCategories"
-            :inactive="inactiveCategoriesList"
-            :manage-open="manageMode.category"
-            :pending-id="pendingManageId.category"
-            :select-disabled="!groupId"
-            placeholder="— select —"
-            disabled-placeholder="— select group first —"
-            :add-disabled="!groupId"
-            :add-title="groupId ? 'New category' : 'Select a group first'"
-            :form-hint="groupId ? '' : 'Select a group first'"
-            @add="requestAdd('category')"
-            @manage-toggle="toggleManage('category')"
-            @deactivate="runCatalogAction('category', $event, 'deactivate')"
-            @reactivate="runCatalogAction('category', $event, 'reactivate')"
-            @delete="runCatalogAction('category', $event, 'remove')"
-            @edit="onEdit('category', $event)"
-          />
-          <InlineCreateRow
-            v-if="newing === 'category'"
-            placeholder="New category name…"
-            @save="handleCreate('category', $event)"
-            @cancel="newing = null"
-          />
-        </div>
-      </div>
-    </div>
+    <!-- Category pick button -->
+    <button
+      type="button"
+      class="category-pick-btn"
+      :class="{ 'is-set': !!categoryId }"
+      data-testid="category-pick-btn"
+      @click="categorySheetOpen = true"
+    >
+      <span v-if="categoryId">{{ catalog.findCategoryById(Number(categoryId))?.name }}</span>
+      <span v-else class="placeholder">Select category…</span>
+      <ChevronRight :size="16" class="pick-chevron" aria-hidden="true" />
+    </button>
 
     <CatalogSelectField
       kind="event"
@@ -541,34 +491,36 @@ defineExpose({ save, reset });
   border-bottom-color: var(--accent);
 }
 
-/* Group → Category hierarchy */
-.group-category-block {
-  margin-bottom: 1rem;
-}
-
-.group-category-block .form-group {
-  margin-bottom: 0;
-}
-
-.category-connector {
+/* Category pick button */
+.category-pick-btn {
   display: flex;
-  align-items: stretch;
-  padding-left: 18px;
-  margin-top: 4px;
+  align-items: center;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 0.75rem;
+  background: var(--field);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-align: left;
+  margin-bottom: 1rem;
+  transition: border-color 0.12s;
 }
 
-.connector-line {
-  width: 1px;
-  background: var(--border-strong);
-  margin-right: 12px;
+.category-pick-btn.is-set {
+  border-color: var(--border-strong);
+}
+
+.placeholder {
+  color: var(--muted);
+}
+
+.pick-chevron {
+  margin-left: auto;
   flex-shrink: 0;
-  border-radius: 1px;
-  align-self: stretch;
-}
-
-.connector-indent {
-  flex: 1;
-  min-width: 0;
+  color: var(--muted);
 }
 
 /* Tags section */

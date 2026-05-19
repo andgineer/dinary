@@ -1,10 +1,8 @@
 <script setup>
-import { Search } from "lucide-vue-next";
-
 const props = defineProps({
   categories: { type: Array, default: () => [] },
 });
-const emit = defineEmits(["select", "search"]);
+const emit = defineEmits(["select"]);
 </script>
 
 <template>
@@ -17,9 +15,6 @@ const emit = defineEmits(["select", "search"]);
       @click="emit('select', cat.id)"
     >
       {{ cat.name }}
-    </button>
-    <button type="button" class="pick-search" aria-label="Search categories" @click="emit('search')">
-      <Search :size="14" aria-hidden="true" />
     </button>
   </div>
 </template>
@@ -47,25 +42,6 @@ const emit = defineEmits(["select", "search"]);
 }
 
 .pick-pill:hover {
-  border-color: var(--border-strong);
-}
-
-.pick-search {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: var(--field);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--muted);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.pick-search:hover {
-  color: var(--text);
   border-color: var(--border-strong);
 }
 </style>

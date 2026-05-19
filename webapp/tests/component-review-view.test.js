@@ -4,6 +4,15 @@ import { createPinia, setActivePinia } from "pinia";
 import ReviewView from "../src/views/ReviewView.vue";
 import { useReviewStore } from "../src/stores/review.js";
 import { useCatalogStore } from "../src/stores/catalog.js";
+import * as reviewApi from "../src/api/review.js";
+
+vi.mock("../src/api/review.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getExpensesFeed: vi.fn(async () => ({ items: [], has_more: false, total: 0 })),
+  };
+});
 
 const FEED_PAGE_1 = {
   doubtful_count: 2,
@@ -51,18 +60,23 @@ function mountView(pinia) {
   });
 }
 
-let observerCallback = null;
+let observerCallbacks = [];
 let observerInstance = null;
+
+// Convenience: fires the first (rules) observer
+function fireRulesObserver(entries) {
+  if (observerCallbacks[0]) observerCallbacks[0](entries);
+}
 
 beforeEach(() => {
   localStorage.clear();
   const pinia = createPinia();
   setActivePinia(pinia);
 
-  observerCallback = null;
+  observerCallbacks = [];
   observerInstance = { observe: vi.fn(), disconnect: vi.fn() };
   globalThis.IntersectionObserver = vi.fn((cb) => {
-    observerCallback = cb;
+    observerCallbacks.push(cb);
     return observerInstance;
   });
 });
@@ -112,7 +126,7 @@ describe("ReviewView offline", () => {
       await flushPromises();
 
       review.hasMore = true;
-      observerCallback?.([{ isIntersecting: true }]);
+      fireRulesObserver([{ isIntersecting: true }]);
       await flushPromises();
 
       expect(spy).not.toHaveBeenCalled();
@@ -187,12 +201,12 @@ describe("ReviewView", () => {
       review.hasMore = true;
       review.page += 1;
     });
-    vi.spyOn(review, "loadRecentExpenses").mockResolvedValue();
+
     const wrapper = mountView(pinia);
     await flushPromises();
 
     review.loading = false;
-    observerCallback?.([{ isIntersecting: true }]);
+    fireRulesObserver([{ isIntersecting: true }]);
     await flushPromises();
     expect(nextPageCalls).toBe(1);
     wrapper.unmount();
@@ -217,13 +231,13 @@ describe("ReviewView", () => {
     await flushPromises();
 
     review.loading = false;
-    observerCallback?.([{ isIntersecting: true }]);
+    fireRulesObserver([{ isIntersecting: true }]);
     await flushPromises();
     expect(nextPageCalls).toBe(0);
     wrapper.unmount();
   });
 
-  it("shows end marker after all items are loaded", async () => {
+  it("shows confirm-all button after all items are loaded when doubtful items remain", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const catalog = useCatalogStore(pinia);
@@ -236,78 +250,81 @@ describe("ReviewView", () => {
       review.page = 1;
       review.totalLoaded = FEED_PAGE_1.items.length;
     });
+
     const wrapper = mountView(pinia);
     await flushPromises();
-    expect(wrapper.text()).toContain("end ·");
+    expect(wrapper.find('[data-testid="confirm-all-btn"]').exists()).toBe(true);
+    expect(wrapper.text()).not.toContain("end ·");
+    wrapper.unmount();
+  });
+
+  it("does not show confirm-all button when hasMore is true", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(async () => {
+      review.items = FEED_PAGE_1.items;
+      review.doubtfulCount = FEED_PAGE_1.doubtful_count;
+      review.hasMore = true;
+      review.page = 1;
+      review.totalLoaded = FEED_PAGE_1.items.length;
+    });
+
+    const wrapper = mountView(pinia);
+    await flushPromises();
+    expect(wrapper.find('[data-testid="confirm-all-btn"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("calls reviewStore.confirmAll when confirm-all button is clicked", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(async () => {
+      review.items = [FEED_PAGE_1.items[0]];
+      review.doubtfulCount = 1;
+      review.hasMore = false;
+      review.page = 1;
+      review.totalLoaded = 1;
+    });
+
+    const confirmSpy = vi.spyOn(review, "confirmAll").mockResolvedValue();
+    const wrapper = mountView(pinia);
+    await flushPromises();
+    await wrapper.find('[data-testid="confirm-all-btn"]').trigger("click");
+    await flushPromises();
+    expect(confirmSpy).toHaveBeenCalledWith([FEED_PAGE_1.items[0].id]);
     wrapper.unmount();
   });
 });
 
 describe("ReviewView — on-mount calls", () => {
-  it("calls loadRecentExpenses on mount when online", async () => {
+  it("only calls loadIfNeeded on mount (no separate expenses call)", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const review = useReviewStore(pinia);
-    vi.spyOn(review, "loadIfNeeded").mockResolvedValue();
-    const spyExpenses = vi.spyOn(review, "loadRecentExpenses").mockResolvedValue();
+    const spyLoad = vi.spyOn(review, "loadIfNeeded").mockResolvedValue();
     const wrapper = mountView(pinia);
     await flushPromises();
-    expect(spyExpenses).toHaveBeenCalledTimes(1);
-    wrapper.unmount();
-  });
-});
-
-describe("ReviewView — two sections", () => {
-  it("renders RECENT EXPENSES section header", async () => {
-    const pinia = createPinia();
-    setActivePinia(pinia);
-    const review = useReviewStore(pinia);
-    vi.spyOn(review, "loadIfNeeded").mockResolvedValue();
-    vi.spyOn(review, "loadRecentExpenses").mockResolvedValue();
-    const wrapper = mountView(pinia);
-    await flushPromises();
-    expect(wrapper.text()).toContain("RECENT EXPENSES");
+    expect(spyLoad).toHaveBeenCalledTimes(1);
     wrapper.unmount();
   });
 
-  it("renders ExpenseRow for each expense in the store", async () => {
+  it("does not render RECENT EXPENSES section", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const review = useReviewStore(pinia);
     vi.spyOn(review, "loadIfNeeded").mockResolvedValue();
-    vi.spyOn(review, "loadRecentExpenses").mockImplementation(async () => {
-      review.expenses = [
-        { id: 101, store: "Idea", amount: 500, currency: "RSD", category_name: "misc", tags: [], confidence_level: 5 },
-      ];
-      review.expensesLoaded = true;
-    });
     const wrapper = mountView(pinia);
     await flushPromises();
-    expect(wrapper.find('[data-testid="expense-row"]').exists()).toBe(true);
+    expect(wrapper.text()).not.toContain("RECENT EXPENSES");
     wrapper.unmount();
   });
 });
 
 describe("ReviewView — ExpenseEditSheet opening", () => {
-  it("opens ExpenseEditSheet when ExpenseRow emits tap", async () => {
-    const pinia = createPinia();
-    setActivePinia(pinia);
-    const review = useReviewStore(pinia);
-    vi.spyOn(review, "loadIfNeeded").mockResolvedValue();
-    vi.spyOn(review, "loadRecentExpenses").mockImplementation(async () => {
-      review.expenses = [
-        { id: 101, store: "Idea", amount: 500, currency: "RSD", category_name: "misc", tags: [], confidence_level: 5 },
-      ];
-      review.expensesLoaded = true;
-    });
-    const wrapper = mountView(pinia);
-    await flushPromises();
-    await wrapper.findComponent({ name: "ExpenseRow" }).vm.$emit("tap");
-    await flushPromises();
-    expect(wrapper.find('[data-testid="expense-edit-sheet"]').exists()).toBe(true);
-    wrapper.unmount();
-  });
-
   it("opens ExpenseEditSheet when RuleRow emits tap", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
@@ -330,7 +347,6 @@ describe("ReviewView — ExpenseEditSheet opening", () => {
       review.doubtfulCount = 1;
       review.hasMore = false;
     });
-    vi.spyOn(review, "loadRecentExpenses").mockResolvedValue();
     const wrapper = mountView(pinia);
     await flushPromises();
     await wrapper.findComponent({ name: "RuleRow" }).vm.$emit("tap");

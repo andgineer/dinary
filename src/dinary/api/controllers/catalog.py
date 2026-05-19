@@ -258,7 +258,7 @@ def frequent_categories_sync(con: sqlite3.Connection, limit: int = 5) -> list[Fr
         """
         SELECT e.category_id, c.name, COUNT(*) AS cnt
           FROM expenses e JOIN categories c ON c.id = e.category_id
-         WHERE c.is_active = 1 AND e.receipt_id IS NULL
+         WHERE c.is_active = 1
            AND e.datetime >= datetime('now', '-3 months')
          GROUP BY e.category_id ORDER BY cnt DESC LIMIT ?
         """,

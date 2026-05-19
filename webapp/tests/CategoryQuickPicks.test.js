@@ -23,10 +23,14 @@ describe("CategoryQuickPicks — pill tap emits select", () => {
   });
 });
 
-describe("CategoryQuickPicks — search button emits search", () => {
-  it("emits search when search button is clicked", async () => {
+describe("CategoryQuickPicks — no search button", () => {
+  it("does not render a search icon button", () => {
     const w = mount(CategoryQuickPicks, { props: { categories: CATS } });
-    await w.find(".pick-search").trigger("click");
-    expect(w.emitted("search")).toBeTruthy();
+    expect(w.find(".pick-search").exists()).toBe(false);
+  });
+
+  it("does not define a search emit", () => {
+    const w = mount(CategoryQuickPicks, { props: { categories: CATS } });
+    expect(w.emitted("search")).toBeUndefined();
   });
 });

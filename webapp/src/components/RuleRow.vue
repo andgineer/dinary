@@ -3,6 +3,7 @@ import { computed, watch } from "vue";
 import { Pencil, Check, Sparkles } from "lucide-vue-next";
 import { useCatalogStore } from "../stores/catalog.js";
 import { useReviewStore } from "../stores/review.js";
+import { useFrequentCategoriesStore } from "../stores/frequentCategories.js";
 import { useSwipeRow } from "../composables/useSwipeRow.js";
 
 const PANEL_DOUBTFUL = 168;
@@ -15,6 +16,7 @@ const emit = defineEmits(["tap", "approve"]);
 
 const catalog = useCatalogStore();
 const reviewStore = useReviewStore();
+const frequentCategoriesStore = useFrequentCategoriesStore();
 
 const isDoubtful = computed(() => props.item.is_doubtful);
 const panelWidth = computed(() => (isDoubtful.value ? PANEL_DOUBTFUL : PANEL_CERTAIN));
@@ -64,10 +66,17 @@ const altCategories = computed(() => (props.item.alternative_categories ?? []).s
 
 const tags = computed(() => props.item.tags ?? []);
 
-const CONFIDENCE_LABELS = { 1: "no match", 2: "guess", 3: "maybe" };
-const CONFIDENCE_TONES = { 1: "danger", 2: "warn", 3: "warn" };
-const confidenceLabel = computed(() => CONFIDENCE_LABELS[props.item.confidence_level] ?? "?");
-const confidenceTone = computed(() => CONFIDENCE_TONES[props.item.confidence_level] ?? "warn");
+const usedCategoryIds = computed(() => {
+  const ids = new Set();
+  if (suggestedCategoryId.value) ids.add(Number(suggestedCategoryId.value));
+  for (const alt of altCategories.value) ids.add(Number(alt.id));
+  return ids;
+});
+
+const frequentPicks = computed(() =>
+  frequentCategoriesStore.categories.filter((c) => !usedCategoryIds.value.has(Number(c.id))),
+);
+
 
 function approveFromButton(e, catId) {
   e.stopPropagation();
@@ -89,7 +98,10 @@ function onRowClick() {
 <template>
   <div
     class="row-wrap"
-    :class="{ 'row-wrap--warning': isDoubtful }"
+    :class="[
+      isDoubtful ? 'row-wrap--warning' : '',
+      isDoubtful ? `row-wrap--c${[1,2,3].includes(item.confidence_level) ? item.confidence_level : 2}` : '',
+    ]"
     :data-testid="isDoubtful ? 'doubtful-row' : 'certain-row'"
     :data-rule-id="item.id"
   >
@@ -154,12 +166,6 @@ function onRowClick() {
       <!-- Bottom row -->
       <div class="row-bottom">
         <template v-if="isDoubtful">
-          <span class="confidence-pill" :class="`pill-${confidenceTone}`">{{ confidenceLabel }}</span>
-
-          <!-- Current category text -->
-          <span v-if="currentCategory" class="row-category">{{ currentCategory.name }}</span>
-          <span v-else-if="item.category_name" class="row-category">{{ item.category_name }}</span>
-
           <!-- Tag chips -->
           <span v-for="tag in tags" :key="tag.id ?? tag" class="tag-chip">
             <template v-if="tag.icon">{{ tag.icon }} </template>{{ tag.name ?? tag }}
@@ -188,6 +194,18 @@ function onRowClick() {
             @click.stop="approveFromButton($event, alt.id)"
           >
             {{ alt.name }}
+          </button>
+
+          <!-- Frequent-category quick picks -->
+          <button
+            v-for="cat in frequentPicks"
+            :key="cat.id"
+            type="button"
+            class="alt-chip freq-chip"
+            :data-testid="`freq-chip-${cat.id}`"
+            @click.stop="approveFromButton($event, cat.id)"
+          >
+            {{ cat.name }}
           </button>
 
           <!-- Edit icon -->
@@ -225,8 +243,19 @@ function onRowClick() {
 }
 
 .row-wrap--warning {
-  border-left: 4px solid var(--warning);
   border-radius: 0 10px 10px 0;
+}
+
+.row-wrap--c1 {
+  border-left: 4px solid var(--error);
+}
+
+.row-wrap--c2 {
+  border-left: 4px solid var(--warning);
+}
+
+.row-wrap--c3 {
+  border-left: 4px solid rgba(245, 158, 11, 0.75);
 }
 
 .row-panel {
@@ -333,26 +362,6 @@ function onRowClick() {
   align-items: center;
   gap: 0.35rem;
   flex-wrap: wrap;
-}
-
-.confidence-pill {
-  font-size: 0.68rem;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 999px;
-  text-transform: lowercase;
-}
-
-.pill-danger {
-  background: rgba(239, 68, 68, 0.15);
-  color: var(--error);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-}
-
-.pill-warn {
-  background: rgba(245, 158, 11, 0.15);
-  color: var(--warning);
-  border: 1px solid rgba(245, 158, 11, 0.3);
 }
 
 .row-category {

@@ -101,43 +101,39 @@ async function selectOption(wrapper, kind, text) {
 }
 
 describe("ExpenseForm: defaults and selectors", () => {
-  it("auto-selects group and category from default_group_id / default_category_id on first paint", async () => {
+  it("shows category name in pick-btn after default category is set", async () => {
     seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
-    expect(getCatalogTrigger(wrapper, "group").text()).toContain("еда");
-    expect(getCatalogTrigger(wrapper, "category").text()).toContain("еда");
+    expect(wrapper.find('[data-testid="category-pick-btn"]').text()).toContain("еда");
   });
 
-  it("leaves group and category empty when no defaults have been applied", async () => {
+  it("shows placeholder in pick-btn when no default category", async () => {
     seedCatalog({ defaults: false });
     const wrapper = mountForm();
     await flushPromises();
-    expect(getCatalogTrigger(wrapper, "group").text()).toContain("— select —");
-    // category is disabled (no group selected) so it shows the disabled placeholder
-    expect(getCatalogTrigger(wrapper, "category").text()).toContain("— select group first —");
+    expect(wrapper.find('[data-testid="category-pick-btn"]').text()).toContain("Select category");
   });
 
-  it("auto-selects the default category when group changes", async () => {
+  it("category-pick-btn shows category set via CategorySheet select", async () => {
     seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
-    await selectOption(wrapper, "group", "транспорт");
+    await wrapper.find('[data-testid="category-pick-btn"]').trigger("click");
     await flushPromises();
-    // транспорт has default_category_id: 12 (такси)
-    expect(getCatalogTrigger(wrapper, "category").text()).toContain("такси");
+    const sheet = wrapper.findComponent({ name: "CategorySheet" });
+    sheet.vm.$emit("select", 11);
+    await flushPromises();
+    expect(wrapper.find('[data-testid="category-pick-btn"]').text()).toContain("кафе");
   });
 
-  it("populates category options for the selected group", async () => {
+  it("group/category dropdown block is absent from DOM", async () => {
     seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
-    // Open category picker (еда group already selected by default)
-    await getCatalogTrigger(wrapper, "category").trigger("click");
-    const opts = wrapper.findAll(".catalog-picker-option").map((o) => o.text().trim());
-    expect(opts).toContain("еда");
-    expect(opts).toContain("кафе");
-    expect(opts).not.toContain("такси");
+    expect(wrapper.find(".group-category-block").exists()).toBe(false);
+    expect(wrapper.find('[data-testid="catalog-trigger-group"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="catalog-trigger-category"]').exists()).toBe(false);
   });
 });
 
@@ -199,23 +195,12 @@ describe("ExpenseForm: save flow", () => {
 });
 
 describe("ExpenseForm: + New buttons open inline create rows", () => {
-  it("opens an inline create row when the group + New button is clicked", async () => {
-    seedCatalog();
-    const wrapper = mountForm();
-    await flushPromises();
-    const newBtns = wrapper.findAll('[aria-label="New"]');
-    expect(newBtns.length).toBeGreaterThanOrEqual(3);
-    await newBtns[0].trigger("click");
-    await flushPromises();
-    expect(wrapper.find('[data-testid="inline-create-row"]').exists()).toBe(true);
-  });
-
   it("opens inline event form when the event + New button is clicked", async () => {
     seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
     const newBtns = wrapper.findAll('[aria-label="New"]');
-    const eventBtn = newBtns[2];
+    const eventBtn = newBtns[0];
     await eventBtn.trigger("click");
     await flushPromises();
     expect(wrapper.find('[data-testid="inline-create-event"]').exists()).toBe(true);
@@ -230,14 +215,16 @@ describe("ExpenseForm: + New buttons open inline create rows", () => {
     expect(wrapper.find('[data-testid="inline-create-row"]').exists()).toBe(true);
   });
 
-  it("disables + New on the category row until a group is chosen", async () => {
-    const catalog = useCatalogStore();
-    catalog.replaceSnapshot({ ...SAMPLE, category_groups: [] });
+  it("category-pick-btn sets categorySheetOpen to true when clicked", async () => {
+    seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
-    const newBtns = wrapper.findAll('[aria-label="New"]');
-    const categoryNewBtn = newBtns[1];
-    expect(categoryNewBtn.attributes("disabled")).toBeDefined();
+    const btn = wrapper.find('[data-testid="category-pick-btn"]');
+    expect(btn.exists()).toBe(true);
+    await btn.trigger("click");
+    await flushPromises();
+    const sheet = wrapper.findComponent({ name: "CategorySheet" });
+    expect(sheet.props("open")).toBe(true);
   });
 });
 

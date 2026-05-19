@@ -149,8 +149,8 @@ class TestReviewFeed:
         finally:
             conn.close()
 
-        p1 = client.get("/api/rules/feed?page=1&page_size=1").json()
-        p2 = client.get("/api/rules/feed?page=2&page_size=1").json()
+        p1 = client.get("/api/rules/feed?page=1&page_size=1&doubtful_only=false").json()
+        p2 = client.get("/api/rules/feed?page=2&page_size=1&doubtful_only=false").json()
 
         assert len(p1["items"]) == 1
         assert p1["has_more"] is True
@@ -170,7 +170,7 @@ class TestReviewFeedCertainRules:
         finally:
             conn.close()
 
-        resp = client.get("/api/rules/feed")
+        resp = client.get("/api/rules/feed?doubtful_only=false")
         data = resp.json()
         certain = [i for i in data["items"] if not i["is_doubtful"]]
         assert len(certain) == 1
@@ -191,7 +191,7 @@ class TestReviewFeedCertainRules:
         finally:
             conn.close()
 
-        resp = client.get("/api/rules/feed")
+        resp = client.get("/api/rules/feed?doubtful_only=false")
         assert resp.json()["doubtful_count"] == 0
 
     def test_rule_name_comes_from_classification_rules(self, client, db):  # noqa: ARG002
@@ -201,7 +201,7 @@ class TestReviewFeedCertainRules:
         finally:
             conn.close()
 
-        resp = client.get("/api/rules/feed")
+        resp = client.get("/api/rules/feed?doubtful_only=false")
         certain = [i for i in resp.json()["items"] if not i["is_doubtful"]]
         assert len(certain) == 1
         assert certain[0]["name"] == "mleko"

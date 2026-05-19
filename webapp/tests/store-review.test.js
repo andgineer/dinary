@@ -4,6 +4,7 @@ import { useReviewStore } from "../src/stores/review.js";
 import * as expenseCorrections from "../src/api/expenseCorrections.js";
 import * as reviewApi from "../src/api/review.js";
 import { useCatalogStore } from "../src/stores/catalog.js";
+import { useToastStore } from "../src/stores/toast.js";
 
 function mockOnLine(value) {
   const ownBefore = Object.getOwnPropertyDescriptor(navigator, "onLine");
@@ -337,8 +338,8 @@ describe("review store: loadNextPage()", () => {
 });
 
 describe("review store: updateExpense()", () => {
-  it("replaces matching expense entry with fields from response", async () => {
-    vi.spyOn(expenseCorrections, "editExpense").mockResolvedValueOnce({
+  it("calls editExpense API with the given payload", async () => {
+    const spy = vi.spyOn(expenseCorrections, "editExpense").mockResolvedValueOnce({
       id: 10,
       category_id: 20,
       category_name: "cafe",
@@ -348,65 +349,65 @@ describe("review store: updateExpense()", () => {
     });
 
     const store = useReviewStore();
-    store.expenses = [{ id: 10, category_id: 1, category_name: "old", tag_ids: [], event_id: null }];
-
     await store.updateExpense(10, { category_id: 20, tag_ids: [5], event_id: 3 });
 
-    expect(store.expenses[0].category_id).toBe(20);
-    expect(store.expenses[0].category_name).toBe("cafe");
-    expect(store.expenses[0].tag_ids).toEqual([5]);
-    expect(store.expenses[0].event_id).toBe(3);
-    expect(store.expenses[0].event_name).toBe("Trip");
+    expect(spy).toHaveBeenCalledWith(10, { category_id: 20, tag_ids: [5], event_id: 3 });
+  });
+
+  it("shows error toast and rethrows when API fails", async () => {
+    vi.spyOn(expenseCorrections, "editExpense").mockRejectedValueOnce(new Error("Server error"));
+    const store = useReviewStore();
+    const toast = useToastStore();
+    const showSpy = vi.spyOn(toast, "show");
+    await expect(store.updateExpense(10, {})).rejects.toThrow("Server error");
+    expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("Server error"), "error");
   });
 });
 
-describe("review store: loadRecentExpenses()", () => {
-  it("populates expenses from response", async () => {
-    vi.spyOn(reviewApi, "getRecentExpenses").mockResolvedValueOnce({
-      expenses: [{ id: 1, store: "Lidl", amount: 100, currency: "RSD" }],
-    });
+describe("review store: confirmAll()", () => {
+  it("removes confirmed items from items list", async () => {
+    vi.spyOn(reviewApi, "confirmAllRules").mockResolvedValueOnce({ confirmed: 2 });
     const store = useReviewStore();
-    await store.loadRecentExpenses();
-    expect(store.expenses).toHaveLength(1);
-    expect(store.expenses[0].id).toBe(1);
-    expect(store.expensesLoaded).toBe(true);
+    store.items = [
+      { id: 1, is_doubtful: true },
+      { id: 2, is_doubtful: true },
+      { id: 3, is_doubtful: false },
+    ];
+    store.doubtfulCount = 2;
+    await store.confirmAll([1, 2]);
+    expect(store.items.map((i) => i.id)).toEqual([3]);
   });
 
-  it("accepts a plain array response (no .expenses wrapper)", async () => {
-    vi.spyOn(reviewApi, "getRecentExpenses").mockResolvedValueOnce([
-      { id: 2, store: "Maxi", amount: 200, currency: "RSD" },
-    ]);
+  it("decrements doubtfulCount by confirmed count", async () => {
+    vi.spyOn(reviewApi, "confirmAllRules").mockResolvedValueOnce({ confirmed: 2 });
     const store = useReviewStore();
-    await store.loadRecentExpenses();
-    expect(store.expenses).toHaveLength(1);
-    expect(store.expenses[0].id).toBe(2);
+    store.items = [
+      { id: 1, is_doubtful: true },
+      { id: 2, is_doubtful: true },
+    ];
+    store.doubtfulCount = 3;
+    await store.confirmAll([1, 2]);
+    expect(store.doubtfulCount).toBe(1);
   });
 
-  it("suppresses error toast when offline and API fails", async () => {
-    vi.spyOn(reviewApi, "getRecentExpenses").mockRejectedValueOnce(new Error("Network error"));
-    const restore = mockOnLine(false);
-    try {
-      const store = useReviewStore();
-      const { useToastStore } = await import("../src/stores/toast.js");
-      const toast = useToastStore();
-      const showSpy = vi.spyOn(toast, "show");
-      await store.loadRecentExpenses();
-      expect(showSpy).not.toHaveBeenCalled();
-      expect(store.expensesLoaded).toBe(false);
-    } finally {
-      restore();
-    }
-  });
-
-  it("shows error toast when online and API fails", async () => {
-    vi.spyOn(reviewApi, "getRecentExpenses").mockRejectedValueOnce(new Error("Server error"));
+  it("shows success toast with count", async () => {
+    vi.spyOn(reviewApi, "confirmAllRules").mockResolvedValueOnce({ confirmed: 3 });
     const store = useReviewStore();
-    const { useToastStore } = await import("../src/stores/toast.js");
+    store.items = [{ id: 1, is_doubtful: true }, { id: 2, is_doubtful: true }, { id: 3, is_doubtful: true }];
+    store.doubtfulCount = 3;
     const toast = useToastStore();
     const showSpy = vi.spyOn(toast, "show");
-    await store.loadRecentExpenses();
+    await store.confirmAll([1, 2, 3]);
+    expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("3"), "success");
+  });
+
+  it("shows error toast when API fails", async () => {
+    vi.spyOn(reviewApi, "confirmAllRules").mockRejectedValueOnce(new Error("Server error"));
+    const store = useReviewStore();
+    const toast = useToastStore();
+    const showSpy = vi.spyOn(toast, "show");
+    await store.confirmAll([1]);
     expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("Server error"), "error");
-    expect(store.expensesLoaded).toBe(false);
   });
 });
 

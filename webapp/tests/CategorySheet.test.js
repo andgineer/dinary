@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import CategorySheet from "../src/components/CategorySheet.vue";
@@ -94,6 +95,37 @@ describe("CategorySheet — flat result tap emits select", () => {
     const item = w.find(".flat-item");
     await item.trigger("click");
     expect(w.emitted("select")?.[0]).toEqual([20]);
+  });
+});
+
+describe("CategorySheet — sticky search bar", () => {
+  it("search-wrap is outside sheet-body (not inside scrollable area)", () => {
+    const w = mountSheet();
+    const sheetBody = w.find(".sheet-body");
+    expect(sheetBody.find(".search-wrap").exists()).toBe(false);
+    expect(w.find(".sheet .search-wrap").exists()).toBe(true);
+  });
+
+  it("search-wrap renders as a direct child of sheet (outside scroll container)", () => {
+    const w = mountSheet();
+    const sheetEl = w.find(".sheet");
+    const directChildren = sheetEl.element.children;
+    const childClasses = Array.from(directChildren).map((el) => el.className);
+    expect(childClasses.some((c) => c.includes("search-wrap"))).toBe(true);
+  });
+
+  it("resets sheet-body scrollTop to 0 when sheet is opened", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const w = mount(CategorySheet, {
+      props: { open: false, suggestions: [] },
+      global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB } },
+    });
+    await w.setProps({ open: true });
+    await nextTick();
+    await nextTick();
+    expect(w.find(".sheet-body").element.scrollTop).toBe(0);
   });
 });
 

@@ -1,5 +1,5 @@
 <script setup>
-import { watch } from "vue";
+import { computed, watch } from "vue";
 import { Pencil } from "lucide-vue-next";
 import { useSwipeRow } from "../composables/useSwipeRow.js";
 import { useReviewStore } from "../stores/review.js";
@@ -31,15 +31,21 @@ watch(
   },
 );
 
+const primaryText = computed(() => {
+  const e = props.expense;
+  return e.item_name ?? e.store_name ?? e.store ?? e.merchant ?? "—";
+});
+
+const secondaryText = computed(() => {
+  const e = props.expense;
+  if (e.item_name && (e.store_name ?? e.store)) return e.store_name ?? e.store;
+  return null;
+});
+
 function formatDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   return `${d.getDate()} ${d.toLocaleString("en", { month: "short" })}`;
-}
-
-function formatAmount(val, currency) {
-  if (val == null) return "";
-  return `${val.toLocaleString("ru-RU")} ${currency ?? ""}`.trim();
 }
 
 function onRowClick() {
@@ -83,11 +89,11 @@ function onEditClick(e) {
       @click="onRowClick"
     >
       <div class="row-top">
-        <span class="row-date">{{ formatDate(expense.date ?? expense.datetime) }}</span>
-        <span class="row-store">{{ expense.store ?? expense.merchant }}</span>
-        <span class="row-amount">{{ formatAmount(expense.amount ?? expense.total, expense.currency) }}</span>
+        <span class="row-primary">{{ primaryText }}</span>
+        <span v-if="secondaryText" class="row-store">{{ secondaryText }}</span>
       </div>
       <div class="row-bottom">
+        <span class="row-date">{{ formatDate(expense.date ?? expense.datetime) }}</span>
         <span class="row-category">{{ expense.category_name }}</span>
         <template v-if="expense.tags?.length">
           <span
@@ -155,7 +161,7 @@ function onEditClick(e) {
   background-color: var(--bg);
   touch-action: pan-y;
   user-select: none;
-  padding: 0.625rem 0.75rem;
+  padding: 0.5rem 0.75rem;
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
 }
@@ -167,18 +173,11 @@ function onEditClick(e) {
 .row-top {
   display: flex;
   align-items: baseline;
-  gap: 0.35rem;
+  gap: 0.4rem;
   margin-bottom: 3px;
 }
 
-.row-date {
-  font-size: 0.78rem;
-  color: var(--muted);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.row-store {
+.row-primary {
   font-weight: 600;
   font-size: 0.9375rem;
   color: var(--text);
@@ -189,11 +188,9 @@ function onEditClick(e) {
   white-space: nowrap;
 }
 
-.row-amount {
-  font-family: var(--font-num);
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--text);
+.row-store {
+  font-size: 0.78rem;
+  color: var(--muted);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -201,13 +198,23 @@ function onEditClick(e) {
 .row-bottom {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
   flex-wrap: wrap;
 }
 
-.row-category {
-  font-size: 0.78rem;
+.row-date {
+  font-size: 0.72rem;
   color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.row-category {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .tag-chip {
@@ -223,7 +230,7 @@ function onEditClick(e) {
 }
 
 .event-name {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: var(--muted-2);
 }
 </style>

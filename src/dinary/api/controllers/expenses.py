@@ -75,16 +75,14 @@ class ExpenseEditResponse(BaseModel):
     event_name: str | None
 
 
-class RecentExpenseTag(BaseModel):
+class ExpenseListTag(BaseModel):
     id: int
     name: str
 
 
-class RecentExpenseItem(BaseModel):
+class ExpenseListItem(BaseModel):
     id: int
     datetime: str
-    amount: float
-    currency_original: str
     category_id: int
     category_name: str
     event_id: int | None
@@ -93,8 +91,9 @@ class RecentExpenseItem(BaseModel):
     store_name: str | None
     receipt_id: int | None
     confidence_level: int | None
-    tags: list[RecentExpenseTag]
+    tags: list[ExpenseListTag]
     has_rule: bool
+    item_name: str | None = None
 
 
 def create_expense_sync(req: ExpenseRequest, con: sqlite3.Connection) -> ExpenseResponse:
@@ -181,14 +180,19 @@ def create_expense_sync(req: ExpenseRequest, con: sqlite3.Connection) -> Expense
     )
 
 
-def list_recent_expenses_sync(con: sqlite3.Connection) -> list[RecentExpenseItem]:
+def list_expenses_sync(
+    con: sqlite3.Connection,
+    page: int,
+    page_size: int,
+) -> dict:
+    con.row_factory = sqlite3.Row
+    offset = (page - 1) * page_size
+    total = con.execute("SELECT COUNT(*) FROM expenses").fetchone()[0]
     rows = con.execute(
         """
         SELECT
             e.id,
             e.datetime,
-            e.amount,
-            e.currency_original,
             e.category_id,
             c.name          AS category_name,
             e.event_id,
@@ -212,43 +216,51 @@ def list_recent_expenses_sync(con: sqlite3.Connection) -> list[RecentExpenseItem
                           AND (cr.store_id IS NULL OR cr.store_id = rec.store_id)
                    )
                  LIMIT 1
-            ), 0) END AS has_rule
+            ), 0) END AS has_rule,
+            (SELECT ri.name_raw FROM receipt_items ri
+              WHERE ri.expense_id = e.id LIMIT 1) AS item_name
         FROM expenses e
         JOIN categories c ON c.id = e.category_id
         LEFT JOIN events ev ON ev.id = e.event_id
         LEFT JOIN stores s ON s.id = e.store_id
         LEFT JOIN receipts rec ON rec.id = e.receipt_id
         ORDER BY e.datetime DESC, e.id DESC
-        LIMIT 30
+        LIMIT ? OFFSET ?
         """,
+        [page_size, offset],
     ).fetchall()
 
-    result = []
+    items = []
     for r in rows:
         try:
-            raw_tags = json.loads(r[12]) if r[12] else []
-            tags = [RecentExpenseTag(id=int(t["id"]), name=str(t["name"])) for t in raw_tags]
+            raw_tags = json.loads(r["tags_json"]) if r["tags_json"] else []
+            tags = [ExpenseListTag(id=int(t["id"]), name=str(t["name"])) for t in raw_tags]
         except (json.JSONDecodeError, KeyError, TypeError):
             tags = []
-        result.append(
-            RecentExpenseItem(
-                id=int(r[0]),
-                datetime=str(r[1]),
-                amount=float(r[2]),
-                currency_original=str(r[3]),
-                category_id=int(r[4]),
-                category_name=str(r[5]),
-                event_id=int(r[6]) if r[6] is not None else None,
-                event_name=str(r[7]) if r[7] is not None else None,
-                store_id=int(r[8]) if r[8] is not None else None,
-                store_name=str(r[9]) if r[9] is not None else None,
-                receipt_id=int(r[10]) if r[10] is not None else None,
-                confidence_level=int(r[11]) if r[11] is not None else None,
+        items.append(
+            ExpenseListItem(
+                id=int(r["id"]),
+                datetime=str(r["datetime"]),
+                category_id=int(r["category_id"]),
+                category_name=str(r["category_name"]),
+                event_id=int(r["event_id"]) if r["event_id"] is not None else None,
+                event_name=str(r["event_name"]) if r["event_name"] is not None else None,
+                store_id=int(r["store_id"]) if r["store_id"] is not None else None,
+                store_name=str(r["store_name"]) if r["store_name"] is not None else None,
+                receipt_id=int(r["receipt_id"]) if r["receipt_id"] is not None else None,
+                confidence_level=int(r["confidence_level"])
+                if r["confidence_level"] is not None
+                else None,
                 tags=tags,
-                has_rule=bool(r[13]),
+                has_rule=bool(r["has_rule"]),
+                item_name=str(r["item_name"]) if r["item_name"] is not None else None,
             ),
         )
-    return result
+    return {
+        "items": items,
+        "has_more": offset + page_size < total,
+        "total": total,
+    }
 
 
 def edit_expense_sync(

@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useReviewStore } from "../stores/review.js";
 import { useOnline } from "../composables/useOnline.js";
 import { useToastStore } from "../stores/toast.js";
@@ -12,13 +12,17 @@ const reviewStore = useReviewStore();
 const { isOnline } = useOnline();
 const toast = useToastStore();
 
+const doubtfulItems = computed(() => reviewStore.items.filter((i) => i.is_doubtful));
+
 const expenseEditOpen = ref(false);
 const editingExpense = ref(null);
 const editingSuggestions = ref([]);
 const editingRuleItem = ref(null);
 
-const sentinel = ref(null);
-let observer = null;
+const rulesSentinel = ref(null);
+const expensesSentinel = ref(null);
+let rulesObserver = null;
+let expensesObserver = null;
 
 function openExpenseEdit(expense, suggestions = [], ruleItem = null) {
   if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
@@ -40,34 +44,56 @@ async function approveItem({ item, categoryId }) {
   await reviewStore.correct(item, categoryId, "all");
 }
 
+async function handleConfirmAll() {
+  if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
+  const ruleIds = doubtfulItems.value.map((i) => i.id);
+  await reviewStore.confirmAll(ruleIds);
+}
+
 async function forceRefresh() {
   if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
   reviewStore.reset();
-  await Promise.all([reviewStore.loadNextPage(), reviewStore.loadRecentExpenses()]);
+  await Promise.all([reviewStore.loadNextPage(), reviewStore.loadExpensesNextPage()]);
 }
 
-function setupObserver() {
-  if (!sentinel.value || typeof IntersectionObserver === "undefined") return;
-  observer = new IntersectionObserver(
-    (entries) => {
-      if (entries[0].isIntersecting && !reviewStore.loading && reviewStore.hasMore && isOnline.value) {
-        reviewStore.loadNextPage();
-      }
-    },
-    { rootMargin: "120px" },
-  );
-  observer.observe(sentinel.value);
+function setupObservers() {
+  if (typeof IntersectionObserver === "undefined") return;
+
+  if (rulesSentinel.value) {
+    rulesObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !reviewStore.loading && reviewStore.hasMore && isOnline.value) {
+          reviewStore.loadNextPage();
+        }
+      },
+      { rootMargin: "120px" },
+    );
+    rulesObserver.observe(rulesSentinel.value);
+  }
+
+  if (expensesSentinel.value) {
+    expensesObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !reviewStore.expensesLoading && reviewStore.expensesHasMore && isOnline.value) {
+          reviewStore.loadExpensesNextPage();
+        }
+      },
+      { rootMargin: "120px" },
+    );
+    expensesObserver.observe(expensesSentinel.value);
+  }
 }
 
 onMounted(async () => {
   if (isOnline.value) {
-    await Promise.all([reviewStore.loadIfNeeded(), reviewStore.loadRecentExpenses()]);
+    await Promise.all([reviewStore.loadIfNeeded(), reviewStore.loadExpensesIfNeeded()]);
   }
-  setupObserver();
+  setupObservers();
 });
 
 onBeforeUnmount(() => {
-  if (observer) observer.disconnect();
+  if (rulesObserver) rulesObserver.disconnect();
+  if (expensesObserver) expensesObserver.disconnect();
 });
 </script>
 
@@ -118,31 +144,32 @@ onBeforeUnmount(() => {
       <div class="skeleton-row" />
     </div>
 
-    <div ref="sentinel" class="scroll-sentinel" aria-hidden="true" />
+    <div ref="rulesSentinel" class="scroll-sentinel" aria-hidden="true" />
 
     <div
-      v-if="!reviewStore.hasMore && !reviewStore.loading && reviewStore.items.length > 0"
-      class="list-end"
+      v-if="!reviewStore.hasMore && !reviewStore.loading && doubtfulItems.length > 0"
+      class="confirm-all-wrap"
     >
-      ─── end · {{ reviewStore.totalLoaded }} loaded ───
+      <button
+        type="button"
+        class="confirm-all-btn"
+        data-testid="confirm-all-btn"
+        @click="handleConfirmAll"
+      >
+        Confirm all ({{ doubtfulItems.length }})
+      </button>
     </div>
 
-    <!-- Recent expenses section -->
-    <div class="review-header expenses-header">
-      <div class="section-header">
-        <span class="section-label">RECENT EXPENSES</span>
-      </div>
-      <IconBtn
-        icon="refresh"
-        tone="muted"
-        label="Refresh expenses"
-        :disabled="!isOnline || reviewStore.expensesLoading"
-        @click="reviewStore.loadRecentExpenses()"
-      />
+    <!-- Expenses section -->
+    <div class="section-header expenses-header">
+      <span class="section-label">EXPENSES</span>
     </div>
 
     <template v-for="expense in reviewStore.expenses" :key="expense.id">
-      <ExpenseRow :expense="expense" @tap="openExpenseEdit(expense)" />
+      <ExpenseRow
+        :expense="expense"
+        @tap="openExpenseEdit(expense)"
+      />
     </template>
 
     <div v-if="reviewStore.expensesLoading" class="skeleton-rows" aria-label="Loading expenses">
@@ -150,11 +177,13 @@ onBeforeUnmount(() => {
     </div>
 
     <div
-      v-if="reviewStore.expensesLoaded && reviewStore.expenses.length === 0"
+      v-if="!reviewStore.expensesLoading && !reviewStore.expensesHasMore && reviewStore.expenses.length === 0"
       class="empty-state"
     >
-      <p class="empty-text">No recent expenses</p>
+      <p class="empty-text">No expenses yet</p>
     </div>
+
+    <div ref="expensesSentinel" class="scroll-sentinel" aria-hidden="true" />
   </div>
 
   <ExpenseEditSheet
@@ -184,7 +213,8 @@ onBeforeUnmount(() => {
 }
 
 .expenses-header {
-  margin-top: 1.25rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
 }
 
 .section-header {
@@ -263,10 +293,25 @@ onBeforeUnmount(() => {
   height: 1px;
 }
 
-.list-end {
-  text-align: center;
-  font-size: 0.75rem;
-  color: var(--muted-2);
-  padding: 1rem 0;
+.confirm-all-wrap {
+  padding: 0.75rem 0;
+  display: flex;
+  justify-content: center;
+}
+
+.confirm-all-btn {
+  padding: 0.5rem 1.5rem;
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: 999px;
+  color: var(--success);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.confirm-all-btn:hover {
+  background: rgba(34, 197, 94, 0.25);
 }
 </style>

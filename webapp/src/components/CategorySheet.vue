@@ -12,6 +12,7 @@ const emit = defineEmits(["select", "close"]);
 
 const catalog = useCatalogStore();
 const searchEl = ref(null);
+const bodyEl = ref(null);
 const query = ref("");
 
 watch(
@@ -19,7 +20,10 @@ watch(
   (isOpen) => {
     if (isOpen) {
       query.value = "";
-      nextTick(() => searchEl.value?.focus());
+      nextTick(() => {
+        if (bodyEl.value) bodyEl.value.scrollTop = 0;
+        searchEl.value?.focus({ preventScroll: true });
+      });
     }
   },
 );
@@ -106,7 +110,7 @@ function onKeydown(e) {
           </button>
         </div>
 
-        <div class="sheet-body">
+        <div ref="bodyEl" class="sheet-body">
           <template v-if="showSearch">
             <div class="flat-list" data-testid="flat-results">
               <button
@@ -206,6 +210,7 @@ function onKeydown(e) {
   display: flex;
   flex-direction: column;
   box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.35);
+  overscroll-behavior: contain;
 }
 
 .drag-handle {
@@ -246,7 +251,10 @@ function onKeydown(e) {
 }
 
 .search-wrap {
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
   margin: 0 1rem 0.5rem;
   flex-shrink: 0;
 }

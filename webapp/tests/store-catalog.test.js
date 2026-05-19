@@ -44,6 +44,7 @@ const SAMPLE = {
     { id: 200, name: "vacation", is_active: true },
     { id: 201, name: "old-tag", is_active: false },
   ],
+  frequent_categories: [{ id: 10, name: "cafe" }],
 };
 
 beforeEach(() => {

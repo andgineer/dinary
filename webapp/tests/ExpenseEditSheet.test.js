@@ -138,9 +138,14 @@ describe("ExpenseEditSheet — update rule checkbox", () => {
     expect(wrapper.find('[data-testid="update-rule-wrap"]').exists()).toBe(false);
   });
 
-  it("shows checkbox when has_rule is true", () => {
-    const { wrapper } = mountSheet({ expense: { ...EXPENSE, has_rule: true } });
+  it("shows checkbox when has_rule is true and receipt_id is set", () => {
+    const { wrapper } = mountSheet({ expense: { ...EXPENSE, has_rule: true, receipt_id: 7 } });
     expect(wrapper.find('[data-testid="update-rule-wrap"]').exists()).toBe(true);
+  });
+
+  it("hides checkbox when has_rule is true but receipt_id is null (manual expense)", () => {
+    const { wrapper } = mountSheet({ expense: { ...EXPENSE, has_rule: true, receipt_id: null } });
+    expect(wrapper.find('[data-testid="update-rule-wrap"]').exists()).toBe(false);
   });
 });
 

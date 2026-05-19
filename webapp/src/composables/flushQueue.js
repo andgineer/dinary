@@ -8,6 +8,7 @@ import { postExpense } from "../api/expenses.js";
 import { useCatalogStore } from "../stores/catalog.js";
 import { useFrequentCategoriesStore } from "../stores/frequentCategories.js";
 import { useQueueStore } from "../stores/queue.js";
+import { useReviewStore } from "../stores/review.js";
 import { useToastStore } from "../stores/toast.js";
 let _inFlight = false;
 
@@ -17,8 +18,10 @@ export async function flushQueue() {
   const queue = useQueueStore();
   const catalog = useCatalogStore();
   const freq = useFrequentCategoriesStore();
+  const review = useReviewStore();
   const toast = useToastStore();
   await queue.refresh();
+  let anyFlushed = false;
   let latestCatalogVersion = -1;
   try {
     for (const item of [...queue.items]) {
@@ -48,6 +51,7 @@ export async function flushQueue() {
         }
         freq.refresh(resp);
         await queue.remove(item.id);
+        anyFlushed = true;
       } catch (err) {
         if (err?.status === 409) {
           await queue.remove(item.id);
@@ -68,6 +72,9 @@ export async function flushQueue() {
   }
   if (latestCatalogVersion > 0 && latestCatalogVersion !== catalog.catalogVersion) {
     await catalog.load();
+  }
+  if (anyFlushed) {
+    review.resetExpenses();
   }
 }
 

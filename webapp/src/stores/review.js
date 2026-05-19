@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { getReviewFeed, getReviewCounts, getRecentExpenses } from "../api/review.js";
+import { getReviewFeed, getReviewCounts, getExpensesFeed, confirmAllRules } from "../api/review.js";
 import { correctCategory, editExpense } from "../api/expenseCorrections.js";
 import { useStaleCache } from "../composables/useStaleCache.js";
 import { useToastStore } from "./toast.js";
@@ -28,11 +28,12 @@ export const useReviewStore = defineStore("review", () => {
   const loading = ref(false);
   const totalLoaded = ref(cached?.totalLoaded ?? 0);
   const fromCache = ref(!!cached);
+  const openRowId = ref(null);
 
   const expenses = ref([]);
+  const expensesPage = ref(0);
+  const expensesHasMore = ref(true);
   const expensesLoading = ref(false);
-  const expensesLoaded = ref(false);
-  const openRowId = ref(null);
 
   function _persistState() {
     writeCache({
@@ -142,38 +143,60 @@ export const useReviewStore = defineStore("review", () => {
     openRowId.value = id;
   }
 
-  async function loadRecentExpenses() {
+  async function confirmAll(ruleIds) {
+    const toast = useToastStore();
+    try {
+      const result = await confirmAllRules(ruleIds);
+      const confirmedCount = result?.confirmed ?? ruleIds.length;
+      items.value = items.value.filter((i) => !ruleIds.includes(i.id));
+      doubtfulCount.value = Math.max(0, doubtfulCount.value - confirmedCount);
+      totalLoaded.value = items.value.length;
+      _persistState();
+      toast.show(`${confirmedCount} rules confirmed`, "success");
+    } catch (err) {
+      toast.show(err?.message || "Confirm all failed", "error");
+    }
+  }
+
+  async function loadExpensesNextPage() {
     if (expensesLoading.value) return;
+    if (expensesPage.value > 0 && !expensesHasMore.value) return;
     expensesLoading.value = true;
     try {
-      const data = await getRecentExpenses();
-      expenses.value = data?.expenses ?? data ?? [];
-      expensesLoaded.value = true;
+      const nextPage = expensesPage.value + 1;
+      const data = await getExpensesFeed({ page: nextPage, pageSize: 20 });
+      const existingIds = new Set(expenses.value.map((e) => e.id));
+      const incoming = (data.items ?? []).filter((e) => !existingIds.has(e.id));
+      expenses.value = [...expenses.value, ...incoming];
+      expensesHasMore.value = data.has_more ?? false;
+      expensesPage.value = nextPage;
     } catch (err) {
       if (navigator.onLine) {
         const toast = useToastStore();
-        toast.show(err?.message || "Failed to load recent expenses", "error");
+        toast.show(err?.message || "Failed to load expenses", "error");
       }
     } finally {
       expensesLoading.value = false;
     }
   }
 
+  async function loadExpensesIfNeeded() {
+    if (expensesPage.value === 0) {
+      await loadExpensesNextPage();
+    }
+  }
+
+  function resetExpenses() {
+    expenses.value = [];
+    expensesPage.value = 0;
+    expensesHasMore.value = true;
+    expensesLoading.value = false;
+  }
+
   async function updateExpense(id, payload) {
     const toast = useToastStore();
     try {
-      const result = await editExpense(id, payload);
-      const idx = expenses.value.findIndex((e) => e.id === id);
-      if (idx !== -1 && result) {
-        expenses.value[idx] = {
-          ...expenses.value[idx],
-          category_id: result.category_id ?? expenses.value[idx].category_id,
-          category_name: result.category_name ?? expenses.value[idx].category_name,
-          tag_ids: result.tag_ids ?? expenses.value[idx].tag_ids,
-          event_id: result.event_id ?? null,
-          event_name: result.event_name ?? null,
-        };
-      }
+      await editExpense(id, payload);
     } catch (err) {
       toast.show(err?.message || "Update failed", "error");
       throw err;
@@ -189,6 +212,10 @@ export const useReviewStore = defineStore("review", () => {
     totalLoaded.value = 0;
     fromCache.value = false;
     lastFetchedAt.value = null;
+    expenses.value = [];
+    expensesPage.value = 0;
+    expensesHasMore.value = true;
+    expensesLoading.value = false;
     clearCache();
     try {
       localStorage.removeItem(FETCHED_KEY);
@@ -205,17 +232,21 @@ export const useReviewStore = defineStore("review", () => {
     fromCache,
     dirtyFlag,
     lastFetchedAt,
-    expenses,
-    expensesLoading,
-    expensesLoaded,
     openRowId,
+    expenses,
+    expensesPage,
+    expensesHasMore,
+    expensesLoading,
     markDirty,
     loadIfNeeded,
     fetchCounts,
     loadNextPage,
     correct,
+    confirmAll,
     setOpenRow,
-    loadRecentExpenses,
+    loadExpensesIfNeeded,
+    loadExpensesNextPage,
+    resetExpenses,
     updateExpense,
     reset,
   };

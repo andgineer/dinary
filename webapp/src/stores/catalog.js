@@ -64,6 +64,7 @@ function readCachedSnapshot() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed.catalog_version !== "number") return null;
+    if (!Array.isArray(parsed.frequent_categories)) return null;
     return parsed;
   } catch {
     return null;
