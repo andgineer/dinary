@@ -20,7 +20,7 @@ COPY pyproject.toml uv.lock ./
 # from the build context — so they must be COPY'd before ``uv pip
 # install``, even though the resulting image never references them at
 # runtime.
-COPY LICENSE.txt README.md ./
+COPY LICENSE README.md ./
 COPY src/dinary/__about__.py src/dinary/__about__.py
 COPY src/dinary/__init__.py src/dinary/__init__.py
 RUN uv pip install --system .
