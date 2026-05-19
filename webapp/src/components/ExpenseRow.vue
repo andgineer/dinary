@@ -33,13 +33,22 @@ watch(
 
 const primaryText = computed(() => {
   const e = props.expense;
-  return e.item_name ?? e.store_name ?? e.store ?? e.merchant ?? "—";
+  return e.item_name ?? e.store_name ?? e.store ?? e.merchant ?? null;
 });
 
 const secondaryText = computed(() => {
   const e = props.expense;
   if (e.item_name && (e.store_name ?? e.store)) return e.store_name ?? e.store;
   return null;
+});
+
+const amountText = computed(() => {
+  const { amount_original: amt, currency_original: cur } = props.expense;
+  if (amt == null) return null;
+  const n = Number(amt);
+  if (!isFinite(n)) return null;
+  const fmt = n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return cur ? `${fmt} ${cur}` : fmt;
 });
 
 function formatDate(iso) {
@@ -88,7 +97,7 @@ function onEditClick(e) {
       @pointercancel="endDrag"
       @click="onRowClick"
     >
-      <div class="row-top">
+      <div v-if="primaryText" class="row-top">
         <span class="row-primary">{{ primaryText }}</span>
         <span v-if="secondaryText" class="row-store">{{ secondaryText }}</span>
       </div>
@@ -105,6 +114,7 @@ function onEditClick(e) {
           </span>
         </template>
         <span v-if="expense.event_name" class="event-name">· {{ expense.event_name }}</span>
+        <span v-if="amountText" class="row-amount">{{ amountText }}</span>
       </div>
     </div>
   </div>
@@ -232,5 +242,13 @@ function onEditClick(e) {
 .event-name {
   font-size: 0.72rem;
   color: var(--muted-2);
+}
+
+.row-amount {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 </style>

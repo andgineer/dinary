@@ -201,12 +201,11 @@ function onKeydown(e) {
   position: fixed;
   left: 0;
   right: 0;
+  top: 0;
   bottom: 0;
   z-index: 50;
   background: var(--surface);
   border-radius: 18px 18px 0 0;
-  min-height: 50vh;
-  max-height: 80vh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.35);

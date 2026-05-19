@@ -90,6 +90,11 @@ function onEventSelect(eventId) {
   }
 }
 
+function _resolvedTags() {
+  const ids = new Set([...selectedTagIds.value].map(Number));
+  return activeTags.value.filter((t) => ids.has(Number(t.id)));
+}
+
 async function save() {
   if (submitting.value) return;
   submitting.value = true;
@@ -103,6 +108,16 @@ async function save() {
         scope: scope.value,
         update_rule: updateRule.value,
       });
+      const ev = selectedEventId.value
+        ? (activeEvents.value.find((e) => e.id === selectedEventId.value) ?? null)
+        : null;
+      reviewStore.patchExpense(props.expense.id, {
+        category_id: selectedCategoryId.value,
+        category_name: selectedCategory.value?.name ?? null,
+        tags: _resolvedTags(),
+        event_id: selectedEventId.value,
+        event_name: ev?.name ?? null,
+      });
     } else if (props.ruleItem) {
       await reviewStore.correct(props.ruleItem, selectedCategoryId.value, "all");
       const expenseId = props.ruleItem.expense_id ?? props.ruleItem.id;
@@ -110,6 +125,7 @@ async function save() {
         tag_ids: [...selectedTagIds.value],
         update_rule: true,
       });
+      reviewStore.patchExpense(expenseId, { tags: _resolvedTags() });
     }
     emit("close");
   } finally {

@@ -203,6 +203,10 @@ export const useReviewStore = defineStore("review", () => {
     }
   }
 
+  function patchExpense(id, patch) {
+    expenses.value = expenses.value.map((e) => (e.id === id ? { ...e, ...patch } : e));
+  }
+
   function reset() {
     items.value = [];
     doubtfulCount.value = 0;
@@ -248,6 +252,7 @@ export const useReviewStore = defineStore("review", () => {
     loadExpensesNextPage,
     resetExpenses,
     updateExpense,
+    patchExpense,
     reset,
   };
 });

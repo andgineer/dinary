@@ -94,6 +94,8 @@ class ExpenseListItem(BaseModel):
     tags: list[ExpenseListTag]
     has_rule: bool
     item_name: str | None = None
+    amount_original: float
+    currency_original: str
 
 
 def create_expense_sync(req: ExpenseRequest, con: sqlite3.Connection) -> ExpenseResponse:
@@ -201,6 +203,8 @@ def list_expenses_sync(
             s.chain_name    AS store_name,
             e.receipt_id,
             e.confidence_level,
+            e.amount_original,
+            e.currency_original,
             COALESCE((
                 SELECT json_group_array(json_object('id', t.id, 'name', t.name))
                   FROM expense_tags et JOIN tags t ON t.id = et.tag_id
@@ -254,6 +258,8 @@ def list_expenses_sync(
                 tags=tags,
                 has_rule=bool(r["has_rule"]),
                 item_name=str(r["item_name"]) if r["item_name"] is not None else None,
+                amount_original=float(r["amount_original"]),
+                currency_original=str(r["currency_original"]),
             ),
         )
     return {

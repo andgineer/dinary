@@ -364,6 +364,61 @@ describe("review store: updateExpense()", () => {
   });
 });
 
+describe("review store: patchExpense()", () => {
+  it("merges patch fields onto the matching expense", () => {
+    const store = useReviewStore();
+    store.expenses = [
+      { id: 10, category_id: 1, category_name: "old", tags: [], event_id: null },
+      { id: 20, category_id: 2, category_name: "other", tags: [], event_id: null },
+    ];
+
+    store.patchExpense(10, {
+      category_id: 5,
+      category_name: "new",
+      tags: [{ id: 3, name: "собака" }],
+      event_id: null,
+      event_name: null,
+    });
+
+    expect(store.expenses[0].category_id).toBe(5);
+    expect(store.expenses[0].category_name).toBe("new");
+    expect(store.expenses[0].tags).toEqual([{ id: 3, name: "собака" }]);
+  });
+
+  it("does not touch other expenses", () => {
+    const store = useReviewStore();
+    store.expenses = [
+      { id: 10, category_name: "a", tags: [] },
+      { id: 20, category_name: "b", tags: [] },
+    ];
+
+    store.patchExpense(10, { category_name: "updated" });
+
+    expect(store.expenses[1].category_name).toBe("b");
+  });
+
+  it("is a no-op when the id is not found", () => {
+    const store = useReviewStore();
+    store.expenses = [{ id: 10, category_name: "a", tags: [] }];
+
+    store.patchExpense(99, { category_name: "updated" });
+
+    expect(store.expenses[0].category_name).toBe("a");
+  });
+
+  it("replaces the array reference so v-for re-renders", () => {
+    const store = useReviewStore();
+    const before = store.expenses;
+    store.expenses = [{ id: 10, category_name: "a", tags: [] }];
+    const afterSet = store.expenses;
+
+    store.patchExpense(10, { category_name: "b" });
+
+    expect(store.expenses).not.toBe(before);
+    expect(store.expenses).not.toBe(afterSet);
+  });
+});
+
 describe("review store: confirmAll()", () => {
   it("removes confirmed items from items list", async () => {
     vi.spyOn(reviewApi, "confirmAllRules").mockResolvedValueOnce({ confirmed: 2 });

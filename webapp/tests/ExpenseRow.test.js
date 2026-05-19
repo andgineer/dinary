@@ -27,9 +27,15 @@ describe("ExpenseRow — renders fields", () => {
     expect(w.text()).toContain("Lidl");
   });
 
-  it("does not render amount (removed by design)", () => {
-    const w = mount(ExpenseRow, { props: { expense: { ...BASE, amount: 250, currency_original: "RSD" } } });
-    expect(w.text()).not.toContain("250");
+  it("renders amount_original with currency in bottom right", () => {
+    const w = mount(ExpenseRow, { props: { expense: { ...BASE, amount_original: 250, currency_original: "RSD" } } });
+    expect(w.find(".row-amount").text()).toContain("250");
+    expect(w.find(".row-amount").text()).toContain("RSD");
+  });
+
+  it("hides amount when amount_original is absent", () => {
+    const w = mount(ExpenseRow, { props: { expense: BASE } });
+    expect(w.find(".row-amount").exists()).toBe(false);
   });
 
   it("renders category name prominently", () => {
@@ -88,6 +94,27 @@ describe("ExpenseRow — item_name primary display", () => {
       props: { expense: { ...BASE, item_name: null, store: "Maxi" } },
     });
     expect(w.find(".row-store").exists()).toBe(false);
+  });
+});
+
+describe("ExpenseRow — manual entry compact layout", () => {
+  it("hides row-top when no name fields are present", () => {
+    const w = mount(ExpenseRow, {
+      props: { expense: { ...BASE, store: undefined, item_name: null, store_name: null, merchant: null } },
+    });
+    expect(w.find(".row-top").exists()).toBe(false);
+  });
+
+  it("shows row-top when store name is available", () => {
+    const w = mount(ExpenseRow, { props: { expense: BASE } });
+    expect(w.find(".row-top").exists()).toBe(true);
+  });
+
+  it("shows row-top when item_name is present", () => {
+    const w = mount(ExpenseRow, {
+      props: { expense: { ...BASE, store: undefined, item_name: "Hleb", store_name: null } },
+    });
+    expect(w.find(".row-top").exists()).toBe(true);
   });
 });
 
