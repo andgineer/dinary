@@ -247,10 +247,10 @@ class TestIfNoneMatchUnit:
 @allure.epic("API")
 @allure.feature("Catalog (3D) — frequent_categories")
 class TestFrequentCategories:
-    """frequent_categories counts all expenses (manual + receipt-backed)
+    """frequent_categories counts only manually-entered expenses (receipt_id IS NULL)
     from the past 3 months, ordered by count descending, capped at 5."""
 
-    def test_receipt_expenses_are_counted(self, client):
+    def test_receipt_expenses_are_excluded(self, client):
         con = storage.get_connection()
         try:
             con.execute(
@@ -265,8 +265,9 @@ class TestFrequentCategories:
             con.close()
 
         data = client.get("/api/catalog").json()
-        assert len(data["frequent_categories"]) == 1
-        assert data["frequent_categories"][0]["id"] == 1
+        assert data["frequent_categories"] == [], (
+            "receipt-backed expenses must not appear in frequent categories"
+        )
 
     def test_old_expenses_excluded(self, client):
         con = storage.get_connection()

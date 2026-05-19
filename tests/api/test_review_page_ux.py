@@ -238,8 +238,8 @@ class TestRulesFeedDoubtfulOnly:
 
 @allure.epic("API")
 @allure.feature("Review Page UX — frequent_categories includes receipt expenses")
-class TestFrequentCategoriesReceiptIncluded:
-    def test_receipt_backed_expenses_counted(self, db):  # noqa: ARG002
+class TestFrequentCategoriesManualOnly:
+    def test_receipt_backed_expenses_excluded(self, db):  # noqa: ARG002
         con = storage.get_connection()
         try:
             con.execute(
@@ -254,10 +254,9 @@ class TestFrequentCategoriesReceiptIncluded:
         finally:
             con.close()
 
-        assert len(result) == 1
-        assert result[0].id == 1
+        assert result == [], "receipt-backed expenses must not appear in frequent categories"
 
-    def test_manual_and_receipt_expenses_both_counted(self, db):  # noqa: ARG002
+    def test_only_manual_expenses_counted_when_mixed(self, db):  # noqa: ARG002
         con = storage.get_connection()
         try:
             con.execute(
@@ -278,5 +277,5 @@ class TestFrequentCategoriesReceiptIncluded:
         finally:
             con.close()
 
-        assert len(result) == 2
-        assert result[0].id == 1
+        assert len(result) == 1
+        assert result[0].id == 2, "only the manually-entered category should appear"

@@ -52,8 +52,8 @@ _SYSTEM_PROMPT = (
     "Reply with a JSON array only — no explanation, no markdown fences.\n"
     'Each element: {"item": "<item name>", "category_id": <int or null>, "confidence": <1-4>}\n'
     "Confidence scale: 1=cannot classify, 2=rough guess, 3=likely correct, 4=certain\n"
-    'When confidence < 4, add "alternatives": [<cat_id>, ...] with 2-3 next-best category IDs'
-    " ordered by likelihood; omit when confidence=4.\n"
+    'Always add "alternatives": [<cat_id>, ...] with 2-3 next-best category IDs'
+    " ordered by likelihood.\n"
     'If tags are provided, add "tags": [<tag_id>, ...] with tag IDs that clearly apply to the'
     " item; omit if none clearly fit; do not guess."
 )

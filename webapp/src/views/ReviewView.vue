@@ -112,9 +112,6 @@ onBeforeUnmount(() => {
         <span class="section-badge">{{ reviewStore.doubtfulCount }}</span>
         <span class="section-sort">by impact</span>
       </div>
-      <div v-else class="section-header">
-        <span class="section-label">RULES</span>
-      </div>
       <IconBtn
         icon="refresh"
         tone="muted"
@@ -132,14 +129,7 @@ onBeforeUnmount(() => {
       />
     </template>
 
-    <div
-      v-if="isOnline && !reviewStore.loading && reviewStore.items.length === 0 && !reviewStore.hasMore"
-      class="empty-state"
-    >
-      <p class="empty-text">All caught up!</p>
-    </div>
-
-    <div v-if="reviewStore.loading" class="skeleton-rows" aria-label="Loading">
+<div v-if="reviewStore.loading" class="skeleton-rows" aria-label="Loading">
       <div class="skeleton-row" />
       <div class="skeleton-row" />
     </div>
