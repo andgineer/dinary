@@ -7,3 +7,7 @@ export function getReviewFeed({ page = 1, pageSize = 20 } = {}) {
 export function getReviewCounts() {
   return apiRequest("/api/rules/counts");
 }
+
+export function getRecentExpenses() {
+  return apiRequest("/api/expenses/recent");
+}

@@ -38,13 +38,14 @@ function stripAdminEnvelope(snapshot) {
   // build_catalog_snapshot returns dict-of-lists; admin* responses also
   // include new_id / status / delete_status / usage_count. Strip those
   // before persisting the snapshot.
-  const { catalog_version, category_groups, categories, events, tags } = snapshot ?? {};
+  const { catalog_version, category_groups, categories, events, tags, frequent_categories } = snapshot ?? {};
   return {
     catalog_version,
     category_groups: category_groups ?? [],
     categories: categories ?? [],
     events: events ?? [],
     tags: tags ?? [],
+    frequent_categories: frequent_categories ?? [],
   };
 }
 
@@ -237,6 +238,10 @@ export const useCatalogStore = defineStore("catalog", () => {
       });
   }
 
+  const frequentCategories = computed(() =>
+    snapshot.value ? snapshot.value.frequent_categories ?? [] : [],
+  );
+
   const tags = computed(() => (snapshot.value ? snapshot.value.tags.filter(isActive) : []));
 
   const inactiveTags = computed(() =>
@@ -316,6 +321,7 @@ export const useCatalogStore = defineStore("catalog", () => {
     catalogVersion,
     groups,
     inactiveGroups,
+    frequentCategories,
     tags,
     inactiveTags,
     categories,

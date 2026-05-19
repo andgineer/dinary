@@ -31,6 +31,9 @@
   imports". If there is a circular import, fix the dependency structure.
 - Do not use `from __future__ import annotations` — the project targets
   Python 3.13+.
+- **No re-export patterns.** Callers must import directly from the module
+  that owns the symbol. Never re-export a symbol through a parent `__init__`
+  or an intermediate module just for convenience.
 
 ## Plan files and in-repo docs
 
@@ -60,6 +63,16 @@
 - Reply to the user in the language they used (Russian or English), using
   proper native script. Do not transliterate Cyrillic into Latin letters.
 
+## Tests
+
+- **Always write unit tests for new code.** Every new function or module
+  needs tests added in the same session. Never skip or defer tests.
+- Python tests: `uv run pytest` from the repo root.
+- Frontend tests: `npm test` from `webapp/`. One test file per
+  component / composable / store, mirroring the source path.
+- Do not run only a narrow subset (`pytest -k …`) when verifying your
+  work — run the full suite.
+
 ## Verification before claiming done
 
 **TL;DR — non-negotiable green gate.** Before you tell the user anything
@@ -71,6 +84,10 @@ MUST have run, in this order, and seen both go fully green:
 2. `uv run pytest` → `N passed` with **zero** failures, errors, or
    xpassed/unexpected results (known `xfail` is fine).
 
+Run `inv pre` after **each discrete batch of changes**, not only at the
+end of the session. If `inv pre` modifies files (formatter, end-of-file
+fixer, etc.), re-run it until it converges to "All checks passed!".
+
 No exceptions. No "this change is docs-only so I skipped tests".
 No "lint error is in an unrelated file so I left it". No running
 only `ReadLints`, no narrow `pytest -k <subset>`, no trusting that a
@@ -79,11 +96,13 @@ edits. Re-run both, every time, at the end of the turn.
 
 Details:
 
-- `inv pre` runs ruff, ruff-format, pyrefly, and the pre-commit file
-  hygiene hooks with the project's actual configuration — it is the
-  only gate that matches CI. `ReadLints` does **not** substitute for
-  it: ReadLints misses ruff-format drift, pyrefly suppressions, and
-  hook-driven file rewrites (end-of-file-fixer, trailing-whitespace).
+- **Never run ruff (or `uvx ruff` / `uv run ruff`) directly.** Always
+  use `uv run inv pre`. `inv pre` runs ruff, ruff-format, pyrefly, and
+  the pre-commit file hygiene hooks with the project's actual
+  configuration — it is the only gate that matches CI. `ReadLints` does
+  **not** substitute for it: ReadLints misses ruff-format drift,
+  pyrefly suppressions, and hook-driven file rewrites
+  (end-of-file-fixer, trailing-whitespace).
 - If `inv pre` reports errors — *even ones that look pre-existing or
   unrelated to your change* — fix them in the same change before
   reporting done. The only valid way to defer a lint error is: (a)

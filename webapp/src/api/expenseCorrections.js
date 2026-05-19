@@ -6,3 +6,10 @@ export function correctCategory(expenseId, categoryId, scope = "all") {
     body: { category_id: categoryId, scope },
   });
 }
+
+export function editExpense(expenseId, payload) {
+  return apiRequest(`/api/expenses/${expenseId}`, {
+    method: "PATCH",
+    body: payload,
+  });
+}

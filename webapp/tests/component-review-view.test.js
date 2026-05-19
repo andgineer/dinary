@@ -187,6 +187,7 @@ describe("ReviewView", () => {
       review.hasMore = true;
       review.page += 1;
     });
+    vi.spyOn(review, "loadRecentExpenses").mockResolvedValue();
     const wrapper = mountView(pinia);
     await flushPromises();
 
@@ -238,6 +239,103 @@ describe("ReviewView", () => {
     const wrapper = mountView(pinia);
     await flushPromises();
     expect(wrapper.text()).toContain("end ·");
+    wrapper.unmount();
+  });
+});
+
+describe("ReviewView — on-mount calls", () => {
+  it("calls loadRecentExpenses on mount when online", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockResolvedValue();
+    const spyExpenses = vi.spyOn(review, "loadRecentExpenses").mockResolvedValue();
+    const wrapper = mountView(pinia);
+    await flushPromises();
+    expect(spyExpenses).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+});
+
+describe("ReviewView — two sections", () => {
+  it("renders RECENT EXPENSES section header", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockResolvedValue();
+    vi.spyOn(review, "loadRecentExpenses").mockResolvedValue();
+    const wrapper = mountView(pinia);
+    await flushPromises();
+    expect(wrapper.text()).toContain("RECENT EXPENSES");
+    wrapper.unmount();
+  });
+
+  it("renders ExpenseRow for each expense in the store", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockResolvedValue();
+    vi.spyOn(review, "loadRecentExpenses").mockImplementation(async () => {
+      review.expenses = [
+        { id: 101, store: "Idea", amount: 500, currency: "RSD", category_name: "misc", tags: [], confidence_level: 5 },
+      ];
+      review.expensesLoaded = true;
+    });
+    const wrapper = mountView(pinia);
+    await flushPromises();
+    expect(wrapper.find('[data-testid="expense-row"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+});
+
+describe("ReviewView — ExpenseEditSheet opening", () => {
+  it("opens ExpenseEditSheet when ExpenseRow emits tap", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockResolvedValue();
+    vi.spyOn(review, "loadRecentExpenses").mockImplementation(async () => {
+      review.expenses = [
+        { id: 101, store: "Idea", amount: 500, currency: "RSD", category_name: "misc", tags: [], confidence_level: 5 },
+      ];
+      review.expensesLoaded = true;
+    });
+    const wrapper = mountView(pinia);
+    await flushPromises();
+    await wrapper.findComponent({ name: "ExpenseRow" }).vm.$emit("tap");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="expense-edit-sheet"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("opens ExpenseEditSheet when RuleRow emits tap", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(async () => {
+      review.items = [
+        {
+          id: 1,
+          is_doubtful: true,
+          name: "item",
+          store: "Lidl",
+          confidence_level: 3,
+          category_id: 10,
+          suggested_category_id: 10,
+          alternative_categories: [],
+          tags: [],
+        },
+      ];
+      review.doubtfulCount = 1;
+      review.hasMore = false;
+    });
+    vi.spyOn(review, "loadRecentExpenses").mockResolvedValue();
+    const wrapper = mountView(pinia);
+    await flushPromises();
+    await wrapper.findComponent({ name: "RuleRow" }).vm.$emit("tap");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="expense-edit-sheet"]').exists()).toBe(true);
     wrapper.unmount();
   });
 });

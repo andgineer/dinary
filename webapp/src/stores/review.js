@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { getReviewFeed, getReviewCounts } from "../api/review.js";
-import { correctCategory } from "../api/expenseCorrections.js";
+import { getReviewFeed, getReviewCounts, getRecentExpenses } from "../api/review.js";
+import { correctCategory, editExpense } from "../api/expenseCorrections.js";
 import { useStaleCache } from "../composables/useStaleCache.js";
 import { useToastStore } from "./toast.js";
 import { useCatalogStore } from "./catalog.js";
@@ -28,6 +28,11 @@ export const useReviewStore = defineStore("review", () => {
   const loading = ref(false);
   const totalLoaded = ref(cached?.totalLoaded ?? 0);
   const fromCache = ref(!!cached);
+
+  const expenses = ref([]);
+  const expensesLoading = ref(false);
+  const expensesLoaded = ref(false);
+  const openRowId = ref(null);
 
   function _persistState() {
     writeCache({
@@ -133,6 +138,48 @@ export const useReviewStore = defineStore("review", () => {
     }
   }
 
+  function setOpenRow(id) {
+    openRowId.value = id;
+  }
+
+  async function loadRecentExpenses() {
+    if (expensesLoading.value) return;
+    expensesLoading.value = true;
+    try {
+      const data = await getRecentExpenses();
+      expenses.value = data?.expenses ?? data ?? [];
+      expensesLoaded.value = true;
+    } catch (err) {
+      if (navigator.onLine) {
+        const toast = useToastStore();
+        toast.show(err?.message || "Failed to load recent expenses", "error");
+      }
+    } finally {
+      expensesLoading.value = false;
+    }
+  }
+
+  async function updateExpense(id, payload) {
+    const toast = useToastStore();
+    try {
+      const result = await editExpense(id, payload);
+      const idx = expenses.value.findIndex((e) => e.id === id);
+      if (idx !== -1 && result) {
+        expenses.value[idx] = {
+          ...expenses.value[idx],
+          category_id: result.category_id ?? expenses.value[idx].category_id,
+          category_name: result.category_name ?? expenses.value[idx].category_name,
+          tag_ids: result.tag_ids ?? expenses.value[idx].tag_ids,
+          event_id: result.event_id ?? null,
+          event_name: result.event_name ?? null,
+        };
+      }
+    } catch (err) {
+      toast.show(err?.message || "Update failed", "error");
+      throw err;
+    }
+  }
+
   function reset() {
     items.value = [];
     doubtfulCount.value = 0;
@@ -158,11 +205,18 @@ export const useReviewStore = defineStore("review", () => {
     fromCache,
     dirtyFlag,
     lastFetchedAt,
+    expenses,
+    expensesLoading,
+    expensesLoaded,
+    openRowId,
     markDirty,
     loadIfNeeded,
     fetchCounts,
     loadNextPage,
     correct,
+    setOpenRow,
+    loadRecentExpenses,
+    updateExpense,
     reset,
   };
 });

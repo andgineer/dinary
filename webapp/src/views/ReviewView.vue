@@ -4,33 +4,46 @@ import { useReviewStore } from "../stores/review.js";
 import { useOnline } from "../composables/useOnline.js";
 import { useToastStore } from "../stores/toast.js";
 import RuleRow from "../components/RuleRow.vue";
-import CorrectionSheet from "../components/CorrectionSheet.vue";
+import ExpenseRow from "../components/ExpenseRow.vue";
+import ExpenseEditSheet from "../components/ExpenseEditSheet.vue";
 import IconBtn from "../components/IconBtn.vue";
 
 const reviewStore = useReviewStore();
 const { isOnline } = useOnline();
 const toast = useToastStore();
 
-const correctionItem = ref(null);
-const correctionOpen = ref(false);
+const expenseEditOpen = ref(false);
+const editingExpense = ref(null);
+const editingSuggestions = ref([]);
+const editingRuleItem = ref(null);
+
 const sentinel = ref(null);
 let observer = null;
 
-function openCorrection(item) {
+function openExpenseEdit(expense, suggestions = [], ruleItem = null) {
   if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
-  correctionItem.value = item;
-  correctionOpen.value = true;
+  editingExpense.value = expense;
+  editingSuggestions.value = suggestions;
+  editingRuleItem.value = ruleItem;
+  expenseEditOpen.value = true;
 }
 
-function closeCorrection() {
-  correctionOpen.value = false;
-  correctionItem.value = null;
+function closeExpenseEdit() {
+  expenseEditOpen.value = false;
+  editingExpense.value = null;
+  editingSuggestions.value = [];
+  editingRuleItem.value = null;
+}
+
+async function approveItem({ item, categoryId }) {
+  if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
+  await reviewStore.correct(item, categoryId, "all");
 }
 
 async function forceRefresh() {
   if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
   reviewStore.reset();
-  await reviewStore.loadNextPage();
+  await Promise.all([reviewStore.loadNextPage(), reviewStore.loadRecentExpenses()]);
 }
 
 function setupObserver() {
@@ -47,7 +60,9 @@ function setupObserver() {
 }
 
 onMounted(async () => {
-  if (isOnline.value) await reviewStore.loadIfNeeded();
+  if (isOnline.value) {
+    await Promise.all([reviewStore.loadIfNeeded(), reviewStore.loadRecentExpenses()]);
+  }
   setupObserver();
 });
 
@@ -84,7 +99,11 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-for="item in reviewStore.items" :key="item.id">
-      <RuleRow :item="item" @tap="openCorrection(item)" />
+      <RuleRow
+        :item="item"
+        @tap="openExpenseEdit(null, item.alternative_categories ?? [], item)"
+        @approve="approveItem($event)"
+      />
     </template>
 
     <div
@@ -107,9 +126,44 @@ onBeforeUnmount(() => {
     >
       ─── end · {{ reviewStore.totalLoaded }} loaded ───
     </div>
+
+    <!-- Recent expenses section -->
+    <div class="review-header expenses-header">
+      <div class="section-header">
+        <span class="section-label">RECENT EXPENSES</span>
+      </div>
+      <IconBtn
+        icon="refresh"
+        tone="muted"
+        label="Refresh expenses"
+        :disabled="!isOnline || reviewStore.expensesLoading"
+        @click="reviewStore.loadRecentExpenses()"
+      />
+    </div>
+
+    <template v-for="expense in reviewStore.expenses" :key="expense.id">
+      <ExpenseRow :expense="expense" @tap="openExpenseEdit(expense)" />
+    </template>
+
+    <div v-if="reviewStore.expensesLoading" class="skeleton-rows" aria-label="Loading expenses">
+      <div class="skeleton-row" />
+    </div>
+
+    <div
+      v-if="reviewStore.expensesLoaded && reviewStore.expenses.length === 0"
+      class="empty-state"
+    >
+      <p class="empty-text">No recent expenses</p>
+    </div>
   </div>
 
-  <CorrectionSheet :open="correctionOpen" :item="correctionItem" @close="closeCorrection" />
+  <ExpenseEditSheet
+    :open="expenseEditOpen"
+    :expense="editingExpense"
+    :suggestions="editingSuggestions"
+    :rule-item="editingRuleItem"
+    @close="closeExpenseEdit"
+  />
 </template>
 
 <style scoped>
@@ -127,6 +181,10 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   margin-top: 0.25rem;
   margin-bottom: 0.5rem;
+}
+
+.expenses-header {
+  margin-top: 1.25rem;
 }
 
 .section-header {

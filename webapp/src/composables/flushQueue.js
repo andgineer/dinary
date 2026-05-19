@@ -6,6 +6,7 @@
 
 import { postExpense } from "../api/expenses.js";
 import { useCatalogStore } from "../stores/catalog.js";
+import { useFrequentCategoriesStore } from "../stores/frequentCategories.js";
 import { useQueueStore } from "../stores/queue.js";
 import { useToastStore } from "../stores/toast.js";
 let _inFlight = false;
@@ -15,6 +16,7 @@ export async function flushQueue() {
   _inFlight = true;
   const queue = useQueueStore();
   const catalog = useCatalogStore();
+  const freq = useFrequentCategoriesStore();
   const toast = useToastStore();
   await queue.refresh();
   let latestCatalogVersion = -1;
@@ -44,6 +46,7 @@ export async function flushQueue() {
         if (resp?.default_group_id != null || resp?.default_category_ids) {
           catalog.applyExpenseDefaults(resp);
         }
+        freq.refresh(resp);
         await queue.remove(item.id);
       } catch (err) {
         if (err?.status === 409) {

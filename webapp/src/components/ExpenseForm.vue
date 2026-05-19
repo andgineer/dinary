@@ -9,10 +9,13 @@ import IconBtn from "./IconBtn.vue";
 import EditModal from "../modals/EditModal.vue";
 import InlineCreateRow from "./InlineCreateRow.vue";
 import InlineCreateEvent from "./InlineCreateEvent.vue";
+import CategoryQuickPicks from "./CategoryQuickPicks.vue";
+import CategorySheet from "./CategorySheet.vue";
 import { useCatalogStore } from "../stores/catalog.js";
 import { useQueueStore } from "../stores/queue.js";
 import { useToastStore } from "../stores/toast.js";
 import { useCurrencyStore } from "../stores/currency.js";
+import { useFrequentCategoriesStore } from "../stores/frequentCategories.js";
 import { flushQueue } from "../composables/flushQueue.js";
 import { useCatalogManage } from "../composables/catalogManage.js";
 import { addResultMessage, validateTagName } from "../composables/addResult.js";
@@ -22,6 +25,7 @@ const catalog = useCatalogStore();
 const queue = useQueueStore();
 const toast = useToastStore();
 const currency = useCurrencyStore();
+const frequentCategoriesStore = useFrequentCategoriesStore();
 const {
   manageMode,
   pendingManageId,
@@ -34,6 +38,7 @@ const {
 
 const selectedCurrency = ref("");
 const currencyPickerOpen = ref(false);
+const categorySheetOpen = ref(false);
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -133,14 +138,23 @@ function reset() {
   applyAutoAttachEventForDate();
 }
 
+function onQuickPick(catId) {
+  const cat = catalog.findCategoryById(catId);
+  if (!cat) return;
+  categoryId.value = String(catId);
+  groupId.value = String(cat.group_id);
+}
+
 async function init() {
   if (!navigator.onLine) {
     applyDefaultGroupAndCategory();
     applyAutoAttachEventForDate();
     selectedCurrency.value = currency.preferredCode;
+    frequentCategoriesStore.ensureLoaded();
     return;
   }
   await catalog.loadIfNeeded();
+  frequentCategoriesStore.ensureLoaded();
   if (catalog.lastError) {
     toast.show(`Catalog: ${catalog.lastError.message}`, "error");
   }
@@ -281,6 +295,13 @@ defineExpose({ save, reset });
       </div>
     </div>
 
+    <!-- Quick category picks -->
+    <CategoryQuickPicks
+      :categories="frequentCategoriesStore.categories"
+      @select="onQuickPick"
+      @search="categorySheetOpen = true"
+    />
+
     <!-- Group → Category hierarchy -->
     <div class="group-category-block">
       <CatalogSelectField
@@ -413,6 +434,13 @@ defineExpose({ save, reset });
       @close="closeEdit"
     />
   </div>
+
+  <CategorySheet
+    :open="categorySheetOpen"
+    :suggestions="[]"
+    @select="onQuickPick($event); categorySheetOpen = false"
+    @close="categorySheetOpen = false"
+  />
 </template>
 
 <style scoped>

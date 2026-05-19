@@ -335,3 +335,93 @@ describe("review store: loadNextPage()", () => {
     expect(store.items).toHaveLength(1);
   });
 });
+
+describe("review store: updateExpense()", () => {
+  it("replaces matching expense entry with fields from response", async () => {
+    vi.spyOn(expenseCorrections, "editExpense").mockResolvedValueOnce({
+      id: 10,
+      category_id: 20,
+      category_name: "cafe",
+      tag_ids: [5],
+      event_id: 3,
+      event_name: "Trip",
+    });
+
+    const store = useReviewStore();
+    store.expenses = [{ id: 10, category_id: 1, category_name: "old", tag_ids: [], event_id: null }];
+
+    await store.updateExpense(10, { category_id: 20, tag_ids: [5], event_id: 3 });
+
+    expect(store.expenses[0].category_id).toBe(20);
+    expect(store.expenses[0].category_name).toBe("cafe");
+    expect(store.expenses[0].tag_ids).toEqual([5]);
+    expect(store.expenses[0].event_id).toBe(3);
+    expect(store.expenses[0].event_name).toBe("Trip");
+  });
+});
+
+describe("review store: loadRecentExpenses()", () => {
+  it("populates expenses from response", async () => {
+    vi.spyOn(reviewApi, "getRecentExpenses").mockResolvedValueOnce({
+      expenses: [{ id: 1, store: "Lidl", amount: 100, currency: "RSD" }],
+    });
+    const store = useReviewStore();
+    await store.loadRecentExpenses();
+    expect(store.expenses).toHaveLength(1);
+    expect(store.expenses[0].id).toBe(1);
+    expect(store.expensesLoaded).toBe(true);
+  });
+
+  it("accepts a plain array response (no .expenses wrapper)", async () => {
+    vi.spyOn(reviewApi, "getRecentExpenses").mockResolvedValueOnce([
+      { id: 2, store: "Maxi", amount: 200, currency: "RSD" },
+    ]);
+    const store = useReviewStore();
+    await store.loadRecentExpenses();
+    expect(store.expenses).toHaveLength(1);
+    expect(store.expenses[0].id).toBe(2);
+  });
+
+  it("suppresses error toast when offline and API fails", async () => {
+    vi.spyOn(reviewApi, "getRecentExpenses").mockRejectedValueOnce(new Error("Network error"));
+    const restore = mockOnLine(false);
+    try {
+      const store = useReviewStore();
+      const { useToastStore } = await import("../src/stores/toast.js");
+      const toast = useToastStore();
+      const showSpy = vi.spyOn(toast, "show");
+      await store.loadRecentExpenses();
+      expect(showSpy).not.toHaveBeenCalled();
+      expect(store.expensesLoaded).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it("shows error toast when online and API fails", async () => {
+    vi.spyOn(reviewApi, "getRecentExpenses").mockRejectedValueOnce(new Error("Server error"));
+    const store = useReviewStore();
+    const { useToastStore } = await import("../src/stores/toast.js");
+    const toast = useToastStore();
+    const showSpy = vi.spyOn(toast, "show");
+    await store.loadRecentExpenses();
+    expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("Server error"), "error");
+    expect(store.expensesLoaded).toBe(false);
+  });
+});
+
+describe("review store: setOpenRow()", () => {
+  it("sets openRowId to the given id", () => {
+    const store = useReviewStore();
+    expect(store.openRowId).toBeNull();
+    store.setOpenRow(42);
+    expect(store.openRowId).toBe(42);
+  });
+
+  it("updates openRowId when called again with a different id", () => {
+    const store = useReviewStore();
+    store.setOpenRow(1);
+    store.setOpenRow(2);
+    expect(store.openRowId).toBe(2);
+  });
+});
