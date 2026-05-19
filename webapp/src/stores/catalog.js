@@ -34,10 +34,12 @@ function namesEqual(a, b) {
   return String(a).localeCompare(String(b), undefined, { sensitivity: "accent" }) === 0;
 }
 
-function stripAdminEnvelope(snapshot) {
+function stripAdminEnvelope(snapshot, existingFrequentCategories = []) {
   // build_catalog_snapshot returns dict-of-lists; admin* responses also
   // include new_id / status / delete_status / usage_count. Strip those
   // before persisting the snapshot.
+  // AdminCatalogResponse omits frequent_categories — fall back to the
+  // previously known list so catalog mutations don't silently clear the picks.
   const { catalog_version, category_groups, categories, events, tags, frequent_categories } = snapshot ?? {};
   return {
     catalog_version,
@@ -45,7 +47,7 @@ function stripAdminEnvelope(snapshot) {
     categories: categories ?? [],
     events: events ?? [],
     tags: tags ?? [],
-    frequent_categories: frequent_categories ?? [],
+    frequent_categories: frequent_categories ?? existingFrequentCategories,
   };
 }
 
@@ -93,9 +95,15 @@ export const useCatalogStore = defineStore("catalog", () => {
 
   function applySnapshot(rawSnapshot) {
     if (!rawSnapshot) return;
-    snapshot.value = stripAdminEnvelope(rawSnapshot);
+    snapshot.value = stripAdminEnvelope(rawSnapshot, snapshot.value?.frequent_categories ?? []);
     writeCachedSnapshot(snapshot.value);
     _stampFresh();
+  }
+
+  function applyFrequentCategories(list) {
+    if (!snapshot.value || !Array.isArray(list)) return;
+    snapshot.value = { ...snapshot.value, frequent_categories: list };
+    writeCachedSnapshot(snapshot.value);
   }
 
   async function load() {
@@ -120,7 +128,15 @@ export const useCatalogStore = defineStore("catalog", () => {
 
   async function loadIfNeeded() {
     const age = catalogFetchedAt.value ? Date.now() - catalogFetchedAt.value : Infinity;
-    if (snapshot.value && catalogFetchedAt.value && age <= CATALOG_TTL_MS) return snapshot.value;
+    if (snapshot.value && catalogFetchedAt.value && age <= CATALOG_TTL_MS) {
+      // Cache hit, but if frequent_categories is empty the cached snapshot may
+      // be stale (e.g. wiped by a previous catalog mutation bug). Refetch in
+      // the background so picks appear without blocking the initial render.
+      if (!snapshot.value.frequent_categories?.length) {
+        load().catch(() => {});
+      }
+      return snapshot.value;
+    }
     return load();
   }
 
@@ -333,6 +349,7 @@ export const useCatalogStore = defineStore("catalog", () => {
     defaultCategoryForGroup,
     defaultGroupId,
     applyExpenseDefaults,
+    applyFrequentCategories,
     events,
     inactiveEventsInWindow,
     autoAttachEventsOn,

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Calendar, Hash, ChevronRight } from "lucide-vue-next";
+import { Calendar, ChevronRight } from "lucide-vue-next";
 import TagPicker from "./TagPicker.vue";
 import ManageList from "./ManageList.vue";
 import CurrencyPicker from "./CurrencyPicker.vue";
@@ -8,7 +8,6 @@ import IconBtn from "./IconBtn.vue";
 import EditModal from "../modals/EditModal.vue";
 import InlineCreateRow from "./InlineCreateRow.vue";
 import InlineCreateEvent from "./InlineCreateEvent.vue";
-import CatalogSelectField from "./CatalogSelectField.vue";
 import CategoryQuickPicks from "./CategoryQuickPicks.vue";
 import CategorySheet from "./CategorySheet.vue";
 import { useCatalogStore } from "../stores/catalog.js";
@@ -123,6 +122,16 @@ watch(date, () => {
 
 function onEventChanged() {
   userEventOverride.value = true;
+}
+
+function selectEvent(ev) {
+  if (eventId.value === String(ev.id)) {
+    eventId.value = "";
+    userEventOverride.value = false;
+  } else {
+    eventId.value = String(ev.id);
+    onEventChanged();
+  }
 }
 
 function reset() {
@@ -291,54 +300,80 @@ defineExpose({ save, reset });
       </div>
     </div>
 
-    <!-- Quick category picks -->
-    <CategoryQuickPicks
-      :categories="catalog.frequentCategories"
-      @select="onQuickPick"
-    />
+    <!-- Category: quick picks + sheet opener in one card -->
+    <div class="category-card">
+      <div v-if="catalog.frequentCategories.length > 0" class="category-picks-row">
+        <CategoryQuickPicks
+          :categories="catalog.frequentCategories"
+          @select="onQuickPick"
+        />
+      </div>
+      <div
+        class="category-select-row"
+        role="button"
+        tabindex="0"
+        data-testid="category-pick-btn"
+        @click="categorySheetOpen = true"
+        @keydown.enter="categorySheetOpen = true"
+        @keydown.space.prevent="categorySheetOpen = true"
+      >
+        <span v-if="categoryId">{{ catalog.findCategoryById(Number(categoryId))?.name }}</span>
+        <span v-else class="placeholder">Select category…</span>
+        <ChevronRight :size="16" class="pick-chevron" aria-hidden="true" />
+      </div>
+    </div>
 
-    <!-- Category pick button -->
-    <button
-      type="button"
-      class="category-pick-btn"
-      :class="{ 'is-set': !!categoryId }"
-      data-testid="category-pick-btn"
-      @click="categorySheetOpen = true"
-    >
-      <span v-if="categoryId">{{ catalog.findCategoryById(Number(categoryId))?.name }}</span>
-      <span v-else class="placeholder">Select category…</span>
-      <ChevronRight :size="16" class="pick-chevron" aria-hidden="true" />
-    </button>
+    <!-- Event chips -->
+    <div class="form-group chips-section">
+      <div class="chips-header">
+        <span class="chips-label">Event</span>
+        <div class="chips-actions">
+          <IconBtn icon="plus" tone="accent" label="New event" @click="requestAdd('event')" />
+          <IconBtn
+            :icon="manageMode.event ? 'x' : 'cog'"
+            tone="muted"
+            :label="manageMode.event ? 'Close events' : 'Manage events'"
+            @click="toggleManage('event')"
+          />
+        </div>
+      </div>
+      <InlineCreateEvent
+        v-if="newing === 'event'"
+        @save="handleCreate('event', $event)"
+        @cancel="newing = null"
+      />
+      <div class="event-chips">
+        <button
+          v-for="ev in activeEvents"
+          :key="ev.id"
+          type="button"
+          class="event-chip"
+          :class="{ 'is-selected': eventId === String(ev.id) }"
+          @click="selectEvent(ev)"
+        >
+          {{ eventLabel(ev) }}
+        </button>
+        <span v-if="activeEvents.length === 0" class="chips-empty">no active events</span>
+      </div>
+      <ManageList
+        v-if="manageMode.event"
+        kind="event"
+        :active="activeEvents"
+        :inactive="inactiveEventsList"
+        :label="eventLabel"
+        :pending-id="pendingManageId.event"
+        @deactivate="runCatalogAction('event', $event, 'deactivate')"
+        @reactivate="runCatalogAction('event', $event, 'reactivate')"
+        @delete="runCatalogAction('event', $event, 'remove')"
+        @edit="onEdit('event', $event)"
+      />
+    </div>
 
-    <CatalogSelectField
-      kind="event"
-      label="Event"
-      v-model="eventId"
-      :options="activeEvents"
-      :inactive="inactiveEventsList"
-      :manage-open="manageMode.event"
-      :pending-id="pendingManageId.event"
-      :placeholder="activeEvents.length === 0 ? '— no active events —' : '— no event —'"
-      :manage-label-fn="eventLabel"
-      @add="requestAdd('event')"
-      @manage-toggle="toggleManage('event')"
-      @select-change="onEventChanged"
-      @deactivate="runCatalogAction('event', $event, 'deactivate')"
-      @reactivate="runCatalogAction('event', $event, 'reactivate')"
-      @delete="runCatalogAction('event', $event, 'remove')"
-      @edit="onEdit('event', $event)"
-    />
-    <InlineCreateEvent
-      v-if="newing === 'event'"
-      @save="handleCreate('event', $event)"
-      @cancel="newing = null"
-    />
-
-    <!-- Tags -->
-    <div class="form-group tags-group">
-      <div class="tags-header">
-        <Hash :size="15" class="hash-glyph" aria-hidden="true" />
-        <div class="tags-actions">
+    <!-- Tags chips -->
+    <div class="form-group chips-section">
+      <div class="chips-header">
+        <span class="chips-label">Tags</span>
+        <div class="chips-actions">
           <IconBtn icon="plus" tone="accent" label="New tag" @click="requestAdd('tag')" />
           <IconBtn
             :icon="manageMode.tag ? 'x' : 'cog'"
@@ -374,7 +409,15 @@ defineExpose({ save, reset });
     </div>
 
     <div class="form-group">
-      <textarea id="comment" v-model="comment" rows="2" placeholder="Note" aria-label="Comment" />
+      <input
+        id="comment"
+        v-model="comment"
+        type="text"
+        class="comment-input"
+        placeholder="Comment"
+        aria-label="Comment"
+        autocomplete="off"
+      />
     </div>
 
     <EditModal
@@ -491,26 +534,37 @@ defineExpose({ save, reset });
   border-bottom-color: var(--accent);
 }
 
-/* Category pick button */
-.category-pick-btn {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-height: 48px;
-  padding: 0 0.75rem;
+/* Category card: quick picks + selector as one grouped panel */
+.category-card {
+  margin-bottom: 1rem;
   background: var(--field);
   border: 1.5px solid var(--border);
-  border-radius: 10px;
-  color: var(--text);
-  font-size: 0.9rem;
-  cursor: pointer;
-  text-align: left;
-  margin-bottom: 1rem;
-  transition: border-color 0.12s;
+  border-radius: 12px;
+  overflow: hidden;
 }
 
-.category-pick-btn.is-set {
-  border-color: var(--border-strong);
+.category-picks-row {
+  padding: 0.6rem 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.category-picks-row :deep(.quick-picks) {
+  margin-bottom: 0;
+}
+
+.category-select-row {
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 0 0.75rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--text);
+  transition: background 0.1s;
+}
+
+.category-select-row:hover {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .placeholder {
@@ -523,28 +577,85 @@ defineExpose({ save, reset });
   color: var(--muted);
 }
 
-/* Tags section */
-.tags-group {
-  margin-bottom: 1rem;
+/* Shared chips section (event + tags) */
+.chips-section {
+  margin-bottom: 0.75rem;
 }
 
-.tags-header {
+.chips-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
-  margin-bottom: 4px;
+  margin-bottom: 0.35rem;
 }
 
-.hash-glyph {
+.chips-label {
+  font-size: 0.78rem;
+  font-weight: 600;
   color: var(--muted);
-  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.tags-actions {
+.chips-actions {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-left: auto;
+}
+
+.event-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.5rem;
+  background: var(--field);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  min-height: 40px;
+  align-items: center;
+}
+
+.event-chip {
+  padding: 0.25rem 0.65rem;
+  background: var(--surface);
+  border: none;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: var(--text);
+  white-space: nowrap;
+  width: auto;
+  margin-bottom: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.event-chip.is-selected {
+  background: var(--accent);
+  color: #fff;
+}
+
+.chips-empty {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Comment single-line input */
+.comment-input {
+  display: block;
+  width: 100%;
+  background: var(--field);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.9rem;
+  color: var(--text);
+  margin-bottom: 0;
+}
+
+.comment-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
 }
 </style>

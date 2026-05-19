@@ -199,9 +199,7 @@ describe("ExpenseForm: + New buttons open inline create rows", () => {
     seedCatalog();
     const wrapper = mountForm();
     await flushPromises();
-    const newBtns = wrapper.findAll('[aria-label="New"]');
-    const eventBtn = newBtns[0];
-    await eventBtn.trigger("click");
+    await wrapper.find('[aria-label="New event"]').trigger("click");
     await flushPromises();
     expect(wrapper.find('[data-testid="inline-create-event"]').exists()).toBe(true);
   });

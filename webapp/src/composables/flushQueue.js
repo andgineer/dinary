@@ -49,6 +49,9 @@ export async function flushQueue() {
         if (resp?.default_group_id != null || resp?.default_category_ids) {
           catalog.applyExpenseDefaults(resp);
         }
+        if (Array.isArray(resp?.frequent_categories)) {
+          catalog.applyFrequentCategories(resp.frequent_categories);
+        }
         freq.refresh(resp);
         await queue.remove(item.id);
         anyFlushed = true;
