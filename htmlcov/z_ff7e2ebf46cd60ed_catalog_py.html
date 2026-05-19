@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_ff7e2ebf46cd60ed_catalog_writer_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-19 07:31 +0000
+            created at 2026-05-19 13:08 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -340,7 +340,7 @@
     <p class="run run2"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t">        <span class="str">"""</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t"><span class="str">        SELECT e.category_id, c.name, COUNT(*) AS cnt</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t"><span class="str">          FROM expenses e JOIN categories c ON c.id = e.category_id</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t"><span class="str">         WHERE c.is_active = 1 AND e.receipt_id IS NULL</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t"><span class="str">         WHERE c.is_active = 1</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t"><span class="str">           AND e.datetime >= datetime('now', '-3 months')</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t"><span class="str">         GROUP BY e.category_id ORDER BY cnt DESC LIMIT ?</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t264" href="#t264">264</a></span><span class="t"><span class="str">        """</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -473,7 +473,7 @@
             <a class="nav" href="z_ff7e2ebf46cd60ed_catalog_writer_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-19 07:31 +0000
+            created at 2026-05-19 13:08 +0000
         </p>
     </div>
 </footer>
