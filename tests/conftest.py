@@ -83,7 +83,7 @@ def _disable_drain_loop(monkeypatch):
     overriding this setting inside their own body.
     """
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0)
-    monkeypatch.setattr(settings, "receipt_drain_interval_sec", 0)
+    monkeypatch.setattr(settings, "receipt_classification_enabled", False)
 
 
 @pytest.fixture(autouse=True)

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import sqlite3
@@ -158,16 +159,13 @@ class OpenAICompatibleClient:
                 json=payload,
             )
             resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
+        content = resp.json()["choices"][0]["message"]["content"]
+        return next((ln.strip() for ln in content.splitlines() if ln.strip()), "")
 
 
 # ---------------------------------------------------------------------------
 # Provider pool — round-robin failover across llm_providers rows
 # ---------------------------------------------------------------------------
-
-
-class AllProvidersExhausted(Exception):  # noqa: N818
-    pass
 
 
 @dataclass(slots=True)
@@ -296,7 +294,7 @@ async def _call_provider_chain_name(provider: _ProviderRow, store_name_raw: str)
 
 def _record_provider_switch(
     conn: sqlite3.Connection,
-    provider: "_ProviderRow",
+    provider: _ProviderRow,
     providers: list,
     idx: int,
     reason: str,
@@ -331,9 +329,37 @@ def _on_provider_success(
 
 
 class ProviderPool:
-    """Round-robin LLM provider pool with failover, rate-limit tracking, and DB audit."""
+    """Round-robin LLM provider pool with per-provider availability events.
 
-    async def classify_receipt(  # noqa: C901
+    When all providers are rate-limited, ``classify_receipt`` waits (via asyncio.Event)
+    until any provider's cooldown expires — it never raises an exception for exhaustion.
+    ``get_chain_name`` is opportunistic: returns ``store_name_raw`` if no provider is ready.
+    """
+
+    def __init__(self) -> None:
+        self._provider_events: dict[int, asyncio.Event] = {}
+
+    def _ensure_event(self, provider: _ProviderRow) -> None:
+        """Initialize an availability event for *provider* if not already present."""
+        if provider.id in self._provider_events:
+            return
+        ev = asyncio.Event()
+        if _is_rate_limited(provider):
+            remaining = (provider.rate_limited_until - datetime.now(UTC)).total_seconds()  # type: ignore[operator]
+            asyncio.get_running_loop().call_later(max(0.0, remaining), ev.set)
+        else:
+            ev.set()
+        self._provider_events[provider.id] = ev
+
+    def _rate_limit_provider(self, provider: _ProviderRow, retry_after_sec: int) -> None:
+        """Clear the provider's event and schedule re-activation after *retry_after_sec*."""
+        ev = self._provider_events.get(provider.id)
+        if ev is None:
+            return
+        ev.clear()
+        asyncio.get_running_loop().call_later(float(retry_after_sec), ev.set)
+
+    async def classify_receipt(  # noqa: C901, PLR0912, PLR0915
         self,
         conn: sqlite3.Connection,
         items: list[str],
@@ -344,106 +370,126 @@ class ProviderPool:
     ) -> tuple[list[ClassificationResult], bool]:
         """Return (results, used_failover).
 
-        used_failover=True means the first-attempted provider failed and
-        a different provider answered — caller should apply a −1 confidence penalty.
-        Raises AllProvidersExhausted when every provider fails.
+        used_failover=True means the primary provider was skipped/failed and
+        a fallback answered — caller should apply a −1 confidence penalty.
+        Waits (indefinitely) when all providers are cooling down instead of raising.
         """
         if ctx is None:
             ctx = ReceiptContext()
         if tags is None:
             tags = {}
-        providers = _load_providers(conn)
-        if not providers:
-            raise AllProvidersExhausted("No enabled LLM providers configured")
-
-        start_idx = _get_start_idx(conn, len(providers))
         used_failover = False
 
-        for i in range(len(providers)):
-            idx = (start_idx + i) % len(providers)
-            provider = providers[idx]
-
-            if _is_rate_limited(provider):
-                logger.info("Provider %s rate-limited, skipping", provider.label)
-                if i == 0:
-                    used_failover = True
+        while True:
+            providers = _load_providers(conn)
+            if not providers:
+                logger.warning("No LLM providers configured — waiting 60 s")
+                await asyncio.sleep(60)
                 continue
 
-            t0 = time.monotonic()
-            try:
-                results = await _call_provider_classify(
-                    provider,
-                    items,
-                    store_name_raw,
-                    categories,
-                    tags,
-                )
-                latency_ms = int((time.monotonic() - t0) * 1000)
-                _log_call(conn, provider.id, ctx.receipt_id, "ok", latency_ms)
-                _on_provider_success(conn, providers, idx, used_failover)
-                return results, used_failover
+            for p in providers:
+                self._ensure_event(p)
 
-            except httpx.HTTPStatusError as exc:
-                latency_ms = int((time.monotonic() - t0) * 1000)
-                status_code = exc.response.status_code
-                if status_code in (429, 503):
-                    _mark_rate_limited(conn, provider.id, _retry_after(exc.response))
-                    _log_call(conn, provider.id, ctx.receipt_id, str(status_code), latency_ms)
+            available_ids = {p.id for p in providers if self._provider_events[p.id].is_set()}
+            if not available_ids:
+                logger.info("All LLM providers cooling down — waiting for availability")
+                tasks = [asyncio.create_task(self._provider_events[p.id].wait()) for p in providers]
+                try:
+                    await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    for t in tasks:
+                        t.cancel()
+                continue
+
+            start_idx = _get_start_idx(conn, len(providers))
+            attempted_any = False
+
+            for i in range(len(providers)):
+                idx = (start_idx + i) % len(providers)
+                provider = providers[idx]
+
+                if provider.id not in available_ids:
+                    if not attempted_any:
+                        used_failover = True
+                    continue
+
+                attempted_any = True
+                t0 = time.monotonic()
+                try:
+                    results = await _call_provider_classify(
+                        provider,
+                        items,
+                        store_name_raw,
+                        categories,
+                        tags,
+                    )
+                    latency_ms = int((time.monotonic() - t0) * 1000)
+                    _log_call(conn, provider.id, ctx.receipt_id, "ok", latency_ms)
+                    _on_provider_success(conn, providers, idx, used_failover)
+                    return results, used_failover
+
+                except httpx.HTTPStatusError as exc:
+                    latency_ms = int((time.monotonic() - t0) * 1000)
+                    status_code = exc.response.status_code
+                    if status_code in (429, 503):
+                        retry_after = _retry_after(exc.response)
+                        _mark_rate_limited(conn, provider.id, retry_after)
+                        _log_call(conn, provider.id, ctx.receipt_id, str(status_code), latency_ms)
+                        self._rate_limit_provider(provider, retry_after)
+                        next_label = _record_provider_switch(
+                            conn,
+                            provider,
+                            providers,
+                            idx,
+                            str(status_code),
+                        )
+                        logger.warning(
+                            "Provider %s returned %s, switching to %s",
+                            provider.label,
+                            status_code,
+                            next_label,
+                        )
+                        used_failover = True
+                        available_ids.discard(provider.id)
+                    else:
+                        _log_call(conn, provider.id, ctx.receipt_id, "error", latency_ms)
+                        raise
+
+                except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                    latency_ms = int((time.monotonic() - t0) * 1000)
+                    _log_call(conn, provider.id, ctx.receipt_id, "error", latency_ms)
                     next_label = _record_provider_switch(
                         conn,
                         provider,
                         providers,
                         idx,
-                        str(status_code),
+                        type(exc).__name__,
                     )
                     logger.warning(
-                        "Provider %s returned %s, switching to %s",
+                        "Provider %s network error (%s), switching to %s",
                         provider.label,
-                        status_code,
+                        type(exc).__name__,
                         next_label,
                     )
                     used_failover = True
-                else:
+                    available_ids.discard(provider.id)
+
+                except Exception:
+                    latency_ms = int((time.monotonic() - t0) * 1000)
                     _log_call(conn, provider.id, ctx.receipt_id, "error", latency_ms)
                     raise
 
-            except (httpx.TimeoutException, httpx.ConnectError) as exc:
-                latency_ms = int((time.monotonic() - t0) * 1000)
-                _log_call(conn, provider.id, ctx.receipt_id, "error", latency_ms)
-                next_label = _record_provider_switch(
-                    conn,
-                    provider,
-                    providers,
-                    idx,
-                    type(exc).__name__,
-                )
-                logger.warning(
-                    "Provider %s network error (%s), switching to %s",
-                    provider.label,
-                    type(exc).__name__,
-                    next_label,
-                )
-                used_failover = True
-
-            except Exception:
-                latency_ms = int((time.monotonic() - t0) * 1000)
-                _log_call(conn, provider.id, ctx.receipt_id, "error", latency_ms)
-                raise
-
-        exhausted_val = (
-            f"{datetime.now(UTC).isoformat()} | invoice: {ctx.invoice_number}"
-            if ctx.invoice_number
-            else datetime.now(UTC).isoformat()
-        )
-        _set_metadata(conn, "llm_all_exhausted_last", exhausted_val)
-        raise AllProvidersExhausted("All LLM providers exhausted")
+            # All currently-available providers exhausted this round — loop to wait.
 
     async def get_chain_name(
         self,
         conn: sqlite3.Connection,
         store_name_raw: str,
     ) -> str:
-        """Return canonical chain name for a raw store name. Uses first available provider."""
+        """Return canonical chain name for a raw store name.
+
+        Opportunistic: if no provider is available right now, returns store_name_raw.
+        """
         providers = _load_providers(conn)
         if not providers:
             return store_name_raw
@@ -461,8 +507,11 @@ class ProviderPool:
                 latency_ms = int((time.monotonic() - t0) * 1000)
                 status_code = exc.response.status_code
                 if status_code in (429, 503):
-                    _mark_rate_limited(conn, provider.id, _retry_after(exc.response))
+                    retry_after = _retry_after(exc.response)
+                    _mark_rate_limited(conn, provider.id, retry_after)
                     _log_call(conn, provider.id, None, str(status_code), latency_ms)
+                    self._ensure_event(provider)
+                    self._rate_limit_provider(provider, retry_after)
                     next_label = providers[i + 1].label if i + 1 < len(providers) else "none"
                     _set_metadata(
                         conn,
@@ -480,3 +529,14 @@ class ProviderPool:
                 logger.warning("Chain name LLM call failed with %s", provider.label, exc_info=True)
 
         return store_name_raw
+
+
+_provider_pool: ProviderPool | None = None
+
+
+def get_provider_pool() -> ProviderPool:
+    """Return the module-level ProviderPool singleton, creating it on first call."""
+    global _provider_pool  # noqa: PLW0603
+    if _provider_pool is None:
+        _provider_pool = ProviderPool()
+    return _provider_pool

@@ -1,11 +1,11 @@
-"""Tests for the receipt classification drain loop and circuit breaker."""
+"""Tests for the receipt classification drain loop."""
 
 import asyncio
+import contextlib
 import json
 import shutil
 import sqlite3
 import unittest.mock
-from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import allure
@@ -15,148 +15,17 @@ import dinary.background.classification.task as drain_mod
 from dinary.db import db_migrations, storage
 from dinary.db.receipts import ReceiptJobRow
 from dinary.background.classification.task import (
-    _activate_llm_backoff,
-    _drain_one,
+    _drain_all_pending,
     _process_job,
-    _reset_llm_backoff,
     notify_new_receipt,
     receipt_classification_task,
 )
-from dinary.adapters.llm_client import AllProvidersExhausted, ClassificationResult
+from dinary.adapters.llm_client import ClassificationResult
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
-
-
-@pytest.fixture(autouse=True)
-def _reset_backoff():
-    """Reset circuit-breaker globals before and after each test."""
-    _reset_llm_backoff()
-    yield
-    _reset_llm_backoff()
 
 
 def _run(coro):
     return asyncio.run(coro)
-
-
-@allure.epic("Background Tasks")
-@allure.feature("Receipt drain — circuit breaker")
-class TestCircuitBreaker:
-    def test_drain_skips_when_backoff_active(self):
-        """_drain_one returns immediately when the LLM backoff window is active."""
-        drain_mod._llm_backoff_until = datetime.now(UTC) + timedelta(hours=1)
-
-        with patch.object(drain_mod, "_claim_job", return_value=None) as mock_claim:
-            _run(_drain_one())
-
-        mock_claim.assert_not_called()
-
-    def test_drain_runs_when_backoff_expired(self):
-        """_drain_one claims a job once the backoff window has passed."""
-        drain_mod._llm_backoff_until = datetime.now(UTC) - timedelta(seconds=1)
-
-        with patch.object(drain_mod, "_claim_job", return_value=None) as mock_claim:
-            _run(_drain_one())
-
-        mock_claim.assert_called_once()
-
-    def test_all_providers_exhausted_activates_backoff(self):
-        """AllProvidersExhausted in _process_job activates the circuit breaker."""
-        mock_job = MagicMock()
-        mock_job.receipt_id = 1
-        mock_job.claim_token = "tok"
-
-        with (
-            patch.object(drain_mod, "_claim_job", return_value=mock_job),
-            patch.object(
-                drain_mod,
-                "_process_job",
-                new=AsyncMock(side_effect=AllProvidersExhausted),
-            ),
-            patch.object(drain_mod, "_release", new=MagicMock()),
-        ):
-            _run(_drain_one())
-
-        assert drain_mod._llm_backoff_until is not None
-        assert drain_mod._llm_backoff_until > datetime.now(UTC)
-        assert drain_mod._llm_current_backoff_sec == drain_mod._LLM_BACKOFF_INITIAL_SEC
-
-    def test_backoff_doubles_on_repeated_exhaustion(self):
-        """Successive AllProvidersExhausted events double the backoff."""
-        mock_job = MagicMock()
-        mock_job.receipt_id = 1
-        mock_job.claim_token = "tok"
-
-        for _ in range(3):
-            with (
-                patch.object(drain_mod, "_claim_job", return_value=mock_job),
-                patch.object(
-                    drain_mod,
-                    "_process_job",
-                    new=AsyncMock(side_effect=AllProvidersExhausted),
-                ),
-                patch.object(drain_mod, "_release", new=MagicMock()),
-            ):
-                # Clear backoff so the loop body runs each iteration
-                drain_mod._llm_backoff_until = None
-                _run(_drain_one())
-
-        expected = min(
-            drain_mod._LLM_BACKOFF_INITIAL_SEC * (2**2),
-            drain_mod._LLM_BACKOFF_MAX_SEC,
-        )
-        assert drain_mod._llm_current_backoff_sec == expected
-
-    def test_backoff_caps_at_max(self):
-        """Backoff never exceeds _LLM_BACKOFF_MAX_SEC."""
-        drain_mod._llm_current_backoff_sec = drain_mod._LLM_BACKOFF_MAX_SEC
-        _activate_llm_backoff()
-        assert drain_mod._llm_current_backoff_sec == drain_mod._LLM_BACKOFF_MAX_SEC
-
-    def test_successful_drain_resets_backoff(self):
-        """A successful _process_job call resets the circuit breaker."""
-        drain_mod._llm_backoff_until = datetime.now(UTC) - timedelta(seconds=1)
-        drain_mod._llm_current_backoff_sec = 120.0
-
-        mock_job = MagicMock()
-        mock_job.receipt_id = 1
-
-        with (
-            patch.object(drain_mod, "_claim_job", return_value=mock_job),
-            patch.object(drain_mod, "_process_job", new=AsyncMock()),
-        ):
-            _run(_drain_one())
-
-        assert drain_mod._llm_backoff_until is None
-        assert drain_mod._llm_current_backoff_sec == 0.0
-
-    def test_parse_error_does_not_activate_backoff(self):
-        """Parse errors (permanent) poison the job but do not activate the circuit breaker."""
-        from sr_invoice_parser.exceptions import ParserParseException
-
-        mock_job = MagicMock()
-        mock_job.receipt_id = 1
-        mock_job.claim_token = "tok"
-
-        with (
-            patch.object(drain_mod, "_claim_job", return_value=mock_job),
-            patch.object(
-                drain_mod,
-                "_process_job",
-                new=AsyncMock(side_effect=ParserParseException("bad")),
-            ),
-            patch.object(drain_mod, "_poison", new=MagicMock()),
-        ):
-            _run(_drain_one())
-
-        assert drain_mod._llm_backoff_until is None
-
-    def test_no_job_does_not_affect_backoff(self):
-        """An empty queue (no job) leaves backoff state unchanged."""
-        with patch.object(drain_mod, "_claim_job", return_value=None):
-            _run(_drain_one())
-
-        assert drain_mod._llm_backoff_until is None
-        assert drain_mod._llm_current_backoff_sec == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +195,7 @@ class TestProcessJobEdgeCases:
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.classification.task.ProviderPool",
+                "dinary.background.classification.task.get_provider_pool",
                 return_value=pool,
             ),
         ):
@@ -411,7 +280,7 @@ class TestProcessJobEdgeCases:
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.classification.task.ProviderPool",
+                "dinary.background.classification.task.get_provider_pool",
                 return_value=pool,
             ),
         ):
@@ -549,7 +418,7 @@ class TestProcessJobEdgeCases:
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.classification.task.ProviderPool",
+                "dinary.background.classification.task.get_provider_pool",
                 return_value=pool,
             ),
         ):
@@ -634,7 +503,7 @@ class TestProcessJobEdgeCases:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
         ):
             asyncio.run(_process_job(job))
 
@@ -725,7 +594,7 @@ class TestReceiptSheetLogging:
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.classification.task.ProviderPool",
+                "dinary.background.classification.task.get_provider_pool",
                 return_value=pool,
             ),
         ):
@@ -813,7 +682,7 @@ class TestReceiptSheetLogging:
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.classification.task.ProviderPool",
+                "dinary.background.classification.task.get_provider_pool",
                 return_value=pool,
             ),
         ):
@@ -938,7 +807,7 @@ class TestPerItemExpenses:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
         ):
             asyncio.run(_process_job(job))
 
@@ -1004,7 +873,7 @@ class TestPerItemExpenses:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
         ):
             asyncio.run(_process_job(job))
 
@@ -1071,7 +940,7 @@ class TestPerItemExpenses:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
         ):
             asyncio.run(_process_job(job))
 
@@ -1136,7 +1005,7 @@ class TestPerItemExpenses:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
         ):
             asyncio.run(_process_job(job))
 
@@ -1205,7 +1074,7 @@ class TestPerItemExpenses:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
         ):
             asyncio.run(_process_job(job))
 
@@ -1275,7 +1144,7 @@ class TestPerItemExpenses:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.ProviderPool", return_value=pool),
+            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
         ):
             asyncio.run(_process_job(job))
 
@@ -1305,8 +1174,8 @@ class TestPerItemExpenses:
 @allure.epic("Background Tasks")
 @allure.feature("Receipt drain — main loop")
 class TestDrainLoop:
-    def test_drains_immediately_when_cooldown_expired_and_receipt_posted(self):
-        """Receipt posted after cooldown triggers an immediate drain."""
+    def test_wakeup_triggers_drain(self):
+        """notify_new_receipt wakes the drain loop immediately."""
         drained = []
 
         async def mock_drain():
@@ -1314,25 +1183,24 @@ class TestDrainLoop:
 
         async def run():
             with (
-                patch.object(drain_mod, "_drain_one", side_effect=mock_drain),
-                patch.object(drain_mod, "settings", MagicMock(receipt_drain_interval_sec=9999.0)),
+                patch.object(drain_mod, "_drain_all_pending", side_effect=mock_drain),
+                patch.object(drain_mod.settings, "receipt_classification_enabled", True),
             ):
                 task = asyncio.create_task(receipt_classification_task())
-                await asyncio.sleep(0)  # let task reach the initial wait
+                await asyncio.sleep(0)  # let task start and run initial drain
+                drained.clear()  # discard the startup drain
                 notify_new_receipt()
                 for _ in range(10):
                     await asyncio.sleep(0)
                 task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await task
-                except asyncio.CancelledError:
-                    pass
 
         asyncio.run(run())
-        assert drained, "receipt post after cooldown must trigger immediate drain"
+        assert drained, "notify_new_receipt must trigger drain"
 
-    def test_cooldown_prevents_second_drain_before_interval(self):
-        """A receipt posted right after a drain must not fire a second drain before the interval."""
+    def test_multiple_notifies_batch_into_one_drain(self):
+        """Multiple rapid notifies result in a single drain cycle (events are coalesced)."""
         drained = []
 
         async def mock_drain():
@@ -1340,26 +1208,23 @@ class TestDrainLoop:
 
         async def run():
             with (
-                patch.object(drain_mod, "_drain_one", side_effect=mock_drain),
-                patch.object(drain_mod, "settings", MagicMock(receipt_drain_interval_sec=9999.0)),
+                patch.object(drain_mod, "_drain_all_pending", side_effect=mock_drain),
+                patch.object(drain_mod.settings, "receipt_classification_enabled", True),
             ):
                 task = asyncio.create_task(receipt_classification_task())
                 await asyncio.sleep(0)
-                notify_new_receipt()  # fire first drain
-                for _ in range(20):
-                    await asyncio.sleep(0)
-                assert len(drained) == 1, "first drain should have run"
-                notify_new_receipt()  # must NOT bypass the cooldown
+                drained.clear()
+                notify_new_receipt()
+                notify_new_receipt()  # second notify before drain starts
+                notify_new_receipt()
                 for _ in range(20):
                     await asyncio.sleep(0)
                 task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await task
-                except asyncio.CancelledError:
-                    pass
 
         asyncio.run(run())
-        assert len(drained) == 1, "notify during cooldown must not trigger a second drain"
+        assert len(drained) == 1, "rapid notifies must batch into one drain cycle"
 
     def test_notify_new_receipt_sets_wakeup_event(self):
         """notify_new_receipt sets the module-level event so the drain loop wakes immediately."""
@@ -1381,3 +1246,116 @@ class TestDrainLoop:
             notify_new_receipt()  # must not raise
         finally:
             drain_mod._wakeup_event = original
+
+    def test_drain_all_pending_noop_with_no_jobs(self, drain_db):  # noqa: ARG002
+        """_drain_all_pending completes immediately when no jobs are pending."""
+        asyncio.run(_drain_all_pending())  # must not raise
+
+    def test_drain_all_pending_runs_jobs_concurrently(self, drain_db):  # noqa: ARG002
+        """Multiple pending jobs all run in parallel via _drain_all_pending."""
+        start_times: list[float] = []
+        import time
+
+        async def slow_job(job: ReceiptJobRow) -> None:
+            start_times.append(time.monotonic())
+            await asyncio.sleep(0.05)  # simulate I/O
+
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            for i in range(3):
+                conn.execute(
+                    "INSERT INTO receipts (client_receipt_id, url, parsed_at)"
+                    " VALUES (?, 'https://x', '2026-05-01')",
+                    [f"r{i}"],
+                )
+                rid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.execute(
+                    "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [rid]
+                )
+        finally:
+            conn.close()
+
+        with patch.object(drain_mod, "_process_job", side_effect=slow_job):
+            asyncio.run(_drain_all_pending())
+
+        assert len(start_times) == 3
+        # All 3 should start within a short window (concurrent, not sequential)
+        assert max(start_times) - min(start_times) < 0.04, "jobs must run concurrently"
+
+    def test_safety_net_timeout_triggers_drain(self):
+        """Drain fires when the 300 s wait_for times out, even without notify_new_receipt."""
+        drain_call_count = {"n": 0}
+        timeout_fired = {"n": 0}
+
+        async def mock_drain():
+            drain_call_count["n"] += 1
+
+        async def instant_timeout(coro, timeout):  # noqa: ARG001
+            # Always wrap the coro in a task and cancel it so asyncio considers it
+            # properly started — prevents "coroutine was never awaited" RuntimeWarning.
+            t = asyncio.ensure_future(coro)
+            t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await t
+            timeout_fired["n"] += 1
+            if timeout_fired["n"] == 1:
+                raise asyncio.TimeoutError
+            # After firing once, park here so the event loop can deliver cancellation.
+            await asyncio.sleep(3600)
+
+        async def run():
+            with (
+                patch.object(drain_mod, "_drain_all_pending", side_effect=mock_drain),
+                patch.object(drain_mod.settings, "receipt_classification_enabled", True),
+                patch(
+                    "dinary.background.classification.task.asyncio.wait_for",
+                    side_effect=instant_timeout,
+                ),
+            ):
+                task = asyncio.create_task(receipt_classification_task())
+                for _ in range(10):
+                    await asyncio.sleep(0)
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(run())
+        assert timeout_fired["n"] >= 1, "wait_for timeout path must be exercised"
+        # startup drain (call 1) + timeout-triggered drain (call 2)
+        assert drain_call_count["n"] >= 2, (
+            "drain must fire after 300 s timeout, not only on startup"
+        )
+
+    def test_error_in_one_job_does_not_cancel_others(self, drain_db):  # noqa: ARG002
+        """An exception in one _process_job does not prevent others from completing."""
+        completed: list[int] = []
+
+        call_count = {"n": 0}
+
+        async def mixed_job(job: ReceiptJobRow) -> None:
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("simulated failure")
+            completed.append(job.receipt_id)
+
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            for i in range(3):
+                conn.execute(
+                    "INSERT INTO receipts (client_receipt_id, url, parsed_at)"
+                    " VALUES (?, 'https://x', '2026-05-01')",
+                    [f"err-r{i}"],
+                )
+                rid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.execute(
+                    "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [rid]
+                )
+        finally:
+            conn.close()
+
+        with patch.object(drain_mod, "_process_job", side_effect=mixed_job):
+            asyncio.run(_drain_all_pending())
+
+        assert len(completed) == 2, "2 of 3 jobs must complete despite one failure"

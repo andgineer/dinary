@@ -3,6 +3,7 @@ import json
 import shutil
 import sqlite3
 import unittest.mock
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import allure
@@ -11,11 +12,10 @@ import pytest
 
 from dinary.db import db_migrations, storage
 from dinary.adapters.llm_client import (
-    AllProvidersExhausted,
     OpenAICompatibleClient,
     ProviderPool,
-    ReceiptContext,
     _build_user_message,
+    _load_providers,
     _parse_response,
 )
 
@@ -276,14 +276,22 @@ _OK_BODY = json.dumps([{"item": "hleb", "category_id": 1, "confidence": 3}])
 @allure.epic("Services")
 @allure.feature("LLM Client — ProviderPool")
 class TestProviderPool:
-    def test_no_providers_raises_all_exhausted(self, pool_conn):
-        pool = ProviderPool()
-        with pytest.raises(AllProvidersExhausted):
-            asyncio.run(
-                pool.classify_receipt(
-                    pool_conn, ["hleb"], "Lidl", _CATEGORIES, ctx=ReceiptContext(receipt_id=1)
+    def test_no_providers_configured_logs_and_waits(self, pool_conn, caplog):
+        """When no providers are configured, classify_receipt logs a warning and waits."""
+        import logging
+
+        async def run():
+            pool = ProviderPool()
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    pool.classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES),
+                    timeout=0.1,
                 )
-            )
+
+        with caplog.at_level(logging.WARNING, logger="dinary.adapters.llm_client"):
+            asyncio.run(run())
+
+        assert any("No LLM providers" in r.message for r in caplog.records)
 
     def test_success_on_first_provider(self, pool_conn):
         _seed_providers(
@@ -350,22 +358,42 @@ class TestProviderPool:
         assert switch is not None
         assert "P1" in switch[0]
 
-    def test_all_providers_exhausted(self, pool_conn):
+    def test_all_providers_cooling_waits_for_event(self, pool_conn):
+        """When all providers are cooling down, classify_receipt waits until one is available."""
         _seed_providers(
             pool_conn,
-            [
-                {"label": "P1", "base_url": "https://a", "api_key": "k", "model": "m"},
-            ],
+            [{"label": "P1", "base_url": "https://a", "api_key": "k", "model": "m"}],
         )
-        with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=_429_http_ctx()):
-            with pytest.raises(AllProvidersExhausted):
-                asyncio.run(
-                    ProviderPool().classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES)
+        future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        pool_conn.execute(
+            "UPDATE llm_providers SET rate_limited_until = ? WHERE label = 'P1'", [future]
+        )
+
+        async def run():
+            pool = ProviderPool()
+            with patch(
+                "dinary.adapters.llm_client.httpx.AsyncClient",
+                return_value=_ok_http_ctx(_OK_BODY),
+            ):
+                classify_task = asyncio.create_task(
+                    pool.classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES)
                 )
-        exhausted = pool_conn.execute(
-            "SELECT value FROM app_metadata WHERE key = 'llm_all_exhausted_last'"
-        ).fetchone()
-        assert exhausted is not None
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+
+                providers = _load_providers(pool_conn)
+                pid = providers[0].id
+                assert pid in pool._provider_events, "event must be initialized for provider"
+                assert not pool._provider_events[pid].is_set(), "cooling provider must not be set"
+
+                pool._provider_events[pid].set()
+
+                results, _ = await asyncio.wait_for(classify_task, timeout=2.0)
+            return results
+
+        results = asyncio.run(run())
+        assert len(results) == 1
+        assert results[0].category_id == 1
 
     def test_round_robin_index_advances_after_success(self, pool_conn):
         _seed_providers(
@@ -506,7 +534,7 @@ class TestProviderPool:
         assert results[0].category_id == 1
 
     def test_get_chain_name_marks_rate_limited_on_429(self, pool_conn):
-        """get_chain_name marks the provider rate_limited_until when it returns 429."""
+        """get_chain_name marks the provider rate_limited_until and clears the in-memory event."""
         _seed_providers(
             pool_conn, [{"label": "P1", "base_url": "https://a", "api_key": "k", "model": "m"}]
         )
@@ -521,8 +549,9 @@ class TestProviderPool:
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
+        pool = ProviderPool()
         with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
-            result = asyncio.run(ProviderPool().get_chain_name(pool_conn, "LIDL SRBIJA"))
+            result = asyncio.run(pool.get_chain_name(pool_conn, "LIDL SRBIJA"))
 
         assert result == "LIDL SRBIJA", "falls back to raw name when all providers fail"
         row = pool_conn.execute(
@@ -535,6 +564,12 @@ class TestProviderPool:
         ).fetchone()
         assert switch is not None, "get_chain_name must record provider switch on 429"
         assert "P1" in switch[0] and "429" in switch[0]
+        providers = _load_providers(pool_conn)
+        pid = providers[0].id
+        assert pid in pool._provider_events, "event must be initialised after 429"
+        assert not pool._provider_events[pid].is_set(), (
+            "in-memory event must be cleared so classify_receipt does not retry immediately"
+        )
 
     def test_failover_on_timeout(self, pool_conn):
         """ReadTimeout on provider 1 triggers failover to provider 2."""
@@ -588,23 +623,37 @@ class TestProviderPool:
         assert "P1" in switch[0]
         assert "ReadTimeout" in switch[0]
 
-    def test_all_exhausted_on_all_timeouts(self, pool_conn):
-        """All providers timing out raises AllProvidersExhausted (job stays pending)."""
+    def test_timeout_on_single_provider_retries_loop(self, pool_conn):
+        """A network timeout on the only provider loops back (no exception raised)."""
         _seed_providers(
             pool_conn,
             [{"label": "P1", "base_url": "https://a", "api_key": "k", "model": "m"}],
         )
+        call_count = {"n": 0}
+
+        def _side_effect(*_a, **_kw):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise httpx.ReadTimeout("timed out")
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json.return_value = {"choices": [{"message": {"content": _OK_BODY}}]}
+            return mock_resp
+
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=httpx.ReadTimeout("timed out"))
+        mock_client.post = AsyncMock(side_effect=_side_effect)
         mock_ctx = MagicMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
-            with pytest.raises(AllProvidersExhausted):
-                asyncio.run(
-                    ProviderPool().classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES)
-                )
+            results, used_failover = asyncio.run(
+                ProviderPool().classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES)
+            )
+
+        assert results[0].category_id == 1
+        assert used_failover
+        assert call_count["n"] == 2
 
     def test_get_chain_name_logs_call(self, pool_conn):
         _seed_providers(

@@ -369,9 +369,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gemini-2.5-flash"
 
-    # Receipt classification drain interval. Default 300s (one receipt per 5 min)
-    # keeps usage within Gemini free-tier 20 RPM. Set lower on paid tiers.
-    receipt_drain_interval_sec: float = 300.0
+    receipt_classification_enabled: bool = True
 
     host: str = "0.0.0.0"  # noqa: S104
     port: int = 8000

@@ -128,6 +128,32 @@ describe("review store: correct()", () => {
     expect(store.doubtfulCount).toBe(0);
   });
 
+  it("clears confidence_level and updates category on matching expenses when correcting a doubtful rule", async () => {
+    vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
+      corrected_expense_id: 42,
+      batch_updated_count: 2,
+      count: 3,
+    });
+    seedCatalog();
+    const store = useReviewStore();
+    store.items = [{ id: 7, expense_id: 42, is_doubtful: true, name: "hleb", count: 3 }];
+    store.expenses = [
+      { id: 42, item_name: "hleb", confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 43, item_name: "hleb", confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 44, item_name: "mleko", confidence_level: 2, category_id: 1, category_name: "old" },
+    ];
+
+    await store.correct(store.items[0], 2);
+
+    expect(store.expenses[0].confidence_level).toBeNull();
+    expect(store.expenses[0].category_id).toBe(2);
+    expect(store.expenses[0].category_name).toBe("snacks");
+    expect(store.expenses[1].confidence_level).toBeNull();
+    expect(store.expenses[1].category_id).toBe(2);
+    expect(store.expenses[2].confidence_level).toBe(2);
+    expect(store.expenses[2].category_id).toBe(1);
+  });
+
   it("does not decrement doubtfulCount when correcting a certain item", async () => {
     vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
       corrected_expense_id: 100,
@@ -362,6 +388,91 @@ describe("review store: updateExpense()", () => {
     await expect(store.updateExpense(10, {})).rejects.toThrow("Server error");
     expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("Server error"), "error");
   });
+
+  it("removes matching doubtful rule from items when update_rule is true", async () => {
+    vi.spyOn(expenseCorrections, "editExpense").mockResolvedValueOnce({});
+    const store = useReviewStore();
+    store.items = [
+      { id: 7, expense_id: 42, is_doubtful: true, name: "hleb" },
+      { id: 8, expense_id: 99, is_doubtful: true, name: "mleko" },
+    ];
+    store.doubtfulCount = 2;
+
+    await store.updateExpense(42, { update_rule: true });
+
+    expect(store.items.map((i) => i.id)).toEqual([8]);
+    expect(store.doubtfulCount).toBe(1);
+  });
+
+  it("clears confidence_level on sibling expenses with same item_name when update_rule is true", async () => {
+    vi.spyOn(expenseCorrections, "editExpense").mockResolvedValueOnce({});
+    const store = useReviewStore();
+    store.items = [{ id: 7, expense_id: 42, is_doubtful: true, name: "hleb" }];
+    store.expenses = [
+      { id: 42, item_name: "hleb", confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 43, item_name: "hleb", confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 44, item_name: "mleko", confidence_level: 2, category_id: 1, category_name: "old" },
+    ];
+    store.doubtfulCount = 1;
+
+    await store.updateExpense(42, { update_rule: true, scope: "single", category_id: 2 });
+
+    expect(store.expenses[0].confidence_level).toBeNull();
+    expect(store.expenses[1].confidence_level).toBeNull();
+    expect(store.expenses[2].confidence_level).toBe(2);
+    // scope=single: category not updated on siblings
+    expect(store.expenses[1].category_id).toBe(1);
+    expect(store.expenses[1].category_name).toBe("old");
+  });
+
+  it("updates category on siblings when update_rule is true and scope is broader than single", async () => {
+    vi.spyOn(expenseCorrections, "editExpense").mockResolvedValueOnce({});
+    seedCatalog();
+    const store = useReviewStore();
+    store.items = [{ id: 7, expense_id: 42, is_doubtful: true, name: "hleb" }];
+    store.expenses = [
+      { id: 42, item_name: "hleb", confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 43, item_name: "hleb", confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 44, item_name: "mleko", confidence_level: 2, category_id: 1, category_name: "old" },
+    ];
+    store.doubtfulCount = 1;
+
+    await store.updateExpense(42, { update_rule: true, scope: "month", category_id: 2 });
+
+    expect(store.expenses[0].confidence_level).toBeNull();
+    expect(store.expenses[0].category_id).toBe(2);
+    expect(store.expenses[0].category_name).toBe("snacks");
+    expect(store.expenses[1].confidence_level).toBeNull();
+    expect(store.expenses[1].category_id).toBe(2);
+    expect(store.expenses[1].category_name).toBe("snacks");
+    // unrelated item_name: untouched
+    expect(store.expenses[2].confidence_level).toBe(2);
+    expect(store.expenses[2].category_id).toBe(1);
+  });
+
+  it("does not modify items when update_rule is false", async () => {
+    vi.spyOn(expenseCorrections, "editExpense").mockResolvedValueOnce({});
+    const store = useReviewStore();
+    store.items = [{ id: 7, expense_id: 42, is_doubtful: true, name: "hleb" }];
+    store.doubtfulCount = 1;
+
+    await store.updateExpense(42, { update_rule: false });
+
+    expect(store.items).toHaveLength(1);
+    expect(store.doubtfulCount).toBe(1);
+  });
+
+  it("does not remove certain items (is_doubtful: false) even when update_rule is true", async () => {
+    vi.spyOn(expenseCorrections, "editExpense").mockResolvedValueOnce({});
+    const store = useReviewStore();
+    store.items = [{ id: 7, expense_id: 42, is_doubtful: false, name: "hleb" }];
+    store.doubtfulCount = 0;
+
+    await store.updateExpense(42, { update_rule: true });
+
+    expect(store.items).toHaveLength(1);
+    expect(store.doubtfulCount).toBe(0);
+  });
 });
 
 describe("review store: patchExpense()", () => {
@@ -463,6 +574,23 @@ describe("review store: confirmAll()", () => {
     const showSpy = vi.spyOn(toast, "show");
     await store.confirmAll([1]);
     expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("Server error"), "error");
+  });
+
+  it("reloads expenses after confirming so updated confidence_level is reflected", async () => {
+    vi.spyOn(reviewApi, "confirmAllRules").mockResolvedValueOnce({ confirmed: 1 });
+    vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValueOnce({
+      items: [{ id: 10, confidence_level: 4, category_name: "food" }],
+      has_more: false,
+    });
+    const store = useReviewStore();
+    store.items = [{ id: 1, expense_id: 10, is_doubtful: true }];
+    store.expenses = [{ id: 10, confidence_level: 2, category_name: "food" }];
+    store.expensesPage = 1;
+
+    await store.confirmAll([1]);
+
+    expect(reviewApi.getExpensesFeed).toHaveBeenCalled();
+    expect(store.expenses[0].confidence_level).toBe(4);
   });
 });
 

@@ -82,7 +82,6 @@ onBeforeUnmount(() => {
         Dinary
         <span class="header-version">{{ headerVersionLabel }}</span>
       </h1>
-      <span v-if="!isOnline" class="offline-hint">Offline</span>
       <button
         v-if="queueCount > 0"
         type="button"

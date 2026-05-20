@@ -25,7 +25,7 @@ const categorySheetOpen = ref(false);
 const submitting = ref(false);
 
 const SCOPE_OPTIONS = [
-  { value: "single", label: "Single" },
+  { value: "single", label: "Only this" },
   { value: "month", label: "Last month" },
   { value: "year", label: "This year" },
   { value: "all", label: "All history" },

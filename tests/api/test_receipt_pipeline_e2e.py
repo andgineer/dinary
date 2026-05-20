@@ -63,7 +63,7 @@ def _run_drain(job, pool=None):
             return_value=_PARSED,
         ),
         patch(
-            "dinary.background.classification.task.ProviderPool",
+            "dinary.background.classification.task.get_provider_pool",
             return_value=pool,
         ),
     ):
@@ -329,7 +329,7 @@ class TestReceiptPipelineE2E:
                 return_value=_parsed_3,
             ),
             patch(
-                "dinary.background.classification.task.ProviderPool",
+                "dinary.background.classification.task.get_provider_pool",
                 return_value=pool3,
             ),
         ):

@@ -100,7 +100,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="review-view" data-testid="review-view">
     <div v-if="!isOnline" class="offline-notice">
-      {{ reviewStore.items.length > 0 ? 'Offline — showing cached data' : 'Offline — no cached data' }}
+      Offline — changes not available
     </div>
 
     <div class="review-header">

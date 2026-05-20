@@ -125,8 +125,8 @@ def _parse_journal(journal: str) -> list[ReceiptItem]:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_json_metadata(
-    client: httpx.Client,
+async def _fetch_json_metadata(
+    client: httpx.AsyncClient,
     url: str,
 ) -> tuple[str, str, float, str, str, str | None]:
     """Fetch JSON from the receipt URL and return store/invoice metadata.
@@ -135,7 +135,7 @@ def _fetch_json_metadata(
     Raises ParserRequestException on network errors, ParserParseException on bad JSON.
     """
     try:
-        resp = client.get(url, headers={"Accept": "application/json"})
+        resp = await client.get(url, headers={"Accept": "application/json"})
         resp.raise_for_status()
     except httpx.RequestError as exc:
         raise ParserRequestException(f"Request failed: {exc}") from exc
@@ -163,10 +163,14 @@ def _fetch_json_metadata(
     )
 
 
-def _fetch_specs_items(client: httpx.Client, url: str, invoice_number: str) -> list[ReceiptItem]:
+async def _fetch_specs_items(
+    client: httpx.AsyncClient,
+    url: str,
+    invoice_number: str,
+) -> list[ReceiptItem]:
     """Fetch structured item list from /specifications. Returns [] on any soft failure."""
     try:
-        html_resp = client.get(url)
+        html_resp = await client.get(url)
         html_resp.raise_for_status()
         token_match = _TOKEN_RE.search(html_resp.text)
     except Exception as exc:  # noqa: BLE001
@@ -178,7 +182,7 @@ def _fetch_specs_items(client: httpx.Client, url: str, invoice_number: str) -> l
         return []
 
     try:
-        specs_resp = client.post(
+        specs_resp = await client.post(
             _SPECS_URL,
             data={"invoiceNumber": invoice_number, "token": token_match.group(1)},
         )
@@ -207,7 +211,7 @@ def _fetch_specs_items(client: httpx.Client, url: str, invoice_number: str) -> l
         return []
 
 
-def parse_receipt(url: str) -> ParsedReceipt:
+async def parse_receipt(url: str) -> ParsedReceipt:
     """Fetch a Serbian fiscal receipt and return all items with structured data.
 
     Tries /specifications first (structured JSON with decimal quantities and
@@ -217,11 +221,16 @@ def parse_receipt(url: str) -> ParsedReceipt:
     Raises ParserRequestException on network errors, ParserParseException if
     neither path yields any items.
     """
-    with httpx.Client(timeout=_REQUEST_TIMEOUT) as client:
-        store_name, store_pib, total_amount, invoice_number, journal, purchase_datetime = (
-            _fetch_json_metadata(client, url)
-        )
-        items = _fetch_specs_items(client, url, invoice_number)
+    async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+        (
+            store_name,
+            store_pib,
+            total_amount,
+            invoice_number,
+            journal,
+            purchase_datetime,
+        ) = await _fetch_json_metadata(client, url)
+        items = await _fetch_specs_items(client, url, invoice_number)
 
     used_journal_fallback = False
     if not items and journal:

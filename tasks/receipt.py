@@ -61,7 +61,7 @@ def _run_receipt(
 ) -> None:
     print(f"URL: {url[:80]}{'...' if len(url) > 80 else ''}")
     try:
-        receipt = parse_receipt(url)
+        receipt = asyncio.run(parse_receipt(url))
     except (ParserParseException, ParserRequestException) as exc:
         print(f"  Parse error: {exc}")
         return

@@ -11,7 +11,7 @@ import pytest
 
 from dinary.background.classification.task import _classify_and_persist
 from dinary.db import db_migrations, storage
-from dinary.adapters.llm_client import AllProvidersExhausted, ClassificationResult, ProviderPool
+from dinary.adapters.llm_client import ClassificationResult, ProviderPool
 from dinary.db.receipts import (
     ReceiptJobRow,
     claim_next_job,
@@ -82,21 +82,18 @@ def _make_job(receipt_id: int, claim_token: str = "tok") -> ReceiptJobRow:
     )
 
 
-def _mock_pool(cat_id=1, conf=3, exhausted=False):
+def _mock_pool(cat_id=1, conf=3):
     pool = MagicMock(spec=ProviderPool)
-    if exhausted:
-        pool.classify_receipt = AsyncMock(side_effect=AllProvidersExhausted)
-    else:
-        pool.classify_receipt = AsyncMock(
-            return_value=(
-                [
-                    ClassificationResult(
-                        item_name_normalized="hleb", category_id=cat_id, confidence_level=conf
-                    )
-                ],
-                False,
-            )
+    pool.classify_receipt = AsyncMock(
+        return_value=(
+            [
+                ClassificationResult(
+                    item_name_normalized="hleb", category_id=cat_id, confidence_level=conf
+                )
+            ],
+            False,
         )
+    )
     return pool
 
 

@@ -132,6 +132,13 @@ export const useReviewStore = defineStore("review", () => {
           };
         }
       }
+      if (item.name) {
+        expenses.value = expenses.value.map((e) =>
+          e.item_name === item.name
+            ? { ...e, category_id: categoryId, category_name: catName, confidence_level: null }
+            : e,
+        );
+      }
       _persistState();
       toast.show(`Updated ${count} expenses → ${catName} · rule saved`, "success");
     } catch (err) {
@@ -152,6 +159,8 @@ export const useReviewStore = defineStore("review", () => {
       doubtfulCount.value = Math.max(0, doubtfulCount.value - confirmedCount);
       totalLoaded.value = items.value.length;
       _persistState();
+      resetExpenses();
+      await loadExpensesNextPage();
       toast.show(`${confirmedCount} rules confirmed`, "success");
     } catch (err) {
       toast.show(err?.message || "Confirm all failed", "error");
@@ -197,6 +206,27 @@ export const useReviewStore = defineStore("review", () => {
     const toast = useToastStore();
     try {
       await editExpense(id, payload);
+      if (payload.update_rule) {
+        const removed = items.value.filter((i) => i.expense_id === id && i.is_doubtful);
+        if (removed.length > 0) {
+          items.value = items.value.filter((i) => !(i.expense_id === id && i.is_doubtful));
+          doubtfulCount.value = Math.max(0, doubtfulCount.value - removed.length);
+          _persistState();
+        }
+        const target = expenses.value.find((e) => e.id === id);
+        if (target?.item_name) {
+          const patch = { confidence_level: null };
+          if (payload.scope && payload.scope !== "single" && payload.category_id != null) {
+            const catalog = useCatalogStore();
+            const cat = catalog.findCategoryById(payload.category_id);
+            patch.category_id = payload.category_id;
+            patch.category_name = cat?.name ?? "";
+          }
+          expenses.value = expenses.value.map((e) =>
+            e.item_name === target.item_name ? { ...e, ...patch } : e,
+          );
+        }
+      }
     } catch (err) {
       toast.show(err?.message || "Update failed", "error");
       throw err;

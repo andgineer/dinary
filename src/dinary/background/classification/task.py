@@ -8,16 +8,16 @@ import contextlib
 import logging
 import sqlite3
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import httpx
 from sr_invoice_parser.exceptions import ParserParseException, ParserRequestException
 
 from dinary.adapters.llm_client import (
-    AllProvidersExhausted,
     ClassificationResult,
     ProviderPool,
     ReceiptContext,
+    get_provider_pool,
 )
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, parse_receipt
 from dinary.background.classification.item_normalizer import normalize_item_name
@@ -47,17 +47,6 @@ from dinary.sheets.sheet_mapping import resolve_event_auto_tag_ids
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Circuit breaker for LLM provider exhaustion
-# Same pattern as the sheet-logging drain: exponential backoff starting at 60 s,
-# capped at 30 min.  Resets on any successful drain cycle.
-# ---------------------------------------------------------------------------
-
-_llm_backoff_until: datetime | None = None
-_llm_current_backoff_sec: float = 0.0
-_LLM_BACKOFF_INITIAL_SEC = 60.0
-_LLM_BACKOFF_MAX_SEC = 1800.0
-
 _wakeup_event: asyncio.Event | None = None
 
 
@@ -67,91 +56,118 @@ def notify_new_receipt() -> None:
         _wakeup_event.set()
 
 
-def _activate_llm_backoff() -> None:
-    global _llm_backoff_until, _llm_current_backoff_sec  # noqa: PLW0603
-    if _llm_current_backoff_sec == 0:
-        _llm_current_backoff_sec = _LLM_BACKOFF_INITIAL_SEC
-    else:
-        _llm_current_backoff_sec = min(_llm_current_backoff_sec * 2, _LLM_BACKOFF_MAX_SEC)
-    _llm_backoff_until = datetime.now(UTC) + timedelta(seconds=_llm_current_backoff_sec)
-    logger.warning("Receipt drain circuit breaker: backoff %.0fs", _llm_current_backoff_sec)
-
-
-def _reset_llm_backoff() -> None:
-    global _llm_backoff_until, _llm_current_backoff_sec  # noqa: PLW0603
-    _llm_backoff_until = None
-    _llm_current_backoff_sec = 0.0
-
-
 async def receipt_classification_task() -> None:
     global _wakeup_event  # noqa: PLW0603
     _wakeup_event = asyncio.Event()
-    interval = settings.receipt_drain_interval_sec
-    if interval <= 0:
+    if not settings.receipt_classification_enabled:
         return
-    logger.info("Receipt classification drain started (interval=%.0fs)", interval)
-    loop = asyncio.get_running_loop()
-    # Pretend last drain happened one interval ago so the first receipt (or
-    # the first periodic tick) fires immediately — no forced startup delay.
-    last_drain_at = loop.time() - interval
+    logger.info("Receipt classification drain started")
+
+    await _drain_all_pending()  # pick up jobs surviving a restart
+
     while True:
-        _wakeup_event.clear()
-        cooldown = max(0.0, last_drain_at + interval - loop.time())
-        if cooldown > 0:
-            # Still inside cooldown — wait it out unconditionally.
-            await asyncio.sleep(cooldown)
-        else:
-            # Cooldown expired — wake on next receipt or the periodic interval.
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(_wakeup_event.wait(), timeout=interval)
-        try:
-            await _drain_one()
-        except Exception:
-            logger.exception("Receipt classification drain error")
-        last_drain_at = loop.time()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(_wakeup_event.wait(), timeout=300)
+        _wakeup_event.clear()  # clear BEFORE drain so receipts arriving during drain re-set it
+        await _drain_all_pending()
 
 
-async def _drain_one() -> None:
-    if _llm_backoff_until is not None and datetime.now(UTC) < _llm_backoff_until:
-        logger.debug("Receipt drain: LLM circuit breaker active — skipping sweep")
-        return
+def _claim_all_pending() -> list[ReceiptJobRow]:
+    conn = storage.get_connection()
+    try:
+        jobs: list[ReceiptJobRow] = []
+        while True:
+            job = claim_next_job(conn)
+            if job is None:
+                break
+            jobs.append(job)
+        return jobs
+    finally:
+        conn.close()
 
-    job = await asyncio.to_thread(_claim_job)
-    if job is None:
-        return
 
+async def _drain_all_pending() -> None:
+    jobs = _claim_all_pending()
+    if jobs:
+        await asyncio.gather(
+            *[_process_job(job) for job in jobs],
+            return_exceptions=True,
+        )
+
+
+async def _process_job(job: ReceiptJobRow) -> None:
     logger.info("Receipt drain: processing receipt_id=%s", job.receipt_id)
     try:
-        await _process_job(job)
-        _reset_llm_backoff()
-    except AllProvidersExhausted:
-        logger.warning(
-            "All LLM providers exhausted for receipt_id=%s — releasing for retry",
-            job.receipt_id,
-        )
-        await asyncio.to_thread(_release, job.receipt_id, job.claim_token)
-        _activate_llm_backoff()
+        pool = get_provider_pool()
+
+        if job.parsed_at is None:
+            parsed = await parse_receipt(job.url)
+            _save_parsed(job.receipt_id, parsed)
+            job = _with_parsed_data(job, parsed)
+
+        store_id = await _ensure_store(job, pool)
+
+        # This connection is held open across the await in _classify_and_persist (including the
+        # LLM round-trip, up to 60 s). With N parallel jobs that is N simultaneous connections.
+        # WAL mode tolerates it; a future improvement would have pool.classify_receipt open its
+        # own connection so the caller can release theirs before the LLM call.
+        conn = storage.get_connection()
+        try:
+            items = get_receipt_items(conn, job.receipt_id)
+
+            # Idempotency: prior run may have committed expenses but crashed before complete_job.
+            has_expenses = bool(
+                conn.execute(
+                    "SELECT 1 FROM expenses WHERE receipt_id = ? LIMIT 1",
+                    [job.receipt_id],
+                ).fetchone(),
+            )
+
+            if not items or has_expenses:
+                if has_expenses:
+                    logger.info(
+                        "Receipt drain: expenses already present for receipt_id=%s"
+                        " — completing stale job",
+                        job.receipt_id,
+                    )
+                elif not items:
+                    logger.warning(
+                        "Receipt drain: no items found for receipt_id=%s"
+                        " — completing job with no expenses",
+                        job.receipt_id,
+                    )
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    complete_job(conn, job.receipt_id)
+                    conn.execute("COMMIT")
+                except BaseException:
+                    conn.execute("ROLLBACK")
+                    raise
+                return
+
+            await _classify_and_persist(conn, pool, job, items, store_id)
+        finally:
+            conn.close()
+
+        logger.info("Receipt drain: completed receipt_id=%s", job.receipt_id)
+
     except (ParserRequestException, OSError) as exc:
         logger.warning(
             "Transient network error for receipt_id=%s (%s) — releasing for retry",
             job.receipt_id,
             exc,
         )
-        await asyncio.to_thread(_release, job.receipt_id, job.claim_token)
+        _release(job.receipt_id, job.claim_token)
     except ParserParseException as exc:
-        logger.error("Permanent parse error for receipt_id=%s — poisoning: %s", job.receipt_id, exc)
-        await asyncio.to_thread(_poison, job.receipt_id, str(exc))
+        logger.error(
+            "Permanent parse error for receipt_id=%s — poisoning: %s",
+            job.receipt_id,
+            exc,
+        )
+        _poison(job.receipt_id, str(exc))
     except Exception as exc:
         logger.exception("Permanent error for receipt_id=%s — poisoning", job.receipt_id)
-        await asyncio.to_thread(_poison, job.receipt_id, str(exc))
-
-
-def _claim_job() -> ReceiptJobRow | None:
-    conn = storage.get_connection()
-    try:
-        return claim_next_job(conn)
-    finally:
-        conn.close()
+        _poison(job.receipt_id, str(exc))
 
 
 def _release(receipt_id: int, claim_token: str) -> None:
@@ -170,63 +186,9 @@ def _poison(receipt_id: int, error: str) -> None:
         conn.close()
 
 
-async def _process_job(job: ReceiptJobRow) -> None:
-    pool = ProviderPool()
-
-    if job.parsed_at is None:
-        parsed = await asyncio.to_thread(parse_receipt, job.url)
-        await asyncio.to_thread(_save_parsed, job.receipt_id, parsed)
-        job = _with_parsed_data(job, parsed)
-
-    store_id = await _ensure_store(job, pool)
-
-    conn = storage.get_connection()
-    try:
-        items = get_receipt_items(conn, job.receipt_id)
-
-        # Idempotency: a prior run may have committed expenses but crashed before
-        # complete_job.  Skip classification and just remove the stale job entry.
-        has_expenses = bool(
-            conn.execute(
-                "SELECT 1 FROM expenses WHERE receipt_id = ? LIMIT 1",
-                [job.receipt_id],
-            ).fetchone(),
-        )
-
-        if not items or has_expenses:
-            if has_expenses:
-                logger.info(
-                    "Receipt drain: expenses already present for receipt_id=%s"
-                    " — completing stale job",
-                    job.receipt_id,
-                )
-            elif not items:
-                logger.warning(
-                    "Receipt drain: no items found for receipt_id=%s"
-                    " — completing job with no expenses",
-                    job.receipt_id,
-                )
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                complete_job(conn, job.receipt_id)
-                conn.execute("COMMIT")
-            except BaseException:
-                conn.execute("ROLLBACK")
-                raise
-            return
-
-        await _classify_and_persist(conn, pool, job, items, store_id)
-    finally:
-        conn.close()
-
-    logger.info("Receipt drain: completed receipt_id=%s", job.receipt_id)
-
-
 def _save_parsed(receipt_id: int, parsed: ParsedReceipt) -> None:
     conn = storage.get_connection()
     try:
-        # Receipt rows committed first; metadata only written on success so a
-        # failed save never leaves stale healthcheck state.
         save_parsed_receipt(conn, receipt_id, parsed)
         if parsed.used_journal_fallback:
             _write_fetch_fallback_metadata(conn, parsed.invoice_number, "journal fallback used")
@@ -279,9 +241,7 @@ async def _ensure_store(job: ReceiptJobRow, pool: ProviderPool) -> int | None:
                 [store_id, job.receipt_id],
             )
             return store_id
-        except sqlite3.OperationalError:
-            raise
-        except (httpx.HTTPError, AllProvidersExhausted, OSError):
+        except (httpx.HTTPError, OSError):
             logger.warning(
                 "Store resolution failed for receipt_id=%s",
                 job.receipt_id,

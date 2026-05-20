@@ -9,10 +9,12 @@ import { useToastStore } from "../stores/toast.js";
 import { isFiscalReceiptUrl } from "../composables/receipt.js";
 import { flushReceiptQueue } from "../composables/flushReceiptQueue.js";
 import { useKeyboardVisible } from "../composables/useKeyboardVisible.js";
+import { useOnline } from "../composables/useOnline.js";
 
 const receiptQueue = useReceiptQueueStore();
 const toast = useToastStore();
 const { keyboardVisible, keyboardBottom } = useKeyboardVisible();
+const { isOnline } = useOnline();
 
 const scanner = ref(null);
 const scannerActive = ref(false);
@@ -64,6 +66,9 @@ function onScanError(err) {
 
 <template>
   <QrScanner ref="scanner" @scan="onScan" @error="onScanError" />
+  <div v-if="!isOnline" class="offline-notice">
+    Offline — expenses will be queued
+  </div>
   <KeyboardSaveBar v-if="keyboardVisible" :bottom="keyboardBottom" @save="saveExpense" />
 
   <ExpenseForm ref="expenseForm" />
@@ -95,6 +100,13 @@ function onScanError(err) {
 </template>
 
 <style scoped>
+.offline-notice {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+  padding: 0.5rem 0 0.25rem;
+}
+
 .action-bar {
   position: fixed;
   left: 0;
