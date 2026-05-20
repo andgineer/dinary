@@ -99,10 +99,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="review-view" data-testid="review-view">
-    <div v-if="!isOnline" class="offline-notice">
-      Offline — changes not available
-    </div>
-
     <div class="review-header">
       <div
         v-if="reviewStore.doubtfulCount > 0"
@@ -241,13 +237,6 @@ onBeforeUnmount(() => {
   margin-left: auto;
   font-size: 0.7rem;
   color: var(--muted);
-}
-
-.offline-notice {
-  text-align: center;
-  font-size: 0.8rem;
-  color: var(--muted);
-  padding: 0.5rem 0 0.25rem;
 }
 
 .empty-state {

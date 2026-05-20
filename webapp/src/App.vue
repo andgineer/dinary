@@ -25,6 +25,12 @@ const reviewStore = useReviewStore();
 
 const { isOnline } = useOnline();
 const tab = ref("add"); // 'add' | 'review' | 'llm'
+
+const offlineMessage = computed(() =>
+  tab.value === "add"
+    ? "Offline — expenses will be queued"
+    : "Offline — changes not available"
+);
 const queueModalOpen = ref(false);
 
 const queueCount = computed(() => queue.items.length + receiptQueue.items.length);
@@ -77,26 +83,29 @@ onBeforeUnmount(() => {
 <template>
   <div v-if="isDev" class="dev-banner">DEV MODE</div>
   <header class="app-header" :class="{ 'below-banner': isDev }">
-    <div class="header-left">
-      <h1>
-        Dinary
-        <span class="header-version">{{ headerVersionLabel }}</span>
-      </h1>
-      <button
-        v-if="queueCount > 0"
-        type="button"
-        class="queue-badge"
-        :aria-label="`${queueCount} queued entries`"
-        data-testid="queue-badge"
-        @click="queueModalOpen = true"
-      >
-        {{ queueCount }} queued
-      </button>
+    <div class="header-row">
+      <div class="header-left">
+        <h1>
+          Dinary
+          <span class="header-version">{{ headerVersionLabel }}</span>
+        </h1>
+        <button
+          v-if="queueCount > 0"
+          type="button"
+          class="queue-badge"
+          :aria-label="`${queueCount} queued entries`"
+          data-testid="queue-badge"
+          @click="queueModalOpen = true"
+        >
+          {{ queueCount }} queued
+        </button>
+      </div>
+      <HeaderSegmented
+        v-model:tab="tab"
+        :doubtful-count="reviewStore.doubtfulCount"
+      />
     </div>
-    <HeaderSegmented
-      v-model:tab="tab"
-      :doubtful-count="reviewStore.doubtfulCount"
-    />
+    <div v-if="!isOnline" class="offline-notice" role="status">{{ offlineMessage }}</div>
   </header>
 
   <main class="app-main">
@@ -148,15 +157,20 @@ onBeforeUnmount(() => {
 
 .app-header {
   background: var(--surface);
-  padding: 1rem 1.25rem;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
+  flex-direction: column;
   border-bottom: 1px solid var(--surface-2);
   position: sticky;
   top: 0;
   z-index: 10;
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 1rem 1.25rem;
 }
 
 .app-header h1 {
@@ -189,6 +203,14 @@ onBeforeUnmount(() => {
   font-weight: 700;
   cursor: pointer;
   width: auto;
+}
+
+.offline-notice {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+  padding: 0.3rem 1.25rem 0.4rem;
+  border-top: 1px solid var(--border);
 }
 
 .app-main {

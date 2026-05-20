@@ -55,10 +55,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="llm-view" data-testid="llm-view">
-    <div v-if="!isOnline" class="offline-notice" data-testid="llm-offline-notice">
-      Offline — changes not available
-    </div>
-
     <HealthSummaryCard :health="llmStore.health" @add="openAdd" />
 
     <div class="pool-header">
@@ -107,13 +103,6 @@ onBeforeUnmount(() => {
   max-width: 480px;
   width: 100%;
   margin: 0 auto;
-}
-
-.offline-notice {
-  text-align: center;
-  font-size: 0.8rem;
-  color: var(--muted);
-  padding: 0.5rem 0 0.25rem;
 }
 
 .pool-header {
