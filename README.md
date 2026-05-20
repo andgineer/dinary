@@ -7,11 +7,11 @@
 | src/dinary/\_\_about\_\_.py                               |        1 |        0 |    100% |           |
 | src/dinary/adapters/exchange\_rates.py                    |       38 |        1 |     97% |        39 |
 | src/dinary/adapters/llm\_bootstrap.py                     |       61 |       13 |     79% |57-60, 90-98 |
-| src/dinary/adapters/llm\_client.py                        |      203 |       22 |     89% |200-202, 223-226, 277-278, 407-408, 428-431, 449, 453, 475, 477-480 |
+| src/dinary/adapters/llm\_client.py                        |      244 |       24 |     90% |198-200, 221-224, 275-276, 358, 388, 455-456, 477-480, 495, 499, 524, 526-529 |
 | src/dinary/adapters/nbp.py                                |       37 |        0 |    100% |           |
 | src/dinary/adapters/nbs.py                                |       47 |        0 |    100% |           |
 | src/dinary/adapters/rate\_helpers.py                      |       27 |        0 |    100% |           |
-| src/dinary/adapters/serbian\_receipt\_parser.py           |      106 |       18 |     83% |66, 72, 81-87, 101, 108, 142-143, 147-148, 151, 172-174, 201-207 |
+| src/dinary/adapters/serbian\_receipt\_parser.py           |      106 |       18 |     83% |66, 72, 81-87, 101, 108, 142-143, 147-148, 151, 176-178, 205-211 |
 | src/dinary/adapters/sheets\_client.py                     |       44 |       28 |     36% |26-35, 39, 54-63, 72-84 |
 | src/dinary/api/catalog.py                                 |      102 |       10 |     90% |71-73, 102-110, 197-208, 267 |
 | src/dinary/api/controllers/catalog.py                     |      133 |        0 |    100% |           |
@@ -34,7 +34,7 @@
 | src/dinary/api/rules.py                                   |       17 |        0 |    100% |           |
 | src/dinary/background/classification/item\_normalizer.py  |       13 |        0 |    100% |           |
 | src/dinary/background/classification/store\_resolver.py   |       18 |        0 |    100% |           |
-| src/dinary/background/classification/task.py              |      258 |       42 |     84% |109-110, 135-140, 144-146, 150-154, 158-162, 166-170, 213-215, 241, 273, 282-290, 384, 422-424, 504-506, 524-526, 565-567 |
+| src/dinary/background/classification/task.py              |      231 |       38 |     84% |143-145, 154-170, 174-178, 182-186, 203, 235, 244-250, 344, 382-384, 464-466, 484-486, 525-527 |
 | src/dinary/background/rate\_prefetch/task.py              |       56 |        2 |     96% |   86, 117 |
 | src/dinary/background/sheet\_logging/logging\_jobs.py     |       63 |        9 |     86% |88-89, 105-111 |
 | src/dinary/background/sheet\_logging/sheet\_logging.py    |      227 |       41 |     82% |101-105, 119-126, 134, 200-201, 211, 216-218, 261-263, 287-288, 292-302, 379, 418-422, 433, 437, 467-468, 488-498 |
@@ -46,13 +46,13 @@
 | src/dinary/db/currencies.py                               |       34 |        5 |     85% |21-22, 59-64 |
 | src/dinary/db/db\_migrations.py                           |       54 |        2 |     96% |    86, 89 |
 | src/dinary/db/expenses.py                                 |      132 |       14 |     89% |126, 146, 149, 168, 201-208, 227-233, 319, 423, 465 |
-| src/dinary/db/receipts.py                                 |       76 |       10 |     87% |94-95, 120-122, 170-172, 233, 249 |
+| src/dinary/db/receipts.py                                 |       76 |        8 |     89% |120-122, 170-172, 233, 249 |
 | src/dinary/db/sql\_loader.py                              |       31 |        0 |    100% |           |
 | src/dinary/db/storage.py                                  |      120 |       11 |     91% |144-145, 256-259, 267-273, 319-321 |
 | src/dinary/main.py                                        |       80 |        8 |     90% |40-42, 110, 116, 122, 132, 142 |
 | src/dinary/sheets/sheet\_mapping.py                       |      250 |       54 |     78% |239, 311-313, 340-341, 348-354, 404, 407-419, 433-434, 444-462, 539-546, 574-626, 654, 665-670 |
 | src/dinary/sheets/sheets.py                               |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
-| **TOTAL**                                                 | **3628** |  **479** | **87%** |           |
+| **TOTAL**                                                 | **3642** |  **475** | **87%** |           |
 
 
 ## Setup coverage badge
