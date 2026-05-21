@@ -143,11 +143,12 @@ class BrokerStorage(Protocol):
 
 `NullStorage` (no-op) ships alongside the broker for tests and no-persistence usage.
 
-`DinaryStorage` in `adapters/llm_storage.py` is the SQLite implementation. Every
-method uses `asyncio.to_thread` so synchronous SQLite calls never block the event
-loop. Each method opens a short-lived connection, does its work, closes it.
+`LLMBrokerStorage` in `adapters/llm_storage.py` is the `aiosqlite`-backed
+implementation. Every method is a genuine `async def` using
+`async with aiosqlite.connect(db_path)` — no `asyncio.to_thread`, no sync helpers.
+Each method opens a short-lived connection, does its work, commits, and closes it.
 
-`DinaryStorage.load_providers()` auto-seeds `llmbroker_providers` from
+`LLMBrokerStorage.load_providers()` auto-seeds `llmbroker_providers` from
 `.deploy/llm_providers.toml` on first call when the table is empty. Falls back
 to `DINARY_LLM_*` env vars when the TOML is absent. `llm_bootstrap.py` is removed;
 its logic lives here.
@@ -196,7 +197,7 @@ if no provider is available rather than waiting.
 ## Broker lifecycle (`main.py`)
 
 ```python
-_broker = LLMBroker(DinaryStorage())
+_broker = LLMBroker(LLMBrokerStorage())
 
 @asynccontextmanager
 async def lifespan(app):
