@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status note:** Runtime uses a **3-dimensional classification model** (`category`, `event`, `tags[]`) against a **single `data/dinary.db` file**. The storage engine is **SQLite in WAL mode**, with a Litestream sidecar shipping LTX segments to an SFTP replica on VM 2 (see [`specs/plans/storage-migration-done.md`](../plans/storage-migration-done.md)). The ledger + catalog repository lives in `dinary.db`. Idempotency is expressed as a PWA-generated `client_expense_id` (UUID) with a DB-level `UNIQUE` constraint. The system separates two currencies: **app currency** (`settings.app_currency`, default `RSD`) is the PWA's display / input currency — the one the user types amounts in and the fallback for `POST /api/expenses` when `currency` is omitted; **accounting currency** (`settings.accounting_currency`, default `EUR`) is what every `expenses.amount` / `income.amount` row and every `inv report-*` total are denominated in. The server writes the audit tuple `(amount_original, currency_original)` verbatim and stores the NBS-anchored conversion to the accounting currency in `amount`. The `POST /api/expenses` response does not echo the server-side expense id back to the client. Catalog management is FK-safe: `inv import-catalog` toggles `is_active` instead of deleting catalog rows that ledger tables still reference. Google Sheets are **never the source of truth at runtime**: the SQLite ledger is. Historical sheet import is bootstrap-only and runs through the destructive `inv import-budget` path. Optional **sheet logging** (off by default; enabled via `DINARY_SHEET_LOGGING_SPREADSHEET`) appends each new expense to a separate spreadsheet so the operator can build pivot tables in Google Sheets alongside Dinary's analytics; its column B stays RSD-denominated regardless of the accounting currency. The authoritative source for concrete category/group/tag/event values is [tasks/imports/seed_config.py](../../tasks/imports/seed_config.py); when this document disagrees with the seed code, the code wins.
+> **Status note:** Runtime uses a **3-dimensional classification model** (`category`, `event`, `tags[]`) against a **single `data/dinary.db` file**. The storage engine is **SQLite in WAL mode**, with a Litestream sidecar shipping LTX segments to an SFTP replica on VM 2 (see [`docs/src/en/operations.md`](../../docs/src/en/operations.md)). The ledger + catalog repository lives in `dinary.db`. Idempotency is expressed as a PWA-generated `client_expense_id` (UUID) with a DB-level `UNIQUE` constraint. The system separates two currencies: **app currency** (`settings.app_currency`, default `RSD`) is the PWA's display / input currency — the one the user types amounts in and the fallback for `POST /api/expenses` when `currency` is omitted; **accounting currency** (`settings.accounting_currency`, default `EUR`) is what every `expenses.amount` / `income.amount` row and every `inv report-*` total are denominated in. The server writes the audit tuple `(amount_original, currency_original)` verbatim and stores the NBS-anchored conversion to the accounting currency in `amount`. The `POST /api/expenses` response does not echo the server-side expense id back to the client. Catalog management is FK-safe: `inv import-catalog` toggles `is_active` instead of deleting catalog rows that ledger tables still reference. Google Sheets are **never the source of truth at runtime**: the SQLite ledger is. Historical sheet import is bootstrap-only and runs through the destructive `inv import-budget` path. Optional **sheet logging** (off by default; enabled via `DINARY_SHEET_LOGGING_SPREADSHEET`) appends each new expense to a separate spreadsheet so the operator can build pivot tables in Google Sheets alongside Dinary's analytics; its column B stays RSD-denominated regardless of the accounting currency. The authoritative source for concrete category/group/tag/event values is [tasks/imports/seed_config.py](../../tasks/imports/seed_config.py); when this document disagrees with the seed code, the code wins.
 
 ### Overview
 
@@ -33,7 +33,27 @@ prioritizing clean data model and scriptability over UI polish.
 - Python-native: `sqlite3` ships with the stdlib — no third-party driver, no server, no ORM needed.
 - Supports live readers concurrently with a single writer under WAL mode, which is what enables Litestream to replicate WAL segments to a secondary Oracle Cloud VM in real time.
 - At the expected scale (~30K item rows/year × a few tens of years), every query completes in milliseconds and the whole dataset still fits comfortably on a 1 GB VPS.
-- OLAP-heavy workloads (window functions over large scans, native Parquet/CSV/JSON round-trips, PIVOT/UNPIVOT) run on the laptop via the "DuckDB-over-SQLite" workflow described in Phase 5 of `storage-migration.md`: DuckDB opens the SQLite file read-only for ad-hoc analytics while the server keeps writing. Writers on the server are ordinary SQL against SQLite; aggregation queries that need OLAP performance are moved to the laptop.
+- OLAP-heavy workloads run on the laptop via DuckDB-over-SQLite (see below). Writers on the server are ordinary SQL against SQLite; aggregation queries that need OLAP performance move to the laptop.
+
+**Why we left DuckDB.** Three specific frictions drove the move:
+
+1. **Exclusive file lock.** DuckDB 1.x holds an exclusive write lock for the lifetime of any read-write connection — including connections opened `read_only=True`. Any concurrent inspector (`inv sql`, DBeaver, ad-hoc scripts) must wait or crash. The only workaround was a `/tmp` snapshot before every inspection. DuckDB documents this as a design choice with no fix planned.
+2. **No WAL replication.** DuckDB has no WAL-streaming story — no logical replication, no change-data-capture. The only backup primitive is a full `EXPORT DATABASE` dump. Not a hot backup.
+3. **OOM risk on 1 GB RAM.** DuckDB's default `memory_limit` is 80% of system RAM. Any non-trivial analytical query on the server would consume ~800 MB, leaving almost nothing for uvicorn and risking an OOM kill that drops in-flight writes.
+
+**Why not libsql (Turso's SQLite fork)?** libsql adds WAL streaming but: (a) it has added features (vector search, virtual WAL) whose forward-compatibility with DuckDB's `sqlite` extension is unverified per release — `ATTACH` from the laptop could silently break on a libsql upgrade; (b) it adds an extra server process with its own failure domain; (c) Turso Cloud routing would mean writes go through the network, violating the requirement that the server accepts writes even when every other node is unreachable.
+
+### DuckDB on the laptop (analytics — Phase 5, not yet implemented)
+
+The planned Phase 5 analytics workflow separates *storage engine* (SQLite, on the server) from *query engine* (DuckDB, on the laptop). `duckdb` is not yet in `pyproject.toml` — it will be added in the Phase 5 implementation PR alongside the first code that imports it.
+
+When implemented: DuckDB opens a locally-restored replica file read-only via `ATTACH 'analytics/dinary.db' AS ledger (TYPE sqlite, READ_ONLY)` — zero-copy, no ETL, no persistent DuckDB state to build or maintain. The replica is produced by `litestream restore` from VM 2 on demand; after a multi-week offline trip the restore takes seconds and `ATTACH` makes the ledger queryable with no post-restore rebuild.
+
+What DuckDB adds over plain SQLite even when reading SQLite pages:
+- **Vectorized multi-threaded execution** — 5–50× faster on aggregations.
+- **Analytical SQL** — `PIVOT`, `QUALIFY`, `LATERAL`, `SUMMARIZE`, list aggregates, `FROM 'file.csv'` inline.
+- **Python/Polars/Arrow integration** — zero-copy `.to_df()`, `FROM polars_df`. Works natively with Marimo, Evidence, Streamlit.
+- **Growth path** — joining CSV bank feeds, OFX statements, or Parquet market data against the ledger in one `SELECT ... FROM 'feed.csv' JOIN ledger.expenses`.
 
 ### Server Memory Constraint
 
@@ -552,7 +572,7 @@ Serbian fiscal receipts contain a QR code with a URL to `suf.purs.gov.rs`. The H
 3. Server fetches the SUF PURS page, parses line items via `sr-invoice-parser`, extracts PIB / store name / address / items.
 4. Raw HTML is cached in `receipts.raw_html` for reproducibility. `receipts` + `receipt_items` + one `receipt_classification_jobs` row are inserted in a single transaction.
 5. Server returns `200 OK` immediately — no classification happens on the hot path.
-6. Background classification drain picks up the job: PIB-based store lookup, `classification_rules` SQL match per item, LLM API call for unmatched items, expense aggregation by category. See "Classification Layer" below.
+6. Background classification drain picks up the job: PIB-based store lookup, `classification_rules` SQL match per item, LLM API call for unmatched items, one expense row per classified item. See "Classification Layer" below.
 
 ### Manual Entry
 
@@ -680,12 +700,10 @@ PWA → POST /api/receipts {url, client_receipt_id}
        prompt includes category list + all unmatched items
        response: [{item_name_normalized, category_id, confidence_level 1-4}]
 
-  5. aggregate receipt_items by category_id:
-       → one expenses row per category (amount = sum of items in group)
-       → expense.confidence_level = MIN(confidence_level of items in group)
-       → confidence=1 items: no expense created; items stay in receipt_items
+  5. per item: if confidence ≥ 2 → INSERT one expenses row (amount = item.total_price)
+              if confidence ≤ 1 → no expense created; item stays in receipt_items
 
-  6. INSERT expenses; UPDATE receipt_items.expense_id
+  6. UPDATE receipt_items.expense_id; enqueue sheet logging per new expense row
 
   7. INSERT classification_rules for all newly classified items (confidence 2-4)
 ```
@@ -954,7 +972,7 @@ The local agent is stateless — it fetches tasks, processes them, and pushes re
 **What it does:**
 - Accepts manual expenses (`POST /api/expenses`) and receipt QR URLs (`POST /api/receipts`) from the PWA (REST API).
 - Stores everything in SQLite (single `data/dinary.db` file, WAL mode).
-- Runs a Litestream sidecar that streams the WAL to a secondary Oracle Cloud VM over SFTP (see `specs/plans/storage-migration-done.md`).
+- Runs a Litestream sidecar that streams the WAL to a secondary Oracle Cloud VM over SFTP (see `docs/src/en/operations.md`).
 - **Background receipt classification**: PIB-based store lookup, `classification_rules` matching, external LLM API calls (DeepSeek / Gemini / Groq — lightweight HTTP, not in-process AI), expense aggregation by category. See "Classification Layer" above.
 - Serves operational and analytical dashboards (static HTML or SPA).
 - Syncs aggregated data to Google Sheets on schedule or on demand.
@@ -1043,7 +1061,7 @@ daemon lifecycle management) depends on the GUI framework choice and will be det
 ### Backup Strategy
 
 - The `data/dinary.db` file on the VPS (dinary) is the primary copy.
-- Continuous off-box replication: Litestream streams the WAL to a secondary Oracle Cloud VM (VM 2) over SFTP; see `specs/plans/storage-migration-done.md` for the ops runbook. Recovery is `litestream restore` on either the primary or the laptop.
+- Continuous off-box replication: Litestream streams the WAL to a secondary Oracle Cloud VM (VM 2) over SFTP; see `docs/src/en/operations.md` for the ops runbook. Recovery is `litestream restore` on either the primary or the laptop.
 - Cold backup on demand: `inv deploy` takes a `sqlite3 .backup` snapshot into `backups/pre-deploy-<ts>/` before shipping code; operators can also run `scp` / `rsync` of the same snapshot to the laptop.
 - Periodic Parquet export for maximum portability happens laptop-side via the DuckDB-over-SQLite reader (`ATTACH 'dinary.db' (TYPE sqlite); COPY ... TO 'expenses_2026.parquet' (FORMAT parquet)`).
 - Git for the codebase (scripts, config). Data files excluded from git, backed up separately.
@@ -1124,7 +1142,7 @@ Detailed plan: [`specs/plans/receipt-pipeline.md`](../plans/receipt-pipeline.md)
 - New tables: `stores`, `receipts`, `receipt_items`, `classification_rules`, `receipt_classification_jobs`, `llm_providers`, `llm_call_log`.
 - `expenses` gains `receipt_id`, `store_id`, `confidence_level`.
 - `POST /api/receipts` accepts QR URL + `client_receipt_id`; inserts receipt + items + classification job in one transaction; returns `200 OK` immediately.
-- Background classification drain (same pattern as sheet-logging drain): PIB store lookup → `classification_rules` SQL match → LLM API call for unmatched items → expense aggregation by category (one `expenses` row per category per receipt). Confidence levels 1-4; level-1 items are held in `receipt_items` pending mandatory user classification.
+- Background classification drain (same pattern as sheet-logging drain): PIB store lookup → `classification_rules` SQL match → LLM API call for unmatched items → one `expenses` row per classified item (`amount = item.total_price`). Confidence levels 1-4; level-1 items are held in `receipt_items` pending mandatory user classification.
 - LLM provider registry with priority-based automatic failover. Multiple providers (DeepSeek, Gemini, Groq, etc.) managed via Admin API from the PWA; env vars seed the initial row on first boot only.
 - Store normalisation: PIB is the primary store key; new PIBs are resolved to a chain name by the LLM on first encounter, then cached in `stores`.
 - PWA receipt flow: scan → immediate `200 OK` confirmation → background classification. Review screen with three confidence-level lists (🔴 required / 🟡 recommended / 🔵 optional). One-tap batch correction propagates a rule fix to all matching historical items.

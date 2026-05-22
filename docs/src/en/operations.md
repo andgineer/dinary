@@ -476,6 +476,8 @@ This wipes the old VM2 entry from VM1's `known_hosts`, re-scans, and re-installs
 
 ## Tailscale sshd break-glass
 
+> **Current production posture:** Tailscale-only SSH is **not** applied in production. It was tried and reverted. Reason: Oracle Cloud Serial Console authenticates by password — but our VMs are configured with key-only SSH and no `/etc/shadow` password. When both SSH access and the Tailscale Serve API endpoint depend on the same tailnet tunnel, a single `tailscaled` crash simultaneously kills operator access and the data plane with no independent break-glass path. Current posture: public-key SSH on `0.0.0.0:22` plus `fail2ban` (1-day initial ban, doubling to 30 days) to absorb brute-force noise. Key-only auth already defeats brute-force; fail2ban absorbs the log noise.
+
 If `--tailscale` was passed to `inv setup-server` (rebinds sshd to Tailscale-only) and you are locked out:
 
 1. Oracle Cloud console → VM Instance → **Console connection** → **Launch Cloud Shell**
