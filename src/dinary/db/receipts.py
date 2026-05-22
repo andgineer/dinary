@@ -259,9 +259,9 @@ def release_job(conn: sqlite3.Connection, receipt_id: int, claim_token: str) -> 
 def trim_llm_call_log(conn: sqlite3.Connection, keep: int = 200) -> None:
     conn.execute(
         """
-        DELETE FROM llm_call_log
+        DELETE FROM llmbroker_call_log
          WHERE id NOT IN (
-             SELECT id FROM llm_call_log ORDER BY id DESC LIMIT ?
+             SELECT id FROM llmbroker_call_log ORDER BY id DESC LIMIT ?
          )
         """,
         [keep],

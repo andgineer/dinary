@@ -1,5 +1,5 @@
 -- Receipt pipeline tables: stores, receipts, receipt_items,
--- classification_rules, receipt_classification_jobs, llm_providers, llm_call_log.
+-- classification_rules, receipt_classification_jobs, llmbroker_providers, llmbroker_call_log.
 -- Also adds receipt_id / store_id / confidence_level to expenses.
 
 CREATE TABLE stores (
@@ -74,21 +74,22 @@ CREATE TABLE receipt_classification_jobs (
     CHECK (status IN ('pending', 'in_progress', 'poisoned'))
 );
 
-CREATE TABLE llm_providers (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    label              TEXT NOT NULL,
-    base_url           TEXT NOT NULL,
-    api_key            TEXT NOT NULL,
-    model              TEXT NOT NULL,
-    priority           INTEGER NOT NULL DEFAULT 0,
-    is_enabled         BOOLEAN NOT NULL DEFAULT 1,
-    rate_limited_until TIMESTAMP,
-    created_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE llmbroker_providers (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    label                TEXT NOT NULL,
+    base_url             TEXT NOT NULL,
+    api_key              TEXT NOT NULL,
+    model                TEXT NOT NULL,
+    priority             INTEGER NOT NULL DEFAULT 0,
+    is_enabled           BOOLEAN NOT NULL DEFAULT 1,
+    rate_limited_until   TIMESTAMP,
+    default_rate_limit_sec INTEGER NOT NULL DEFAULT 60,
+    created_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE llm_call_log (
+CREATE TABLE llmbroker_call_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    provider_id INTEGER REFERENCES llm_providers(id),
+    provider_id INTEGER REFERENCES llmbroker_providers(id),
     receipt_id  INTEGER REFERENCES receipts(id),
     called_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status      TEXT NOT NULL,
@@ -103,4 +104,4 @@ CREATE INDEX receipt_items_receipt_id    ON receipt_items (receipt_id);
 CREATE INDEX receipt_items_expense_id    ON receipt_items (expense_id);
 CREATE INDEX receipt_items_name_norm     ON receipt_items (name_normalized);
 CREATE INDEX receipts_store_id           ON receipts (store_id);
-CREATE INDEX llm_call_log_provider_id    ON llm_call_log (provider_id);
+CREATE INDEX llmbroker_call_log_provider_id ON llmbroker_call_log (provider_id);

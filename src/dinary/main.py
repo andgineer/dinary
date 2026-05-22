@@ -13,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from dinary import __version__
+from dinary.adapters.llm_storage import LLMBrokerStorage
+from dinary.adapters.llmbroker import LLMBroker
 from dinary.api import (
     catalog,
     currencies,
@@ -62,11 +64,13 @@ def _setup_logging() -> None:
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     storage.init_db()
+    broker = LLMBroker(LLMBrokerStorage())
+    await broker.start()
     await warm_sheet_mapping()
     sheet_logging_bg = asyncio.create_task(sheet_logging_task(), name="sheet-logging-task")
     rate_prefetch_bg = asyncio.create_task(rate_prefetch_task(), name="rate-prefetch-task")
     receipt_classification_bg = asyncio.create_task(
-        receipt_classification_task(),
+        receipt_classification_task(broker),
         name="receipt-classification-task",
     )
     try:
@@ -81,6 +85,7 @@ async def _lifespan(_app: FastAPI):
             await rate_prefetch_bg
         with contextlib.suppress(asyncio.CancelledError):
             await receipt_classification_bg
+        await broker.stop()
 
 
 def create_app() -> FastAPI:

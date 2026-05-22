@@ -20,7 +20,6 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from dinary.adapters.llm_bootstrap import seed_llm_provider_if_empty
 from dinary.config import settings
 from dinary.db import currencies, db_migrations
 
@@ -209,7 +208,6 @@ def init_db() -> None:
     try:
         _reconcile_accounting_currency(con)
         currencies.seed_default_if_empty(con, settings.app_currency)
-        seed_llm_provider_if_empty(con)
     finally:
         con.close()
 

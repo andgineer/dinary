@@ -10,19 +10,22 @@
 #   Gemini:     https://aistudio.google.com/apikey
 
 [[providers]]
-label    = "Groq Llama-3.3-70b"
-base_url = "https://api.groq.com/openai/v1"
-api_key  = "<groq_key>"
-model    = "llama-3.3-70b-versatile"
+label           = "Groq Llama-3.3-70b"
+base_url        = "https://api.groq.com/openai/v1"
+api_key         = "<groq_key>"
+model           = "llama-3.3-70b-versatile"
+rate_limit_sec  = 60
 
 [[providers]]
-label    = "OpenRouter GPT-OSS-120b"
-base_url = "https://openrouter.ai/api/v1"
-api_key  = "<openrouter_key>"
-model    = "openai/gpt-oss-120b:free"
+label           = "OpenRouter GPT-OSS-120b"
+base_url        = "https://openrouter.ai/api/v1"
+api_key         = "<openrouter_key>"
+model           = "openai/gpt-oss-120b:free"
+rate_limit_sec  = 60
 
 [[providers]]
-label    = "Google Gemini 2.5 Flash"
-base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
-api_key  = "<gemini_key>"
-model    = "gemini-2.5-flash"
+label           = "Google Gemini 2.5 Flash"
+base_url        = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key         = "<gemini_key>"
+model           = "gemini-2.5-flash"
+rate_limit_sec  = 60

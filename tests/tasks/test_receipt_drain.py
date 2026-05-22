@@ -6,22 +6,23 @@ import json
 import shutil
 import sqlite3
 import unittest.mock
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import allure
 import pytest
 
 import dinary.background.classification.task as drain_mod
-from dinary.db import db_migrations, storage
-from dinary.db.receipts import ReceiptJobRow
+from dinary.adapters.llm_client import ClassificationResult
+from dinary.adapters.llmbroker import LLMBroker, NullStorage
+from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 from dinary.background.classification.task import (
     _drain_all_pending,
     _process_job,
     notify_new_receipt,
     receipt_classification_task,
 )
-from dinary.adapters.llm_client import ClassificationResult
-from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
+from dinary.db import db_migrations, storage
+from dinary.db.receipts import ReceiptJobRow
 
 
 def _run(coro):
@@ -106,7 +107,7 @@ class TestProcessJobEdgeCases:
             claim_token="tok",
         )
         with caplog.at_level(logging.WARNING, logger="dinary.background.classification.task"):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         assert any("no items" in r.message.lower() for r in caplog.records)
 
@@ -127,7 +128,6 @@ class TestProcessJobEdgeCases:
 
     def test_failover_penalty_reduces_confidence(self, drain_db):  # noqa: ARG002
         """When the pool returns used_failover=True, expense confidence is reduced by 1."""
-        from unittest.mock import AsyncMock, MagicMock
 
         from dinary.background.classification.task import _process_job
         from dinary.adapters.llm_client import ClassificationResult
@@ -151,19 +151,6 @@ class TestProcessJobEdgeCases:
             total_ok=True,
             used_journal_fallback=False,
         )
-        pool = MagicMock()
-        pool.get_chain_name = AsyncMock(return_value="Lidl")
-        pool.classify_receipt = AsyncMock(
-            return_value=(
-                [
-                    ClassificationResult(
-                        item_name_normalized="hleb", category_id=1, confidence_level=3
-                    )
-                ],
-                True,  # used_failover=True → penalty −1 → final conf = 2
-            )
-        )
-
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -195,11 +182,18 @@ class TestProcessJobEdgeCases:
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.classification.task.get_provider_pool",
-                return_value=pool,
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [
+                        ClassificationResult(
+                            item_name_normalized="hleb", category_id=1, confidence_level=3
+                        )
+                    ],
+                    True,  # used_failover=True → penalty −1 → final conf = 2
+                ),
             ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
@@ -214,7 +208,6 @@ class TestProcessJobEdgeCases:
 
     def test_expense_datetime_matches_receipt_created_at(self, drain_db):  # noqa: ARG002
         """Expenses use the receipt's created_at as their datetime, not classification time."""
-        from unittest.mock import AsyncMock, MagicMock
 
         from dinary.background.classification.task import _process_job
         from dinary.adapters.llm_client import ClassificationResult
@@ -234,19 +227,6 @@ class TestProcessJobEdgeCases:
             total_ok=True,
             used_journal_fallback=False,
         )
-        pool = MagicMock()
-        pool.get_chain_name = AsyncMock(return_value="")
-        pool.classify_receipt = AsyncMock(
-            return_value=(
-                [
-                    ClassificationResult(
-                        item_name_normalized="mleko", category_id=1, confidence_level=4
-                    )
-                ],
-                False,
-            )
-        )
-
         fixed_created_at = "2026-01-15 08:30:00"
         conn = storage.get_connection()
         try:
@@ -280,11 +260,18 @@ class TestProcessJobEdgeCases:
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.classification.task.get_provider_pool",
-                return_value=pool,
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [
+                        ClassificationResult(
+                            item_name_normalized="mleko", category_id=1, confidence_level=4
+                        )
+                    ],
+                    False,
+                ),
             ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
@@ -352,7 +339,6 @@ class TestProcessJobEdgeCases:
 
     def test_expense_datetime_uses_purchase_datetime_when_set(self, drain_db):  # noqa: ARG002
         """Expenses use purchase_datetime from the receipt when present, not created_at."""
-        from unittest.mock import AsyncMock, MagicMock
 
         from dinary.background.classification.task import _process_job
         from dinary.adapters.llm_client import ClassificationResult
@@ -374,19 +360,6 @@ class TestProcessJobEdgeCases:
             used_journal_fallback=False,
             purchase_datetime=purchase_dt,
         )
-        pool = MagicMock()
-        pool.get_chain_name = AsyncMock(return_value="")
-        pool.classify_receipt = AsyncMock(
-            return_value=(
-                [
-                    ClassificationResult(
-                        item_name_normalized="kafa", category_id=1, confidence_level=4
-                    )
-                ],
-                False,
-            )
-        )
-
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -418,11 +391,18 @@ class TestProcessJobEdgeCases:
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.classification.task.get_provider_pool",
-                return_value=pool,
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [
+                        ClassificationResult(
+                            item_name_normalized="kafa", category_id=1, confidence_level=4
+                        )
+                    ],
+                    False,
+                ),
             ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
@@ -462,20 +442,6 @@ class TestProcessJobEdgeCases:
             total_ok=True,
             used_journal_fallback=True,  # journal penalty: −1
         )
-        pool = MagicMock()
-        pool.get_chain_name = AsyncMock(return_value="Lidl")
-        # LLM returns cat=1 conf=2; journal penalty (−1) → final conf=1
-        pool.classify_receipt = AsyncMock(
-            return_value=(
-                [
-                    ClassificationResult(
-                        item_name_normalized="nepoznato", category_id=1, confidence_level=2
-                    )
-                ],
-                False,
-            )
-        )
-
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -501,11 +467,22 @@ class TestProcessJobEdgeCases:
             claim_token="tok",
         )
 
+        # LLM returns cat=1 conf=2; journal penalty (−1) → final conf=1
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [
+                        ClassificationResult(
+                            item_name_normalized="nepoznato", category_id=1, confidence_level=2
+                        )
+                    ],
+                    False,
+                ),
+            ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
@@ -558,12 +535,6 @@ class TestReceiptSheetLogging:
             total_ok=True,
             used_journal_fallback=False,
         )
-        pool = MagicMock()
-        pool.get_chain_name = AsyncMock(return_value="")
-        pool.classify_receipt = AsyncMock(
-            return_value=([ClassificationResult("hleb", category_id=1, confidence_level=3)], False)
-        )
-
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -594,11 +565,14 @@ class TestReceiptSheetLogging:
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.classification.task.get_provider_pool",
-                return_value=pool,
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [ClassificationResult("hleb", category_id=1, confidence_level=3)],
+                    False,
+                ),
             ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
@@ -639,19 +613,6 @@ class TestReceiptSheetLogging:
             total_ok=True,
             used_journal_fallback=False,
         )
-        pool = MagicMock()
-        pool.get_chain_name = AsyncMock(return_value="")
-        # Two items → two individual expenses (one per item)
-        pool.classify_receipt = AsyncMock(
-            return_value=(
-                [
-                    ClassificationResult("mleko", category_id=1, confidence_level=3),
-                    ClassificationResult("sir", category_id=1, confidence_level=3),
-                ],
-                False,
-            )
-        )
-
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -676,17 +637,24 @@ class TestReceiptSheetLogging:
             claim_token="tok",
         )
 
+        # Two items → two individual expenses (one per item)
         with (
             patch(
                 "dinary.background.classification.task.parse_receipt",
                 return_value=parsed,
             ),
             patch(
-                "dinary.background.classification.task.get_provider_pool",
-                return_value=pool,
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [
+                        ClassificationResult("mleko", category_id=1, confidence_level=3),
+                        ClassificationResult("sir", category_id=1, confidence_level=3),
+                    ],
+                    False,
+                ),
             ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
@@ -721,12 +689,9 @@ class TestReceiptSheetLogging:
 # ---------------------------------------------------------------------------
 
 
-def _make_pool_for_items(results_list):
-    """Return a mock ProviderPool that yields the given ClassificationResult list."""
-    pool = MagicMock()
-    pool.get_chain_name = AsyncMock(return_value="")
-    pool.classify_receipt = AsyncMock(return_value=(results_list, False))
-    return pool
+def _make_broker() -> LLMBroker:
+    """Return a minimal broker instance (NullStorage, never called in unit tests)."""
+    return LLMBroker(NullStorage())
 
 
 def _seed_drain_db_with_tags(conn):
@@ -780,14 +745,6 @@ class TestPerItemExpenses:
             total_ok=True,
             used_journal_fallback=False,
         )
-        pool = _make_pool_for_items(
-            [
-                ClassificationResult("a", category_id=1, confidence_level=3),
-                ClassificationResult("b", category_id=1, confidence_level=3),
-                ClassificationResult("c", category_id=1, confidence_level=3),
-            ]
-        )
-
         conn = storage.get_connection()
         try:
             receipt_id = self._setup_receipt(conn)
@@ -807,9 +764,19 @@ class TestPerItemExpenses:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [
+                        ClassificationResult("a", category_id=1, confidence_level=3),
+                        ClassificationResult("b", category_id=1, confidence_level=3),
+                        ClassificationResult("c", category_id=1, confidence_level=3),
+                    ],
+                    False,
+                ),
+            ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
@@ -840,12 +807,6 @@ class TestPerItemExpenses:
             total_ok=True,
             used_journal_fallback=False,
         )
-        pool = _make_pool_for_items(
-            [
-                ClassificationResult("x", category_id=1, confidence_level=3, tag_ids=[1]),
-            ]
-        )
-
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -873,9 +834,15 @@ class TestPerItemExpenses:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [ClassificationResult("x", category_id=1, confidence_level=3, tag_ids=[1])],
+                    False,
+                ),
+            ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
@@ -908,12 +875,6 @@ class TestPerItemExpenses:
             total_ok=True,
             used_journal_fallback=False,
         )
-        pool = _make_pool_for_items(
-            [
-                ClassificationResult("y", category_id=1, confidence_level=3),
-            ]
-        )
-
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -940,9 +901,15 @@ class TestPerItemExpenses:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [ClassificationResult("y", category_id=1, confidence_level=3)],
+                    False,
+                ),
+            ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
@@ -968,12 +935,6 @@ class TestPerItemExpenses:
             total_ok=True,
             used_journal_fallback=False,
         )
-        pool = _make_pool_for_items(
-            [
-                ClassificationResult("z", category_id=1, confidence_level=3),
-            ]
-        )
-
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -1005,9 +966,15 @@ class TestPerItemExpenses:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [ClassificationResult("z", category_id=1, confidence_level=3)],
+                    False,
+                ),
+            ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
@@ -1036,12 +1003,6 @@ class TestPerItemExpenses:
             total_ok=True,
             used_journal_fallback=False,
         )
-        pool = _make_pool_for_items(
-            [
-                ClassificationResult("w", category_id=1, confidence_level=3),
-            ]
-        )
-
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -1074,9 +1035,15 @@ class TestPerItemExpenses:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [ClassificationResult("w", category_id=1, confidence_level=3)],
+                    False,
+                ),
+            ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
@@ -1105,12 +1072,6 @@ class TestPerItemExpenses:
             total_ok=True,
             used_journal_fallback=False,
         )
-        pool = _make_pool_for_items(
-            [
-                ClassificationResult("q", category_id=1, confidence_level=3),
-            ]
-        )
-
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -1144,9 +1105,15 @@ class TestPerItemExpenses:
 
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
-            patch("dinary.background.classification.task.get_provider_pool", return_value=pool),
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [ClassificationResult("q", category_id=1, confidence_level=3)],
+                    False,
+                ),
+            ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
@@ -1178,7 +1145,7 @@ class TestDrainLoop:
         """notify_new_receipt wakes the drain loop immediately."""
         drained = []
 
-        async def mock_drain():
+        async def mock_drain(_broker=None):
             drained.append(1)
 
         async def run():
@@ -1186,7 +1153,7 @@ class TestDrainLoop:
                 patch.object(drain_mod, "_drain_all_pending", side_effect=mock_drain),
                 patch.object(drain_mod.settings, "receipt_classification_enabled", True),
             ):
-                task = asyncio.create_task(receipt_classification_task())
+                task = asyncio.create_task(receipt_classification_task(_make_broker()))
                 await asyncio.sleep(0)  # let task start and run initial drain
                 drained.clear()  # discard the startup drain
                 notify_new_receipt()
@@ -1203,7 +1170,7 @@ class TestDrainLoop:
         """Multiple rapid notifies result in a single drain cycle (events are coalesced)."""
         drained = []
 
-        async def mock_drain():
+        async def mock_drain(_broker=None):
             drained.append(1)
 
         async def run():
@@ -1211,7 +1178,7 @@ class TestDrainLoop:
                 patch.object(drain_mod, "_drain_all_pending", side_effect=mock_drain),
                 patch.object(drain_mod.settings, "receipt_classification_enabled", True),
             ):
-                task = asyncio.create_task(receipt_classification_task())
+                task = asyncio.create_task(receipt_classification_task(_make_broker()))
                 await asyncio.sleep(0)
                 drained.clear()
                 notify_new_receipt()
@@ -1249,14 +1216,14 @@ class TestDrainLoop:
 
     def test_drain_all_pending_noop_with_no_jobs(self, drain_db):  # noqa: ARG002
         """_drain_all_pending completes immediately when no jobs are pending."""
-        asyncio.run(_drain_all_pending())  # must not raise
+        asyncio.run(_drain_all_pending(_make_broker()))  # must not raise
 
     def test_drain_all_pending_runs_jobs_concurrently(self, drain_db):  # noqa: ARG002
         """Multiple pending jobs all run in parallel via _drain_all_pending."""
         start_times: list[float] = []
         import time
 
-        async def slow_job(job: ReceiptJobRow) -> None:
+        async def slow_job(job: ReceiptJobRow, _broker=None) -> None:
             start_times.append(time.monotonic())
             await asyncio.sleep(0.05)  # simulate I/O
 
@@ -1277,7 +1244,7 @@ class TestDrainLoop:
             conn.close()
 
         with patch.object(drain_mod, "_process_job", side_effect=slow_job):
-            asyncio.run(_drain_all_pending())
+            asyncio.run(_drain_all_pending(_make_broker()))
 
         assert len(start_times) == 3
         # All 3 should start within a short window (concurrent, not sequential)
@@ -1288,7 +1255,7 @@ class TestDrainLoop:
         drain_call_count = {"n": 0}
         timeout_fired = {"n": 0}
 
-        async def mock_drain():
+        async def mock_drain(_broker=None):
             drain_call_count["n"] += 1
 
         async def instant_timeout(coro, timeout):  # noqa: ARG001
@@ -1313,7 +1280,7 @@ class TestDrainLoop:
                     side_effect=instant_timeout,
                 ),
             ):
-                task = asyncio.create_task(receipt_classification_task())
+                task = asyncio.create_task(receipt_classification_task(_make_broker()))
                 for _ in range(10):
                     await asyncio.sleep(0)
                 task.cancel()
@@ -1333,7 +1300,7 @@ class TestDrainLoop:
 
         call_count = {"n": 0}
 
-        async def mixed_job(job: ReceiptJobRow) -> None:
+        async def mixed_job(job: ReceiptJobRow, _broker=None) -> None:
             call_count["n"] += 1
             if call_count["n"] == 1:
                 raise RuntimeError("simulated failure")
@@ -1356,6 +1323,6 @@ class TestDrainLoop:
             conn.close()
 
         with patch.object(drain_mod, "_process_job", side_effect=mixed_job):
-            asyncio.run(_drain_all_pending())
+            asyncio.run(_drain_all_pending(_make_broker()))
 
         assert len(completed) == 2, "2 of 3 jobs must complete despite one failure"

@@ -7,10 +7,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from dinary.config import settings
-from dinary.main import create_app
-from dinary.db import db_migrations, storage
 from dinary.adapters import rate_helpers
+from dinary.adapters.llm_storage import LLMBrokerStorage
+
+_REAL_LLM_SEED = LLMBrokerStorage._seed
+from dinary.config import settings
+from dinary.db import db_migrations, storage
+from dinary.main import create_app
 from dinary.sheets import sheet_mapping
 
 # Tests that need the built Vue PWA must depend on ``built_static_dir``;
@@ -76,6 +79,26 @@ def _reset_db_connection():
 
 
 @pytest.fixture(autouse=True)
+def _disable_llm_seed(monkeypatch):
+    """Prevent LLMBrokerStorage from auto-seeding providers from .deploy/llm_providers.toml.
+
+    Tests that specifically assert on llmbroker_providers state start from an empty
+    table; the operator's real credentials or local TOML must not interfere.
+    """
+
+    async def _no_op(self, db):  # noqa: ARG001
+        pass
+
+    monkeypatch.setattr(LLMBrokerStorage, "_seed", _no_op)
+
+
+@pytest.fixture
+def real_llm_seed(monkeypatch):
+    """Opt out of _disable_llm_seed for tests that specifically verify provider seeding."""
+    monkeypatch.setattr(LLMBrokerStorage, "_seed", _REAL_LLM_SEED)
+
+
+@pytest.fixture(autouse=True)
 def _disable_drain_loop(monkeypatch):
     """Silence the lifespan periodic drain for every test by default.
 
@@ -84,20 +107,6 @@ def _disable_drain_loop(monkeypatch):
     """
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 0)
     monkeypatch.setattr(settings, "receipt_classification_enabled", False)
-
-
-@pytest.fixture(autouse=True)
-def _disable_llm_seed(monkeypatch):
-    """Prevent init_db from auto-seeding llm_providers from .deploy/.env in tests.
-
-    Production seeding is intentional; test DBs should start empty so
-    tests that assert on llm_providers state are not surprised by the
-    operator's real credentials.
-
-    Patches seed_llm_provider_if_empty directly so both the TOML file
-    path and the env-var fallback are blocked in one place.
-    """
-    monkeypatch.setattr(storage, "seed_llm_provider_if_empty", lambda *_a, **_kw: None)
 
 
 @pytest.fixture(autouse=True)

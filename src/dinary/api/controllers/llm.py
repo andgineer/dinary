@@ -46,7 +46,7 @@ def list_providers(con: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = con.execute(
         "SELECT id, label, base_url, model, priority, is_enabled,"
         "       rate_limited_until, created_at"
-        " FROM llm_providers ORDER BY priority, id",
+        " FROM llmbroker_providers ORDER BY priority, id",
     ).fetchall()
     return [_row_to_dict(r) for r in rows]
 
@@ -54,7 +54,8 @@ def list_providers(con: sqlite3.Connection) -> list[dict[str, Any]]:
 def add_provider(body: ProviderIn, con: sqlite3.Connection) -> dict[str, Any]:
     with transaction(con):
         con.execute(
-            "INSERT INTO llm_providers (label, base_url, api_key, model, priority, is_enabled)"
+            "INSERT INTO llmbroker_providers"
+            " (label, base_url, api_key, model, priority, is_enabled)"
             " VALUES (?, ?, ?, ?, ?, ?)",
             [
                 body.label,
@@ -74,7 +75,13 @@ def update_provider(
     body: ProviderPatch,
     con: sqlite3.Connection,
 ) -> dict[str, Any]:
-    if con.execute("SELECT id FROM llm_providers WHERE id = ?", [provider_id]).fetchone() is None:
+    if (
+        con.execute(
+            "SELECT id FROM llmbroker_providers WHERE id = ?",
+            [provider_id],
+        ).fetchone()
+        is None
+    ):
         raise HTTPException(status_code=404, detail="Provider not found")
     updates: list[str] = []
     params: list[Any] = []
@@ -100,28 +107,34 @@ def update_provider(
         with transaction(con):
             params.append(provider_id)
             con.execute(
-                f"UPDATE llm_providers SET {', '.join(updates)} WHERE id = ?",  # noqa: S608
+                f"UPDATE llmbroker_providers SET {', '.join(updates)} WHERE id = ?",  # noqa: S608
                 params,
             )
     return {"status": "ok"}
 
 
 def delete_provider(provider_id: int, con: sqlite3.Connection) -> dict[str, Any]:
-    if con.execute("SELECT id FROM llm_providers WHERE id = ?", [provider_id]).fetchone() is None:
+    if (
+        con.execute(
+            "SELECT id FROM llmbroker_providers WHERE id = ?",
+            [provider_id],
+        ).fetchone()
+        is None
+    ):
         raise HTTPException(status_code=404, detail="Provider not found")
     conflict = False
     with transaction(con):
         enabled_count = con.execute(
-            "SELECT COUNT(*) FROM llm_providers WHERE is_enabled = 1",
+            "SELECT COUNT(*) FROM llmbroker_providers WHERE is_enabled = 1",
         ).fetchone()[0]
         is_enabled = con.execute(
-            "SELECT is_enabled FROM llm_providers WHERE id = ?",
+            "SELECT is_enabled FROM llmbroker_providers WHERE id = ?",
             [provider_id],
         ).fetchone()[0]
         if enabled_count <= 1 and is_enabled:
             conflict = True
         else:
-            con.execute("DELETE FROM llm_providers WHERE id = ?", [provider_id])
+            con.execute("DELETE FROM llmbroker_providers WHERE id = ?", [provider_id])
     if conflict:
         raise HTTPException(status_code=409, detail="Cannot delete the only enabled provider")
     return {"status": "ok"}
@@ -129,7 +142,7 @@ def delete_provider(provider_id: int, con: sqlite3.Connection) -> dict[str, Any]
 
 async def test_provider(provider_id: int, con: sqlite3.Connection) -> dict[str, Any]:
     row = con.execute(
-        "SELECT base_url, api_key, model FROM llm_providers WHERE id = ?",
+        "SELECT base_url, api_key, model FROM llmbroker_providers WHERE id = ?",
         [provider_id],
     ).fetchone()
     if row is None:
@@ -155,11 +168,11 @@ def llm_status(con: sqlite3.Connection) -> dict[str, Any]:
                p.is_enabled, p.rate_limited_until, p.created_at,
                COUNT(l.id) AS used_today,
                SUM(CASE WHEN l.status = 'ok' THEN 1 ELSE 0 END) AS ok_calls,
-               (SELECT status FROM llm_call_log
+               (SELECT status FROM llmbroker_call_log
                  WHERE provider_id = p.id
                  ORDER BY id DESC LIMIT 1) AS last_status
-          FROM llm_providers p
-          LEFT JOIN llm_call_log l ON l.provider_id = p.id
+          FROM llmbroker_providers p
+          LEFT JOIN llmbroker_call_log l ON l.provider_id = p.id
          GROUP BY p.id
          ORDER BY p.priority, p.id
         """,
@@ -180,14 +193,6 @@ def llm_status(con: sqlite3.Connection) -> dict[str, Any]:
         }
         for r in rows
     ]
-    meta = {
-        row[0]: row[1]
-        for row in con.execute(
-            "SELECT key, value FROM app_metadata"
-            " WHERE key IN ('llm_last_provider_idx','llm_provider_switch_last',"
-            "               'llm_provider_switch_count','llm_all_exhausted_last')",
-        ).fetchall()
-    }
     enabled = [p for p in provider_list if p["is_enabled"]]
     total = len(enabled)
     healthy = sum(1 for p in enabled if p["rate_limited_until"] is None)
@@ -195,12 +200,10 @@ def llm_status(con: sqlite3.Connection) -> dict[str, Any]:
         "healthy": healthy,
         "total": total,
         "strategy": "failover" if total >= 2 else None,
-        "last_switch": meta.get("llm_provider_switch_last"),
     }
     pending_receipts = count_pending_classification_jobs(con)
     return {
         "health": health,
         "providers": provider_list,
-        "meta": meta,
         "pending_receipts": int(pending_receipts),
     }

@@ -2,12 +2,13 @@
 
 import sqlite3
 
-from dinary.adapters.llm_client import ProviderPool
+from dinary.adapters.llm_client import get_chain_name
+from dinary.adapters.llmbroker import LLMBroker
 
 
 async def resolve_store(
     conn: sqlite3.Connection,
-    pool: ProviderPool,
+    broker: LLMBroker,
     store_pib: str,
     store_name_raw: str,
 ) -> int:
@@ -26,7 +27,7 @@ async def resolve_store(
         if row:
             return int(row[0])
 
-    chain_name = await pool.get_chain_name(conn, store_name_raw)
+    chain_name = await get_chain_name(broker, store_name_raw)
     chain_name = chain_name.strip() or store_name_raw.strip()
 
     row = conn.execute(

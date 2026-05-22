@@ -4,14 +4,15 @@ import asyncio
 import shutil
 import sqlite3
 import unittest.mock
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import patch
 
 import allure
 import pytest
 
+from dinary.adapters.llm_client import ClassificationResult
+from dinary.adapters.llmbroker import LLMBroker, NullStorage
 from dinary.background.classification.task import _classify_and_persist
 from dinary.db import db_migrations, storage
-from dinary.adapters.llm_client import ClassificationResult, ProviderPool
 from dinary.db.receipts import (
     ReceiptJobRow,
     claim_next_job,
@@ -82,27 +83,21 @@ def _make_job(receipt_id: int, claim_token: str = "tok") -> ReceiptJobRow:
     )
 
 
-def _mock_pool(cat_id=1, conf=3):
-    pool = MagicMock(spec=ProviderPool)
-    pool.classify_receipt = AsyncMock(
-        return_value=(
-            [
-                ClassificationResult(
-                    item_name_normalized="hleb", category_id=cat_id, confidence_level=conf
-                )
-            ],
-            False,
-        )
+def _broker() -> LLMBroker:
+    return LLMBroker(NullStorage())
+
+
+def _classify_patch(results: list[ClassificationResult], used_fallback: bool = False):
+    return patch(
+        "dinary.background.classification.task.classify_receipt",
+        return_value=(results, used_fallback),
     )
-    return pool
 
 
-def _categories(conn):
-    rows = conn.execute(
-        "SELECT c.id, cg.name, c.name FROM categories c"
-        " LEFT JOIN category_groups cg ON cg.id = c.group_id WHERE c.is_active = 1"
-    ).fetchall()
-    return {int(r[0]): f"{r[1]}: {r[2]}" if r[1] else str(r[2]) for r in rows}
+def _hleb_result(cat_id=1, conf=3) -> ClassificationResult:
+    return ClassificationResult(
+        item_name_normalized="hleb", category_id=cat_id, confidence_level=conf
+    )
 
 
 @allure.epic("Services")
@@ -118,15 +113,21 @@ class TestClassifyAndPersist:
         )
         job = claim_next_job(conn)
         items = get_receipt_items(conn, receipt_id)
-        pool = _mock_pool()
+        conn.close()
 
-        asyncio.run(_classify_and_persist(conn, pool, job, items, None))
+        with _classify_patch([_hleb_result(conf=4)]) as mock_classify:
+            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            mock_classify.assert_not_called()
 
-        pool.classify_receipt.assert_not_called()
-        exp = conn.execute(
-            "SELECT amount, category_id, confidence_level FROM expenses WHERE receipt_id = ?",
-            [receipt_id],
-        ).fetchone()
+        conn2 = storage.get_connection()
+        try:
+            exp = conn2.execute(
+                "SELECT amount, category_id, confidence_level FROM expenses WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+        finally:
+            conn2.close()
+
         assert exp is not None
         assert exp[0] == 120.0
         assert exp[1] == 1
@@ -137,16 +138,21 @@ class TestClassifyAndPersist:
         receipt_id = _seed_receipt(conn)
         job = claim_next_job(conn)
         items = get_receipt_items(conn, receipt_id)
+        conn.close()
 
-        asyncio.run(
-            _classify_and_persist(conn, pool := _mock_pool(cat_id=1, conf=3), job, items, None)
-        )  # noqa: E731
+        with _classify_patch([_hleb_result(cat_id=1, conf=3)]) as mock_classify:
+            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            mock_classify.assert_called_once()
 
-        pool.classify_receipt.assert_called_once()
-        exp = conn.execute(
-            "SELECT amount, category_id, confidence_level FROM expenses WHERE receipt_id = ?",
-            [receipt_id],
-        ).fetchone()
+        conn2 = storage.get_connection()
+        try:
+            exp = conn2.execute(
+                "SELECT amount, category_id, confidence_level FROM expenses WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+        finally:
+            conn2.close()
+
         assert exp is not None
         assert exp[0] == 120.0
         assert exp[1] == 1
@@ -157,23 +163,25 @@ class TestClassifyAndPersist:
         receipt_id = _seed_receipt(conn)
         job = claim_next_job(conn)
         items = get_receipt_items(conn, receipt_id)
-        pool = _mock_pool(cat_id=None, conf=1)
-        pool.classify_receipt = AsyncMock(
-            return_value=(
-                [
-                    ClassificationResult(
-                        item_name_normalized="hleb", category_id=None, confidence_level=1
-                    )
-                ],
-                False,
-            )
-        )
+        conn.close()
 
-        asyncio.run(_classify_and_persist(conn, pool, job, items, None))
+        with _classify_patch(
+            [
+                ClassificationResult(
+                    item_name_normalized="hleb", category_id=None, confidence_level=1
+                )
+            ]
+        ):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None))
 
-        exp_count = conn.execute(
-            "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
-        ).fetchone()[0]
+        conn2 = storage.get_connection()
+        try:
+            exp_count = conn2.execute(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()[0]
+        finally:
+            conn2.close()
+
         assert exp_count == 0
 
     def test_complete_job_inside_transaction(self, conn):
@@ -181,21 +189,26 @@ class TestClassifyAndPersist:
         receipt_id = _seed_receipt(conn)
         job = claim_next_job(conn)
         items = get_receipt_items(conn, receipt_id)
+        conn.close()
 
-        asyncio.run(_classify_and_persist(conn, _mock_pool(), job, items, None))
+        with _classify_patch([_hleb_result()]):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None))
 
-        # Job must be deleted (complete_job was called inside the transaction)
-        job_row = conn.execute(
-            "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?",
-            [receipt_id],
-        ).fetchone()
+        conn2 = storage.get_connection()
+        try:
+            job_row = conn2.execute(
+                "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+        finally:
+            conn2.close()
+
         assert job_row is None
 
     def test_idempotency_guard_skips_on_existing_expenses(self, conn):
         _seed_catalog(conn)
         receipt_id = _seed_receipt(conn)
 
-        # Pre-insert an expense (simulating a prior completed run)
         conn.execute(
             "INSERT INTO expenses"
             " (datetime, amount, amount_original, currency_original, category_id, confidence_level, receipt_id)"
@@ -203,16 +216,22 @@ class TestClassifyAndPersist:
             [receipt_id],
         )
 
-        pool = _mock_pool()
         job = _make_job(receipt_id)
         items = get_receipt_items(conn, receipt_id)
+        conn.close()
 
-        asyncio.run(_classify_and_persist(conn, pool, job, items, None))
+        with _classify_patch([_hleb_result()]) as mock_classify:
+            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            mock_classify.assert_not_called()
 
-        pool.classify_receipt.assert_not_called()
-        exp_count = conn.execute(
-            "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
-        ).fetchone()[0]
+        conn2 = storage.get_connection()
+        try:
+            exp_count = conn2.execute(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()[0]
+        finally:
+            conn2.close()
+
         assert exp_count == 1
 
     def test_journal_penalty_reduces_confidence(self, conn):
@@ -235,12 +254,19 @@ class TestClassifyAndPersist:
             [receipt_id],
         )
         items = get_receipt_items(conn, receipt_id)
+        conn.close()
 
-        asyncio.run(_classify_and_persist(conn, _mock_pool(conf=3), job, items, None))
+        with _classify_patch([_hleb_result(conf=3)]):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None))
 
-        exp = conn.execute(
-            "SELECT confidence_level FROM expenses WHERE receipt_id = ?", [receipt_id]
-        ).fetchone()
+        conn2 = storage.get_connection()
+        try:
+            exp = conn2.execute(
+                "SELECT confidence_level FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()
+        finally:
+            conn2.close()
+
         assert exp[0] == 2  # 3 - 1 journal penalty
 
     def test_llm_rule_created_for_high_confidence(self, conn):
@@ -248,13 +274,20 @@ class TestClassifyAndPersist:
         receipt_id = _seed_receipt(conn)
         job = claim_next_job(conn)
         items = get_receipt_items(conn, receipt_id)
+        conn.close()
 
-        asyncio.run(_classify_and_persist(conn, _mock_pool(conf=3), job, items, None))
+        with _classify_patch([_hleb_result(conf=3)]):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None))
 
-        rule = conn.execute(
-            "SELECT category_id, confidence_level, source FROM classification_rules"
-            " WHERE item_name_normalized = 'hleb'"
-        ).fetchone()
+        conn2 = storage.get_connection()
+        try:
+            rule = conn2.execute(
+                "SELECT category_id, confidence_level, source FROM classification_rules"
+                " WHERE item_name_normalized = 'hleb'"
+            ).fetchone()
+        finally:
+            conn2.close()
+
         assert rule is not None
         assert rule[0] == 1
         assert rule[1] == 3
@@ -271,16 +304,22 @@ class TestClassifyAndPersist:
         )
         job = claim_next_job(conn)
         items = get_receipt_items(conn, receipt_id)
-        pool = _mock_pool(cat_id=1, conf=3)
+        conn.close()
 
-        asyncio.run(_classify_and_persist(conn, pool, job, items, None))
+        with _classify_patch([_hleb_result(cat_id=1, conf=3)]) as mock_classify:
+            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            mock_classify.assert_called_once()
 
-        pool.classify_receipt.assert_called_once()
-        exp = conn.execute(
-            "SELECT confidence_level FROM expenses WHERE receipt_id = ?", [receipt_id]
-        ).fetchone()
+        conn2 = storage.get_connection()
+        try:
+            exp = conn2.execute(
+                "SELECT confidence_level FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()
+        finally:
+            conn2.close()
+
         assert exp is not None
-        assert exp[0] == 3  # LLM result used, not stale conf=1 rule
+        assert exp[0] == 3
 
     def test_no_rule_created_for_conf1(self, conn):
         _seed_catalog(conn)
@@ -292,23 +331,19 @@ class TestClassifyAndPersist:
         )
         job = claim_next_job(conn)
         items = get_receipt_items(conn, receipt_id)
+        conn.close()
 
-        pool = MagicMock(spec=ProviderPool)
-        pool.classify_receipt = AsyncMock(
-            return_value=(
-                [
-                    ClassificationResult(
-                        item_name_normalized="hleb", category_id=1, confidence_level=1
-                    )
-                ],
-                False,
-            )
-        )
+        with _classify_patch(
+            [ClassificationResult(item_name_normalized="hleb", category_id=1, confidence_level=1)]
+        ):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None))
 
-        asyncio.run(_classify_and_persist(conn, pool, job, items, None))
+        conn2 = storage.get_connection()
+        try:
+            exp_count = conn2.execute(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()[0]
+        finally:
+            conn2.close()
 
-        # conf=1 → item skipped, no new expense
-        exp_count = conn.execute(
-            "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
-        ).fetchone()[0]
         assert exp_count == 0

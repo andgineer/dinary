@@ -5,15 +5,16 @@ QR URL → POST /api/receipts → drain (_process_job with mocks)
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import allure
 
+from dinary.adapters.llm_client import ClassificationResult
+from dinary.adapters.llmbroker import LLMBroker, NullStorage
+from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 from dinary.background.classification.task import _process_job
 from dinary.db import storage
-from dinary.adapters.llm_client import ClassificationResult
-from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
-from dinary.db.receipts import claim_next_job
+from dinary.db.receipts import ReceiptJobRow, claim_next_job
 
 from _api_helpers import db  # noqa: F401
 
@@ -37,37 +38,33 @@ _PARSED = ParsedReceipt(
 )
 
 
-def _mock_pool(cat_id=1, conf=3):
-    pool = MagicMock()
-    pool.classify_receipt = AsyncMock(
-        return_value=(
-            [
-                ClassificationResult(
-                    item_name_normalized="hleb beli", category_id=cat_id, confidence_level=conf
-                )
-            ],
-            False,
-        )
-    )
-    pool.get_chain_name = AsyncMock(return_value="Lidl")
-    return pool
+def _broker() -> LLMBroker:
+    return LLMBroker(NullStorage())
 
 
-def _run_drain(job, pool=None):
+def _run_drain(job, results=None):
     """Run _process_job synchronously with mocked parse and LLM."""
-    if pool is None:
-        pool = _mock_pool()
+    if results is None:
+        results = [
+            ClassificationResult(
+                item_name_normalized="hleb beli", category_id=1, confidence_level=3
+            )
+        ]
     with (
         patch(
             "dinary.background.classification.task.parse_receipt",
             return_value=_PARSED,
         ),
         patch(
-            "dinary.background.classification.task.get_provider_pool",
-            return_value=pool,
+            "dinary.background.classification.task.classify_receipt",
+            return_value=(results, False),
+        ),
+        patch(
+            "dinary.background.classification.store_resolver.get_chain_name",
+            return_value="Lidl",
         ),
     ):
-        asyncio.run(_process_job(job))
+        asyncio.run(_process_job(job, _broker()))
 
 
 @allure.epic("Integration")
@@ -220,6 +217,7 @@ class TestReceiptPipelineE2E:
 
     def test_drain_idempotent_on_stale_job(self, client, db):  # noqa: ARG002
         """Re-running drain on a receipt that already has expenses is a safe no-op."""
+
         resp = client.post(
             "/api/receipts",
             json={"client_receipt_id": "e2e-stale", "url": "https://suf.purs.gov.rs/v/?vl=stu"},
@@ -232,13 +230,28 @@ class TestReceiptPipelineE2E:
         finally:
             conn.close()
 
-        pool = _mock_pool()
-        _run_drain(job, pool)
-        call_count_after_first = pool.classify_receipt.call_count
+        # First drain — classify_receipt should be called once
+        with (
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [ClassificationResult("hleb beli", category_id=1, confidence_level=3)],
+                    False,
+                ),
+            ) as mock_classify,
+            patch(
+                "dinary.background.classification.task.parse_receipt",
+                return_value=_PARSED,
+            ),
+            patch(
+                "dinary.background.classification.store_resolver.get_chain_name",
+                return_value="Lidl",
+            ),
+        ):
+            asyncio.run(_process_job(job, _broker()))
+        assert mock_classify.call_count == 1
 
-        # Simulate re-claim (stale job re-entry) by reconstructing the job
-        from dinary.db.receipts import ReceiptJobRow
-
+        # Simulate stale re-claim — classify_receipt must NOT be called again
         stale_job = ReceiptJobRow(
             receipt_id=receipt_id,
             url="https://suf.purs.gov.rs/v/?vl=stu",
@@ -249,10 +262,15 @@ class TestReceiptPipelineE2E:
             used_journal_fallback=False,
             claim_token="stale-token",
         )
-        pool2 = _mock_pool()
-        _run_drain(stale_job, pool2)
-
-        pool2.classify_receipt.assert_not_called()
+        with patch(
+            "dinary.background.classification.task.classify_receipt",
+            return_value=(
+                [ClassificationResult("hleb beli", category_id=1, confidence_level=3)],
+                False,
+            ),
+        ) as mock_classify2:
+            asyncio.run(_process_job(stale_job, _broker()))
+        mock_classify2.assert_not_called()
 
         conn = storage.get_connection()
         try:
@@ -261,7 +279,7 @@ class TestReceiptPipelineE2E:
             ).fetchone()[0]
         finally:
             conn.close()
-        assert exp_count == call_count_after_first == 1
+        assert exp_count == 1
 
     def test_n_items_create_n_expenses(self, client, db):  # noqa: ARG002
         """3-item receipt → 3 individual expense rows."""
@@ -297,18 +315,11 @@ class TestReceiptPipelineE2E:
             total_ok=True,
             used_journal_fallback=False,
         )
-        pool3 = MagicMock()
-        pool3.get_chain_name = AsyncMock(return_value="Lidl")
-        pool3.classify_receipt = AsyncMock(
-            return_value=(
-                [
-                    ClassificationResult("hleb", category_id=1, confidence_level=3),
-                    ClassificationResult("mleko", category_id=1, confidence_level=3),
-                    ClassificationResult("sir", category_id=1, confidence_level=3),
-                ],
-                False,
-            )
-        )
+        results_3 = [
+            ClassificationResult("hleb", category_id=1, confidence_level=3),
+            ClassificationResult("mleko", category_id=1, confidence_level=3),
+            ClassificationResult("sir", category_id=1, confidence_level=3),
+        ]
 
         resp = client.post(
             "/api/receipts",
@@ -329,11 +340,15 @@ class TestReceiptPipelineE2E:
                 return_value=_parsed_3,
             ),
             patch(
-                "dinary.background.classification.task.get_provider_pool",
-                return_value=pool3,
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(results_3, False),
+            ),
+            patch(
+                "dinary.background.classification.store_resolver.get_chain_name",
+                return_value="Lidl",
             ),
         ):
-            asyncio.run(_process_job(job))
+            asyncio.run(_process_job(job, _broker()))
 
         conn = storage.get_connection()
         try:

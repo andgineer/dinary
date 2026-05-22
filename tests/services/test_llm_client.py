@@ -1,23 +1,19 @@
 import asyncio
 import json
-import shutil
-import sqlite3
-import unittest.mock
-from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import allure
 import httpx
 import pytest
 
-from dinary.db import db_migrations, storage
 from dinary.adapters.llm_client import (
     OpenAICompatibleClient,
-    ProviderPool,
     _build_user_message,
-    _load_providers,
     _parse_response,
+    classify_receipt,
+    get_chain_name,
 )
+from dinary.adapters.llmbroker import LLMBroker
 
 _CATEGORIES = {1: "Еда: еда", 2: "Жильё: хозтовары", 3: "Красота и ЗОЖ: гигиена"}
 
@@ -102,7 +98,6 @@ class TestParseResponse:
             [{"item": "x", "category_id": 1, "confidence": 3, "alternatives": [1, "bad", 2.5, 3]}]
         )
         results = _parse_response(raw, ["x"], set())
-        # 2.5 is float but float(2.5) != int(2.5)==2, so dropped; "bad" dropped; 1 and 3 kept
         assert results[0].alternative_category_ids == [1, 3]
 
     def test_alternatives_missing_key(self):
@@ -146,7 +141,7 @@ class TestOpenAICompatibleClient:
                 {"item": "hleb", "category_id": 1, "confidence": 4},
             ]
         )
-        mock_ctx, mock_async_client = self._mock_http(response_body)
+        mock_ctx, _ = self._mock_http(response_body)
 
         with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
             client = OpenAICompatibleClient("https://api.example.com/v1", "key", "model")
@@ -165,8 +160,7 @@ class TestOpenAICompatibleClient:
             client = OpenAICompatibleClient("https://api.example.com/v1", "key", "my-model")
             asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
 
-        call_kwargs = mock_async_client.post.call_args
-        payload = call_kwargs.kwargs["json"]
+        payload = mock_async_client.post.call_args.kwargs["json"]
         assert payload["model"] == "my-model"
 
     def test_classify_receipt_trailing_slash_stripped(self):
@@ -211,468 +205,69 @@ class TestOpenAICompatibleClient:
         assert results[0].category_id is None
 
 
-@pytest.fixture
-def pool_conn(tmp_path, monkeypatch):
-    dst = tmp_path / "dinary.db"
-    blank_src = tmp_path / "blank.db"
+@allure.epic("Services")
+@allure.feature("LLM Client — adapter functions")
+class TestClassifyReceiptAdapter:
+    def _make_broker(self, raw_content: str, used_fallback: bool = False) -> LLMBroker:
+        broker = MagicMock(spec=LLMBroker)
+        broker.complete = AsyncMock(return_value=(raw_content, used_fallback))
+        return broker
 
-    def _migration_connect(self, dburi):
-        con = sqlite3.connect(str(self.uri.database), isolation_level=None)
-        con.execute("PRAGMA journal_mode=WAL")
-        con.execute("PRAGMA foreign_keys=ON")
-        con.execute("PRAGMA busy_timeout=5000")
-        return con
+    def test_returns_parsed_results_and_used_fallback(self):
+        raw = json.dumps([{"item": "hleb", "category_id": 1, "confidence": 3}])
+        broker = self._make_broker(raw, used_fallback=False)
 
-    with unittest.mock.patch.object(db_migrations.SQLiteBackend, "connect", _migration_connect):
-        db_migrations.migrate_db(blank_src)
-
-    shutil.copy(blank_src, dst)
-    monkeypatch.setattr(storage, "DB_PATH", dst)
-    monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
-
-    c = storage.get_connection()
-    yield c
-    c.close()
-
-
-def _seed_providers(conn, providers):
-    for p in providers:
-        conn.execute(
-            "INSERT INTO llm_providers (label, base_url, api_key, model, priority, is_enabled)"
-            " VALUES (?, ?, ?, ?, ?, 1)",
-            [p["label"], p["base_url"], p["api_key"], p["model"], p.get("priority", 0)],
+        results, used_fallback = asyncio.run(
+            classify_receipt(broker, ["hleb"], "Lidl", _CATEGORIES)
         )
 
+        assert len(results) == 1
+        assert results[0].category_id == 1
+        assert used_fallback is False
 
-def _ok_http_ctx(response_body: str):
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {"choices": [{"message": {"content": response_body}}]}
-    mock_async_client = AsyncMock()
-    mock_async_client.post = AsyncMock(return_value=mock_response)
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=mock_async_client)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    return mock_ctx
+    def test_passes_context_id_to_broker(self):
+        raw = json.dumps([{"item": "hleb", "category_id": 1, "confidence": 3}])
+        broker = self._make_broker(raw)
 
+        asyncio.run(classify_receipt(broker, ["hleb"], "Lidl", _CATEGORIES, context_id=42))
 
-def _429_http_ctx():
-    resp_429 = MagicMock()
-    resp_429.status_code = 429
-    resp_429.headers = {}
-    mock_async_client = AsyncMock()
-    mock_async_client.post = AsyncMock(
-        side_effect=httpx.HTTPStatusError("429", request=MagicMock(), response=resp_429)
-    )
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=mock_async_client)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    return mock_ctx
+        broker.complete.assert_awaited_once()
+        _, kwargs = broker.complete.call_args
+        assert kwargs.get("context_id") == "42"
 
+    def test_used_fallback_true_propagated(self):
+        raw = json.dumps([{"item": "hleb", "category_id": 1, "confidence": 3}])
+        broker = self._make_broker(raw, used_fallback=True)
 
-_OK_BODY = json.dumps([{"item": "hleb", "category_id": 1, "confidence": 3}])
+        _, used_fallback = asyncio.run(classify_receipt(broker, ["hleb"], "Lidl", _CATEGORIES))
+
+        assert used_fallback is True
 
 
 @allure.epic("Services")
-@allure.feature("LLM Client — ProviderPool")
-class TestProviderPool:
-    def test_no_providers_configured_logs_and_waits(self, pool_conn, caplog):
-        """When no providers are configured, classify_receipt logs a warning and waits."""
-        import logging
+@allure.feature("LLM Client — adapter functions")
+class TestGetChainNameAdapter:
+    def test_returns_first_non_empty_line(self):
+        broker = MagicMock(spec=LLMBroker)
+        broker.try_complete = AsyncMock(return_value="Lidl")
 
-        async def run():
-            pool = ProviderPool()
-            with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(
-                    pool.classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES),
-                    timeout=0.1,
-                )
-
-        with caplog.at_level(logging.WARNING, logger="dinary.adapters.llm_client"):
-            asyncio.run(run())
-
-        assert any("No LLM providers" in r.message for r in caplog.records)
-
-    def test_success_on_first_provider(self, pool_conn):
-        _seed_providers(
-            pool_conn, [{"label": "P1", "base_url": "https://a", "api_key": "k", "model": "m"}]
-        )
-        with patch(
-            "dinary.adapters.llm_client.httpx.AsyncClient", return_value=_ok_http_ctx(_OK_BODY)
-        ):
-            results, used_failover = asyncio.run(
-                ProviderPool().classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES)
-            )
-        assert len(results) == 1
-        assert results[0].category_id == 1
-        assert not used_failover
-
-    def test_failover_on_429(self, pool_conn):
-        _seed_providers(
-            pool_conn,
-            [
-                {
-                    "label": "P1",
-                    "base_url": "https://a",
-                    "api_key": "k1",
-                    "model": "m",
-                    "priority": 0,
-                },
-                {
-                    "label": "P2",
-                    "base_url": "https://b",
-                    "api_key": "k2",
-                    "model": "m",
-                    "priority": 1,
-                },
-            ],
-        )
-        call_count = {"n": 0}
-
-        def _side_effect(*_a, **_kw):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                resp = MagicMock(status_code=429, headers={})
-                raise httpx.HTTPStatusError("429", request=MagicMock(), response=resp)
-            mock_resp = MagicMock()
-            mock_resp.raise_for_status = MagicMock()
-            mock_resp.json.return_value = {"choices": [{"message": {"content": _OK_BODY}}]}
-            return mock_resp
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=_side_effect)
-        mock_ctx = MagicMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
-            results, used_failover = asyncio.run(
-                ProviderPool().classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES)
-            )
-
-        assert used_failover
-        assert results[0].category_id == 1
-        switch = pool_conn.execute(
-            "SELECT value FROM app_metadata WHERE key = 'llm_provider_switch_last'"
-        ).fetchone()
-        assert switch is not None
-        assert "P1" in switch[0]
-
-    def test_all_providers_cooling_waits_for_event(self, pool_conn):
-        """When all providers are cooling down, classify_receipt waits until one is available."""
-        _seed_providers(
-            pool_conn,
-            [{"label": "P1", "base_url": "https://a", "api_key": "k", "model": "m"}],
-        )
-        future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
-        pool_conn.execute(
-            "UPDATE llm_providers SET rate_limited_until = ? WHERE label = 'P1'", [future]
-        )
-
-        async def run():
-            pool = ProviderPool()
-            with patch(
-                "dinary.adapters.llm_client.httpx.AsyncClient",
-                return_value=_ok_http_ctx(_OK_BODY),
-            ):
-                classify_task = asyncio.create_task(
-                    pool.classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES)
-                )
-                await asyncio.sleep(0)
-                await asyncio.sleep(0)
-
-                providers = _load_providers(pool_conn)
-                pid = providers[0].id
-                assert pid in pool._provider_events, "event must be initialized for provider"
-                assert not pool._provider_events[pid].is_set(), "cooling provider must not be set"
-
-                pool._provider_events[pid].set()
-
-                results, _ = await asyncio.wait_for(classify_task, timeout=2.0)
-            return results
-
-        results = asyncio.run(run())
-        assert len(results) == 1
-        assert results[0].category_id == 1
-
-    def test_round_robin_index_advances_after_success(self, pool_conn):
-        _seed_providers(
-            pool_conn,
-            [
-                {
-                    "label": "P1",
-                    "base_url": "https://a",
-                    "api_key": "k1",
-                    "model": "m",
-                    "priority": 0,
-                },
-                {
-                    "label": "P2",
-                    "base_url": "https://b",
-                    "api_key": "k2",
-                    "model": "m",
-                    "priority": 1,
-                },
-            ],
-        )
-        with patch(
-            "dinary.adapters.llm_client.httpx.AsyncClient", return_value=_ok_http_ctx(_OK_BODY)
-        ):
-            asyncio.run(ProviderPool().classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES))
-        idx = pool_conn.execute(
-            "SELECT value FROM app_metadata WHERE key = 'llm_last_provider_idx'"
-        ).fetchone()
-        assert idx is not None
-        assert int(idx[0]) == 1
-
-    def test_switch_metadata_not_cleared_on_failover_success(self, pool_conn):
-        _seed_providers(
-            pool_conn,
-            [
-                {
-                    "label": "P1",
-                    "base_url": "https://a",
-                    "api_key": "k1",
-                    "model": "m",
-                    "priority": 0,
-                },
-                {
-                    "label": "P2",
-                    "base_url": "https://b",
-                    "api_key": "k2",
-                    "model": "m",
-                    "priority": 1,
-                },
-            ],
-        )
-        pool_conn.execute(
-            "INSERT INTO app_metadata (key, value)"
-            " VALUES ('llm_provider_switch_last', '2026-05-01 | from: P1 | to: P2')"
-        )
-        call_count = {"n": 0}
-
-        def _side_effect(*_a, **_kw):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                resp = MagicMock(status_code=429, headers={})
-                raise httpx.HTTPStatusError("429", request=MagicMock(), response=resp)
-            mock_resp = MagicMock()
-            mock_resp.raise_for_status = MagicMock()
-            mock_resp.json.return_value = {"choices": [{"message": {"content": _OK_BODY}}]}
-            return mock_resp
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=_side_effect)
-        mock_ctx = MagicMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
-            asyncio.run(ProviderPool().classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES))
-
-        switch = pool_conn.execute(
-            "SELECT value FROM app_metadata WHERE key = 'llm_provider_switch_last'"
-        ).fetchone()
-        assert switch is not None, "switch metadata must persist when failover was used"
-
-    def test_switch_metadata_cleared_on_primary_success(self, pool_conn):
-        _seed_providers(
-            pool_conn,
-            [
-                {"label": "P1", "base_url": "https://a", "api_key": "k", "model": "m"},
-            ],
-        )
-        pool_conn.execute(
-            "INSERT INTO app_metadata (key, value) VALUES ('llm_provider_switch_last', 'old-event')"
-        )
-        with patch(
-            "dinary.adapters.llm_client.httpx.AsyncClient", return_value=_ok_http_ctx(_OK_BODY)
-        ):
-            asyncio.run(ProviderPool().classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES))
-        switch = pool_conn.execute(
-            "SELECT value FROM app_metadata WHERE key = 'llm_provider_switch_last'"
-        ).fetchone()
-        assert switch is None
-
-    def test_pre_rate_limited_provider_sets_used_failover(self, pool_conn):
-        """Provider already marked rate_limited_until (from a prior call) skips and sets used_failover."""
-        from datetime import UTC, datetime, timedelta
-
-        future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
-        _seed_providers(
-            pool_conn,
-            [
-                {
-                    "label": "P1",
-                    "base_url": "https://a",
-                    "api_key": "k1",
-                    "model": "m",
-                    "priority": 0,
-                },
-                {
-                    "label": "P2",
-                    "base_url": "https://b",
-                    "api_key": "k2",
-                    "model": "m",
-                    "priority": 1,
-                },
-            ],
-        )
-        pool_conn.execute(
-            "UPDATE llm_providers SET rate_limited_until = ? WHERE label = 'P1'",
-            [future],
-        )
-
-        with patch(
-            "dinary.adapters.llm_client.httpx.AsyncClient", return_value=_ok_http_ctx(_OK_BODY)
-        ):
-            results, used_failover = asyncio.run(
-                ProviderPool().classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES)
-            )
-
-        assert used_failover, "pre-rate-limited first provider must set used_failover=True"
-        assert results[0].category_id == 1
-
-    def test_get_chain_name_marks_rate_limited_on_429(self, pool_conn):
-        """get_chain_name marks the provider rate_limited_until and clears the in-memory event."""
-        _seed_providers(
-            pool_conn, [{"label": "P1", "base_url": "https://a", "api_key": "k", "model": "m"}]
-        )
-        resp_429 = MagicMock()
-        resp_429.status_code = 429
-        resp_429.headers = {}
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(
-            side_effect=httpx.HTTPStatusError("429", request=MagicMock(), response=resp_429)
-        )
-        mock_ctx = MagicMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        pool = ProviderPool()
-        with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
-            result = asyncio.run(pool.get_chain_name(pool_conn, "LIDL SRBIJA"))
-
-        assert result == "LIDL SRBIJA", "falls back to raw name when all providers fail"
-        row = pool_conn.execute(
-            "SELECT rate_limited_until FROM llm_providers WHERE label = 'P1'"
-        ).fetchone()
-        assert row is not None
-        assert row[0] is not None, "rate_limited_until must be set after 429"
-        switch = pool_conn.execute(
-            "SELECT value FROM app_metadata WHERE key = 'llm_provider_switch_last'"
-        ).fetchone()
-        assert switch is not None, "get_chain_name must record provider switch on 429"
-        assert "P1" in switch[0] and "429" in switch[0]
-        providers = _load_providers(pool_conn)
-        pid = providers[0].id
-        assert pid in pool._provider_events, "event must be initialised after 429"
-        assert not pool._provider_events[pid].is_set(), (
-            "in-memory event must be cleared so classify_receipt does not retry immediately"
-        )
-
-    def test_failover_on_timeout(self, pool_conn):
-        """ReadTimeout on provider 1 triggers failover to provider 2."""
-        _seed_providers(
-            pool_conn,
-            [
-                {
-                    "label": "P1",
-                    "base_url": "https://a",
-                    "api_key": "k1",
-                    "model": "m",
-                    "priority": 0,
-                },
-                {
-                    "label": "P2",
-                    "base_url": "https://b",
-                    "api_key": "k2",
-                    "model": "m",
-                    "priority": 1,
-                },
-            ],
-        )
-        call_count = {"n": 0}
-
-        def _side_effect(*_a, **_kw):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                raise httpx.ReadTimeout("timed out")
-            mock_resp = MagicMock()
-            mock_resp.raise_for_status = MagicMock()
-            mock_resp.json.return_value = {"choices": [{"message": {"content": _OK_BODY}}]}
-            return mock_resp
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=_side_effect)
-        mock_ctx = MagicMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
-            results, used_failover = asyncio.run(
-                ProviderPool().classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES)
-            )
-
-        assert used_failover
-        assert results[0].category_id == 1
-        switch = pool_conn.execute(
-            "SELECT value FROM app_metadata WHERE key = 'llm_provider_switch_last'"
-        ).fetchone()
-        assert switch is not None
-        assert "P1" in switch[0]
-        assert "ReadTimeout" in switch[0]
-
-    def test_timeout_on_single_provider_retries_loop(self, pool_conn):
-        """A network timeout on the only provider loops back (no exception raised)."""
-        _seed_providers(
-            pool_conn,
-            [{"label": "P1", "base_url": "https://a", "api_key": "k", "model": "m"}],
-        )
-        call_count = {"n": 0}
-
-        def _side_effect(*_a, **_kw):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                raise httpx.ReadTimeout("timed out")
-            mock_resp = MagicMock()
-            mock_resp.raise_for_status = MagicMock()
-            mock_resp.json.return_value = {"choices": [{"message": {"content": _OK_BODY}}]}
-            return mock_resp
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=_side_effect)
-        mock_ctx = MagicMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
-            results, used_failover = asyncio.run(
-                ProviderPool().classify_receipt(pool_conn, ["hleb"], "Lidl", _CATEGORIES)
-            )
-
-        assert results[0].category_id == 1
-        assert used_failover
-        assert call_count["n"] == 2
-
-    def test_get_chain_name_logs_call(self, pool_conn):
-        _seed_providers(
-            pool_conn, [{"label": "P1", "base_url": "https://a", "api_key": "k", "model": "m"}]
-        )
-        chain_ctx = MagicMock()
-        chain_resp = MagicMock()
-        chain_resp.raise_for_status = MagicMock()
-        chain_resp.json.return_value = {"choices": [{"message": {"content": "Lidl"}}]}
-        chain_client = AsyncMock()
-        chain_client.post = AsyncMock(return_value=chain_resp)
-        chain_ctx.__aenter__ = AsyncMock(return_value=chain_client)
-        chain_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=chain_ctx):
-            result = asyncio.run(ProviderPool().get_chain_name(pool_conn, "LIDL SRBIJA KD"))
+        result = asyncio.run(get_chain_name(broker, "LIDL SRBIJA KD"))
 
         assert result == "Lidl"
-        log_count = pool_conn.execute("SELECT COUNT(*) FROM llm_call_log").fetchone()[0]
-        assert log_count == 1
-        log_row = pool_conn.execute("SELECT status FROM llm_call_log").fetchone()
-        assert log_row[0] == "ok"
+
+    def test_returns_store_name_raw_when_broker_returns_none(self):
+        broker = MagicMock(spec=LLMBroker)
+        broker.try_complete = AsyncMock(return_value=None)
+
+        result = asyncio.run(get_chain_name(broker, "UNKNOWN STORE"))
+
+        assert result == "UNKNOWN STORE"
+
+    def test_passes_chain_name_prompt_to_try_complete(self):
+        broker = MagicMock(spec=LLMBroker)
+        broker.try_complete = AsyncMock(return_value="Maxi")
+
+        asyncio.run(get_chain_name(broker, "MAXI AD"))
+
+        messages = broker.try_complete.call_args.args[0]
+        assert any("MAXI AD" in str(m) for m in messages)

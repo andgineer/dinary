@@ -89,13 +89,11 @@ class TestLLMStatus:
         assert resp.status_code == 200
         data = resp.json()
         assert "providers" in data
-        assert "meta" in data
         assert "health" in data
         h = data["health"]
         assert "healthy" in h
         assert "total" in h
         assert "strategy" in h
-        assert "last_switch" in h
 
     def test_status_shows_providers(self, client, db):  # noqa: ARG002
         _add_provider(client)

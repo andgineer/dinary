@@ -13,12 +13,8 @@ from datetime import UTC, datetime
 import httpx
 from sr_invoice_parser.exceptions import ParserParseException, ParserRequestException
 
-from dinary.adapters.llm_client import (
-    ClassificationResult,
-    ProviderPool,
-    ReceiptContext,
-    get_provider_pool,
-)
+from dinary.adapters.llm_client import ClassificationResult, classify_receipt
+from dinary.adapters.llmbroker import LLMBroker
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, parse_receipt
 from dinary.background.classification.item_normalizer import normalize_item_name
 from dinary.background.classification.store_resolver import resolve_store
@@ -56,20 +52,20 @@ def notify_new_receipt() -> None:
         _wakeup_event.set()
 
 
-async def receipt_classification_task() -> None:
+async def receipt_classification_task(broker: LLMBroker) -> None:
     global _wakeup_event  # noqa: PLW0603
     _wakeup_event = asyncio.Event()
     if not settings.receipt_classification_enabled:
         return
     logger.info("Receipt classification drain started")
 
-    await _drain_all_pending()  # pick up jobs surviving a restart
+    await _drain_all_pending(broker)  # pick up jobs surviving a restart
 
     while True:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(_wakeup_event.wait(), timeout=300)
         _wakeup_event.clear()  # clear BEFORE drain so receipts arriving during drain re-set it
-        await _drain_all_pending()
+        await _drain_all_pending(broker)
 
 
 def _claim_all_pending() -> list[ReceiptJobRow]:
@@ -86,36 +82,29 @@ def _claim_all_pending() -> list[ReceiptJobRow]:
         conn.close()
 
 
-async def _drain_all_pending() -> None:
+async def _drain_all_pending(broker: LLMBroker) -> None:
     jobs = _claim_all_pending()
     if jobs:
         await asyncio.gather(
-            *[_process_job(job) for job in jobs],
+            *[_process_job(job, broker) for job in jobs],
             return_exceptions=True,
         )
 
 
-async def _process_job(job: ReceiptJobRow) -> None:
+async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
     logger.info("Receipt drain: processing receipt_id=%s", job.receipt_id)
     try:
-        pool = get_provider_pool()
-
         if job.parsed_at is None:
             parsed = await parse_receipt(job.url)
             _save_parsed(job.receipt_id, parsed)
             job = _with_parsed_data(job, parsed)
 
-        store_id = await _ensure_store(job, pool)
+        store_id = await _ensure_store(job, broker)
 
-        # This connection is held open across the await in _classify_and_persist (including the
-        # LLM round-trip, up to 60 s). With N parallel jobs that is N simultaneous connections.
-        # WAL mode tolerates it; a future improvement would have pool.classify_receipt open its
-        # own connection so the caller can release theirs before the LLM call.
         conn = storage.get_connection()
         try:
             items = get_receipt_items(conn, job.receipt_id)
 
-            # Idempotency: prior run may have committed expenses but crashed before complete_job.
             has_expenses = bool(
                 conn.execute(
                     "SELECT 1 FROM expenses WHERE receipt_id = ? LIMIT 1",
@@ -144,11 +133,10 @@ async def _process_job(job: ReceiptJobRow) -> None:
                     conn.execute("ROLLBACK")
                     raise
                 return
-
-            await _classify_and_persist(conn, pool, job, items, store_id)
         finally:
-            conn.close()
+            conn.close()  # released before any LLM await
 
+        await _classify_and_persist(broker, job, items, store_id)
         logger.info("Receipt drain: completed receipt_id=%s", job.receipt_id)
 
     except (ParserRequestException, OSError) as exc:
@@ -221,7 +209,7 @@ def _with_parsed_data(job: ReceiptJobRow, parsed: ParsedReceipt) -> ReceiptJobRo
     )
 
 
-async def _ensure_store(job: ReceiptJobRow, pool: ProviderPool) -> int | None:
+async def _ensure_store(job: ReceiptJobRow, broker: LLMBroker) -> int | None:
     if not job.store_name_raw and not job.store_pib_raw:
         return None
 
@@ -235,7 +223,7 @@ async def _ensure_store(job: ReceiptJobRow, pool: ProviderPool) -> int | None:
             return int(existing[0])
 
         try:
-            store_id = await resolve_store(conn, pool, job.store_pib_raw, job.store_name_raw)
+            store_id = await resolve_store(conn, broker, job.store_pib_raw, job.store_name_raw)
             conn.execute(
                 "UPDATE receipts SET store_id = ? WHERE id = ?",
                 [store_id, job.receipt_id],
@@ -301,28 +289,27 @@ def _run_rules_pass(
 
 
 async def _run_llm_pass(
-    pool: ProviderPool,
-    conn: sqlite3.Connection,
+    broker: LLMBroker,
     job: ReceiptJobRow,
     llm_queue: list[tuple[int, str]],
     categories: dict[int, str],
     tags: dict[int, str],
 ) -> tuple[dict[int, ClassificationResult], bool]:
-    """Call LLM for queued items; return (results keyed by item_id, used_failover)."""
+    """Call LLM for queued items; return (results keyed by item_id, used_fallback)."""
     if not llm_queue:
         return {}, False
     normalized_names = [name for _, name in llm_queue]
-    results, used_failover = await pool.classify_receipt(
-        conn=conn,
-        items=normalized_names,
-        store_name_raw=job.store_name_raw or "Unknown Store",
-        categories=categories,
-        tags=tags,
-        ctx=ReceiptContext(receipt_id=job.receipt_id, invoice_number=job.invoice_number),
+    results, used_fallback = await classify_receipt(
+        broker,
+        normalized_names,
+        job.store_name_raw or "Unknown Store",
+        categories,
+        tags,
+        context_id=job.receipt_id,
     )
     return (
         {item_id: result for (item_id, _), result in zip(llm_queue, results, strict=False)},
-        used_failover,
+        used_fallback,
     )
 
 
@@ -424,7 +411,6 @@ def _persist_classification_results(
                 ItemClassification(cat_id, conf, expense_id),
             )
 
-            # Merge classification tags with event auto-tags (deduped, event tags appended)
             if item.id in rule_hits:
                 _, _, tag_ids_for_item = rule_hits[item.id]
             else:
@@ -440,7 +426,6 @@ def _persist_classification_results(
                         [expense_id, tag_id],
                     )
 
-            # Create/update classification rule only for LLM-classified items
             if item.id not in rule_hits and norm and conf >= 2:
                 llm_r = llm_results.get(item.id)
                 alt_ids = llm_r.alternative_category_ids if llm_r else []
@@ -467,39 +452,50 @@ def _persist_classification_results(
 
 
 async def _classify_and_persist(
-    conn: sqlite3.Connection,
-    pool: ProviderPool,
+    broker: LLMBroker,
     job: ReceiptJobRow,
     items: list[ReceiptItemRow],
     store_id: int | None,
 ) -> None:
-    if conn.execute(
-        "SELECT 1 FROM expenses WHERE receipt_id = ? LIMIT 1",
-        [job.receipt_id],
-    ).fetchone():
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            complete_job(conn, job.receipt_id)
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        return
-    rule_hits, llm_queue = _run_rules_pass(conn, items, store_id)
-    categories = _load_categories(conn)
-    tags = _load_tags(conn)
-    llm_results, used_failover = await _run_llm_pass(pool, conn, job, llm_queue, categories, tags)
+    # Connection 1: sync reads (released before LLM call)
+    conn = storage.get_connection()
+    try:
+        if conn.execute(
+            "SELECT 1 FROM expenses WHERE receipt_id = ? LIMIT 1",
+            [job.receipt_id],
+        ).fetchone():
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                complete_job(conn, job.receipt_id)
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+            return
+        rule_hits, llm_queue = _run_rules_pass(conn, items, store_id)
+        categories = _load_categories(conn)
+        tags = _load_tags(conn)
+    finally:
+        conn.close()
+
+    llm_results, used_failover = await _run_llm_pass(broker, job, llm_queue, categories, tags)
     total_penalty = (1 if job.used_journal_fallback else 0) + (1 if used_failover else 0)
     classifications = _compute_classifications(items, rule_hits, llm_results, total_penalty)
-    _persist_classification_results(
-        conn,
-        job,
-        items,
-        classifications,
-        rule_hits,
-        llm_results,
-        store_id,
-    )
+
+    # Connection 2: write transaction
+    conn = storage.get_connection()
+    try:
+        _persist_classification_results(
+            conn,
+            job,
+            items,
+            classifications,
+            rule_hits,
+            llm_results,
+            store_id,
+        )
+    finally:
+        conn.close()
 
 
 def _write_fetch_fallback_metadata(
