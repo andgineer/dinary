@@ -111,7 +111,9 @@ def _run_remote_sql(sql_text: str, csv: bool, json_mode: bool) -> None:
     remote_flags = ["--query", sql_text, "--json"]
     try:
         raw = ssh_capture_bytes(remote_snapshot_cmd("tasks.sql", remote_flags))
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            sys.stderr.buffer.write(exc.stderr)
         sys.exit(1)
     if json_mode:
         sys.stdout.buffer.write(raw)
