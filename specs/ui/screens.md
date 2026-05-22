@@ -79,42 +79,91 @@ After save, the form resets but keeps the user's default group/category and curr
 
 ## Review view
 
-Single unified list. The shipped feed (`GET /api/receipts/review/feed`) returns one stream with `is_doubtful: bool` per item. The UI renders both kinds in one column with `RuleRow`, sorted by impact for doubtful and date for certain.
+Two ordered sections in a single scroll container: **NEEDS REVIEW** (classification rules awaiting confirmation, one per unique item-name) and **EXPENSES** (individual receipt lines, newest first).
+
+The feed `GET /api/receipts/review/feed` returns rule items with `is_doubtful: bool`. Doubtful items appear in NEEDS REVIEW. Certain items are filtered out of NEEDS REVIEW; individual expenses are loaded separately from `GET /api/expenses/feed` (paginated).
 
 ```
 ┌──────────────────────────────────────┐
-│  NEEDS REVIEW  [5]   by impact    ⟳ │
+│  NEEDS REVIEW  [5]   by impact    ⟳ │ (only shown when doubtfulCount > 0)
 │                                      │
-│  ⚠ ┃ Karamel čoko prot.čok.   1340  │ doubtful (warning left-border)
-│    ┃ Lidl Beograd · ×6        RSD   │
-│    ┃ [maybe] Еда › еда → ✨ ...      │
+│  ⚠ ┃ Karamel čoko prot.čok.          │ doubtful row — c2 (warning) left-border
+│    ┃                Lidl Beograd     │
+│    ┃ [✨✓ Сладости] [Еда] [Перекус] ✎ │ approve chip + alts + edit
 │                                      │
-│  ⚠ ┃ Mesnata slanina           920   │
-│    ┃ Maxi Vračar · ×2         RSD   │
-│    ┃ [maybe] Еда › еда → ✨ ...      │
+│  ⚠ ┃ Mesnata slanina                 │ another doubtful — c2
+│    ┃              Maxi Vračar        │
+│    ┃ [✨✓ Мясо] [Еда] [Колбасы]    ✎  │
 │                                      │
+│  ⚠ ┃ Energy drink unknown            │ c1 — error left-border (lowest conf)
+│    ┃              7-Eleven           │
+│    ┃ [✨✓ Напитки] [Еда] [Снеки]   ✎  │
+│                                      │
+│         [ Confirm all (5) ]          │ shown at end of doubtful list
+│                                      │
+│  EXPENSES                            │ second section header
 │  ┌────────────────────────────────┐  │
-│  │ Lidl Beograd            4 870  │  │ certain (plain card)
-│  │ 08.05 · 19 items          RSD  │  │
+│  │ Karamel čoko prot.čok.   220   │  │ ExpenseRow (item-name primary)
+│  │ Lidl Beograd · 17 May    RSD   │  │
+│  │ Еда › Сладости                 │  │
+│  └────────────────────────────────┘  │
+│  ┌────────────────────────────────┐  │
+│  │ Maxi Vračar              4 870 │  │ ExpenseRow (store fallback)
+│  │ 08.05                    RSD   │  │
 │  │ Еда › еда                      │  │
 │  └────────────────────────────────┘  │
-│  …more certain rows…                 │
+│  …more expenses…                     │
 │  [skeleton]                          │ infinite-scroll loading state
-│  ─── end · N loaded ───              │
 └──────────────────────────────────────┘
 ```
 
-Section header swaps copy based on whether doubtful items exist:
-- `doubtfulCount > 0` → `NEEDS REVIEW  [N]  by impact`
-- otherwise → `RULES`
+### Section headers
 
-The refresh button on the right is muted, icon-only — secondary action. List uses an `IntersectionObserver` sentinel + skeleton rows for pagination.
+- **NEEDS REVIEW** — only mounts when `doubtfulCount > 0`. Warning-colored label + amber count badge + "by impact" sort hint on the right, alongside the refresh `IconBtn`.
+- **EXPENSES** — always mounted below. Plain uppercase eyebrow.
 
-Owned by `views/ReviewView.vue`, rows by `components/RuleRow.vue`.
+### RuleRow at a glance
 
-### Correction flow
+- **Confidence tier drives the left-border color** (4px solid):
+  - `c1` → `--error` (red) — lowest confidence
+  - `c2` → `--warning` (amber)
+  - `c3` → muted amber (`rgba(245, 158, 11, 0.75)`)
+  - Any out-of-range value is treated as `c2`.
+  Doubtful rows also paint a low-alpha amber wash over the slider background.
+- **Top row** — name (bold; 700 on doubtful, 600 on certain), store right-aligned and muted. If `name` is empty, name slot falls back to `store` and the trailing slot is dropped.
+- **Bottom row (doubtful)** — wrap-flow of, in order:
+  - Tag chips (if any tags attached to the rule)
+  - **Approve chip** for the suggested category (green-tinted, `Sparkles` icon prefix when the suggestion differs from current, then `Check` + category name) — tap = fast-path approve with that category, no sheet
+  - Up to **2 alternative chips** from `alternative_categories` — tap = fast-path approve with that alt
+  - **Frequent-category quick picks** for any categories the user uses often that aren't already in suggestion/alt chips — tap = fast-path approve
+  - Trailing **Edit pencil icon** — opens `ExpenseEditSheet` in rule-correction mode
+- **Bottom row (certain)** — `group › category` breadcrumb on the left, muted chevron on the right.
 
-Tapping any row opens `CorrectionSheet` — see `patterns.md` for the bottom-sheet pattern and `patterns.md#scope-selector` for the per-row scope choice.
+### Approve flow (fast path)
+
+Tapping any approve/alt/freq chip emits `approve({ item, categoryId })`. The store calls `correctCategory(expenseId, categoryId, "all")` — same endpoint as the sheet, scope forced to `all` because correcting a doubtful row is fundamentally rule creation. On success the row is removed from NEEDS REVIEW and re-inserted as a certain row above the existing certain section (so the user can see the result without losing position).
+
+### Confirm all
+
+When the doubtful list has fully paginated (`!hasMore`) and at least one doubtful row remains, a green outlined **Confirm all (N)** button appears below the list. Tap confirms every visible doubtful rule in one batch (`confirmAllRules(ruleIds)`), then refreshes the EXPENSES section to reflect the new classifications.
+
+### Swipe-to-act
+
+Both `RuleRow` and `ExpenseRow` support left swipe via `useSwipeRow`. See `patterns.md#swipe-to-act`. The reveal panel is **Edit + Approve** on doubtful rows (`168px` total) and **Edit** only on certain rows and expense rows (`92px` / `84px`).
+
+### Correction sheet
+
+Tapping a row, the trailing Edit pencil, the Edit panel button, or releasing a long swipe on a certain row opens `ExpenseEditSheet`. When opened from a doubtful row, the sheet runs in rule-correction mode (scope hidden, treated as `all`). When opened from an `ExpenseRow`, the sheet may show the scope selector and "Update rule" checkbox depending on the source expense's `receipt_id` and `has_rule`.
+
+### Pagination
+
+Two independent `IntersectionObserver` sentinels — one for the rule feed, one for the expense feed — each `rootMargin: "120px"`. Skeleton rows show during fetch. See `patterns.md#infinite-scroll`.
+
+### Offline
+
+The whole view degrades gracefully: cached rules and expenses still render, refresh + writes are disabled with an info toast. See `patterns.md#offline-aware-actions`.
+
+Owned by `views/ReviewView.vue`. Rows by `components/RuleRow.vue` and `components/ExpenseRow.vue`.
 
 ## LLM view
 

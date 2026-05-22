@@ -44,8 +44,12 @@ Every shipped UI component, with its source file and one-line contract. The `.vu
 
 | Component | File | Contract |
 |---|---|---|
-| `RuleRow` | `components/RuleRow.vue` | Unified row for both doubtful and certain entries. Doubtful → warning left-border, tinted bg, confidence pill, optional suggestion chip. Certain → plain card, top-category breadcrumb. Tap → emits `tap`. |
-| `CorrectionSheet` | `components/CorrectionSheet.vue` | Bottom sheet for category correction. Includes the **scope selector** (Last expense / Last month / This year / All history) for certain rows; doubtful rows force "all" (rule-creation path). |
+| `RuleRow` | `components/RuleRow.vue` | Row for a classification rule (one per unique item-name). Renders **doubtful** rows (graded left-border by `confidence_level` 1/2/3 → error/warning/muted-warning, tinted bg, name+store, inline action chips, edit button) and **certain** rows (plain card, group › category breadcrumb, chevron). Whole row is the tap target. Doubtful rows expose multiple **fast-path approve chips** (suggested with `Sparkles` icon if it differs from current, up to 2 alternatives, then frequent-category picks). Supports swipe-to-act via `useSwipeRow` — left swipe reveals **Edit** + **Approve** (doubtful) or **Edit**-only (certain). Props: `item`. Emits: `tap`, `approve({ item, categoryId })`. |
+| `ExpenseRow` | `components/ExpenseRow.vue` | Individual receipt-line row in the EXPENSES section. Top: item name (or store fallback), trailing amount + currency in `--font-num`. Bottom: store + date when item-name is the primary, plus group › category breadcrumb. Swipe-to-act via `useSwipeRow` reveals an **Edit** button. Props: `expense`. Emits: `tap`. |
+| `ExpenseEditSheet` | `components/ExpenseEditSheet.vue` | Bottom sheet for editing a single expense or correcting a rule. Inline `CategorySheet` launcher, tag toggles, event select. Shows the **scope selector** (Only this / Last month / This year / All history) when editing a receipt-linked expense; shows an **"Update rule"** checkbox when the source expense has an existing rule. Doubtful-row corrections (rule path) skip the scope selector and always patch with `scope: "all"`. Props: `open`, `expense`, `suggestions`, `ruleItem`. Emits: `close`. |
+| `CategorySheet` | `components/CategorySheet.vue` | Searchable bottom sheet listing every active category, grouped by parent group, with LLM `suggestions` pinned to the top (each prefixed with a `Sparkles` glyph). Autofocuses the search input on open. Props: `open`, `suggestions`, `title`. Emits: `select(categoryId)`, `close`. |
+| `CategoryQuickPicks` | `components/CategoryQuickPicks.vue` | Wrap-flow of pill buttons over a list of frequently-used categories. Surfaces an "all categories" affordance to the parent. Props: `categories`. Emits: `select(categoryId)`. |
+| `CorrectionSheet` | `components/CorrectionSheet.vue` | **Legacy.** Earlier doubtful-row correction sheet — superseded by `ExpenseEditSheet` for the Review flow. Still in the tree (with passing tests) but no view mounts it. Don't add new entry points; new screens that need the same flow should mount `ExpenseEditSheet`. |
 
 ## LLM view
 
@@ -61,8 +65,17 @@ Every shipped UI component, with its source file and one-line contract. The `.vu
 |---|---|---|
 | `App` | `App.vue` | Top-level shell — sticky header (brand + version + queue badge + segmented), main view router, queue modal, global toast. |
 | `AddView` | `views/AddView.vue` | Mounts `ExpenseForm`, `QrScanner`, the bottom action bar (Scan / Save), and `KeyboardSaveBar`. |
-| `ReviewView` | `views/ReviewView.vue` | Owns scroll container, IntersectionObserver, refresh control, correction-sheet open/close. |
+| `ReviewView` | `views/ReviewView.vue` | Two-section list (NEEDS REVIEW + EXPENSES). Owns scroll container, two `IntersectionObserver` sentinels (one per section), refresh control, **Confirm all** bulk action, and the edit sheet open/close. |
 | `LLMView` | `views/LLMView.vue` | Owns refresh timer (30s polling), opens add/edit `ProviderSheet`. |
+
+## Composables (non-component reusable logic)
+
+| Composable | File | Contract |
+|---|---|---|
+| `useSwipeRow` | `composables/useSwipeRow.js` | Pointer-event horizontal swipe state for a row. Returns `sliderEl` (ref to slide-translating element), `phase`, reactive `isOpen` / `isCommit`, pointer handlers, `shouldFireTap()` (use to gate `@click` against drag-induced clicks), and imperative `open()` / `close()`. Args: `panelWidth`, `commitOver` (default 80), `onPrimary` callback fired when a continued swipe past commit threshold releases. 8px axis-lock; vertical scroll is preserved via `touch-action: pan-y` on the slider. |
+| `useKeyboardVisible` | `composables/useKeyboardVisible.js` | `visualViewport`-based detection of soft-keyboard presence. Used by `KeyboardSaveBar`. |
+| `useOnline` | `composables/useOnline.js` | Reactive `isOnline`. Used by every screen to gate write actions and refresh. |
+| `useStaleCache` | `composables/useStaleCache.js` | localStorage-backed cache with dirty + last-fetched timestamps. Used by review store. |
 
 ## Legacy / supporting
 
@@ -75,9 +88,9 @@ Every shipped UI component, with its source file and one-line contract. The `.vu
 
 - **Reusable across screens** → `components/`
 - **Owns a top-level tab's layout** → `views/`
-- **Wraps a foreign API** → `composables/` (not a component)
+- **Wraps a foreign API or shared reactive logic** → `composables/` (not a component)
 - **Adds a modal/sheet for a CRUD pattern** → `components/` and prefer a bottom sheet over `BaseModal` for any new flow
 
 ## Where it's worth duplicating
 
-If a one-off design only ever appears in one screen, don't extract it. Components earn their abstraction by being used in 2+ places. Look at `RuleRow` (re-used for doubtful + certain) and `InlineCreateRow` (re-used for group/category/tag) for examples of well-justified extraction.
+If a one-off design only ever appears in one screen, don't extract it. Components earn their abstraction by being used in 2+ places. Look at `RuleRow` / `ExpenseRow` (both built on `useSwipeRow`) and `InlineCreateRow` (re-used for group/category/tag) for examples of well-justified extraction.

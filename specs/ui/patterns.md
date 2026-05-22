@@ -39,17 +39,17 @@ Used for: category correction, provider CRUD, currency picker (popover variant),
 - Footer is sticky with `padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px))` so it clears the home indicator.
 - The primary action is `flex: 0 0 auto`; the context label takes `flex: 1` and truncates with ellipsis.
 
-References: `CorrectionSheet.vue`, `ProviderSheet.vue`.
+References: `ExpenseEditSheet.vue`, `ProviderSheet.vue`, `CategorySheet.vue`.
 
 ## Scope selector
 
-When a correction can apply to varying breadth of history, the user picks the scope explicitly. Used inside `CorrectionSheet` for certain rows; doubtful rows force `"all"` (because correcting a doubtful row is fundamentally rule creation).
+When a correction can apply to varying breadth of history, the user picks the scope explicitly. Lives inside `ExpenseEditSheet` for receipt-linked expenses (`expense.receipt_id != null`); doubtful-row corrections from `RuleRow` skip the sheet entirely via fast-path approve chips and force `scope: "all"` (correcting a doubtful row is fundamentally rule creation).
 
 ### Anatomy
 
 ```
 APPLY CHANGE TO:
-  ⦿ Last expense
+  ⦿ Only this
   ⦾ Last month
   ⦾ This year
   ⦾ All history
@@ -62,9 +62,10 @@ APPLY CHANGE TO:
 - Native radio inputs (`<input type="radio">`) with `accent-color: var(--accent)`.
 - Uppercase 11px label above, options stacked below.
 - Sits at the top of the sheet body, separated from the rest by a 1px `--border` line.
-- Don't show the selector when scope is forced (e.g. doubtful-row corrections always apply `all`). Hiding > disabling.
+- Don't show the selector when scope is forced or irrelevant (manual expenses with no `receipt_id`; rule-correction path). Hiding > disabling.
+- When the source expense already has a rule (`has_rule === true`), show a sibling **"Update rule"** checkbox below — applying a scope > `single` and ticking the box updates the rule mapping too.
 
-References: `CorrectionSheet.vue`.
+References: `ExpenseEditSheet.vue`.
 
 ## Picker vs Manage
 
@@ -188,6 +189,61 @@ Single global `<div class="toast">` lives in `App.vue`, driven by `useToastStore
 - Single-line, max-width `calc(100% - 2rem)`, ellipsis on overflow.
 
 Don't queue multiple toasts. Replace.
+
+## Swipe-to-act
+
+List rows that have a primary tap action plus 1–2 secondary actions reveal those actions via a left swipe instead of cluttering the row chrome. Used in `RuleRow` (Edit + Approve) and `ExpenseRow` (Edit). All wiring lives in `composables/useSwipeRow.js`.
+
+### Anatomy
+
+```
+At rest                          Mid-swipe                       Past commit
+┌─────────────────────┐          ┌─────────────────┬───┬────┐    ┌───┬─────────────────┐
+│  row content        │   →      │  row content    │ ✎ │ ✓  │ →  │ … │ ✓   APPROVE    │
+└─────────────────────┘          └─────────────────┴───┴────┘    └───┴─────────────────┘
+                                    slider             panel       secondary shrinks,
+                                                                   primary widens+bright
+```
+
+### Behavior
+
+| User action | Result |
+|---|---|
+| Tap the row | Emits `tap` (opens edit sheet). |
+| Tap an inline action chip (RuleRow approve chips) | `@click.stop` + emits `approve`. Never bubbles to row tap. |
+| Swipe left ~`commitOver` px (default 80) | Row slides left, reveals action panel docked right. |
+| Continue swiping past `panelWidth` | `isCommit` flips true — primary panel button widens to ~2× and brightens; secondary collapses. |
+| Release inside revealed zone | Snaps fully open. User can tap a panel button or tap the row to close. |
+| Release past commit zone | `onPrimary` fires: Approve on doubtful, Edit-sheet on certain / expense rows. Row snaps closed. |
+| Vertical scroll | 8px axis-lock detects vertical intent and disables horizontal drag for the gesture. |
+| Open another row | Store-mediated: every row writes its id to `review.openRowId` on open; other rows watch and close themselves. |
+
+### Rules
+
+- **Wrapper is the clip surface** (`overflow: hidden`, fully opaque background, holds the warning left-border on `RuleRow` so it doesn't slide off-screen).
+- **Slider must be opaque.** The action panel sits behind it. A translucent slider bleeds button color through the row at rest.
+- **Don't put the row's tint into shorthand `background`** mixed with `var(--bg)` — browsers drop the whole declaration. Use `background-color` for the solid base and `background-image: linear-gradient(...)` for the tint.
+- **`touch-action: pan-y`** on the slider — vertical page scroll keeps working through the row.
+- **Don't replace row content during commit phase.** The commit cue lives on the *panel button* (widens + brightens). The user keeps reading what they're acting on.
+- **Single open row** — opening any swipe row closes the currently-open one via `review.openRowId`. No multi-open state to reason about.
+- **`shouldFireTap()` gates the `@click` handler** so a drag-induced click (release after a horizontal move) doesn't fire `tap`.
+
+References: `composables/useSwipeRow.js`, `components/RuleRow.vue`, `components/ExpenseRow.vue`.
+
+## Confirm all
+
+Batch-confirm pattern for queues where every pending item shares the same primary action. Currently used at the end of the NEEDS REVIEW list to confirm every visible doubtful rule in one PATCH.
+
+### Rules
+
+- Mount the button only when **(a)** the list has fully paginated (`!hasMore`) and **(b)** at least one actionable item remains.
+- Centered, full-width-capped, pill-shaped (`border-radius: 999px`), green-tinted (same recipe as the approve chip): `rgba(34, 197, 94, 0.15)` fill, `rgba(34, 197, 94, 0.3)` border, `--success` text.
+- Label format: `Confirm all (N)` where N is the live count.
+- Tap → single API call (`confirmAllRules(ruleIds)`), then refresh any dependent sections (e.g. EXPENSES, so the user sees the new classifications immediately).
+- Don't auto-confirm. The user always has to tap. Don't put a countdown.
+- Gate on `isOnline` like every other write action.
+
+References: `views/ReviewView.vue`.
 
 ## Skeleton rows
 
