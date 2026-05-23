@@ -39,7 +39,7 @@ CREATE TABLE receipts (
 
 CREATE TABLE receipt_items (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    receipt_id       INTEGER NOT NULL REFERENCES receipts(id),
+    receipt_id       INTEGER NOT NULL REFERENCES receipts(id) ON DELETE CASCADE,
     name_raw         TEXT NOT NULL,
     name_normalized  TEXT,
     unit_price       DECIMAL(12,4) NOT NULL DEFAULT 0,
@@ -48,7 +48,7 @@ CREATE TABLE receipt_items (
     tax_label        TEXT NOT NULL DEFAULT '',
     category_id      INTEGER REFERENCES categories(id),
     confidence_level INTEGER,
-    expense_id       INTEGER REFERENCES expenses(id)
+    expense_id       INTEGER REFERENCES expenses(id) ON DELETE SET NULL
 );
 
 -- Chain-specific rules: (store_id, item_name_normalized) must be unique when store_id IS NOT NULL.
@@ -80,7 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_cr_store_name
     ON classification_rules (store_id, item_name_normalized);
 
 CREATE TABLE receipt_classification_jobs (
-    receipt_id   INTEGER PRIMARY KEY REFERENCES receipts(id),
+    receipt_id   INTEGER PRIMARY KEY REFERENCES receipts(id) ON DELETE CASCADE,
     status       TEXT NOT NULL DEFAULT 'pending',
     claim_token  TEXT,
     claimed_at   TIMESTAMP,
@@ -104,7 +104,7 @@ CREATE TABLE llmbroker_providers (
 CREATE TABLE llmbroker_call_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     provider_id INTEGER REFERENCES llmbroker_providers(id),
-    receipt_id  INTEGER REFERENCES receipts(id),
+    receipt_id  INTEGER REFERENCES receipts(id) ON DELETE SET NULL,
     called_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status      TEXT NOT NULL,
     latency_ms  INTEGER

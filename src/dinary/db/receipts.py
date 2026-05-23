@@ -380,14 +380,8 @@ def delete_receipt_cascade(conn: sqlite3.Connection, receipt_id: int) -> None:
     """Delete a receipt and all its expenses (cascade). Idempotent."""
     conn.execute("BEGIN IMMEDIATE")
     try:
-        conn.execute(
-            "DELETE FROM receipt_classification_jobs WHERE receipt_id = ?",
-            [receipt_id],
-        )
-        conn.execute(
-            "UPDATE receipt_items SET expense_id = NULL WHERE receipt_id = ?",
-            [receipt_id],
-        )
+        # expense_tags and sheet_logging_jobs (from migration 0001) have no ON DELETE action;
+        # all 0004 child tables are handled automatically by CASCADE / SET NULL.
         conn.execute(
             "DELETE FROM expense_tags WHERE expense_id IN "
             "(SELECT id FROM expenses WHERE receipt_id = ?)",
@@ -399,11 +393,6 @@ def delete_receipt_cascade(conn: sqlite3.Connection, receipt_id: int) -> None:
             [receipt_id],
         )
         conn.execute("DELETE FROM expenses WHERE receipt_id = ?", [receipt_id])
-        conn.execute("DELETE FROM receipt_items WHERE receipt_id = ?", [receipt_id])
-        conn.execute(
-            "DELETE FROM llmbroker_call_log WHERE receipt_id = ?",
-            [receipt_id],
-        )
         conn.execute("DELETE FROM receipts WHERE id = ?", [receipt_id])
         conn.execute("COMMIT")
     except BaseException:
