@@ -9,10 +9,14 @@ import logging
 from datetime import UTC, datetime
 
 import httpx
-from sr_invoice_parser.exceptions import ParserParseException, ParserRequestException
 
 from dinary.adapters.llmbroker import LLMBroker
-from dinary.adapters.serbian_receipt_parser import ParsedReceipt, parse_receipt
+from dinary.adapters.serbian_receipt_parser import (
+    ParsedReceipt,
+    ParserParseError,
+    ParserRequestError,
+    parse_receipt,
+)
 from dinary.background.classification.item_normalizer import normalize_item_name
 from dinary.background.classification.llm_client import (
     ClassificationResult,
@@ -138,14 +142,14 @@ async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
         await _classify_and_persist(broker, job, items, store_id)
         logger.info("Receipt drain: completed receipt_id=%s", job.receipt_id)
 
-    except (ParserRequestException, OSError, RateMissingError) as exc:
+    except (ParserRequestError, OSError, RateMissingError) as exc:
         logger.warning(
             "Transient error for receipt_id=%s (%s) — releasing for retry",
             job.receipt_id,
             exc,
         )
         _release(job.receipt_id, job.claim_token)
-    except ParserParseException as exc:
+    except ParserParseError as exc:
         logger.error(
             "Permanent parse error for receipt_id=%s — poisoning: %s",
             job.receipt_id,

@@ -8,8 +8,6 @@ Primary path (3 steps):
 Fallback path (if /specifications fails or returns empty items):
   Parse the `journal` text field from the JSON response. The journal is always
   present in the official JSON response and has a fixed column-aligned format.
-  This fallback correctly handles KG (by-weight) items with decimal quantities,
-  fixing the sr-invoice-parser bug (int() vs float() for quantity).
 """
 
 import logging
@@ -17,7 +15,15 @@ import re
 from dataclasses import dataclass
 
 import httpx
-from sr_invoice_parser.exceptions import ParserParseException, ParserRequestException
+
+
+class ParserRequestError(Exception):
+    """Raised when a receipt fetch fails due to a network or HTTP error (transient)."""
+
+
+class ParserParseError(Exception):
+    """Raised when a receipt cannot be parsed due to unexpected content (permanent)."""
+
 
 logger = logging.getLogger(__name__)
 
@@ -132,27 +138,27 @@ async def _fetch_json_metadata(
     """Fetch JSON from the receipt URL and return store/invoice metadata.
 
     Returns (store_name, store_pib, total_amount, invoice_number, journal, purchase_datetime).
-    Raises ParserRequestException on network errors, ParserParseException on bad JSON.
+    Raises ParserRequestError on network errors, ParserParseError on bad JSON.
     """
     try:
         resp = await client.get(url, headers={"Accept": "application/json"})
         resp.raise_for_status()
     except httpx.RequestError as exc:
-        raise ParserRequestException(f"Request failed: {exc}") from exc
+        raise ParserRequestError(f"Request failed: {exc}") from exc
     except httpx.HTTPStatusError as exc:
-        raise ParserRequestException(f"Request failed: {exc}") from exc
+        raise ParserRequestError(f"Request failed: {exc}") from exc
 
     try:
         data = resp.json()
     except Exception as exc:
-        raise ParserParseException(f"Invalid JSON from {url}") from exc
+        raise ParserParseError(f"Invalid JSON from {url}") from exc
 
     if not isinstance(data, dict):
-        raise ParserParseException(f"Unexpected JSON shape from {url}")
+        raise ParserParseError(f"Unexpected JSON shape from {url}")
 
     req = data.get("invoiceRequest") or {}
     res = data.get("invoiceResult") or {}
-    purchase_datetime: str | None = str(res.get("sdcDateTime") or "") or None
+    purchase_datetime: str | None = str(res.get("sdcTime") or "") or None
     return (
         req.get("businessName") or "",
         req.get("taxId") or "",
@@ -218,7 +224,7 @@ async def parse_receipt(url: str) -> ParsedReceipt:
     tax details). Falls back to journal text parsing if /specifications is
     unavailable or returns empty items.
 
-    Raises ParserRequestException on network errors, ParserParseException if
+    Raises ParserRequestError on network errors, ParserParseError if
     neither path yields any items.
     """
     async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
@@ -239,7 +245,7 @@ async def parse_receipt(url: str) -> ParsedReceipt:
         used_journal_fallback = True
 
     if not items:
-        raise ParserParseException(f"No items found via /specifications or journal for {url}")
+        raise ParserParseError(f"No items found via /specifications or journal for {url}")
 
     items_total = round(sum(i.total_price for i in items), 2)
     return ParsedReceipt(

@@ -6,7 +6,13 @@ import allure
 import httpx
 import pytest
 
-from dinary.adapters.serbian_receipt_parser import _parse_journal, _rsd, parse_receipt
+from dinary.adapters.serbian_receipt_parser import (
+    ParserParseError,
+    ParserRequestError,
+    _parse_journal,
+    _rsd,
+    parse_receipt,
+)
 
 _JOURNAL_WITH_KG = """\
 ========================================
@@ -23,7 +29,11 @@ Karamel čoko/KOM/1002303 (Ђ)
 
 _JSON_RESPONSE = {
     "invoiceRequest": {"businessName": "LIDL SRBIJA KD", "taxId": "106884584"},
-    "invoiceResult": {"totalAmount": 974.76, "invoiceNumber": "TEST-TEST-001"},
+    "invoiceResult": {
+        "totalAmount": 974.76,
+        "invoiceNumber": "TEST-TEST-001",
+        "sdcTime": "2026-05-01T08:30:00.000Z",
+    },
     "journal": _JOURNAL_WITH_KG,
     "isValid": True,
 }
@@ -138,6 +148,22 @@ class TestParseReceiptPrimary:
         assert post_call.kwargs["data"]["token"] == "abc-token-123"
         assert post_call.kwargs["data"]["invoiceNumber"] == "TEST-TEST-001"
 
+    def test_purchase_datetime_extracted(self):
+        ctx, _ = _mock_async_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+            receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
+        assert receipt.purchase_datetime == "2026-05-01T08:30:00.000Z"
+
+    def test_purchase_datetime_none_when_missing(self):
+        no_time = {
+            **_JSON_RESPONSE,
+            "invoiceResult": {"totalAmount": 974.76, "invoiceNumber": "TEST-TEST-001"},
+        }
+        ctx, _ = _mock_async_client(no_time, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
+        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+            receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
+        assert receipt.purchase_datetime is None
+
 
 @allure.epic("Services")
 @allure.feature("Receipt Parser — journal fallback")
@@ -164,24 +190,20 @@ class TestParseReceiptFallback:
         assert grejpfrut.total_price == pytest.approx(454.97)
 
     def test_raises_when_both_paths_fail(self):
-        from sr_invoice_parser.exceptions import ParserParseException
-
         no_journal = {**_JSON_RESPONSE, "journal": ""}
         ctx, _ = _mock_async_client(no_journal, "<html>no token</html>", _SPECS_EMPTY)
         with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
-            with pytest.raises(ParserParseException):
+            with pytest.raises(ParserParseError):
                 asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
 
     def test_network_error_raises(self):
-        from sr_invoice_parser.exceptions import ParserRequestException
-
         client = AsyncMock()
         client.get = AsyncMock(side_effect=httpx.RequestError("timeout"))
         ctx = MagicMock()
         ctx.__aenter__ = AsyncMock(return_value=client)
         ctx.__aexit__ = AsyncMock(return_value=False)
         with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
-            with pytest.raises(ParserRequestException):
+            with pytest.raises(ParserRequestError):
                 asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
 
 

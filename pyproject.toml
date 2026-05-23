@@ -17,7 +17,6 @@ dependencies = [
     "google-auth>=2.38.0",
     "httpx>=0.28.0",
     "aiosqlite>=0.20.0",
-    "sr-invoice-parser>=1.0.3",
     "pydantic-settings>=2.8.0",
     "yoyo-migrations>=9.0.0",
     "holidays>=0.94",

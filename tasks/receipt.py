@@ -4,9 +4,12 @@ import asyncio
 import sys
 
 from invoke import task
-from sr_invoice_parser.exceptions import ParserParseException, ParserRequestException
 
-from dinary.adapters.serbian_receipt_parser import parse_receipt
+from dinary.adapters.serbian_receipt_parser import (
+    ParserParseError,
+    ParserRequestError,
+    parse_receipt,
+)
 from dinary.background.classification.item_normalizer import normalize_item_name
 from dinary.background.classification.llm_client import OpenAICompatibleClient
 from dinary.config import settings
@@ -62,7 +65,7 @@ def _run_receipt(
     print(f"URL: {url[:80]}{'...' if len(url) > 80 else ''}")
     try:
         receipt = asyncio.run(parse_receipt(url))
-    except (ParserParseException, ParserRequestException) as exc:
+    except (ParserParseError, ParserRequestError) as exc:
         print(f"  Parse error: {exc}")
         return
 
