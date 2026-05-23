@@ -35,8 +35,24 @@ async def _drain_all_pending(broker: LLMBroker) -> None:
         await asyncio.gather(*[_process_job(job, broker) for job in jobs], return_exceptions=True)
 ```
 
+`_claim_all_pending` opens one connection and loops `claim_next_job(conn)` until
+it returns `None`, collecting all claimable jobs before closing the connection.
+
 No cap on parallelism — realistic backlog for a personal tracker is tens of jobs.
 `return_exceptions=True` ensures one failing job does not cancel others.
+
+### Rule-hit threshold
+
+`_run_rules_pass` only treats a rule match as a hit when `confidence_level > 1`.
+A stored rule with `confidence_level = 1` is treated as a miss and its item is
+added to the LLM queue instead:
+
+```python
+if rule and rule[1] > 1:
+    rule_hits[item.id] = rule
+else:
+    llm_queue.append((item.id, norm))
+```
 
 ### Connection discipline
 
@@ -132,8 +148,11 @@ class LLMBroker:
 skipped higher-priority ones that were cooling) or a provider failed mid-loop and
 the next provider was tried. Callers apply a confidence penalty in either case.
 
-`context_id` flows untouched from caller → `CallEvent` → `BrokerStorage.on_call_logged`.
-For dinary it carries `receipt_id` so call-log rows can be traced back to a receipt.
+`context_id` flows from caller → `CallEvent` → `BrokerStorage.on_call_logged`.
+For dinary it carries `receipt_id`. `llm_client.classify_receipt` converts the
+`int | None` receipt_id to `str | None` before passing it to `broker.complete()`,
+so `CallEvent.context_id` and the `llmbroker_call_log.receipt_id` column are stored
+as strings.
 
 ### Hot-path loop — zero DB connections during HTTP
 
@@ -265,9 +284,12 @@ task to build the dicts passed to `classify_receipt` on every LLM pass.
 `create_or_update_rule` behaviour by source:
 
 - `source='llm'`: persists `alternative_category_ids` and `tag_ids` as JSON arrays.
-- `source='user_correction'`: overwrites `tag_ids` with the user-supplied value;
-  clears `alternative_category_ids` to `[]` (user-confirmed rules have no meaningful
-  alternatives); sets `confidence_level = 4` regardless of what is passed in `RuleSpec`.
+- `source='user_correction'`: sets `confidence_level = 4` regardless of what is passed
+  in `RuleSpec`. On UPDATE: overwrites `tag_ids` with the user-supplied value and
+  explicitly clears `alternative_category_ids` to `'[]'`. On INSERT (no existing rule):
+  stores `alternative_category_ids` and `tag_ids` as-is from the spec; the
+  `alternative_category_ids = []` invariant is not enforced by the code for the insert
+  path — callers are expected to pass an empty tuple.
 
 `classify_by_rules` returns `(category_id, confidence_level, tag_ids)` so the
 drain can apply stored tags without an LLM call on rule hits.
@@ -278,16 +300,32 @@ drain can apply stored tags without an LLM call on rule hits.
 
 ```python
 @asynccontextmanager
-async def lifespan(app):
+async def _lifespan(_app: FastAPI):
+    storage.init_db()
     broker = LLMBroker(LLMBrokerStorage())
     await broker.start()
-    asyncio.create_task(receipt_classification_task(broker))
-    yield
-    await broker.stop()
+    await warm_sheet_mapping()
+    sheet_logging_bg = asyncio.create_task(sheet_logging_task())
+    rate_prefetch_bg = asyncio.create_task(rate_prefetch_task())
+    receipt_classification_bg = asyncio.create_task(receipt_classification_task(broker))
+    try:
+        yield
+    finally:
+        sheet_logging_bg.cancel()
+        rate_prefetch_bg.cancel()
+        receipt_classification_bg.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sheet_logging_bg
+        with contextlib.suppress(asyncio.CancelledError):
+            await rate_prefetch_bg
+        with contextlib.suppress(asyncio.CancelledError):
+            await receipt_classification_bg
+        await broker.stop()
 ```
 
 One broker instance per process, started at lifespan and injected wherever LLM
-access is needed.
+access is needed. All three background tasks are stored so they can be cancelled
+and awaited cleanly on shutdown before the broker is stopped.
 
 ---
 
