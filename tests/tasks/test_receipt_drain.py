@@ -14,7 +14,7 @@ import allure
 import pytest
 
 import dinary.background.classification.task as drain_mod
-from dinary.background.classification.llm_client import ClassificationResult
+from dinary.background.classification.receipt_classifier import ClassificationResult
 from dinary.adapters.llmbroker import LLMBroker, NullStorage
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 from dinary.background.classification.task import (
@@ -150,7 +150,15 @@ class TestProcessJobEdgeCases:
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
-            conn.execute("INSERT INTO stores (chain_name, pib) VALUES ('Lidl', '100')")
+            conn.execute("INSERT OR IGNORE INTO shop_chains (name) VALUES ('Lidl')")
+            chain_id_Lidl = conn.execute("SELECT id FROM shop_chains WHERE name='Lidl'").fetchone()[
+                0
+            ]
+            conn.execute(
+                "INSERT INTO stores (name, chain_id, pib) VALUES ('Lidl', "
+                + str(chain_id_Lidl)
+                + ", '100')"
+            )
             conn.execute(
                 "INSERT INTO receipts (client_receipt_id, url) VALUES ('fp-r1', 'https://x')"
             )
@@ -424,7 +432,15 @@ class TestProcessJobEdgeCases:
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
-            conn.execute("INSERT INTO stores (chain_name, pib) VALUES ('Lidl', '100')")
+            conn.execute("INSERT OR IGNORE INTO shop_chains (name) VALUES ('Lidl')")
+            chain_id_Lidl = conn.execute("SELECT id FROM shop_chains WHERE name='Lidl'").fetchone()[
+                0
+            ]
+            conn.execute(
+                "INSERT INTO stores (name, chain_id, pib) VALUES ('Lidl', "
+                + str(chain_id_Lidl)
+                + ", '100')"
+            )
             conn.execute(
                 "INSERT INTO receipts (client_receipt_id, url) VALUES ('c1-r1', 'https://x')"
             )

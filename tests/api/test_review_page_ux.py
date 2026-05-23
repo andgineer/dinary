@@ -16,7 +16,10 @@ from _api_helpers import db  # noqa: F401
 
 
 def _seed_doubtful_rule(con, item_name="hleb", confidence=3):
-    con.execute("INSERT OR IGNORE INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+    con.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+    con.execute(
+        "INSERT OR IGNORE INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')"
+    )
     con.execute(
         "INSERT OR IGNORE INTO receipts (id, client_receipt_id, url, store_id)"
         " VALUES (1, 'r1', 'https://x', 1)"
@@ -145,7 +148,8 @@ class TestConfirmRulesBulk:
 @allure.feature("Review Page UX — doubtful_only feed filter")
 class TestRulesFeedDoubtfulOnly:
     def _seed_both(self, con):
-        con.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+        con.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+        con.execute("INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')")
         con.execute(
             "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
             " VALUES (1, 'r1', 'https://x', 1)"

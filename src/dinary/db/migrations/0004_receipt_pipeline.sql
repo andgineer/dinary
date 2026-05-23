@@ -1,12 +1,26 @@
--- Receipt pipeline tables: stores, receipts, receipt_items,
+-- Receipt pipeline tables: shop_chains, stores, receipts, receipt_items,
 -- classification_rules, receipt_classification_jobs, llmbroker_providers, llmbroker_call_log.
 -- Also adds receipt_id / store_id / confidence_level to expenses.
 
-CREATE TABLE stores (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    chain_name TEXT NOT NULL UNIQUE,
-    pib        TEXT UNIQUE
+-- One row per retail brand (e.g. "Lidl", "Maxi"). Many stores share one chain.
+CREATE TABLE shop_chains (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
 );
+
+-- One row per physical store location, identified by PIB (Serbian tax ID).
+-- name = raw store name from the fiscal receipt.
+-- chain_id = LLM-normalised brand; nullable until the chain-name call completes.
+-- pib is UNIQUE across all store locations.
+-- Partial unique index prevents duplicate no-PIB store records per raw name.
+CREATE TABLE stores (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    name     TEXT NOT NULL,
+    chain_id INTEGER REFERENCES shop_chains(id),
+    pib      TEXT UNIQUE
+);
+
+CREATE UNIQUE INDEX stores_name_no_pib ON stores (name) WHERE pib IS NULL;
 
 CREATE TABLE receipts (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,

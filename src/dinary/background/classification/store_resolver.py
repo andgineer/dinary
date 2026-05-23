@@ -1,8 +1,18 @@
-"""Store resolution: PIB-keyed cache → LLM chain-name identification → DB upsert."""
+"""Store resolution: PIB/name cache lookup → LLM chain-name normalisation → DB upsert."""
+
+import logging
 
 from dinary.adapters.llmbroker import LLMBroker
-from dinary.background.classification.llm_client import get_chain_name
+from dinary.background.classification.receipt_classifier import get_chain_name
 from dinary.db import storage
+
+logger = logging.getLogger(__name__)
+
+
+def _upsert_chain(conn, chain_name: str) -> int:
+    conn.execute("INSERT OR IGNORE INTO shop_chains (name) VALUES (?)", [chain_name])
+    row = conn.execute("SELECT id FROM shop_chains WHERE name = ?", [chain_name]).fetchone()
+    return int(row[0])
 
 
 async def resolve_store(
@@ -12,37 +22,46 @@ async def resolve_store(
 ) -> int:
     """Return store_id for the given receipt store.
 
-    1. PIB cache lookup (no LLM call).
-    2. On miss: ask LLM for canonical chain name.
-    3. Chain name lookup — if found, UPDATE pib on that row and return.
-    4. Both miss: INSERT new stores row.
+    With PIB:    SELECT by pib → return if found; else LLM → insert → SELECT by pib.
+    Without PIB: log error; SELECT by name → return if found; else LLM → insert → SELECT by name.
     """
-    if store_pib:
-        with storage.connection() as conn:
+    with storage.connection() as conn:
+        if store_pib:
             row = conn.execute("SELECT id FROM stores WHERE pib = ?", [store_pib]).fetchone()
-        if row:
-            return int(row[0])
+        else:
+            logger.error(
+                "resolve_store: no PIB on receipt for store %r — falling back to name lookup",
+                store_name_raw,
+            )
+            row = conn.execute(
+                "SELECT id FROM stores WHERE name = ? AND pib IS NULL",
+                [store_name_raw],
+            ).fetchone()
+    if row:
+        return int(row[0])
 
     chain_name = await get_chain_name(broker, store_name_raw)
     chain_name = chain_name.strip() or store_name_raw.strip()
 
     with storage.connection() as conn:
-        row = conn.execute(
-            "SELECT id FROM stores WHERE chain_name = ?",
-            [chain_name],
-        ).fetchone()
-        if row:
-            store_id = int(row[0])
-            if store_pib:
-                conn.execute(
-                    "UPDATE stores SET pib = ? WHERE id = ?",
-                    [store_pib, store_id],
-                )
-            return store_id
-
+        chain_id = _upsert_chain(conn, chain_name)
         conn.execute(
-            "INSERT OR IGNORE INTO stores (chain_name, pib) VALUES (?, ?)",
-            [chain_name, store_pib or None],
+            "INSERT OR IGNORE INTO stores (name, chain_id, pib) VALUES (?, ?, ?)",
+            [store_name_raw, chain_id, store_pib or None],
         )
-        row = conn.execute("SELECT id FROM stores WHERE chain_name = ?", [chain_name]).fetchone()
-        return int(row[0])
+        if store_pib:
+            row = conn.execute(
+                "SELECT id FROM stores WHERE pib = ?",
+                [store_pib],
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id FROM stores WHERE name = ? AND pib IS NULL",
+                [store_name_raw],
+            ).fetchone()
+
+    if row is None:
+        raise RuntimeError(
+            f"Failed to resolve store: name={store_name_raw!r}, pib={store_pib!r}",
+        )
+    return int(row[0])

@@ -18,16 +18,16 @@ from dinary.adapters.serbian_receipt_parser import (
     parse_receipt,
 )
 from dinary.background.classification.item_normalizer import normalize_item_name
-from dinary.background.classification.llm_client import (
-    ClassificationResult,
-    classify_receipt,
-    load_categories,
-    load_tags,
-)
 from dinary.background.classification.persist import (
     RateMissingError,
     persist_classification_results,
     write_fetch_fallback_metadata,
+)
+from dinary.background.classification.receipt_classifier import (
+    ClassificationResult,
+    classify_receipt,
+    load_categories,
+    load_tags,
 )
 from dinary.background.classification.store_resolver import resolve_store
 from dinary.config import settings

@@ -211,7 +211,7 @@ def list_expenses_sync(
             e.event_id,
             ev.name         AS event_name,
             e.store_id,
-            s.chain_name    AS store_name,
+            sc.name         AS store_name,
             e.receipt_id,
             e.confidence_level,
             e.rule_id,
@@ -228,6 +228,7 @@ def list_expenses_sync(
         JOIN categories c ON c.id = e.category_id
         LEFT JOIN events ev ON ev.id = e.event_id
         LEFT JOIN stores s ON s.id = e.store_id
+        LEFT JOIN shop_chains sc ON sc.id = s.chain_id
         LEFT JOIN receipts rec ON rec.id = e.receipt_id
         ORDER BY e.datetime DESC, e.id DESC
         LIMIT ? OFFSET ?

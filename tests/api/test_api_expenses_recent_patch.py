@@ -31,7 +31,8 @@ def _insert_expense(con, eid, cid, *, client_expense_id=None, days_ago=0, receip
 @allure.feature("Expenses — PATCH /api/expenses/{id}")
 class TestPatchExpense:
     def _seed_receipt_expense(self, con, expense_id=1, category_id=1):
-        con.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+        con.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+        con.execute("INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')")
         con.execute(
             "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
             " VALUES (1, 'pe-r1', 'https://x', 1)"

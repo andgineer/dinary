@@ -14,7 +14,13 @@ def _seed(conn):
     conn.execute(
         "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'продукты', 1, 1)"
     )
-    conn.execute("INSERT INTO stores (chain_name, pib) VALUES ('Lidl', '100')")
+    conn.execute("INSERT OR IGNORE INTO shop_chains (name) VALUES ('Lidl')")
+    chain_id_Lidl = conn.execute("SELECT id FROM shop_chains WHERE name='Lidl'").fetchone()[0]
+    conn.execute(
+        "INSERT INTO stores (name, chain_id, pib) VALUES ('Lidl', "
+        + str(chain_id_Lidl)
+        + ", '100')"
+    )
     store_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.execute(
         "INSERT INTO receipts (client_receipt_id, url, store_id, parsed_at)"
@@ -156,7 +162,15 @@ class TestRequeuReceipts:
             r1, _ = _seed(conn)
             lidl_id = conn.execute("SELECT store_id FROM receipts WHERE id = ?", [r1]).fetchone()[0]
             # Add a DIFFERENT store and a hleb rule for it — should survive
-            conn.execute("INSERT INTO stores (chain_name, pib) VALUES ('Maxi', '200')")
+            conn.execute("INSERT OR IGNORE INTO shop_chains (name) VALUES ('Maxi')")
+            chain_id_Maxi = conn.execute("SELECT id FROM shop_chains WHERE name='Maxi'").fetchone()[
+                0
+            ]
+            conn.execute(
+                "INSERT INTO stores (name, chain_id, pib) VALUES ('Maxi', "
+                + str(chain_id_Maxi)
+                + ", '200')"
+            )
             maxi_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             conn.execute(
                 "INSERT INTO classification_rules"

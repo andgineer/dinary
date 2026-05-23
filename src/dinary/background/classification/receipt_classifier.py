@@ -17,10 +17,13 @@ from dinary.adapters.llmbroker import LLMBroker
 logger = logging.getLogger(__name__)
 
 _CHAIN_NAME_PROMPT = (
-    "What retail chain is this store? "
+    "Normalize this Serbian retail store name to its canonical brand name. "
     "Raw name: {store_name_raw}. "
-    "Reply with just the canonical chain name (e.g. Lidl, Maxi, DM, Metro). "
-    "No explanation."
+    "Strip all legal suffixes (d.o.o., k.d., a.d.), country/region words "
+    "(Srbija, Serbia, RS, Beograd), "
+    "and store-type words (supermarket, market, centar, prodavnica, shop). "
+    "Return proper-case brand name only — no explanation, no punctuation. "
+    "Examples: 'LIDL SRBIJA KD' → 'Lidl', 'MAXI DOO BEOGRAD' → 'Maxi', 'DM DROGERIE MARKT' → 'DM'."
 )
 
 _SYSTEM_PROMPT = (

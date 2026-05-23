@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from dinary.adapters.exchange_rates import get_rate
 from dinary.background.classification.item_normalizer import normalize_item_name
-from dinary.background.classification.llm_client import ClassificationResult
+from dinary.background.classification.receipt_classifier import ClassificationResult
 from dinary.background.sheet_logging import sheet_logging
 from dinary.config import settings
 from dinary.db.classification_rules import RuleHit, RuleSpec, create_or_update_rule

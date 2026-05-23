@@ -13,7 +13,8 @@ from _api_helpers import db  # noqa: F401
 
 def _seed_review_data(conn):
     # category_groups id=1 and categories id=1 are seeded by the db fixture already
-    conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+    conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+    conn.execute("INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')")
     conn.execute(
         "INSERT INTO receipts (id, client_receipt_id, url, store_id) VALUES (1, 'r1', 'https://x', 1)"
     )
@@ -35,7 +36,8 @@ def _seed_review_data(conn):
 
 
 def _seed_certain_rule(conn):
-    conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+    conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+    conn.execute("INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')")
     conn.execute(
         "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
         " VALUES (1, 'r1', 'https://x', 1)"
@@ -105,7 +107,10 @@ class TestReviewFeed:
         """Page 2 must return a different rule than page 1 with page_size=1."""
         conn = storage.get_connection()
         try:
-            conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+            conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+            conn.execute(
+                "INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')"
+            )
             conn.execute(
                 "INSERT INTO receipts (id, client_receipt_id, url, store_id, created_at)"
                 " VALUES (1, 'r1', 'https://x', 1, '2026-05-02T10:00:00')"
@@ -210,7 +215,10 @@ class TestReviewFeedCertainRules:
         """A low-confidence rule with a matching receipt_item appears as doubtful."""
         conn = storage.get_connection()
         try:
-            conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+            conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+            conn.execute(
+                "INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')"
+            )
             conn.execute(
                 "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
                 " VALUES (1, 'r1', 'https://x', 1)"
@@ -291,7 +299,10 @@ class TestReviewCounts:
         conn = storage.get_connection()
         try:
             # Insert a rule with conf < 4 but NO receipt_items referencing it
-            conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+            conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+            conn.execute(
+                "INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')"
+            )
             conn.execute(
                 "INSERT INTO classification_rules"
                 " (store_id, item_name_normalized, category_id, confidence_level, source)"
@@ -308,7 +319,8 @@ class TestReviewCounts:
 @allure.feature("Receipt Review")
 class TestCategoryCorrection:
     def _seed_correction(self, conn):
-        conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+        conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+        conn.execute("INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')")
         conn.execute(
             "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
             " VALUES (1, 'r1', 'https://x', 1)"
@@ -428,7 +440,8 @@ class TestCategoryCorrection:
 @allure.feature("Receipt Review")
 class TestBatchPropagation:
     def _seed(self, conn):
-        conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+        conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+        conn.execute("INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')")
         conn.execute(
             "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
             " VALUES (1, 'r1', 'https://x', 1)"
@@ -570,7 +583,8 @@ class TestBatchPropagationNullStore:
         conn.execute("UPDATE receipt_items SET expense_id = 11 WHERE id = 11")
 
         # Receipt 3: store_id=1 (known store) — must NOT be batch-updated
-        conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+        conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+        conn.execute("INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')")
         conn.execute(
             "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
             " VALUES (12, 'lidl-r3', 'https://z', 1)"
@@ -647,7 +661,8 @@ class TestCategoryBatchCorrection:
     """scope=all updates each matched expense directly — no rows created or split."""
 
     def _seed(self, conn):
-        conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+        conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+        conn.execute("INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')")
         # receipt1: one "hleb" item → one expense (per-item model)
         conn.execute(
             "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
@@ -733,7 +748,8 @@ class TestCategoryBatchCorrection:
 @allure.feature("Receipt Review")
 class TestScopedCorrections:
     def _seed(self, conn, expense_date: str, expense_id: int = 1):
-        conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+        conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+        conn.execute("INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')")
         conn.execute(
             f"INSERT INTO receipts (id, client_receipt_id, url, store_id, created_at)"
             f" VALUES (1, 'r1', 'https://x', 1, '{expense_date}')"
@@ -887,7 +903,8 @@ class TestRulesFeedAlternativesAndTags:
     """Rules feed items must include alternative_categories and tags fields."""
 
     def _seed_rule_with_alternatives_and_tags(self, conn):
-        conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+        conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+        conn.execute("INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')")
         conn.execute(
             "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
             " VALUES (1, 'alt-r1', 'https://x', 1)"
@@ -974,7 +991,10 @@ class TestRulesFeedAlternativesAndTags:
     def test_alternative_categories_empty_when_not_set(self, client, db):  # noqa: ARG002
         conn = storage.get_connection()
         try:
-            conn.execute("INSERT INTO stores (id, chain_name, pib) VALUES (1, 'Lidl', '100')")
+            conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+            conn.execute(
+                "INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')"
+            )
             conn.execute(
                 "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
                 " VALUES (1, 'noalt-r1', 'https://x', 1)"

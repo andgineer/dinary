@@ -39,7 +39,8 @@ def conn(tmp_path, monkeypatch):
     c.execute("INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'Food', 1)")
     c.execute("INSERT INTO categories (id, name, group_id) VALUES (1, 'Groceries', 1)")
     c.execute("INSERT INTO categories (id, name, group_id) VALUES (2, 'Drinks', 1)")
-    c.execute("INSERT INTO stores (id, chain_name) VALUES (1, 'Lidl')")
+    c.execute("INSERT INTO shop_chains (id, name) VALUES (1, 'Lidl')")
+    c.execute("INSERT INTO stores (id, name, chain_id) VALUES (1, 'LIDL SRBIJA KD', 1)")
     yield c
     c.close()
 
@@ -74,7 +75,8 @@ class TestClassifyByRules:
         assert result.confidence_level == 4
 
     def test_generic_rule_applies_to_different_store(self, conn):
-        conn.execute("INSERT INTO stores (id, chain_name) VALUES (2, 'Maxi')")
+        conn.execute("INSERT INTO shop_chains (id, name) VALUES (2, 'Maxi')")
+        conn.execute("INSERT INTO stores (id, name, chain_id) VALUES (2, 'MAXI DOO', 2)")
         create_or_update_rule(conn, None, "sir", RuleSpec(1, 3, "llm"))
         result = classify_by_rules(conn, 2, "sir")
         assert isinstance(result, RuleHit)

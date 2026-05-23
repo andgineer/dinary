@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from dinary.adapters.llmbroker import LLMBroker
-from dinary.background.classification.llm_client import (
+from dinary.background.classification.receipt_classifier import (
     OpenAICompatibleClient,
     _build_user_message,
     _parse_response,
@@ -144,7 +144,8 @@ class TestOpenAICompatibleClient:
         mock_ctx, _ = self._mock_http(response_body)
 
         with patch(
-            "dinary.background.classification.llm_client.httpx.AsyncClient", return_value=mock_ctx
+            "dinary.background.classification.receipt_classifier.httpx.AsyncClient",
+            return_value=mock_ctx,
         ):
             client = OpenAICompatibleClient("https://api.example.com/v1", "key", "model")
             results = asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
@@ -159,7 +160,8 @@ class TestOpenAICompatibleClient:
         mock_ctx, mock_async_client = self._mock_http(response_body)
 
         with patch(
-            "dinary.background.classification.llm_client.httpx.AsyncClient", return_value=mock_ctx
+            "dinary.background.classification.receipt_classifier.httpx.AsyncClient",
+            return_value=mock_ctx,
         ):
             client = OpenAICompatibleClient("https://api.example.com/v1", "key", "my-model")
             asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
@@ -172,7 +174,8 @@ class TestOpenAICompatibleClient:
         mock_ctx, mock_async_client = self._mock_http(response_body)
 
         with patch(
-            "dinary.background.classification.llm_client.httpx.AsyncClient", return_value=mock_ctx
+            "dinary.background.classification.receipt_classifier.httpx.AsyncClient",
+            return_value=mock_ctx,
         ):
             client = OpenAICompatibleClient("https://api.example.com/v1/", "key", "model")
             asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
@@ -195,7 +198,8 @@ class TestOpenAICompatibleClient:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "dinary.background.classification.llm_client.httpx.AsyncClient", return_value=mock_ctx
+            "dinary.background.classification.receipt_classifier.httpx.AsyncClient",
+            return_value=mock_ctx,
         ):
             client = OpenAICompatibleClient("https://api.example.com/v1", "key", "model")
             with pytest.raises(httpx.HTTPStatusError):
@@ -205,7 +209,8 @@ class TestOpenAICompatibleClient:
         mock_ctx, _ = self._mock_http("this is not json")
 
         with patch(
-            "dinary.background.classification.llm_client.httpx.AsyncClient", return_value=mock_ctx
+            "dinary.background.classification.receipt_classifier.httpx.AsyncClient",
+            return_value=mock_ctx,
         ):
             client = OpenAICompatibleClient("https://api.example.com/v1", "key", "model")
             results = asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))

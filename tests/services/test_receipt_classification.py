@@ -13,7 +13,7 @@ import pytest
 
 from dinary.adapters.llmbroker import LLMBroker, NullStorage
 from dinary.adapters.rate_helpers import save_db_rate
-from dinary.background.classification.llm_client import ClassificationResult
+from dinary.background.classification.receipt_classifier import ClassificationResult
 from dinary.background.classification.persist import RECEIPT_CURRENCY, RateMissingError
 from dinary.background.classification.task import _classify_and_persist
 from dinary.config import settings

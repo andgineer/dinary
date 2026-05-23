@@ -1,6 +1,6 @@
 """Self-contained LLM provider broker with round-robin failover and rate-limit handling.
 
-No imports from dinary.db, dinary.adapters.llm_client, or any SQLite module —
+No imports from dinary.db or any SQLite module —
 intentionally isolated for future extraction as a standalone package.
 """
 
@@ -302,8 +302,13 @@ class LLMBroker:
 
     def _advance_idx(self, provider: ProviderConfig) -> None:
         providers = self._providers
-        if providers:
-            self._next_idx = (providers.index(provider) + 1) % len(providers)
+        if not providers:
+            return
+        ids = [p.id for p in providers]
+        try:
+            self._next_idx = (ids.index(provider.id) + 1) % len(providers)
+        except ValueError:
+            self._next_idx = 0
 
     async def _call_provider(self, provider: ProviderConfig, messages: list[dict]) -> str:
         async with httpx.AsyncClient(timeout=60.0) as client:

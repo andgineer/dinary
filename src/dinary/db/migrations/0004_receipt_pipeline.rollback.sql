@@ -15,6 +15,7 @@ DROP TABLE IF EXISTS classification_rules;
 DROP TABLE IF EXISTS receipt_items;
 DROP TABLE IF EXISTS receipts;
 DROP TABLE IF EXISTS stores;
+DROP TABLE IF EXISTS shop_chains;
 ALTER TABLE expenses DROP COLUMN IF EXISTS rule_id;
 ALTER TABLE expenses DROP COLUMN IF EXISTS confidence_level;
 ALTER TABLE expenses DROP COLUMN IF EXISTS store_id;

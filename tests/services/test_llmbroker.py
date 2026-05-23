@@ -288,6 +288,42 @@ class TestLLMBrokerComplete:
 
         assert asyncio.run(run()) is False
 
+    def test_advance_idx_tolerates_provider_refresh(self):
+        """_advance_idx must not crash when self._providers is replaced by a refresh
+        that recreates ProviderConfig objects with different field values (e.g.
+        rate_limited_until updated from DB), so the old object is no longer in the list."""
+        p_original = _make_provider(1, label="P1")
+        p_refreshed = ProviderConfig(
+            id=1,
+            label="P1",
+            base_url="https://api.example.com/v1",
+            api_key="key",
+            model="model",
+            priority=0,
+            rate_limit_sec=60,
+            rate_limited_until=datetime(2025, 1, 1, tzinfo=UTC),
+        )
+
+        async def run():
+            broker = LLMBroker(_SeededStorage([p_original]))
+            await broker.start()
+            original_advance = broker._advance_idx
+
+            def patched_advance(provider):
+                broker._providers = [p_refreshed]
+                original_advance(provider)
+
+            broker._advance_idx = patched_advance
+            with patch(
+                "dinary.adapters.llmbroker.httpx.AsyncClient",
+                return_value=_http_ctx(_ok_response("ok")),
+            ):
+                content, _ = await broker.complete([{"role": "user", "content": "hi"}])
+            await broker.stop()
+            return content
+
+        assert asyncio.run(run()) == "ok"
+
     def test_background_tasks_start_and_stop_cleanly(self):
         async def run():
             broker = LLMBroker(NullStorage())

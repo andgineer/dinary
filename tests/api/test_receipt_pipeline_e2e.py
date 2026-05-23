@@ -12,7 +12,7 @@ import pytest
 
 from dinary.adapters.llmbroker import LLMBroker, NullStorage
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
-from dinary.background.classification.llm_client import ClassificationResult
+from dinary.background.classification.receipt_classifier import ClassificationResult
 from dinary.background.classification.task import _process_job
 from dinary.config import settings
 from dinary.db import storage

@@ -77,7 +77,7 @@ def query_rules(
                 cr.confidence_level,
                 cr.alternative_category_ids,
                 cr.tag_ids,
-                s.chain_name                AS store_chain,
+                sc.name                     AS store_chain,
                 c.name                      AS category_name,
                 SUM(ri.total_price)         AS amount_at_stake,
                 COUNT(ri.id)                AS occurrence_count,
@@ -87,6 +87,7 @@ def query_rules(
               FROM classification_rules cr
               JOIN categories c   ON c.id = cr.category_id
               LEFT JOIN stores s  ON s.id = cr.store_id
+              LEFT JOIN shop_chains sc ON sc.id = s.chain_id
               JOIN receipt_items ri ON ri.name_normalized = cr.item_name_normalized
               JOIN receipts rec   ON rec.id = ri.receipt_id
                    AND (cr.store_id IS NULL OR rec.store_id = cr.store_id)
