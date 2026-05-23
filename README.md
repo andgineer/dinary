@@ -21,7 +21,7 @@
 | src/dinary/api/controllers/catalog\_writer\_events.py     |      209 |       34 |     84% |39, 247-249, 264, 274-279, 313, 315, 317, 319, 329, 345, 382-384, 418, 426, 439-441, 465, 501, 505-507, 514-516, 538, 551-553 |
 | src/dinary/api/controllers/catalog\_writer\_groups.py     |       76 |       31 |     59% |37-41, 108-110, 130-170, 179, 203 |
 | src/dinary/api/controllers/expense\_corrections.py        |       59 |        0 |    100% |           |
-| src/dinary/api/controllers/expenses.py                    |      154 |        6 |     96% |153, 252-253, 419-421 |
+| src/dinary/api/controllers/expenses.py                    |      154 |        6 |     96% |154, 243-244, 411-413 |
 | src/dinary/api/controllers/llm.py                         |       89 |       18 |     80% |92-93, 95-96, 101-102, 104-105, 144-160 |
 | src/dinary/api/controllers/qr\_parser.py                  |       16 |        1 |     94% |        31 |
 | src/dinary/api/controllers/rules.py                       |       54 |        4 |     93% |51-52, 153-161 |
@@ -34,7 +34,7 @@
 | src/dinary/api/rules.py                                   |       17 |        0 |    100% |           |
 | src/dinary/background/classification/item\_normalizer.py  |       13 |        0 |    100% |           |
 | src/dinary/background/classification/llm\_client.py       |       73 |        7 |     90% |   150-163 |
-| src/dinary/background/classification/persist.py           |       83 |       10 |     88% |142, 171-173, 198-200, 223-225 |
+| src/dinary/background/classification/persist.py           |       85 |       10 |     88% |145, 174-176, 201-203, 226-228 |
 | src/dinary/background/classification/store\_resolver.py   |       21 |        0 |    100% |           |
 | src/dinary/background/classification/task.py              |      174 |       30 |     83% |131-133, 141-157, 161-165, 169-173, 190, 221, 231-237, 278, 306, 330-332 |
 | src/dinary/background/rate\_prefetch/task.py              |       57 |        2 |     96% |   87, 118 |
@@ -44,7 +44,7 @@
 | src/dinary/background/sheet\_logging/task.py              |       54 |        7 |     87% |     45-58 |
 | src/dinary/config.py                                      |      158 |       19 |     88% |38, 48, 111-113, 144, 150, 206-210, 212-216, 219-224, 227-231, 294-296 |
 | src/dinary/db/catalog.py                                  |       44 |        0 |    100% |           |
-| src/dinary/db/classification\_rules.py                    |       33 |        2 |     94% |     53-54 |
+| src/dinary/db/classification\_rules.py                    |       39 |        2 |     95% |     64-65 |
 | src/dinary/db/currencies.py                               |       34 |        5 |     85% |21-22, 59-64 |
 | src/dinary/db/db\_migrations.py                           |       54 |        2 |     96% |    86, 89 |
 | src/dinary/db/expenses.py                                 |      132 |       14 |     89% |126, 146, 149, 168, 201-208, 227-233, 319, 423, 465 |
@@ -54,7 +54,7 @@
 | src/dinary/main.py                                        |       85 |        8 |     91% |42-44, 115, 121, 127, 137, 147 |
 | src/dinary/sheets/sheet\_mapping.py                       |      250 |       54 |     78% |239, 311-313, 340-341, 348-354, 404, 407-419, 433-434, 444-462, 539-546, 574-626, 654, 665-670 |
 | src/dinary/sheets/sheets.py                               |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
-| **TOTAL**                                                 | **3775** |  **500** | **87%** |           |
+| **TOTAL**                                                 | **3783** |  **500** | **87%** |           |
 
 
 ## Setup coverage badge
