@@ -223,14 +223,14 @@ class TestOpenAICompatibleClient:
 @allure.epic("Services")
 @allure.feature("LLM Client — adapter functions")
 class TestClassifyReceiptAdapter:
-    def _make_broker(self, raw_content: str, used_fallback: bool = False) -> LLMBroker:
+    def _make_broker(self, raw_content: str) -> LLMBroker:
         broker = MagicMock(spec=LLMBroker)
-        broker.complete = AsyncMock(return_value=(raw_content, used_fallback))
+        broker.chat = AsyncMock(return_value=raw_content)
         return broker
 
-    def test_returns_parsed_results_and_used_fallback(self):
+    def test_returns_parsed_results_no_fallback_on_first_success(self):
         raw = json.dumps([{"item": "hleb", "category_id": 1, "confidence": 3}])
-        broker = self._make_broker(raw, used_fallback=False)
+        broker = self._make_broker(raw)
 
         results, used_fallback = asyncio.run(
             classify_receipt(broker, ["hleb"], "Lidl", _CATEGORIES)
@@ -246,17 +246,20 @@ class TestClassifyReceiptAdapter:
 
         asyncio.run(classify_receipt(broker, ["hleb"], "Lidl", _CATEGORIES, context_id=42))
 
-        broker.complete.assert_awaited_once()
-        _, kwargs = broker.complete.call_args
+        broker.chat.assert_awaited_once()
+        _, kwargs = broker.chat.call_args
         assert kwargs.get("context_id") == "42"
 
-    def test_used_fallback_true_propagated(self):
-        raw = json.dumps([{"item": "hleb", "category_id": 1, "confidence": 3}])
-        broker = self._make_broker(raw, used_fallback=True)
+    def test_used_fallback_true_when_broker_returns_none(self):
+        broker = MagicMock(spec=LLMBroker)
+        broker.chat = AsyncMock(return_value=None)
 
-        _, used_fallback = asyncio.run(classify_receipt(broker, ["hleb"], "Lidl", _CATEGORIES))
+        results, used_fallback = asyncio.run(
+            classify_receipt(broker, ["hleb"], "Lidl", _CATEGORIES)
+        )
 
         assert used_fallback is True
+        assert all(r.confidence_level == 1 for r in results)
 
 
 @allure.epic("Services")
@@ -264,7 +267,7 @@ class TestClassifyReceiptAdapter:
 class TestGetChainNameAdapter:
     def test_returns_first_non_empty_line(self):
         broker = MagicMock(spec=LLMBroker)
-        broker.try_complete = AsyncMock(return_value="Lidl")
+        broker.chat = AsyncMock(return_value="Lidl")
 
         result = asyncio.run(get_chain_name(broker, "LIDL SRBIJA KD"))
 
@@ -272,17 +275,19 @@ class TestGetChainNameAdapter:
 
     def test_returns_store_name_raw_when_broker_returns_none(self):
         broker = MagicMock(spec=LLMBroker)
-        broker.try_complete = AsyncMock(return_value=None)
+        broker.chat = AsyncMock(return_value=None)
 
         result = asyncio.run(get_chain_name(broker, "UNKNOWN STORE"))
 
         assert result == "UNKNOWN STORE"
 
-    def test_passes_chain_name_prompt_to_try_complete(self):
+    def test_passes_chain_name_prompt_to_chat_no_wait(self):
         broker = MagicMock(spec=LLMBroker)
-        broker.try_complete = AsyncMock(return_value="Maxi")
+        broker.chat = AsyncMock(return_value="Maxi")
 
         asyncio.run(get_chain_name(broker, "MAXI AD"))
 
-        messages = broker.try_complete.call_args.args[0]
+        _, kwargs = broker.chat.call_args
+        assert kwargs.get("wait") is False
+        messages = broker.chat.call_args.args[0]
         assert any("MAXI AD" in str(m) for m in messages)

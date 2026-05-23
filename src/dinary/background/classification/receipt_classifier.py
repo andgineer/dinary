@@ -181,16 +181,21 @@ async def classify_receipt(
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": user_msg},
     ]
-    raw, used_fallback = await broker.complete(
+    raw = await broker.chat(
         messages,
         context_id=str(context_id) if context_id is not None else None,
     )
-    return _parse_response(raw, items, set(tags.keys())), used_fallback
+    if raw is None:
+        return [
+            ClassificationResult(item_name_normalized=item, category_id=None, confidence_level=1)
+            for item in items
+        ], True
+    return _parse_response(raw, items, set(tags.keys())), False
 
 
 async def get_chain_name(broker: LLMBroker, store_name_raw: str) -> str:
     prompt = _CHAIN_NAME_PROMPT.format(store_name_raw=store_name_raw)
-    raw = await broker.try_complete([{"role": "user", "content": prompt}])
+    raw = await broker.chat([{"role": "user", "content": prompt}], wait=False)
     if raw is None:
         return store_name_raw
     return next((ln.strip() for ln in raw.splitlines() if ln.strip()), "")

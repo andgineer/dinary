@@ -59,11 +59,15 @@ class NullStorage:
 
 
 class LLMBroker:
-    """Round-robin LLM provider broker with per-provider availability events.
+    """Round-robin LLM provider broker with per-provider rate-limit handling.
 
-    ``complete()`` waits indefinitely when all providers are cooling; it never
-    raises for rate limits. ``try_complete()`` returns None immediately when
-    no provider is available.
+    Each provider occupies one slot in ``_queue``. Acquiring a provider removes
+    it from the queue; releasing puts it back — immediately on success/error, or
+    after the cooldown delay on 429/503.  At most one in-flight request per
+    provider at any time, so the thundering-herd 429 storm cannot happen.
+
+    ``chat(wait=True)`` blocks until a provider is free.
+    ``chat(wait=False)`` returns None immediately if none is available.
     """
 
     def __init__(
@@ -74,241 +78,111 @@ class LLMBroker:
     ) -> None:
         self._storage = storage
         self._refresh_interval = refresh_interval
-        self._providers: list[ProviderConfig] = []
-        self._provider_events: dict[Any, asyncio.Event] = {}
-        self._log_queue: asyncio.Queue[CallEvent] = asyncio.Queue()
-        self._next_idx: int = 0
+        self._queue: asyncio.Queue[ProviderConfig] = asyncio.Queue()
+        self._known_ids: set[Any] = set()
+        self._providers: list[ProviderConfig] = []  # snapshot for introspection / tests
         self._bg_refresh: asyncio.Task | None = None
-        self._bg_log_drain: asyncio.Task | None = None
 
     async def start(self) -> None:
-        providers = await self._storage.load_providers()
-        self._providers = providers
-        for p in providers:
-            self._init_event(p)
+        await self._enqueue_providers_from_db()
         self._bg_refresh = asyncio.create_task(self._run_refresh(), name="llmbroker-refresh")
-        self._bg_log_drain = asyncio.create_task(
-            self._run_log_drain(),
-            name="llmbroker-log-drain",
-        )
 
     async def stop(self) -> None:
-        for task in (self._bg_refresh, self._bg_log_drain):
-            if task:
-                task.cancel()
+        if self._bg_refresh:
+            self._bg_refresh.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             if self._bg_refresh:
                 await self._bg_refresh
-        with contextlib.suppress(asyncio.CancelledError):
-            if self._bg_log_drain:
-                await self._bg_log_drain
-        while not self._log_queue.empty():
-            try:
-                event = self._log_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            try:
-                await self._storage.on_call_logged(event)
-                if event.rate_limited_until is not None:
-                    await self._storage.on_rate_limited(event.provider_id, event.rate_limited_until)
-            except Exception:  # noqa: BLE001
-                logger.exception("LLMBroker: log drain failed during shutdown flush")
-            finally:
-                self._log_queue.task_done()
+
+    async def _enqueue_providers_from_db(self) -> None:
+        providers = await self._storage.load_providers()
+        self._providers = providers
+        now = datetime.now(UTC)
+        loop = asyncio.get_running_loop()
+        for p in providers:
+            if p.id not in self._known_ids:
+                self._known_ids.add(p.id)
+                if p.rate_limited_until and p.rate_limited_until > now:
+                    delay = (p.rate_limited_until - now).total_seconds()
+                    loop.call_later(max(0.0, delay), self._queue.put_nowait, p)
+                else:
+                    self._queue.put_nowait(p)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    async def complete(
+    async def chat(
         self,
         messages: list[dict],
+        *,
+        wait: bool = True,
         context_id: Any | None = None,
-    ) -> tuple[str, bool]:
-        """Return (content, used_fallback).
+    ) -> str | None:
+        """Send a chat completion job to an available provider.
 
-        Waits indefinitely when all providers are cooling; never raises for
-        rate limits. used_fallback=True when the primary provider was skipped
-        or a provider failed before a successful call.
+        Returns the response content, or None on transient error (network / unavailable).
+        Raises on permanent HTTP errors (non-429/503).
+        wait=True  — on 429/503 blocks until cooldown expires and retries; blocks if queue empty.
+        wait=False — returns None immediately if no provider is available or on 429/503.
         """
-        used_fallback = False
         while True:
-            provider, skipped_primary = await self._wait_and_pick()
-            used_fallback = used_fallback or skipped_primary
-            content = await self._attempt_call(provider, messages, context_id)
-            if content is not None:
-                self._advance_idx(provider)
-                return content, used_fallback
-            used_fallback = True
+            try:
+                provider = await self._queue.get() if wait else self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return None
 
-    async def try_complete(self, messages: list[dict]) -> str | None:
-        """Return content from first available provider, or None if none available right now."""
-        provider = self._pick_first_available()
-        if provider is None:
-            return None
-        t0 = time.monotonic()
-        status, rate_limited_until = "ok", None
-        try:
-            return await self._call_provider(provider, messages)
-        except httpx.HTTPStatusError as exc:
-            code = exc.response.status_code
-            if code in (429, 503):
-                delay = self._parse_retry_after(exc.response, provider.rate_limit_sec)
-                rate_limited_until = datetime.now(UTC) + timedelta(seconds=delay)
-                self._rate_limit_provider(provider.id, delay)
-                status = str(code)
-            else:
+            t0 = time.monotonic()
+            status, rate_limited_until = "ok", None
+            try:
+                content = await self._call_provider(provider, messages)
+                self._queue.put_nowait(provider)
+                return content
+            except httpx.HTTPStatusError as exc:
+                code = exc.response.status_code
+                if code in (429, 503):
+                    delay = self._parse_retry_after(exc.response, provider.rate_limit_sec)
+                    rate_limited_until = datetime.now(UTC) + timedelta(seconds=delay)
+                    asyncio.get_running_loop().call_later(
+                        float(delay),
+                        self._queue.put_nowait,
+                        provider,
+                    )
+                    status = str(code)
+                    logger.warning(
+                        "LLMBroker: %s returned %s, cooling for %ds",
+                        provider.label,
+                        code,
+                        delay,
+                    )
+                    if not wait:
+                        return None
+                    # wait=True: loop — queue.get() blocks until cooldown or another provider
+                else:
+                    self._queue.put_nowait(provider)
+                    status = "error"
+                    raise
+            except (httpx.TimeoutException, httpx.ConnectError, OSError) as exc:
+                self._queue.put_nowait(provider)
                 status = "error"
-            logger.warning(
-                "LLMBroker.try_complete: %s failed with HTTP %s",
-                provider.label,
-                code,
-            )
-            return None
-        except (httpx.TimeoutException, httpx.ConnectError, OSError) as exc:
-            status = "error"
-            logger.warning(
-                "LLMBroker.try_complete: %s network error (%s)",
-                provider.label,
-                type(exc).__name__,
-            )
-            return None
-        finally:
-            self._emit(
-                provider.id,
-                None,
-                status,
-                int((time.monotonic() - t0) * 1000),
-                rate_limited_until=rate_limited_until,
-            )
+                logger.warning(
+                    "LLMBroker: %s network error (%s)",
+                    provider.label,
+                    type(exc).__name__,
+                )
+                return None
+            finally:
+                await self._log_call(
+                    provider.id,
+                    context_id,
+                    status,
+                    int((time.monotonic() - t0) * 1000),
+                    rate_limited_until=rate_limited_until,
+                )
 
     # ------------------------------------------------------------------
-    # Provider selection helpers
+    # HTTP
     # ------------------------------------------------------------------
-
-    def _available_ids(self, providers: list[ProviderConfig]) -> set:
-        return {
-            p.id for p in providers if self._provider_events.get(p.id, asyncio.Event()).is_set()
-        }
-
-    def _pick_round_robin(
-        self,
-        providers: list[ProviderConfig],
-        available: set,
-    ) -> tuple[ProviderConfig | None, bool]:
-        """Return (provider, skipped_primary) using round-robin over available providers."""
-        n = len(providers)
-        for i in range(n):
-            candidate = providers[(self._next_idx + i) % n]
-            if candidate.id in available:
-                return candidate, i > 0
-        return None, False
-
-    def _pick_first_available(self) -> ProviderConfig | None:
-        """Return the first available provider in round-robin order, or None."""
-        providers = self._providers
-        n = len(providers)
-        for i in range(n):
-            candidate = providers[(self._next_idx + i) % n]
-            if self._provider_events.get(candidate.id, asyncio.Event()).is_set():
-                return candidate
-        return None
-
-    async def _wait_for_any_available(self, providers: list[ProviderConfig]) -> None:
-        logger.info("LLMBroker: all providers cooling — waiting for availability")
-        events = [self._provider_events[p.id] for p in providers if p.id in self._provider_events]
-        if not events:
-            await asyncio.sleep(5)
-            return
-        tasks = [asyncio.create_task(ev.wait()) for ev in events]
-        try:
-            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            for t in tasks:
-                t.cancel()
-
-    async def _wait_and_pick(self) -> tuple[ProviderConfig, bool]:
-        """Block until a provider is available; return (provider, skipped_primary)."""
-        while True:
-            providers = self._providers
-            if not providers:
-                logger.warning("LLMBroker: no providers configured — waiting 60s")
-                await asyncio.sleep(60)
-                continue
-            available = self._available_ids(providers)
-            if not available:
-                await self._wait_for_any_available(providers)
-                continue
-            provider, skipped = self._pick_round_robin(providers, available)
-            if provider is not None:
-                return provider, skipped
-
-    # ------------------------------------------------------------------
-    # HTTP call helpers
-    # ------------------------------------------------------------------
-
-    async def _attempt_call(
-        self,
-        provider: ProviderConfig,
-        messages: list[dict],
-        context_id: Any | None,
-    ) -> str | None:
-        """Call one provider. Returns content on success, None on retriable failure.
-
-        Raises on non-retriable HTTP errors or unexpected exceptions — those
-        propagate to the caller for poisoning.
-        """
-        t0 = time.monotonic()
-        try:
-            content = await self._call_provider(provider, messages)
-            self._emit(provider.id, context_id, "ok", int((time.monotonic() - t0) * 1000))
-            return content
-        except httpx.HTTPStatusError as exc:
-            latency_ms = int((time.monotonic() - t0) * 1000)
-            return self._handle_http_error(exc, provider, context_id, latency_ms)
-        except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            latency_ms = int((time.monotonic() - t0) * 1000)
-            self._emit(provider.id, context_id, "error", latency_ms)
-            logger.warning(
-                "LLMBroker: provider %s network error (%s)",
-                provider.label,
-                type(exc).__name__,
-            )
-            return None
-
-    def _handle_http_error(
-        self,
-        exc: httpx.HTTPStatusError,
-        provider: ProviderConfig,
-        context_id: Any | None,
-        latency_ms: int,
-    ) -> str | None:
-        """Log and handle an HTTPStatusError. Returns None for rate limits, re-raises otherwise."""
-        code = exc.response.status_code
-        if code in (429, 503):
-            delay = self._parse_retry_after(exc.response, provider.rate_limit_sec)
-            until = datetime.now(UTC) + timedelta(seconds=delay)
-            self._emit(provider.id, context_id, str(code), latency_ms, rate_limited_until=until)
-            self._rate_limit_provider(provider.id, delay)
-            logger.warning(
-                "LLMBroker: provider %s returned %s, cooling for %ds",
-                provider.label,
-                code,
-                delay,
-            )
-            return None
-        self._emit(provider.id, context_id, "error", latency_ms)
-        raise exc
-
-    def _advance_idx(self, provider: ProviderConfig) -> None:
-        providers = self._providers
-        if not providers:
-            return
-        ids = [p.id for p in providers]
-        try:
-            self._next_idx = (ids.index(provider.id) + 1) % len(providers)
-        except ValueError:
-            self._next_idx = 0
 
     async def _call_provider(self, provider: ProviderConfig, messages: list[dict]) -> str:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -327,7 +201,11 @@ class LLMBroker:
         except (ValueError, TypeError):
             return default_sec
 
-    def _emit(
+    # ------------------------------------------------------------------
+    # Storage callbacks
+    # ------------------------------------------------------------------
+
+    async def _log_call(
         self,
         provider_id: Any,
         context_id: Any | None,
@@ -336,42 +214,23 @@ class LLMBroker:
         *,
         rate_limited_until: datetime | None = None,
     ) -> None:
-        self._log_queue.put_nowait(
-            CallEvent(
-                provider_id=provider_id,
-                context_id=context_id,
-                status=status,
-                latency_ms=latency_ms,
-                timestamp=datetime.now(UTC),
-                rate_limited_until=rate_limited_until,
-            ),
+        event = CallEvent(
+            provider_id=provider_id,
+            context_id=context_id,
+            status=status,
+            latency_ms=latency_ms,
+            timestamp=datetime.now(UTC),
+            rate_limited_until=rate_limited_until,
         )
+        try:
+            await self._storage.on_call_logged(event)
+            if rate_limited_until is not None:
+                await self._storage.on_rate_limited(provider_id, rate_limited_until)
+        except Exception:  # noqa: BLE001
+            logger.exception("LLMBroker: storage call failed")
 
     # ------------------------------------------------------------------
-    # Event management
-    # ------------------------------------------------------------------
-
-    def _init_event(self, p: ProviderConfig) -> None:
-        if p.id in self._provider_events:
-            return
-        ev = asyncio.Event()
-        now = datetime.now(UTC)
-        if p.rate_limited_until and p.rate_limited_until > now:
-            remaining = (p.rate_limited_until - now).total_seconds()
-            asyncio.get_running_loop().call_later(max(0.0, remaining), ev.set)
-        else:
-            ev.set()
-        self._provider_events[p.id] = ev
-
-    def _rate_limit_provider(self, provider_id: Any, delay_sec: int) -> None:
-        ev = self._provider_events.get(provider_id)
-        if ev is None:
-            return
-        ev.clear()
-        asyncio.get_running_loop().call_later(float(delay_sec), ev.set)
-
-    # ------------------------------------------------------------------
-    # Background tasks
+    # Background refresh
     # ------------------------------------------------------------------
 
     async def _run_refresh(self) -> None:
@@ -381,27 +240,6 @@ class LLMBroker:
             except asyncio.CancelledError:
                 break
             try:
-                new_providers = await self._storage.load_providers()
-                self._providers = new_providers
-                for p in new_providers:
-                    self._init_event(p)
+                await self._enqueue_providers_from_db()
             except Exception:  # noqa: BLE001
                 logger.exception("LLMBroker: provider refresh failed")
-
-    async def _run_log_drain(self) -> None:
-        while True:
-            try:
-                event = await self._log_queue.get()
-            except asyncio.CancelledError:
-                break
-            try:
-                await self._storage.on_call_logged(event)
-                if event.rate_limited_until is not None:
-                    await self._storage.on_rate_limited(
-                        event.provider_id,
-                        event.rate_limited_until,
-                    )
-            except Exception:  # noqa: BLE001
-                logger.exception("LLMBroker: log drain failed")
-            finally:
-                self._log_queue.task_done()
