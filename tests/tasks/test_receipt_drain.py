@@ -218,7 +218,7 @@ class TestProcessJobEdgeCases:
             total_ok=True,
             used_journal_fallback=False,
         )
-        fixed_created_at = "2026-01-15 08:30:00"
+        fixed_created_at = "2026-01-15 08:30:00+00:00"
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -273,7 +273,7 @@ class TestProcessJobEdgeCases:
             conn.close()
 
         assert exp is not None
-        assert str(exp[0]).startswith("2026-01-15 08:30")
+        assert str(exp[0]).startswith("2026-01-15 09:30")
 
     def test_fallback_metadata_cleared_on_successful_parse(self, drain_db):  # noqa: ARG002
         """_save_parsed clears fallback metadata when /specifications succeeds."""
