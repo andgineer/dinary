@@ -34,9 +34,10 @@
 | src/dinary/api/rules.py                                   |       17 |        0 |    100% |           |
 | src/dinary/background/classification/item\_normalizer.py  |       13 |        0 |    100% |           |
 | src/dinary/background/classification/llm\_client.py       |       73 |        7 |     90% |   150-163 |
+| src/dinary/background/classification/persist.py           |       78 |        9 |     88% |169-171, 196-198, 221-223 |
 | src/dinary/background/classification/store\_resolver.py   |       21 |        0 |    100% |           |
-| src/dinary/background/classification/task.py              |      230 |       38 |     83% |137-139, 147-163, 167-171, 175-179, 196, 227, 237-243, 319, 357-359, 437-439, 459-461, 509-511 |
-| src/dinary/background/rate\_prefetch/task.py              |       56 |        2 |     96% |   86, 117 |
+| src/dinary/background/classification/task.py              |      174 |       30 |     83% |131-133, 141-157, 161-165, 169-173, 190, 221, 231-237, 278, 306, 330-332 |
+| src/dinary/background/rate\_prefetch/task.py              |       57 |        2 |     96% |   87, 118 |
 | src/dinary/background/sheet\_logging/logging\_jobs.py     |       63 |        9 |     86% |88-89, 105-111 |
 | src/dinary/background/sheet\_logging/sheet\_logging.py    |      227 |       41 |     82% |101-105, 119-126, 134, 200-201, 211, 216-218, 261-263, 287-288, 292-302, 379, 418-422, 433, 437, 467-468, 488-498 |
 | src/dinary/background/sheet\_logging/sheets\_write.py     |       65 |       35 |     46% |114-119, 124-127, 131-136, 158-192 |
@@ -53,7 +54,7 @@
 | src/dinary/main.py                                        |       85 |        8 |     91% |42-44, 115, 121, 127, 137, 147 |
 | src/dinary/sheets/sheet\_mapping.py                       |      250 |       54 |     78% |239, 311-313, 340-341, 348-354, 404, 407-419, 433-434, 444-462, 539-546, 574-626, 654, 665-670 |
 | src/dinary/sheets/sheets.py                               |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
-| **TOTAL**                                                 | **3745** |  **498** | **87%** |           |
+| **TOTAL**                                                 | **3768** |  **499** | **87%** |           |
 
 
 ## Setup coverage badge

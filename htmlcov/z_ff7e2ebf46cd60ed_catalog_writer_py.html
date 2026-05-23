@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_ff7e2ebf46cd60ed_catalog_writer_categories_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-23 07:58 +0000
+            created at 2026-05-23 09:37 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -96,7 +96,7 @@
     <p class="pln"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t"><span class="key">def</span> <span class="nam">hash_catalog_state</span><span class="op">(</span><span class="nam">con</span><span class="op">:</span> <span class="nam">sqlite3</span><span class="op">.</span><span class="nam">Connection</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t">    <span class="str">"""Return a hex sha256 over the canonical catalog state."""</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t">    <span class="key">return</span> <span class="nam">_hash_state</span><span class="op">(</span><span class="nam">con</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t">    <span class="key">return</span> <span class="nam">hash_state</span><span class="op">(</span><span class="nam">con</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t"><span class="key">def</span> <span class="nam">_canonical_state</span><span class="op">(</span><span class="nam">con</span><span class="op">:</span> <span class="nam">sqlite3</span><span class="op">.</span><span class="nam">Connection</span><span class="op">)</span> <span class="op">-></span> <span class="nam">bytes</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -140,11 +140,11 @@
     <p class="run"><span class="n"><a id="t58" href="#t58">58</a></span><span class="t">    <span class="key">return</span> <span class="str">"\n"</span><span class="op">.</span><span class="nam">join</span><span class="op">(</span><span class="nam">parts</span><span class="op">)</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="str">"utf-8"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t59" href="#t59">59</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t60" href="#t60">60</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t61" href="#t61">61</a></span><span class="t"><span class="key">def</span> <span class="nam">_hash_state</span><span class="op">(</span><span class="nam">con</span><span class="op">:</span> <span class="nam">sqlite3</span><span class="op">.</span><span class="nam">Connection</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t61" href="#t61">61</a></span><span class="t"><span class="key">def</span> <span class="nam">hash_state</span><span class="op">(</span><span class="nam">con</span><span class="op">:</span> <span class="nam">sqlite3</span><span class="op">.</span><span class="nam">Connection</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t62" href="#t62">62</a></span><span class="t">    <span class="key">return</span> <span class="nam">hashlib</span><span class="op">.</span><span class="nam">sha256</span><span class="op">(</span><span class="nam">_canonical_state</span><span class="op">(</span><span class="nam">con</span><span class="op">)</span><span class="op">)</span><span class="op">.</span><span class="nam">hexdigest</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t63" href="#t63">63</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t64" href="#t64">64</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t65" href="#t65">65</a></span><span class="t"><span class="key">def</span> <span class="nam">_commit_with_bump</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t65" href="#t65">65</a></span><span class="t"><span class="key">def</span> <span class="nam">commit_with_bump</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t66" href="#t66">66</a></span><span class="t">    <span class="nam">con</span><span class="op">:</span> <span class="nam">sqlite3</span><span class="op">.</span><span class="nam">Connection</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t">    <span class="nam">before_hash</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t68" href="#t68">68</a></span><span class="t">    <span class="op">*</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -154,7 +154,7 @@
     <p class="pln"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t"><span class="str">    Returns ``True`` when the version was bumped, ``False`` on no-op.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">    <span class="nam">after_hash</span> <span class="op">=</span> <span class="nam">_hash_state</span><span class="op">(</span><span class="nam">con</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">    <span class="nam">after_hash</span> <span class="op">=</span> <span class="nam">hash_state</span><span class="op">(</span><span class="nam">con</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t">    <span class="nam">bumped</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t77" href="#t77">77</a></span><span class="t">    <span class="key">if</span> <span class="nam">before_hash</span> <span class="op">!=</span> <span class="nam">after_hash</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t">        <span class="nam">previous</span> <span class="op">=</span> <span class="nam">get_catalog_version</span><span class="op">(</span><span class="nam">con</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -169,7 +169,7 @@
     <p class="run"><span class="n"><a id="t87" href="#t87">87</a></span><span class="t">    <span class="key">return</span> <span class="nam">bumped</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t88" href="#t88">88</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t89" href="#t89">89</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t90" href="#t90">90</a></span><span class="t"><span class="key">def</span> <span class="nam">_next_id</span><span class="op">(</span><span class="nam">con</span><span class="op">:</span> <span class="nam">sqlite3</span><span class="op">.</span><span class="nam">Connection</span><span class="op">,</span> <span class="nam">table</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">int</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t90" href="#t90">90</a></span><span class="t"><span class="key">def</span> <span class="nam">next_id</span><span class="op">(</span><span class="nam">con</span><span class="op">:</span> <span class="nam">sqlite3</span><span class="op">.</span><span class="nam">Connection</span><span class="op">,</span> <span class="nam">table</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">int</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t91" href="#t91">91</a></span><span class="t">    <span class="nam">row</span> <span class="op">=</span> <span class="nam">con</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span><span class="fst">f"</span><span class="fst">SELECT COALESCE(MAX(id), 0) + 1 FROM </span><span class="op">{</span><span class="nam">table</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span><span class="op">.</span><span class="nam">fetchone</span><span class="op">(</span><span class="op">)</span>  <span class="com"># noqa: S608</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t">    <span class="key">return</span> <span class="nam">int</span><span class="op">(</span><span class="nam">row</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">)</span> <span class="key">if</span> <span class="nam">row</span> <span class="key">else</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
 </main>
@@ -181,7 +181,7 @@
             <a class="nav" href="z_ff7e2ebf46cd60ed_catalog_writer_categories_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-23 07:58 +0000
+            created at 2026-05-23 09:37 +0000
         </p>
     </div>
 </footer>

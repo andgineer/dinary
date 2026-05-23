@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_2795f89fe87e2487_nbs_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-23 07:58 +0000
+            created at 2026-05-23 09:37 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -98,7 +98,7 @@
     <p class="run"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">adapters</span><span class="op">.</span><span class="nam">rate_helpers</span> <span class="key">import</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t">    <span class="nam">_FETCH_RATE_CACHE_TIME</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t">    <span class="nam">_get_json_or_none</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t">    <span class="nam">_save_db_rate</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t">    <span class="nam">save_db_rate</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t20" href="#t20">20</a></span><span class="t"><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t21" href="#t21">21</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t"><span class="nam">logger</span> <span class="op">=</span> <span class="nam">logging</span><span class="op">.</span><span class="nam">getLogger</span><span class="op">(</span><span class="nam">__name__</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -152,7 +152,7 @@
     <p class="run"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t">    <span class="key">return</span> <span class="nam">_fetch_nbp_pln_leg</span><span class="op">(</span><span class="key">None</span><span class="op">,</span> <span class="nam">currency</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t"><span class="key">def</span> <span class="nam">_resolve_from_nbp</span><span class="op">(</span><span class="nam">con</span><span class="op">,</span> <span class="nam">rate_date</span><span class="op">:</span> <span class="nam">date</span><span class="op">,</span> <span class="nam">source</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">target</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">Decimal</span> <span class="op">|</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t"><span class="key">def</span> <span class="nam">resolve_from_nbp</span><span class="op">(</span><span class="nam">con</span><span class="op">,</span> <span class="nam">rate_date</span><span class="op">:</span> <span class="nam">date</span><span class="op">,</span> <span class="nam">source</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">target</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">Decimal</span> <span class="op">|</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">    <span class="str">"""Resolve ``source/target`` via NBP, bridging through PLN.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t"><span class="str">    Returns ``None`` when NBP has no rate for either side. The</span>&nbsp;</span><span class="r"></span></p>
@@ -172,7 +172,7 @@
     <p class="run"><span class="n"><a id="t90" href="#t90">90</a></span><span class="t">    <span class="key">if</span> <span class="nam">rate_tgt</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t91" href="#t91">91</a></span><span class="t">        <span class="key">return</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t">    <span class="nam">bridged</span> <span class="op">=</span> <span class="op">(</span><span class="nam">rate_src</span> <span class="op">/</span> <span class="nam">rate_tgt</span><span class="op">)</span><span class="op">.</span><span class="nam">quantize</span><span class="op">(</span><span class="nam">Decimal</span><span class="op">(</span><span class="str">"0.000001"</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t93" href="#t93">93</a></span><span class="t">    <span class="nam">_save_db_rate</span><span class="op">(</span><span class="nam">con</span><span class="op">,</span> <span class="nam">rate_date</span><span class="op">,</span> <span class="nam">source</span><span class="op">,</span> <span class="nam">target</span><span class="op">,</span> <span class="nam">bridged</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t93" href="#t93">93</a></span><span class="t">    <span class="nam">save_db_rate</span><span class="op">(</span><span class="nam">con</span><span class="op">,</span> <span class="nam">rate_date</span><span class="op">,</span> <span class="nam">source</span><span class="op">,</span> <span class="nam">target</span><span class="op">,</span> <span class="nam">bridged</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t94" href="#t94">94</a></span><span class="t">    <span class="key">return</span> <span class="nam">bridged</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
@@ -183,7 +183,7 @@
             <a class="nav" href="z_2795f89fe87e2487_nbs_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-23 07:58 +0000
+            created at 2026-05-23 09:37 +0000
         </p>
     </div>
 </footer>
