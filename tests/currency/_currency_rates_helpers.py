@@ -46,8 +46,8 @@ def _clear_ttl_caches():
 @pytest.fixture
 def nbs_mocks():
     with (
-        patch("dinary.adapters.nbs._get_db_rate") as get_db,
-        patch("dinary.adapters.nbs._save_db_rate") as save_db,
+        patch("dinary.adapters.nbs.get_db_rate") as get_db,
+        patch("dinary.adapters.nbs.save_db_rate") as save_db,
         patch("dinary.adapters.nbs._fetch_nbs_rate") as fetch_nbs,
     ):
         get_db.return_value = None

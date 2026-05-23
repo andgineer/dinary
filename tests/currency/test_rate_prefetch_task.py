@@ -114,7 +114,7 @@ class TestWorkingDayFetch:
                 "dinary.background.rate_prefetch.task.storage",
             ) as mock_repo,
             patch(
-                "dinary.background.rate_prefetch.task._get_db_rate",
+                "dinary.background.rate_prefetch.task.get_db_rate",
                 # first call: no existing rate; second call: verify write succeeded
                 side_effect=[None, _RATE],
             ),
@@ -167,7 +167,7 @@ class TestWeekendFetch:
                 "dinary.background.rate_prefetch.task.storage",
             ) as mock_repo,
             patch(
-                "dinary.background.rate_prefetch.task._get_db_rate",
+                "dinary.background.rate_prefetch.task.get_db_rate",
                 side_effect=[None, _RATE],
             ),
             patch(
@@ -217,7 +217,7 @@ class TestAlreadyCached:
                 "dinary.background.rate_prefetch.task.storage",
             ) as mock_repo,
             patch(
-                "dinary.background.rate_prefetch.task._get_db_rate",
+                "dinary.background.rate_prefetch.task.get_db_rate",
                 return_value=_RATE,
             ),
             patch(
@@ -262,7 +262,7 @@ class TestFetchError:
                 "dinary.background.rate_prefetch.task.storage",
             ) as mock_repo,
             patch(
-                "dinary.background.rate_prefetch.task._get_db_rate",
+                "dinary.background.rate_prefetch.task.get_db_rate",
                 return_value=None,
             ),
             patch(
@@ -310,7 +310,7 @@ class TestStaleFallback:
                 "dinary.background.rate_prefetch.task.storage",
             ) as mock_repo,
             patch(
-                "dinary.background.rate_prefetch.task._get_db_rate",
+                "dinary.background.rate_prefetch.task.get_db_rate",
                 # first call: no existing rate; second call: still None (not written)
                 return_value=None,
             ),

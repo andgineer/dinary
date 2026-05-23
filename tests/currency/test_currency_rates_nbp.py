@@ -8,7 +8,7 @@ suite pins:
 * The "specific date 404 → no-date latest" walk inside
   ``_pln_leg``.
 * The PLN-bridge product, identity, and missing-leg cases inside
-  ``_resolve_from_nbp``.
+  ``resolve_from_nbp``.
 
 Cross-resolver chain tests (NBS → NBP fallback) live in
 :file:`test_currency_rates_misc.py`.
@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, call, patch
 
 import allure
 
-from dinary.adapters.nbp import _fetch_nbp_pln_leg, _pln_leg, _resolve_from_nbp
+from dinary.adapters.nbp import _fetch_nbp_pln_leg, _pln_leg, resolve_from_nbp
 
 from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
     _MON,
@@ -106,39 +106,39 @@ class TestPlnLeg:
 
 @allure.epic("Services")
 @allure.feature("NBP Exchange Rate")
-@allure.story("_resolve_from_nbp — bridge through PLN")
+@allure.story("resolve_from_nbp — bridge through PLN")
 class TestResolveFromNbp:
-    @patch("dinary.adapters.nbp._save_db_rate")
+    @patch("dinary.adapters.nbp.save_db_rate")
     @patch("dinary.adapters.nbp._pln_leg")
     def test_bridges_two_legs(self, mock_leg, mock_save):
         # X/Y = (X/PLN) / (Y/PLN). RSD/EUR ≈ 0.0362 / 4.27 ≈ 0.008479.
         mock_leg.side_effect = [Decimal("0.0362"), Decimal("4.2700")]
         con = MagicMock()
-        rate = _resolve_from_nbp(con, _MON, "RSD", "EUR")
+        rate = resolve_from_nbp(con, _MON, "RSD", "EUR")
         expected = (Decimal("0.0362") / Decimal("4.2700")).quantize(Decimal("0.000001"))
         assert rate == expected
         mock_save.assert_called_once_with(con, _MON, "RSD", "EUR", expected)
 
-    @patch("dinary.adapters.nbp._save_db_rate")
+    @patch("dinary.adapters.nbp.save_db_rate")
     @patch("dinary.adapters.nbp._pln_leg")
     def test_returns_none_when_source_leg_missing(self, mock_leg, mock_save):
         mock_leg.return_value = None
         con = MagicMock()
-        assert _resolve_from_nbp(con, _MON, "ZZZ", "EUR") is None
+        assert resolve_from_nbp(con, _MON, "ZZZ", "EUR") is None
         # Source-leg miss short-circuits before the target leg query.
         mock_leg.assert_called_once()
         mock_save.assert_not_called()
 
-    @patch("dinary.adapters.nbp._save_db_rate")
+    @patch("dinary.adapters.nbp.save_db_rate")
     @patch("dinary.adapters.nbp._pln_leg")
     def test_returns_none_when_target_leg_missing(self, mock_leg, mock_save):
         # Source resolved but target has no NBP coverage.
         mock_leg.side_effect = [Decimal("0.0362"), None]
         con = MagicMock()
-        assert _resolve_from_nbp(con, _MON, "RSD", "ZZZ") is None
+        assert resolve_from_nbp(con, _MON, "RSD", "ZZZ") is None
         mock_save.assert_not_called()
 
-    @patch("dinary.adapters.nbp._save_db_rate")
+    @patch("dinary.adapters.nbp.save_db_rate")
     @patch("dinary.adapters.nbp._pln_leg")
     def test_identity_pair_short_circuits_without_fetch_or_db_write(self, mock_leg, mock_save):
         # Same source/target: return 1 without touching NBP HTTP and
@@ -147,7 +147,7 @@ class TestResolveFromNbp:
         # this resolver, but defending here too keeps direct callers
         # (and any future ``get_rate`` rewiring) from polluting the DB.
         con = MagicMock()
-        rate = _resolve_from_nbp(con, _MON, "EUR", "EUR")
+        rate = resolve_from_nbp(con, _MON, "EUR", "EUR")
         assert rate == Decimal(1)
         mock_leg.assert_not_called()
         mock_save.assert_not_called()

@@ -130,8 +130,8 @@ class TestGetRateFallbackChain:
     when NBS doesn't serve the pair.
     """
 
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbp")
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbs")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
     def test_rsd_pair_uses_nbs_direct(self, mock_nbs, mock_nbp):
         # RSD pair: NBS resolves directly. NBP must not be touched.
         mock_nbs.return_value = Decimal("117.32")
@@ -143,9 +143,9 @@ class TestGetRateFallbackChain:
         mock_nbp.assert_not_called()
         mock_nbs.assert_called_once_with(con, _MON, "EUR", "RSD")
 
-    @patch("dinary.adapters.exchange_rates._save_db_rate")
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbp")
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbs")
+    @patch("dinary.adapters.exchange_rates.save_db_rate")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
     def test_non_rsd_pair_bridges_through_rsd_via_nbs(
         self,
         mock_nbs,
@@ -166,8 +166,8 @@ class TestGetRateFallbackChain:
         mock_nbp.assert_not_called()
         mock_save.assert_called_once_with(con, _MON, "BAM", "EUR", expected)
 
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbp")
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbs")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
     def test_rsd_pair_falls_back_to_nbp_when_nbs_unavailable(
         self,
         mock_nbs,
@@ -191,8 +191,8 @@ class TestGetRateFallbackChain:
             "falling back to NBP" in r.message and r.levelname == "WARNING" for r in caplog.records
         )
 
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbp")
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbs")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
     def test_non_rsd_pair_falls_back_to_nbp_when_nbs_bridge_fails(
         self,
         mock_nbs,
@@ -209,8 +209,8 @@ class TestGetRateFallbackChain:
         assert rate == Decimal("0.5113")
         mock_nbp.assert_called_once_with(con, _MON, "BAM", "EUR")
 
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbp")
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbs")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
     def test_raises_when_both_sources_fail(self, mock_nbs, mock_nbp):
         # Surface ValueError so ``POST /api/expenses`` can propagate
         # an error instead of silently returning a stale or zero rate.
@@ -229,8 +229,8 @@ class TestGetRateOffline:
     """offline=True returns DB rate without HTTP calls; falls back to
     online resolution only when DB has no rate."""
 
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbs")
-    @patch("dinary.adapters.exchange_rates._get_db_rate")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
+    @patch("dinary.adapters.exchange_rates.get_db_rate")
     def test_offline_returns_db_rate_without_fetch(self, mock_db, mock_nbs):
         mock_db.return_value = _RATE
         con = MagicMock()
@@ -238,9 +238,9 @@ class TestGetRateOffline:
         assert result == _RATE
         mock_nbs.assert_not_called()
 
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbp")
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbs")
-    @patch("dinary.adapters.exchange_rates._get_db_rate")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
+    @patch("dinary.adapters.exchange_rates.get_db_rate")
     def test_offline_falls_back_to_online_when_db_empty(
         self,
         mock_db,
@@ -255,8 +255,8 @@ class TestGetRateOffline:
         mock_nbs.assert_called_once()
         mock_nbp.assert_not_called()
 
-    @patch("dinary.adapters.exchange_rates._resolve_from_nbs")
-    @patch("dinary.adapters.exchange_rates._get_db_rate")
+    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
+    @patch("dinary.adapters.exchange_rates.get_db_rate")
     def test_online_does_not_check_db_first(self, mock_db, mock_nbs):
         mock_nbs.return_value = _RATE
         con = MagicMock()

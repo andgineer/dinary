@@ -6,8 +6,6 @@ See "Classification Layer" in specs/architecture/architecture.md.
 import asyncio
 import contextlib
 import logging
-import sqlite3
-import uuid
 from datetime import UTC, datetime
 
 import httpx
@@ -22,17 +20,16 @@ from dinary.background.classification.llm_client import (
     load_categories,
     load_tags,
 )
+from dinary.background.classification.persist import (
+    RateMissingError,
+    persist_classification_results,
+    write_fetch_fallback_metadata,
+)
 from dinary.background.classification.store_resolver import resolve_store
 from dinary.config import settings
 from dinary.db import storage
-from dinary.db.classification_rules import (
-    RuleSpec,
-    classify_by_rules,
-    create_or_update_rule,
-)
-from dinary.db.expenses import enqueue_for_logging
+from dinary.db.classification_rules import classify_by_rules
 from dinary.db.receipts import (
-    ItemClassification,
     ReceiptItemRow,
     ReceiptJobRow,
     claim_next_job,
@@ -41,10 +38,7 @@ from dinary.db.receipts import (
     poison_job,
     release_job,
     save_parsed_receipt,
-    trim_llm_call_log,
-    update_receipt_item,
 )
-from dinary.sheets.sheet_mapping import resolve_event_auto_tag_ids
 
 logger = logging.getLogger(__name__)
 
@@ -144,9 +138,9 @@ async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
         await _classify_and_persist(broker, job, items, store_id)
         logger.info("Receipt drain: completed receipt_id=%s", job.receipt_id)
 
-    except (ParserRequestException, OSError) as exc:
+    except (ParserRequestException, OSError, RateMissingError) as exc:
         logger.warning(
-            "Transient network error for receipt_id=%s (%s) — releasing for retry",
+            "Transient error for receipt_id=%s (%s) — releasing for retry",
             job.receipt_id,
             exc,
         )
@@ -184,7 +178,7 @@ def _save_parsed(receipt_id: int, parsed: ParsedReceipt) -> None:
     try:
         save_parsed_receipt(conn, receipt_id, parsed)
         if parsed.used_journal_fallback:
-            _write_fetch_fallback_metadata(conn, parsed.invoice_number, "journal fallback used")
+            write_fetch_fallback_metadata(conn, parsed.invoice_number, "journal fallback used")
         else:
             conn.execute(
                 "DELETE FROM app_metadata WHERE key = 'receipt_fetch_fallback_last'",
@@ -208,7 +202,7 @@ def _with_parsed_data(job: ReceiptJobRow, parsed: ParsedReceipt) -> ReceiptJobRo
         store_name_raw=parsed.store_name,
         store_pib_raw=parsed.store_pib,
         invoice_number=parsed.invoice_number,
-        parsed_at="now",
+        parsed_at=datetime.now(UTC).isoformat(),
         used_journal_fallback=parsed.used_journal_fallback,
         claim_token=job.claim_token,
     )
@@ -243,23 +237,8 @@ async def _ensure_store(job: ReceiptJobRow, broker: LLMBroker) -> int | None:
         return None
 
 
-def _find_auto_attach_event(conn: sqlite3.Connection, receipt_dt: str) -> int | None:
-    """Return id of the active auto-attach event covering receipt_dt, or None."""
-    row = conn.execute(
-        """
-        SELECT id FROM events
-         WHERE auto_attach_enabled = 1 AND is_active = 1
-           AND date_from <= date(?) AND date_to >= date(?)
-         ORDER BY date_from DESC
-         LIMIT 1
-        """,
-        [receipt_dt, receipt_dt],
-    ).fetchone()
-    return int(row[0]) if row else None
-
-
 def _run_rules_pass(
-    conn: sqlite3.Connection,
+    conn,
     items: list[ReceiptItemRow],
     store_id: int | None,
 ) -> tuple[dict[int, tuple[int, int, list[int]]], list[tuple[int, str]]]:
@@ -295,6 +274,14 @@ async def _run_llm_pass(
         tags,
         context_id=job.receipt_id,
     )
+    if len(results) != len(llm_queue):
+        logger.warning(
+            "LLM returned %d results for %d queued items for receipt_id=%s"
+            " — trailing items will be unclassified",
+            len(results),
+            len(llm_queue),
+            job.receipt_id,
+        )
     return (
         {item_id: result for (item_id, _), result in zip(llm_queue, results, strict=False)},
         used_fallback,
@@ -321,122 +308,6 @@ def _compute_classifications(
                 conf = max(1, llm.confidence_level - total_penalty)
                 result[item.id] = (llm.category_id, conf)
     return result
-
-
-def _persist_classification_results(
-    conn: sqlite3.Connection,
-    job: ReceiptJobRow,
-    items: list[ReceiptItemRow],
-    classifications: dict[int, tuple[int | None, int]],
-    rule_hits: dict[int, tuple[int, int, list[int]]],
-    llm_results: dict[int, ClassificationResult],
-    store_id: int | None,
-) -> None:
-    """Write classification results atomically; handles idempotency inside the transaction."""
-    receipt_dt_row = conn.execute(
-        "SELECT COALESCE(purchase_datetime, created_at) FROM receipts WHERE id = ?",
-        [job.receipt_id],
-    ).fetchone()
-    receipt_dt = (
-        receipt_dt_row[0]
-        if receipt_dt_row
-        else datetime.now(UTC).replace(microsecond=0).isoformat()
-    )
-
-    auto_event_id = _find_auto_attach_event(conn, receipt_dt)
-    event_auto_tag_ids: list[int] = (
-        resolve_event_auto_tag_ids(conn, auto_event_id) if auto_event_id is not None else []
-    )
-
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        if conn.execute(
-            "SELECT 1 FROM expenses WHERE receipt_id = ? LIMIT 1",
-            [job.receipt_id],
-        ).fetchone():
-            complete_job(conn, job.receipt_id)
-            conn.execute("COMMIT")
-            return
-
-        for item in items:
-            cat_id, conf = classifications.get(item.id, (None, 1))
-            norm = normalize_item_name(item.name_raw)
-
-            if cat_id is None or conf <= 1:
-                update_receipt_item(
-                    conn,
-                    item.id,
-                    norm,
-                    ItemClassification(None, 1, None),
-                )
-                continue
-
-            conn.execute(
-                """
-                INSERT INTO expenses
-                       (client_expense_id, datetime, amount, amount_original, currency_original,
-                        category_id, confidence_level, receipt_id, store_id, event_id)
-                VALUES (?, ?, ?, ?, 'RSD', ?, ?, ?, ?, ?)
-                """,
-                [
-                    str(uuid.uuid4()),
-                    receipt_dt,
-                    item.total_price,
-                    item.total_price,
-                    cat_id,
-                    conf,
-                    job.receipt_id,
-                    store_id,
-                    auto_event_id,
-                ],
-            )
-            expense_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
-            enqueue_for_logging(conn, expense_id)
-            update_receipt_item(
-                conn,
-                item.id,
-                norm,
-                ItemClassification(cat_id, conf, expense_id),
-            )
-
-            if item.id in rule_hits:
-                _, _, tag_ids_for_item = rule_hits[item.id]
-            else:
-                llm_r = llm_results.get(item.id)
-                tag_ids_for_item = llm_r.tag_ids if llm_r else []
-
-            seen: set[int] = set()
-            for tag_id in [*tag_ids_for_item, *event_auto_tag_ids]:
-                if tag_id not in seen:
-                    seen.add(tag_id)
-                    conn.execute(
-                        "INSERT OR IGNORE INTO expense_tags (expense_id, tag_id) VALUES (?, ?)",
-                        [expense_id, tag_id],
-                    )
-
-            if item.id not in rule_hits and norm and conf >= 2:
-                llm_r = llm_results.get(item.id)
-                alt_ids = llm_r.alternative_category_ids if llm_r else []
-                tag_ids_for_rule = llm_r.tag_ids if llm_r else []
-                create_or_update_rule(
-                    conn,
-                    store_id,
-                    norm,
-                    RuleSpec(
-                        cat_id,
-                        conf,
-                        "llm",
-                        alternative_category_ids=tuple(alt_ids),
-                        tag_ids=tuple(tag_ids_for_rule),
-                    ),
-                )
-
-        trim_llm_call_log(conn)
-        complete_job(conn, job.receipt_id)
-        conn.execute("COMMIT")
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
 
 
 async def _classify_and_persist(
@@ -473,7 +344,7 @@ async def _classify_and_persist(
     # Connection 2: write transaction
     conn = storage.get_connection()
     try:
-        _persist_classification_results(
+        persist_classification_results(
             conn,
             job,
             items,
@@ -484,28 +355,3 @@ async def _classify_and_persist(
         )
     finally:
         conn.close()
-
-
-def _write_fetch_fallback_metadata(
-    conn: sqlite3.Connection,
-    invoice_number: str,
-    reason: str,
-) -> None:
-    now = datetime.now(UTC).isoformat()
-    value = f"{now} | invoice: {invoice_number} | reason: {reason}"
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        conn.execute(
-            "INSERT INTO app_metadata (key, value) VALUES ('receipt_fetch_fallback_last', ?)"
-            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [value],
-        )
-        conn.execute(
-            "INSERT INTO app_metadata (key, value) VALUES ('receipt_fetch_fallback_count', '1')"
-            " ON CONFLICT(key) DO UPDATE SET value ="
-            "   CAST(CAST(value AS INTEGER) + 1 AS TEXT)",
-        )
-        conn.execute("COMMIT")
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise

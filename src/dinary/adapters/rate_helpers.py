@@ -42,7 +42,7 @@ def _get_json_or_none(url: str, **kwargs) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def _get_db_rate(con, rate_date: date, source: str, target: str) -> Decimal | None:
+def get_db_rate(con, rate_date: date, source: str, target: str) -> Decimal | None:
     row = con.execute(
         "SELECT rate FROM exchange_rates"
         " WHERE date = ? AND source_currency = ? AND target_currency = ?",
@@ -51,7 +51,7 @@ def _get_db_rate(con, rate_date: date, source: str, target: str) -> Decimal | No
     return Decimal(str(row[0])) if row else None
 
 
-def _save_db_rate(con, rate_date: date, source: str, target: str, rate: Decimal) -> None:
+def save_db_rate(con, rate_date: date, source: str, target: str, rate: Decimal) -> None:
     inverse = (Decimal(1) / rate).quantize(Decimal("0.000001"))
     con.executemany(
         "INSERT INTO exchange_rates (date, source_currency, target_currency, rate)"

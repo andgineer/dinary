@@ -24,6 +24,7 @@ from dinary.background.classification.task import (
     notify_new_receipt,
     receipt_classification_task,
 )
+from dinary.config import settings
 from dinary.db import db_migrations, storage
 from dinary.db.receipts import ReceiptJobRow
 
@@ -54,6 +55,7 @@ def drain_db(tmp_path, monkeypatch):
     shutil.copy(blank, dst)
     monkeypatch.setattr(storage, "DB_PATH", dst)
     monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(settings, "accounting_currency", "RSD")
     yield dst
 
 

@@ -6,7 +6,7 @@ Shared helpers, exception classes, and state-hashing utilities live in
 
 import sqlite3
 
-from dinary.api.controllers.catalog_writer import _commit_with_bump, _hash_state, _next_id
+from dinary.api.controllers.catalog_writer import commit_with_bump, hash_state, next_id
 from dinary.api.controllers.catalog_writer_errors import (
     AddResult,
     AddStatus,
@@ -73,7 +73,7 @@ def add_group(
     """
     con.execute("BEGIN IMMEDIATE")
     try:
-        before = _hash_state(con)
+        before = hash_state(con)
         existing = con.execute(
             "SELECT id, is_active FROM category_groups WHERE name = ?",
             [name],
@@ -86,14 +86,14 @@ def add_group(
                     "UPDATE category_groups SET is_active = TRUE WHERE id = ?",
                     [gid],
                 )
-            bumped = _commit_with_bump(
+            bumped = commit_with_bump(
                 con,
                 before,
                 context=f"add_group(reactivate name={name!r})",
             )
             status: AddStatus = "reactivated" if bumped else "noop"
             return AddResult(id=gid, status=status)
-        gid = _next_id(con, "category_groups")
+        gid = next_id(con, "category_groups")
         if sort_order is None:
             row = con.execute(
                 "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM category_groups",
@@ -103,7 +103,7 @@ def add_group(
             "INSERT INTO category_groups (id, name, sort_order, is_active) VALUES (?, ?, ?, TRUE)",
             [gid, name, sort_order],
         )
-        _commit_with_bump(con, before, context=f"add_group(name={name!r})")
+        commit_with_bump(con, before, context=f"add_group(name={name!r})")
         return AddResult(id=gid, status="created")
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.add_group")
@@ -129,7 +129,7 @@ def edit_group(
     """
     con.execute("BEGIN IMMEDIATE")
     try:
-        before = _hash_state(con)
+        before = hash_state(con)
         row = con.execute(
             "SELECT id FROM category_groups WHERE id = ?",
             [group_id],
@@ -164,7 +164,7 @@ def edit_group(
                 "UPDATE category_groups SET is_active = ? WHERE id = ?",
                 [bool(is_active), group_id],
             )
-        _commit_with_bump(con, before, context=f"edit_group(id={group_id})")
+        commit_with_bump(con, before, context=f"edit_group(id={group_id})")
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.edit_group")
         raise
@@ -194,7 +194,7 @@ def delete_group(
     """
     con.execute("BEGIN IMMEDIATE")
     try:
-        before = _hash_state(con)
+        before = hash_state(con)
         row = con.execute(
             "SELECT id FROM category_groups WHERE id = ?",
             [group_id],
@@ -205,7 +205,7 @@ def delete_group(
         if child_count > 0:
             raise CatalogInUseError("category_group", group_id, child_count)
         con.execute("DELETE FROM category_groups WHERE id = ?", [group_id])
-        _commit_with_bump(con, before, context=f"delete_group(id={group_id})")
+        commit_with_bump(con, before, context=f"delete_group(id={group_id})")
         return DeleteResult(status="hard", usage_count=0)
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.delete_group")

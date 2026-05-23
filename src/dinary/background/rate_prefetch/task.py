@@ -3,7 +3,7 @@
 Waits until 08:00 Belgrade time (when kurs.resenje.org publishes
 NBS rates), then calls ``get_rate`` for today's date.  On working
 days this fetches a fresh rate from the API; on weekends and
-holidays ``_resolve_from_nbs`` walks back and stores the previous
+holidays ``resolve_from_nbs`` walks back and stores the previous
 working day's rate under today's date.
 
 Once the rate for today is in the DB the task sleeps until
@@ -22,7 +22,8 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from dinary.adapters.exchange_rates import _get_db_rate, get_rate
+from dinary.adapters.exchange_rates import get_rate
+from dinary.adapters.rate_helpers import get_db_rate
 from dinary.config import settings
 from dinary.db import storage
 
@@ -76,7 +77,7 @@ async def rate_prefetch_task() -> None:
 
             con = storage.get_connection()
             try:
-                already_stored = _get_db_rate(con, today, source, target) is not None
+                already_stored = get_db_rate(con, today, source, target) is not None
             finally:
                 con.close()
 
@@ -89,7 +90,7 @@ async def rate_prefetch_task() -> None:
 
             con = storage.get_connection()
             try:
-                stored_now = _get_db_rate(con, today, source, target) is not None
+                stored_now = get_db_rate(con, today, source, target) is not None
             finally:
                 con.close()
 

@@ -18,8 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
-from dinary.db import storage
-from dinary.db import expenses
+from dinary.db import expenses, storage
 
 
 @contextlib.contextmanager

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def hash_catalog_state(con: sqlite3.Connection) -> str:
     """Return a hex sha256 over the canonical catalog state."""
-    return _hash_state(con)
+    return hash_state(con)
 
 
 def _canonical_state(con: sqlite3.Connection) -> bytes:
@@ -58,11 +58,11 @@ def _canonical_state(con: sqlite3.Connection) -> bytes:
     return "\n".join(parts).encode("utf-8")
 
 
-def _hash_state(con: sqlite3.Connection) -> str:
+def hash_state(con: sqlite3.Connection) -> str:
     return hashlib.sha256(_canonical_state(con)).hexdigest()
 
 
-def _commit_with_bump(
+def commit_with_bump(
     con: sqlite3.Connection,
     before_hash: str,
     *,
@@ -72,7 +72,7 @@ def _commit_with_bump(
 
     Returns ``True`` when the version was bumped, ``False`` on no-op.
     """
-    after_hash = _hash_state(con)
+    after_hash = hash_state(con)
     bumped = False
     if before_hash != after_hash:
         previous = get_catalog_version(con)
@@ -87,6 +87,6 @@ def _commit_with_bump(
     return bumped
 
 
-def _next_id(con: sqlite3.Connection, table: str) -> int:
+def next_id(con: sqlite3.Connection, table: str) -> int:
     row = con.execute(f"SELECT COALESCE(MAX(id), 0) + 1 FROM {table}").fetchone()  # noqa: S608
     return int(row[0]) if row else 1

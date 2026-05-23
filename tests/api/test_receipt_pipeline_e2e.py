@@ -8,11 +8,13 @@ import asyncio
 from unittest.mock import patch
 
 import allure
+import pytest
 
-from dinary.background.classification.llm_client import ClassificationResult
 from dinary.adapters.llmbroker import LLMBroker, NullStorage
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
+from dinary.background.classification.llm_client import ClassificationResult
 from dinary.background.classification.task import _process_job
+from dinary.config import settings
 from dinary.db import storage
 from dinary.db.receipts import ReceiptJobRow, claim_next_job
 
@@ -70,6 +72,10 @@ def _run_drain(job, results=None):
 @allure.epic("Integration")
 @allure.feature("Receipt pipeline end-to-end")
 class TestReceiptPipelineE2E:
+    @pytest.fixture(autouse=True)
+    def _no_fx_conversion(self, monkeypatch):
+        monkeypatch.setattr(settings, "accounting_currency", "RSD")
+
     def test_qr_url_to_expense_created(self, client, db):  # noqa: ARG002
         """POST receipt URL → drain → expense row exists in DB."""
         resp = client.post(

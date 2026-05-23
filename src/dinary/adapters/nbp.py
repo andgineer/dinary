@@ -16,7 +16,7 @@ from cachetools import TTLCache, cached
 from dinary.adapters.rate_helpers import (
     _FETCH_RATE_CACHE_TIME,
     _get_json_or_none,
-    _save_db_rate,
+    save_db_rate,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def _pln_leg(rate_date: date, currency: str) -> Decimal | None:
     return _fetch_nbp_pln_leg(None, currency)
 
 
-def _resolve_from_nbp(con, rate_date: date, source: str, target: str) -> Decimal | None:
+def resolve_from_nbp(con, rate_date: date, source: str, target: str) -> Decimal | None:
     """Resolve ``source/target`` via NBP, bridging through PLN.
 
     Returns ``None`` when NBP has no rate for either side. The
@@ -90,5 +90,5 @@ def _resolve_from_nbp(con, rate_date: date, source: str, target: str) -> Decimal
     if rate_tgt is None:
         return None
     bridged = (rate_src / rate_tgt).quantize(Decimal("0.000001"))
-    _save_db_rate(con, rate_date, source, target, bridged)
+    save_db_rate(con, rate_date, source, target, bridged)
     return bridged

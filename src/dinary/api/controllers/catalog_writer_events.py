@@ -9,7 +9,7 @@ import re
 import sqlite3
 from datetime import date
 
-from dinary.api.controllers.catalog_writer import _commit_with_bump, _hash_state, _next_id
+from dinary.api.controllers.catalog_writer import commit_with_bump, hash_state, next_id
 from dinary.api.controllers.catalog_writer_errors import (
     AddResult,
     AddStatus,
@@ -207,7 +207,7 @@ def add_event(
         )
     con.execute("BEGIN IMMEDIATE")
     try:
-        before = _hash_state(con)
+        before = hash_state(con)
         _require_known_tag_names(con, auto_tags or ())
         existing = con.execute(
             "SELECT id, is_active FROM events WHERE name = ?",
@@ -221,14 +221,14 @@ def add_event(
                     "UPDATE events SET is_active = TRUE WHERE id = ?",
                     [eid],
                 )
-            bumped = _commit_with_bump(
+            bumped = commit_with_bump(
                 con,
                 before,
                 context=f"add_event(reactivate name={name!r})",
             )
             status: AddStatus = "reactivated" if bumped else "noop"
             return AddResult(id=eid, status=status)
-        eid = _next_id(con, "events")
+        eid = next_id(con, "events")
         con.execute(
             "INSERT INTO events"
             " (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
@@ -242,7 +242,7 @@ def add_event(
                 _encode_auto_tags(auto_tags),
             ],
         )
-        _commit_with_bump(con, before, context=f"add_event(name={name!r})")
+        commit_with_bump(con, before, context=f"add_event(name={name!r})")
         return AddResult(id=eid, status="created")
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.add_event")
@@ -307,7 +307,7 @@ def edit_event(
     """
     con.execute("BEGIN IMMEDIATE")
     try:
-        before = _hash_state(con)
+        before = hash_state(con)
         _validate_event_edit(con, event_id, name, (date_from, date_to), auto_tags)
         if name is not None:
             con.execute("UPDATE events SET name = ? WHERE id = ?", [name, event_id])
@@ -330,7 +330,7 @@ def edit_event(
                 "UPDATE events SET is_active = ? WHERE id = ?",
                 [bool(is_active), event_id],
             )
-        _commit_with_bump(con, before, context=f"edit_event(id={event_id})")
+        commit_with_bump(con, before, context=f"edit_event(id={event_id})")
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.edit_event")
         raise
@@ -355,7 +355,7 @@ def add_tag(con: sqlite3.Connection, *, name: str) -> AddResult:
     _validate_tag_name(name)
     con.execute("BEGIN IMMEDIATE")
     try:
-        before = _hash_state(con)
+        before = hash_state(con)
         existing = con.execute(
             "SELECT id, is_active FROM tags WHERE name = ?",
             [name],
@@ -365,19 +365,19 @@ def add_tag(con: sqlite3.Connection, *, name: str) -> AddResult:
             was_active = bool(existing[1])
             if not was_active:
                 con.execute("UPDATE tags SET is_active = TRUE WHERE id = ?", [tid])
-            bumped = _commit_with_bump(
+            bumped = commit_with_bump(
                 con,
                 before,
                 context=f"add_tag(reactivate name={name!r})",
             )
             status: AddStatus = "reactivated" if bumped else "noop"
             return AddResult(id=tid, status=status)
-        tid = _next_id(con, "tags")
+        tid = next_id(con, "tags")
         con.execute(
             "INSERT INTO tags (id, name, is_active) VALUES (?, ?, TRUE)",
             [tid, name],
         )
-        _commit_with_bump(con, before, context=f"add_tag(name={name!r})")
+        commit_with_bump(con, before, context=f"add_tag(name={name!r})")
         return AddResult(id=tid, status="created")
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.add_tag")
@@ -412,7 +412,7 @@ def edit_tag(
         _validate_tag_name(name)
     con.execute("BEGIN IMMEDIATE")
     try:
-        before = _hash_state(con)
+        before = hash_state(con)
         row = con.execute("SELECT id, name FROM tags WHERE id = ?", [tag_id]).fetchone()
         if row is None:
             raise CatalogNotFoundError(f"tag id={tag_id} not found")
@@ -435,7 +435,7 @@ def edit_tag(
                 "UPDATE tags SET is_active = ? WHERE id = ?",
                 [bool(is_active), tag_id],
             )
-        _commit_with_bump(con, before, context=f"edit_tag(id={tag_id})")
+        commit_with_bump(con, before, context=f"edit_tag(id={tag_id})")
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.edit_tag")
         raise
@@ -492,7 +492,7 @@ def delete_event(
     """
     con.execute("BEGIN IMMEDIATE")
     try:
-        before = _hash_state(con)
+        before = hash_state(con)
         row = con.execute(
             "SELECT id FROM events WHERE id = ?",
             [event_id],
@@ -503,13 +503,13 @@ def delete_event(
         mapping_refs = _event_mapping_reference_count(con, event_id)
         if usage == 0 and mapping_refs == 0:
             con.execute("DELETE FROM events WHERE id = ?", [event_id])
-            _commit_with_bump(con, before, context=f"delete_event(hard id={event_id})")
+            commit_with_bump(con, before, context=f"delete_event(hard id={event_id})")
             return DeleteResult(status="hard", usage_count=0)
         con.execute(
             "UPDATE events SET is_active = FALSE WHERE id = ?",
             [event_id],
         )
-        _commit_with_bump(con, before, context=f"delete_event(soft id={event_id})")
+        commit_with_bump(con, before, context=f"delete_event(soft id={event_id})")
         return DeleteResult(status="soft", usage_count=usage)
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.delete_event")
@@ -529,7 +529,7 @@ def delete_tag(
     """
     con.execute("BEGIN IMMEDIATE")
     try:
-        before = _hash_state(con)
+        before = hash_state(con)
         row = con.execute(
             "SELECT id FROM tags WHERE id = ?",
             [tag_id],
@@ -540,13 +540,13 @@ def delete_tag(
         mapping_refs = _tag_mapping_reference_count(con, tag_id)
         if usage == 0 and mapping_refs == 0:
             con.execute("DELETE FROM tags WHERE id = ?", [tag_id])
-            _commit_with_bump(con, before, context=f"delete_tag(hard id={tag_id})")
+            commit_with_bump(con, before, context=f"delete_tag(hard id={tag_id})")
             return DeleteResult(status="hard", usage_count=0)
         con.execute(
             "UPDATE tags SET is_active = FALSE WHERE id = ?",
             [tag_id],
         )
-        _commit_with_bump(con, before, context=f"delete_tag(soft id={tag_id})")
+        commit_with_bump(con, before, context=f"delete_tag(soft id={tag_id})")
         return DeleteResult(status="soft", usage_count=usage)
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.delete_tag")

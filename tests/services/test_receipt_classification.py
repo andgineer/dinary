@@ -4,14 +4,19 @@ import asyncio
 import shutil
 import sqlite3
 import unittest.mock
+from datetime import date
+from decimal import Decimal
 from unittest.mock import patch
 
 import allure
 import pytest
 
-from dinary.background.classification.llm_client import ClassificationResult
 from dinary.adapters.llmbroker import LLMBroker, NullStorage
+from dinary.adapters.rate_helpers import save_db_rate
+from dinary.background.classification.llm_client import ClassificationResult
+from dinary.background.classification.persist import RECEIPT_CURRENCY, RateMissingError
 from dinary.background.classification.task import _classify_and_persist
+from dinary.config import settings
 from dinary.db import db_migrations, storage
 from dinary.db.receipts import (
     ReceiptJobRow,
@@ -103,6 +108,11 @@ def _hleb_result(cat_id=1, conf=3) -> ClassificationResult:
 @allure.epic("Services")
 @allure.feature("Receipt classification drain")
 class TestClassifyAndPersist:
+    @pytest.fixture(autouse=True)
+    def _no_fx_conversion(self, monkeypatch):
+        """Patch accounting_currency to RSD so tests skip currency conversion."""
+        monkeypatch.setattr(settings, "accounting_currency", "RSD")
+
     def test_rule_hit_creates_expense_without_llm(self, conn):
         _seed_catalog(conn)
         receipt_id = _seed_receipt(conn)
@@ -182,7 +192,7 @@ class TestClassifyAndPersist:
         finally:
             conn2.close()
 
-        assert exp_count == 0
+        assert exp_count == 0  # level-1 conf, no expense
 
     def test_complete_job_inside_transaction(self, conn):
         _seed_catalog(conn)
@@ -337,6 +347,81 @@ class TestClassifyAndPersist:
             [ClassificationResult(item_name_normalized="hleb", category_id=1, confidence_level=1)]
         ):
             asyncio.run(_classify_and_persist(_broker(), job, items, None))
+
+        conn2 = storage.get_connection()
+        try:
+            exp_count = conn2.execute(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()[0]
+        finally:
+            conn2.close()
+
+        assert exp_count == 0
+
+    def test_amount_converted_to_accounting_currency(self, conn, monkeypatch):
+        """expenses.amount stores the converted accounting-currency value."""
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        _seed_catalog(conn)
+        conn.execute(
+            "INSERT INTO receipts (client_receipt_id, url, parsed_at, purchase_datetime)"
+            " VALUES ('r_fx', 'https://x', '2026-05-01T10:00:00', '2026-05-01T10:00:00')"
+        )
+        receipt_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+        conn.execute(
+            "INSERT INTO receipt_items (receipt_id, name_raw, total_price, quantity, unit_price)"
+            " VALUES (?, 'hleb', 120.0, 1, 120.0)",
+            [receipt_id],
+        )
+        insert_job(conn, receipt_id)
+        save_db_rate(conn, date(2026, 5, 1), RECEIPT_CURRENCY, "EUR", Decimal("0.009"))
+        job = claim_next_job(conn)
+        items = get_receipt_items(conn, receipt_id)
+        conn.close()
+
+        with _classify_patch([_hleb_result(cat_id=1, conf=3)]):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+
+        conn2 = storage.get_connection()
+        try:
+            exp = conn2.execute(
+                "SELECT amount, amount_original, currency_original"
+                " FROM expenses WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+        finally:
+            conn2.close()
+
+        assert exp is not None
+        assert float(exp[0]) == pytest.approx(1.08)  # 120 * 0.009
+        assert exp[1] == 120.0
+        assert exp[2] == RECEIPT_CURRENCY
+
+    def test_rate_missing_raises_and_no_expense(self, conn, monkeypatch):
+        """When no rate is available RateMissingError is raised and no expense is stored."""
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        _seed_catalog(conn)
+        conn.execute(
+            "INSERT INTO receipts (client_receipt_id, url, parsed_at, purchase_datetime)"
+            " VALUES ('r_nofx', 'https://x', '2026-05-01T10:00:00', '2026-05-01T10:00:00')"
+        )
+        receipt_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+        conn.execute(
+            "INSERT INTO receipt_items (receipt_id, name_raw, total_price, quantity, unit_price)"
+            " VALUES (?, 'hleb', 120.0, 1, 120.0)",
+            [receipt_id],
+        )
+        insert_job(conn, receipt_id)
+        job = claim_next_job(conn)
+        items = get_receipt_items(conn, receipt_id)
+        conn.close()
+
+        with _classify_patch([_hleb_result(cat_id=1, conf=3)]):
+            with patch(
+                "dinary.background.classification.persist.get_rate",
+                side_effect=ValueError("no rate"),
+            ):
+                with pytest.raises(RateMissingError):
+                    asyncio.run(_classify_and_persist(_broker(), job, items, None))
 
         conn2 = storage.get_connection()
         try:

@@ -13,9 +13,9 @@ from cachetools import TTLCache, cached
 
 from dinary.adapters.rate_helpers import (
     _FETCH_RATE_CACHE_TIME,
-    _get_db_rate,
     _get_json_or_none,
-    _save_db_rate,
+    get_db_rate,
+    save_db_rate,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def _fetch_nbs_rate(rate_date: date, currency: str) -> Decimal | None:
     return None
 
 
-def _resolve_from_nbs(con, rate_date: date, source: str, target: str) -> Decimal | None:
+def resolve_from_nbs(con, rate_date: date, source: str, target: str) -> Decimal | None:
     """Walk back up to _RATE_LOOKBACK_DAYS looking for an NBS rate (DB or API).
 
     Stores the found rate under ``rate_date`` only when ``rate_date``
@@ -76,14 +76,14 @@ def _resolve_from_nbs(con, rate_date: date, source: str, target: str) -> Decimal
     for i in range(_RATE_LOOKBACK_DAYS):
         check_date = rate_date - timedelta(days=i)
 
-        db_rate = _get_db_rate(con, check_date, source, target)
+        db_rate = get_db_rate(con, check_date, source, target)
         if db_rate:
             if (
                 check_date != rate_date
                 and not rate_date_is_working
                 and not working_day_without_rate_seen
             ):
-                _save_db_rate(con, rate_date, source, target, db_rate)
+                save_db_rate(con, rate_date, source, target, db_rate)
             return db_rate
 
         if not _is_working_day(check_date):
@@ -92,9 +92,9 @@ def _resolve_from_nbs(con, rate_date: date, source: str, target: str) -> Decimal
         nbs_rate = _fetch_nbs_rate(check_date, nbs_currency)
         if nbs_rate:
             rate_val = (Decimal(1) / nbs_rate).quantize(Decimal("0.000001")) if invert else nbs_rate
-            _save_db_rate(con, check_date, source, target, rate_val)
+            save_db_rate(con, check_date, source, target, rate_val)
             if not rate_date_is_working and not working_day_without_rate_seen:
-                _save_db_rate(con, rate_date, source, target, rate_val)
+                save_db_rate(con, rate_date, source, target, rate_val)
             return rate_val
         working_day_without_rate_seen = True
     return None

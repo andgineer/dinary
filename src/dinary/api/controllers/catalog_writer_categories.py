@@ -6,7 +6,7 @@ Shared helpers, exception classes, and state-hashing utilities live in
 
 import sqlite3
 
-from dinary.api.controllers.catalog_writer import _commit_with_bump, _hash_state, _next_id
+from dinary.api.controllers.catalog_writer import commit_with_bump, hash_state, next_id
 from dinary.api.controllers.catalog_writer_errors import (
     AddResult,
     AddStatus,
@@ -109,7 +109,7 @@ def add_category(
     """
     con.execute("BEGIN IMMEDIATE")
     try:
-        before = _hash_state(con)
+        before = hash_state(con)
         _require_active_group(con, group_id)
         existing = con.execute(
             "SELECT id, is_active, group_id FROM categories WHERE name = ?",
@@ -130,20 +130,20 @@ def add_category(
                     "UPDATE categories SET group_id = ?, is_active = TRUE WHERE id = ?",
                     [group_id, cid],
                 )
-            bumped = _commit_with_bump(
+            bumped = commit_with_bump(
                 con,
                 before,
                 context=f"add_category(reactivate name={name!r})",
             )
             status: AddStatus = "reactivated" if bumped else "noop"
             return AddResult(id=cid, status=status)
-        cid = _next_id(con, "categories")
+        cid = next_id(con, "categories")
         con.execute(
             "INSERT INTO categories (id, name, group_id, is_active, sheet_name, sheet_group)"
             " VALUES (?, ?, ?, TRUE, ?, ?)",
             [cid, name, group_id, sheet_name, sheet_group],
         )
-        _commit_with_bump(con, before, context=f"add_category(name={name!r})")
+        commit_with_bump(con, before, context=f"add_category(name={name!r})")
         return AddResult(id=cid, status="created")
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.add_category")
@@ -176,7 +176,7 @@ def edit_category(
     """
     con.execute("BEGIN IMMEDIATE")
     try:
-        before = _hash_state(con)
+        before = hash_state(con)
         _validate_category_edit(con, category_id, name, group_id)
         if name is not None:
             con.execute("UPDATE categories SET name = ? WHERE id = ?", [name, category_id])
@@ -197,7 +197,7 @@ def edit_category(
                 "UPDATE categories SET is_active = ? WHERE id = ?",
                 [bool(is_active), category_id],
             )
-        _commit_with_bump(con, before, context=f"edit_category(id={category_id})")
+        commit_with_bump(con, before, context=f"edit_category(id={category_id})")
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.edit_category")
         raise
@@ -226,7 +226,7 @@ def delete_category(
     """
     con.execute("BEGIN IMMEDIATE")
     try:
-        before = _hash_state(con)
+        before = hash_state(con)
         row = con.execute(
             "SELECT id, is_active FROM categories WHERE id = ?",
             [category_id],
@@ -237,13 +237,13 @@ def delete_category(
         mapping_refs = _category_mapping_reference_count(con, category_id)
         if usage == 0 and mapping_refs == 0:
             con.execute("DELETE FROM categories WHERE id = ?", [category_id])
-            _commit_with_bump(con, before, context=f"delete_category(hard id={category_id})")
+            commit_with_bump(con, before, context=f"delete_category(hard id={category_id})")
             return DeleteResult(status="hard", usage_count=0)
         con.execute(
             "UPDATE categories SET is_active = FALSE WHERE id = ?",
             [category_id],
         )
-        _commit_with_bump(con, before, context=f"delete_category(soft id={category_id})")
+        commit_with_bump(con, before, context=f"delete_category(soft id={category_id})")
         return DeleteResult(status="soft", usage_count=usage)
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.delete_category")

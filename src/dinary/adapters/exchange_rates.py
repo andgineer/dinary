@@ -10,9 +10,9 @@ import logging
 from datetime import date
 from decimal import Decimal
 
-from dinary.adapters.nbp import _resolve_from_nbp
-from dinary.adapters.nbs import _resolve_from_nbs
-from dinary.adapters.rate_helpers import _get_db_rate, _save_db_rate
+from dinary.adapters.nbp import resolve_from_nbp
+from dinary.adapters.nbs import resolve_from_nbs
+from dinary.adapters.rate_helpers import get_db_rate, save_db_rate
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +31,14 @@ def _bridge_through_rsd_via_nbs(
     the rates DB so subsequent lookups short-circuit the two NBS
     calls.
     """
-    rate_src_rsd = _resolve_from_nbs(con, rate_date, source, "RSD")
+    rate_src_rsd = resolve_from_nbs(con, rate_date, source, "RSD")
     if rate_src_rsd is None:
         return None
-    rate_rsd_tgt = _resolve_from_nbs(con, rate_date, "RSD", target)
+    rate_rsd_tgt = resolve_from_nbs(con, rate_date, "RSD", target)
     if rate_rsd_tgt is None:
         return None
     bridged = (rate_src_rsd * rate_rsd_tgt).quantize(Decimal("0.000001"))
-    _save_db_rate(con, rate_date, source, target, bridged)
+    save_db_rate(con, rate_date, source, target, bridged)
     return bridged
 
 
@@ -67,14 +67,14 @@ def get_rate(
         return Decimal(1)
 
     if offline:
-        db_rate = _get_db_rate(con, rate_date, source, target)
+        db_rate = get_db_rate(con, rate_date, source, target)
         if db_rate is not None:
             return db_rate
 
     rsd_involved = source.upper() == "RSD" or target.upper() == "RSD"
 
     if rsd_involved:
-        rate = _resolve_from_nbs(con, rate_date, source, target)
+        rate = resolve_from_nbs(con, rate_date, source, target)
         if rate is not None:
             return rate
     else:
@@ -91,7 +91,7 @@ def get_rate(
         target,
         rate_date,
     )
-    rate = _resolve_from_nbp(con, rate_date, source, target)
+    rate = resolve_from_nbp(con, rate_date, source, target)
     if rate is not None:
         return rate
 
