@@ -1,6 +1,7 @@
 """Expense creation and editing business logic."""
 
 import json
+import logging
 import sqlite3
 from datetime import date, datetime
 from decimal import Decimal
@@ -32,6 +33,8 @@ from dinary.db.expenses import (
 )
 from dinary.db.storage import transaction
 from dinary.sheets import sheet_mapping
+
+logger = logging.getLogger(__name__)
 
 
 class ExpenseRequest(BaseModel):
@@ -317,22 +320,42 @@ def edit_expense_sync(
                 [expense_id],
             ).fetchone()
             if ri_row and ri_row[0]:
-                exp_row = con.execute(
-                    "SELECT category_id FROM expenses WHERE id = ?",
-                    [expense_id],
+                item_name = ri_row[0]
+                store_id = ri_row[1]
+                rule_exists = con.execute(
+                    """
+                    SELECT 1 FROM classification_rules
+                     WHERE item_name_normalized = ?
+                       AND (store_id IS NULL OR store_id = ?)
+                     LIMIT 1
+                    """,
+                    [item_name, store_id],
                 ).fetchone()
-                if exp_row:
-                    create_or_update_rule(
-                        con,
-                        ri_row[1],
-                        ri_row[0],
-                        RuleSpec(
-                            int(exp_row[0]),
-                            4,
-                            "user_correction",
-                            tag_ids=tuple(req.tag_ids),
-                        ),
+                if rule_exists is None:
+                    logger.error(
+                        "update_rule=True for expense_id=%s but no rule exists"
+                        " for item=%r store_id=%s — skipping rule update",
+                        expense_id,
+                        item_name,
+                        store_id,
                     )
+                else:
+                    exp_row = con.execute(
+                        "SELECT category_id FROM expenses WHERE id = ?",
+                        [expense_id],
+                    ).fetchone()
+                    if exp_row:
+                        create_or_update_rule(
+                            con,
+                            store_id,
+                            item_name,
+                            RuleSpec(
+                                int(exp_row[0]),
+                                4,
+                                "user_correction",
+                                tag_ids=tuple(req.tag_ids),
+                            ),
+                        )
 
     updated = con.execute(
         """

@@ -302,6 +302,38 @@ class TestLLMBrokerComplete:
 
         asyncio.run(run())
 
+    def test_stop_flushes_pending_queue_events(self):
+        """Events queued but not yet drained must be written to storage on stop()."""
+        storage = _TrackingStorage([_make_provider(1)])
+
+        async def run():
+            broker = LLMBroker(storage)
+            await broker.start()
+            # Put events directly into the queue, bypassing the drain task
+            broker._log_queue.put_nowait(
+                CallEvent(
+                    provider_id=1,
+                    context_id=None,
+                    status="ok",
+                    latency_ms=10,
+                    timestamp=datetime.now(UTC),
+                )
+            )
+            broker._log_queue.put_nowait(
+                CallEvent(
+                    provider_id=1,
+                    context_id=None,
+                    status="ok",
+                    latency_ms=20,
+                    timestamp=datetime.now(UTC),
+                )
+            )
+            await broker.stop()
+            return storage.logged
+
+        logged = asyncio.run(run())
+        assert len(logged) >= 2, "stop() must flush all pending queue events"
+
 
 @allure.epic("Services")
 @allure.feature("LLMBroker")

@@ -6,9 +6,9 @@ import sys
 from invoke import task
 from sr_invoice_parser.exceptions import ParserParseException, ParserRequestException
 
-from dinary.adapters.llm_client import OpenAICompatibleClient
 from dinary.adapters.serbian_receipt_parser import parse_receipt
 from dinary.background.classification.item_normalizer import normalize_item_name
+from dinary.background.classification.llm_client import OpenAICompatibleClient
 from dinary.config import settings
 from dinary.db.catalog import list_categories
 from dinary.db.receipts import requeue_receipts

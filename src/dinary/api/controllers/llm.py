@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from dinary.adapters.llm_client import OpenAICompatibleClient
+from dinary.background.classification.llm_client import OpenAICompatibleClient
 from dinary.db.receipts import count_pending_classification_jobs
 from dinary.db.storage import transaction
 

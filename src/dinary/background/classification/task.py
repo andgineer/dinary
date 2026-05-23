@@ -13,10 +13,15 @@ from datetime import UTC, datetime
 import httpx
 from sr_invoice_parser.exceptions import ParserParseException, ParserRequestException
 
-from dinary.adapters.llm_client import ClassificationResult, classify_receipt
 from dinary.adapters.llmbroker import LLMBroker
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, parse_receipt
 from dinary.background.classification.item_normalizer import normalize_item_name
+from dinary.background.classification.llm_client import (
+    ClassificationResult,
+    classify_receipt,
+    load_categories,
+    load_tags,
+)
 from dinary.background.classification.store_resolver import resolve_store
 from dinary.config import settings
 from dinary.db import storage
@@ -213,8 +218,7 @@ async def _ensure_store(job: ReceiptJobRow, broker: LLMBroker) -> int | None:
     if not job.store_name_raw and not job.store_pib_raw:
         return None
 
-    conn = storage.get_connection()
-    try:
+    with storage.connection() as conn:
         existing = conn.execute(
             "SELECT store_id FROM receipts WHERE id = ?",
             [job.receipt_id],
@@ -222,32 +226,21 @@ async def _ensure_store(job: ReceiptJobRow, broker: LLMBroker) -> int | None:
         if existing and existing[0]:
             return int(existing[0])
 
-        try:
-            store_id = await resolve_store(conn, broker, job.store_pib_raw, job.store_name_raw)
+    try:
+        store_id = await resolve_store(broker, job.store_pib_raw, job.store_name_raw)
+        with storage.connection() as conn:
             conn.execute(
                 "UPDATE receipts SET store_id = ? WHERE id = ?",
                 [store_id, job.receipt_id],
             )
-            return store_id
-        except (httpx.HTTPError, OSError):
-            logger.warning(
-                "Store resolution failed for receipt_id=%s",
-                job.receipt_id,
-                exc_info=True,
-            )
-            return None
-    finally:
-        conn.close()
-
-
-def _load_categories(conn: sqlite3.Connection) -> dict[int, str]:
-    rows = conn.execute(
-        "SELECT c.id, cg.name, c.name"
-        " FROM categories c"
-        " LEFT JOIN category_groups cg ON cg.id = c.group_id"
-        " WHERE c.is_active = 1",
-    ).fetchall()
-    return {int(r[0]): f"{r[1]}: {r[2]}" if r[1] else str(r[2]) for r in rows}
+        return store_id
+    except (httpx.HTTPError, OSError):
+        logger.warning(
+            "Store resolution failed for receipt_id=%s",
+            job.receipt_id,
+            exc_info=True,
+        )
+        return None
 
 
 def _find_auto_attach_event(conn: sqlite3.Connection, receipt_dt: str) -> int | None:
@@ -263,11 +256,6 @@ def _find_auto_attach_event(conn: sqlite3.Connection, receipt_dt: str) -> int | 
         [receipt_dt, receipt_dt],
     ).fetchone()
     return int(row[0]) if row else None
-
-
-def _load_tags(conn: sqlite3.Connection) -> dict[int, str]:
-    rows = conn.execute("SELECT id, name FROM tags WHERE is_active = 1").fetchall()
-    return {int(r[0]): str(r[1]) for r in rows}
 
 
 def _run_rules_pass(
@@ -473,8 +461,8 @@ async def _classify_and_persist(
                 raise
             return
         rule_hits, llm_queue = _run_rules_pass(conn, items, store_id)
-        categories = _load_categories(conn)
-        tags = _load_tags(conn)
+        categories = load_categories(conn)
+        tags = load_tags(conn)
     finally:
         conn.close()
 

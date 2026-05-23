@@ -102,6 +102,19 @@ class LLMBroker:
         with contextlib.suppress(asyncio.CancelledError):
             if self._bg_log_drain:
                 await self._bg_log_drain
+        while not self._log_queue.empty():
+            try:
+                event = self._log_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            try:
+                await self._storage.on_call_logged(event)
+                if event.rate_limited_until is not None:
+                    await self._storage.on_rate_limited(event.provider_id, event.rate_limited_until)
+            except Exception:  # noqa: BLE001
+                logger.exception("LLMBroker: log drain failed during shutdown flush")
+            finally:
+                self._log_queue.task_done()
 
     # ------------------------------------------------------------------
     # Public API

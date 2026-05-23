@@ -1,6 +1,7 @@
 """Tests for PATCH /api/expenses/{id}."""
 
 import json
+import logging
 
 import allure
 
@@ -143,16 +144,19 @@ class TestPatchExpense:
             "update_rule=False must not create or modify any classification rules"
         )
 
-    def test_update_rule_true_creates_rule_for_receipt_expense(self, client, db):  # noqa: ARG002
-        """PATCH with update_rule=True persists the current expense category as a rule."""
+    def test_update_rule_true_updates_existing_rule(self, client, db):  # noqa: ARG002
+        """PATCH with update_rule=True updates an existing classification rule."""
         con = storage.get_connection()
         try:
             self._seed_receipt_expense(con)
+            con.execute(
+                "INSERT INTO classification_rules"
+                " (item_name_normalized, store_id, category_id, confidence_level, source)"
+                " VALUES ('hleb', 1, 1, 3, 'llm')"
+            )
         finally:
             con.close()
 
-        # Only change tags, no category_id → correct_category_sync not called.
-        # update_rule=True → rule is upserted from the expense's current category.
         resp = client.patch("/api/expenses/1", json={"tag_ids": [1], "update_rule": True})
         assert resp.status_code == 200
 
@@ -164,9 +168,29 @@ class TestPatchExpense:
             ).fetchone()
         finally:
             con.close()
-        assert rule is not None, "update_rule=True must create a classification rule"
+        assert rule is not None, "rule must still exist after update"
         assert rule[0] == 1  # expense category_id=1
         assert rule[1] == "user_correction"
+
+    def test_update_rule_true_logs_error_when_no_rule_exists(self, client, db, caplog):  # noqa: ARG002
+        """update_rule=True on a receipt expense with no pre-existing rule logs an error and skips."""
+        con = storage.get_connection()
+        try:
+            self._seed_receipt_expense(con)
+        finally:
+            con.close()
+
+        with caplog.at_level(logging.ERROR, logger="dinary.api.controllers.expenses"):
+            resp = client.patch("/api/expenses/1", json={"update_rule": True})
+        assert resp.status_code == 200
+
+        con = storage.get_connection()
+        try:
+            rule_count = con.execute("SELECT COUNT(*) FROM classification_rules").fetchone()[0]
+        finally:
+            con.close()
+        assert rule_count == 0, "no rule must be created when none exists"
+        assert any("no rule exists" in r.message for r in caplog.records)
 
     def test_update_rule_true_no_rule_for_non_receipt_expense(self, client, db):  # noqa: ARG002
         """PATCH with update_rule=True on a non-receipt expense creates no rules."""
@@ -204,6 +228,11 @@ class TestPatchExpense:
         con = storage.get_connection()
         try:
             self._seed_receipt_expense(con)
+            con.execute(
+                "INSERT INTO classification_rules"
+                " (item_name_normalized, store_id, category_id, confidence_level, source)"
+                " VALUES ('hleb', 1, 1, 3, 'llm')"
+            )
         finally:
             con.close()
 

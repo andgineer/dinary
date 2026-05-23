@@ -144,7 +144,7 @@ class TestCreateOrUpdateRule:
         assert json.loads(row[0]) == [2]
         assert json.loads(row[1]) == [10]
 
-    def test_user_correction_leaves_alternative_category_ids_unchanged(self, conn):
+    def test_user_correction_clears_alternative_category_ids(self, conn):
         create_or_update_rule(
             conn,
             1,
@@ -162,8 +162,8 @@ class TestCreateOrUpdateRule:
             " WHERE item_name_normalized = 'ananas'",
         ).fetchone()
         assert row is not None
-        # alternative_category_ids must be unchanged by user_correction
-        assert json.loads(row[0]) == [2]
+        # user_correction sets confidence=4 so alternatives are meaningless — must be cleared
+        assert json.loads(row[0]) == []
         # tag_ids must be overwritten by user_correction
         assert json.loads(row[1]) == [11]
 

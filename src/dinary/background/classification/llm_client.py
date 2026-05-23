@@ -1,5 +1,13 @@
+"""LLM classification adapter: prompt building, response parsing, and data loading.
+
+Provides the bridge between the drain loop and LLMBroker. Also ships
+OpenAICompatibleClient for contexts that use the LLM directly without the broker
+(admin test endpoint, CLI tasks).
+"""
+
 import json
 import logging
+import sqlite3
 from dataclasses import dataclass, field
 
 import httpx
@@ -35,6 +43,21 @@ class ClassificationResult:
     confidence_level: int
     alternative_category_ids: list[int] = field(default_factory=list)
     tag_ids: list[int] = field(default_factory=list)
+
+
+def load_categories(conn: sqlite3.Connection) -> dict[int, str]:
+    rows = conn.execute(
+        "SELECT c.id, cg.name, c.name"
+        " FROM categories c"
+        " LEFT JOIN category_groups cg ON cg.id = c.group_id"
+        " WHERE c.is_active = 1",
+    ).fetchall()
+    return {int(r[0]): f"{r[1]}: {r[2]}" if r[1] else str(r[2]) for r in rows}
+
+
+def load_tags(conn: sqlite3.Connection) -> dict[int, str]:
+    rows = conn.execute("SELECT id, name FROM tags WHERE is_active = 1").fetchall()
+    return {int(r[0]): str(r[1]) for r in rows}
 
 
 def _build_user_message(

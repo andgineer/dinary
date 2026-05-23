@@ -9,7 +9,7 @@ from unittest.mock import patch
 import allure
 import pytest
 
-from dinary.adapters.llm_client import ClassificationResult
+from dinary.background.classification.llm_client import ClassificationResult
 from dinary.adapters.llmbroker import LLMBroker, NullStorage
 from dinary.background.classification.task import _classify_and_persist
 from dinary.db import db_migrations, storage

@@ -298,6 +298,16 @@ def get_connection() -> sqlite3.Connection:
     return connect(str(_get_db_path()))
 
 
+@contextlib.contextmanager
+def connection() -> Iterator[sqlite3.Connection]:
+    """Context manager: open a connection, close it on exit."""
+    con = get_connection()
+    try:
+        yield con
+    finally:
+        con.close()
+
+
 def get_db() -> Iterator[sqlite3.Connection]:
     """FastAPI dependency: yield an open connection, close it on exit."""
     con = get_connection()

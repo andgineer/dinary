@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import allure
 
-from dinary.adapters.llm_client import ClassificationResult
+from dinary.background.classification.llm_client import ClassificationResult
 from dinary.adapters.llmbroker import LLMBroker, NullStorage
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 from dinary.background.classification.task import _process_job

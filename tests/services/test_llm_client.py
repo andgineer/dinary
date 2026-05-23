@@ -6,14 +6,14 @@ import allure
 import httpx
 import pytest
 
-from dinary.adapters.llm_client import (
+from dinary.adapters.llmbroker import LLMBroker
+from dinary.background.classification.llm_client import (
     OpenAICompatibleClient,
     _build_user_message,
     _parse_response,
     classify_receipt,
     get_chain_name,
 )
-from dinary.adapters.llmbroker import LLMBroker
 
 _CATEGORIES = {1: "Еда: еда", 2: "Жильё: хозтовары", 3: "Красота и ЗОЖ: гигиена"}
 
@@ -143,7 +143,9 @@ class TestOpenAICompatibleClient:
         )
         mock_ctx, _ = self._mock_http(response_body)
 
-        with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
+        with patch(
+            "dinary.background.classification.llm_client.httpx.AsyncClient", return_value=mock_ctx
+        ):
             client = OpenAICompatibleClient("https://api.example.com/v1", "key", "model")
             results = asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
 
@@ -156,7 +158,9 @@ class TestOpenAICompatibleClient:
         response_body = json.dumps([{"item": "hleb", "category_id": 1, "confidence": 3}])
         mock_ctx, mock_async_client = self._mock_http(response_body)
 
-        with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
+        with patch(
+            "dinary.background.classification.llm_client.httpx.AsyncClient", return_value=mock_ctx
+        ):
             client = OpenAICompatibleClient("https://api.example.com/v1", "key", "my-model")
             asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
 
@@ -167,7 +171,9 @@ class TestOpenAICompatibleClient:
         response_body = json.dumps([{"item": "hleb", "category_id": 1, "confidence": 3}])
         mock_ctx, mock_async_client = self._mock_http(response_body)
 
-        with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
+        with patch(
+            "dinary.background.classification.llm_client.httpx.AsyncClient", return_value=mock_ctx
+        ):
             client = OpenAICompatibleClient("https://api.example.com/v1/", "key", "model")
             asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
 
@@ -188,7 +194,9 @@ class TestOpenAICompatibleClient:
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_async_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
+        with patch(
+            "dinary.background.classification.llm_client.httpx.AsyncClient", return_value=mock_ctx
+        ):
             client = OpenAICompatibleClient("https://api.example.com/v1", "key", "model")
             with pytest.raises(httpx.HTTPStatusError):
                 asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
@@ -196,7 +204,9 @@ class TestOpenAICompatibleClient:
     def test_malformed_llm_response_falls_back(self):
         mock_ctx, _ = self._mock_http("this is not json")
 
-        with patch("dinary.adapters.llm_client.httpx.AsyncClient", return_value=mock_ctx):
+        with patch(
+            "dinary.background.classification.llm_client.httpx.AsyncClient", return_value=mock_ctx
+        ):
             client = OpenAICompatibleClient("https://api.example.com/v1", "key", "model")
             results = asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
 

@@ -91,7 +91,7 @@ def create_or_update_rule(
                 """
                 UPDATE classification_rules
                    SET category_id = ?, confidence_level = ?, source = ?,
-                       tag_ids = ?, updated_at = ?
+                       alternative_category_ids = '[]', tag_ids = ?, updated_at = ?
                  WHERE id = ?
                 """,
                 [

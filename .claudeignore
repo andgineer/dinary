@@ -1,0 +1,10 @@
+.venv/
+.vite/
+_static/
+allure-results/
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+data/
+node_modules/

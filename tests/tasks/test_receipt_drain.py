@@ -3,8 +3,10 @@
 import asyncio
 import contextlib
 import json
+import logging
 import shutil
 import sqlite3
+import time
 import unittest.mock
 from unittest.mock import patch
 
@@ -12,12 +14,13 @@ import allure
 import pytest
 
 import dinary.background.classification.task as drain_mod
-from dinary.adapters.llm_client import ClassificationResult
+from dinary.background.classification.llm_client import ClassificationResult
 from dinary.adapters.llmbroker import LLMBroker, NullStorage
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 from dinary.background.classification.task import (
     _drain_all_pending,
     _process_job,
+    _save_parsed,
     notify_new_receipt,
     receipt_classification_task,
 )
@@ -78,10 +81,6 @@ class TestProcessJobEdgeCases:
         caplog,  # noqa: ARG002
     ):
         """Drain logs a warning and removes the job when parsed but receipt_items is empty."""
-        import logging
-
-        from dinary.background.classification.task import _process_job
-
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -128,11 +127,6 @@ class TestProcessJobEdgeCases:
 
     def test_failover_penalty_reduces_confidence(self, drain_db):  # noqa: ARG002
         """When the pool returns used_failover=True, expense confidence is reduced by 1."""
-
-        from dinary.background.classification.task import _process_job
-        from dinary.adapters.llm_client import ClassificationResult
-        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
-
         parsed = ParsedReceipt(
             store_name="Lidl",
             store_pib="100",
@@ -208,11 +202,6 @@ class TestProcessJobEdgeCases:
 
     def test_expense_datetime_matches_receipt_created_at(self, drain_db):  # noqa: ARG002
         """Expenses use the receipt's created_at as their datetime, not classification time."""
-
-        from dinary.background.classification.task import _process_job
-        from dinary.adapters.llm_client import ClassificationResult
-        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
-
         parsed = ParsedReceipt(
             store_name="",
             store_pib="",
@@ -286,9 +275,6 @@ class TestProcessJobEdgeCases:
 
     def test_fallback_metadata_cleared_on_successful_parse(self, drain_db):  # noqa: ARG002
         """_save_parsed clears fallback metadata when /specifications succeeds."""
-        from dinary.background.classification.task import _save_parsed
-        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
-
         conn = storage.get_connection()
         try:
             conn.execute(
@@ -339,11 +325,6 @@ class TestProcessJobEdgeCases:
 
     def test_expense_datetime_uses_purchase_datetime_when_set(self, drain_db):  # noqa: ARG002
         """Expenses use purchase_datetime from the receipt when present, not created_at."""
-
-        from dinary.background.classification.task import _process_job
-        from dinary.adapters.llm_client import ClassificationResult
-        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
-
         purchase_dt = "2026-01-10T09:15:00+01:00"
         parsed = ParsedReceipt(
             store_name="",
@@ -420,10 +401,6 @@ class TestProcessJobEdgeCases:
 
     def test_conf1_items_do_not_create_rules(self, drain_db):  # noqa: ARG002
         """Items penalised to conf=1 do not store a rule; the LLM is called again next pass."""
-        from dinary.background.classification.task import _process_job
-        from dinary.adapters.llm_client import ClassificationResult
-        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
-
         parsed = ParsedReceipt(
             store_name="Lidl",
             store_pib="100",
@@ -513,10 +490,6 @@ class TestReceiptSheetLogging:
 
     def test_expense_has_client_expense_id(self, drain_db):  # noqa: ARG002
         """Each receipt expense gets a non-null UUID client_expense_id."""
-        from dinary.background.classification.task import _process_job
-        from dinary.adapters.llm_client import ClassificationResult
-        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
-
         parsed = ParsedReceipt(
             store_name="",
             store_pib="",
@@ -588,10 +561,6 @@ class TestReceiptSheetLogging:
 
     def test_expense_enqueued_for_sheet_logging(self, drain_db):  # noqa: ARG002
         """Each receipt expense is inserted into sheet_logging_jobs as pending."""
-        from dinary.background.classification.task import _process_job
-        from dinary.adapters.llm_client import ClassificationResult
-        from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
-
         parsed = ParsedReceipt(
             store_name="",
             store_pib="",
@@ -1221,7 +1190,6 @@ class TestDrainLoop:
     def test_drain_all_pending_runs_jobs_concurrently(self, drain_db):  # noqa: ARG002
         """Multiple pending jobs all run in parallel via _drain_all_pending."""
         start_times: list[float] = []
-        import time
 
         async def slow_job(job: ReceiptJobRow, _broker=None) -> None:
             start_times.append(time.monotonic())

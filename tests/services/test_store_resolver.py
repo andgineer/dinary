@@ -51,7 +51,7 @@ class TestResolveStore:
             new_callable=AsyncMock,
             return_value="ShouldNotBeUsed",
         ) as mock_chain:
-            store_id = asyncio.run(resolve_store(conn, _broker(), "100000001", "LIDL SRBIJA KD"))
+            store_id = asyncio.run(resolve_store(_broker(), "100000001", "LIDL SRBIJA KD"))
             mock_chain.assert_not_called()
         row = conn.execute("SELECT chain_name FROM stores WHERE id = ?", [store_id]).fetchone()
         assert row[0] == "Lidl"
@@ -62,7 +62,7 @@ class TestResolveStore:
             new_callable=AsyncMock,
             return_value="Maxi",
         ):
-            store_id = asyncio.run(resolve_store(conn, _broker(), "200000002", "MAXI DOO"))
+            store_id = asyncio.run(resolve_store(_broker(), "200000002", "MAXI DOO"))
         row = conn.execute("SELECT chain_name, pib FROM stores WHERE id = ?", [store_id]).fetchone()
         assert row[0] == "Maxi"
         assert row[1] == "200000002"
@@ -75,7 +75,7 @@ class TestResolveStore:
             new_callable=AsyncMock,
             return_value="DM",
         ):
-            store_id = asyncio.run(resolve_store(conn, _broker(), "300000003", "DM DROGERIE MARKT"))
+            store_id = asyncio.run(resolve_store(_broker(), "300000003", "DM DROGERIE MARKT"))
         assert store_id == old_id
         pib = conn.execute("SELECT pib FROM stores WHERE id = ?", [store_id]).fetchone()[0]
         assert pib == "300000003"
@@ -86,7 +86,7 @@ class TestResolveStore:
             new_callable=AsyncMock,
             return_value="Roda",
         ):
-            store_id = asyncio.run(resolve_store(conn, _broker(), "", "RODA CENTAR"))
+            store_id = asyncio.run(resolve_store(_broker(), "", "RODA CENTAR"))
         row = conn.execute("SELECT chain_name FROM stores WHERE id = ?", [store_id]).fetchone()
         assert row[0] == "Roda"
 
@@ -96,7 +96,31 @@ class TestResolveStore:
             new_callable=AsyncMock,
             return_value="Idea",
         ) as mock_chain:
-            id1 = asyncio.run(resolve_store(conn, _broker(), "400000004", "IDEA PLUS"))
-            id2 = asyncio.run(resolve_store(conn, _broker(), "400000004", "IDEA PLUS"))
+            id1 = asyncio.run(resolve_store(_broker(), "400000004", "IDEA PLUS"))
+            id2 = asyncio.run(resolve_store(_broker(), "400000004", "IDEA PLUS"))
         assert id1 == id2
         mock_chain.assert_called_once()
+
+    def test_no_connection_held_during_llm_call(self, conn):
+        """resolve_store must not hold an open connection while awaiting the LLM."""
+        held_during_llm: list[bool] = []
+
+        async def fake_chain_name(broker, store_name_raw):
+            c = storage.get_connection()
+            try:
+                # SQLite WAL allows this only if no other writer holds the file locked
+                c.execute("SELECT 1")
+                held_during_llm.append(False)
+            finally:
+                c.close()
+            return "TestChain"
+
+        with patch(
+            "dinary.background.classification.store_resolver.get_chain_name",
+            side_effect=fake_chain_name,
+        ):
+            asyncio.run(resolve_store(_broker(), "", "TEST STORE"))
+
+        assert held_during_llm == [False], (
+            "a second connection must be openable during the LLM call"
+        )
