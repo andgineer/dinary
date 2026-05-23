@@ -4,7 +4,12 @@ import shutil
 import allure
 import pytest
 
-from dinary.db.classification_rules import RuleSpec, classify_by_rules, create_or_update_rule
+from dinary.db.classification_rules import (
+    RuleHit,
+    RuleSpec,
+    classify_by_rules,
+    create_or_update_rule,
+)
 from dinary.db import db_migrations, storage
 
 
@@ -49,24 +54,32 @@ class TestClassifyByRules:
     def test_store_specific_rule_hit(self, conn):
         create_or_update_rule(conn, 1, "jabuka", RuleSpec(1, 3, "llm"))
         result = classify_by_rules(conn, 1, "jabuka")
-        assert result[:2] == (1, 3)
+        assert isinstance(result, RuleHit)
+        assert result.category_id == 1
+        assert result.confidence_level == 3
 
     def test_generic_rule_hit(self, conn):
         create_or_update_rule(conn, None, "hleb", RuleSpec(1, 4, "user_correction"))
         result = classify_by_rules(conn, 1, "hleb")
-        assert result[:2] == (1, 4)
+        assert isinstance(result, RuleHit)
+        assert result.category_id == 1
+        assert result.confidence_level == 4
 
     def test_store_specific_beats_generic(self, conn):
         create_or_update_rule(conn, None, "mleko", RuleSpec(1, 2, "llm"))
         create_or_update_rule(conn, 1, "mleko", RuleSpec(2, 4, "user_correction"))
         result = classify_by_rules(conn, 1, "mleko")
-        assert result[:2] == (2, 4)
+        assert isinstance(result, RuleHit)
+        assert result.category_id == 2
+        assert result.confidence_level == 4
 
     def test_generic_rule_applies_to_different_store(self, conn):
         conn.execute("INSERT INTO stores (id, chain_name) VALUES (2, 'Maxi')")
         create_or_update_rule(conn, None, "sir", RuleSpec(1, 3, "llm"))
         result = classify_by_rules(conn, 2, "sir")
-        assert result[:2] == (1, 3)
+        assert isinstance(result, RuleHit)
+        assert result.category_id == 1
+        assert result.confidence_level == 3
 
     def test_no_store_id_miss(self, conn):
         create_or_update_rule(conn, 1, "jogurt", RuleSpec(1, 3, "llm"))
@@ -76,7 +89,9 @@ class TestClassifyByRules:
     def test_no_store_id_generic_hit(self, conn):
         create_or_update_rule(conn, None, "jogurt", RuleSpec(2, 3, "llm"))
         result = classify_by_rules(conn, None, "jogurt")
-        assert result[:2] == (2, 3)
+        assert isinstance(result, RuleHit)
+        assert result.category_id == 2
+        assert result.confidence_level == 3
 
     def test_returns_tag_ids_from_rule(self, conn):
         conn.execute(
@@ -86,11 +101,10 @@ class TestClassifyByRules:
             [json.dumps([5, 7])],
         )
         result = classify_by_rules(conn, 1, "testitem")
-        assert result is not None
-        cat, conf, tag_ids = result
-        assert cat == 1
-        assert conf == 3
-        assert sorted(tag_ids) == [5, 7]
+        assert isinstance(result, RuleHit)
+        assert result.category_id == 1
+        assert result.confidence_level == 3
+        assert sorted(result.tag_ids) == [5, 7]
 
     def test_returns_empty_tag_ids_when_empty_json(self, conn):
         conn.execute(
@@ -99,9 +113,8 @@ class TestClassifyByRules:
             " VALUES (1, 'nulltags', 1, 4, 'user_correction', '[]')",
         )
         result = classify_by_rules(conn, 1, "nulltags")
-        assert result is not None
-        cat, conf, tag_ids = result
-        assert tag_ids == []
+        assert isinstance(result, RuleHit)
+        assert result.tag_ids == []
 
 
 @allure.epic("Services")
@@ -110,24 +123,35 @@ class TestCreateOrUpdateRule:
     def test_insert_new_rule(self, conn):
         create_or_update_rule(conn, 1, "banana", RuleSpec(1, 3, "llm"))
         result = classify_by_rules(conn, 1, "banana")
-        assert result[:2] == (1, 3)
+        assert isinstance(result, RuleHit)
+        assert result.category_id == 1
+        assert result.confidence_level == 3
 
     def test_update_existing_rule(self, conn):
         create_or_update_rule(conn, 1, "banana", RuleSpec(1, 3, "llm"))
         create_or_update_rule(conn, 1, "banana", RuleSpec(2, 4, "user_correction"))
         result = classify_by_rules(conn, 1, "banana")
-        assert result[:2] == (2, 4)
+        assert isinstance(result, RuleHit)
+        assert result.category_id == 2
+        assert result.confidence_level == 4
 
     def test_user_correction_always_conf4(self, conn):
         create_or_update_rule(conn, 1, "sladoled", RuleSpec(1, 2, "user_correction"))
         result = classify_by_rules(conn, 1, "sladoled")
-        assert result[1] == 4
+        assert isinstance(result, RuleHit)
+        assert result.confidence_level == 4
 
     def test_generic_and_store_rules_independent(self, conn):
         create_or_update_rule(conn, None, "voda", RuleSpec(2, 3, "llm"))
         create_or_update_rule(conn, 1, "voda", RuleSpec(1, 4, "user_correction"))
-        assert classify_by_rules(conn, None, "voda")[:2] == (2, 3)
-        assert classify_by_rules(conn, 1, "voda")[:2] == (1, 4)
+        generic = classify_by_rules(conn, None, "voda")
+        store = classify_by_rules(conn, 1, "voda")
+        assert (
+            isinstance(generic, RuleHit)
+            and generic.category_id == 2
+            and generic.confidence_level == 3
+        )
+        assert isinstance(store, RuleHit) and store.category_id == 1 and store.confidence_level == 4
 
     def test_llm_persists_alternative_category_ids(self, conn):
         create_or_update_rule(
