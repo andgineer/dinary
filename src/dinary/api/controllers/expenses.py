@@ -3,9 +3,10 @@
 import json
 import logging
 import sqlite3
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -45,7 +46,7 @@ class ExpenseRequest(BaseModel):
     event_id: int | None = None
     tag_ids: list[int] = Field(default_factory=list)
     comment: str | None = None
-    date: date
+    expense_datetime: datetime
 
 
 class ExpenseResponse(BaseModel):
@@ -108,12 +109,18 @@ def create_expense_sync(req: ExpenseRequest, con: sqlite3.Connection) -> Expense
     _validate_event(con, req)
     _validate_tags(con, req)
 
+    expense_dt = req.expense_datetime.astimezone(ZoneInfo(settings.user_timezone))
+
     amount_acc = req.amount
     if currency.upper() != settings.accounting_currency.upper():
-        rate = get_rate(con, req.date, currency, settings.accounting_currency, offline=True)
+        rate = get_rate(
+            con,
+            expense_dt.date(),
+            currency,
+            settings.accounting_currency,
+            offline=True,
+        )
         amount_acc = (req.amount * rate).quantize(Decimal("0.01"))
-
-    expense_dt = datetime.combine(req.date, datetime.min.time())
 
     effective_tag_ids: list[int] = list(dict.fromkeys(int(t) for t in req.tag_ids))
     if req.event_id is not None:
@@ -174,7 +181,7 @@ def create_expense_sync(req: ExpenseRequest, con: sqlite3.Connection) -> Expense
 
     return ExpenseResponse(
         status="ok" if result == "created" else "duplicate",
-        month=req.date.strftime("%Y-%m"),
+        month=expense_dt.strftime("%Y-%m"),
         category_id=req.category_id,
         amount_original=req.amount,
         currency_original=currency,

@@ -21,7 +21,7 @@ def _post_expense(client, *, expense_id="e1", amount=250.0, currency="RSD"):
                 "amount": amount,
                 "currency": currency,
                 "category_id": 1,
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
     assert resp.status_code == 200, resp.text

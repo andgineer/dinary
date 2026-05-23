@@ -4,6 +4,7 @@ import sqlite3
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from dinary.adapters.exchange_rates import get_rate
 from dinary.background.classification.item_normalizer import normalize_item_name
@@ -50,7 +51,7 @@ def _write_single_item(  # noqa: PLR0913
     cat_id: int | None,
     conf: int,
     norm: str,
-    receipt_dt: str,
+    receipt_dt: datetime,
     accounting_rate: Decimal,
     auto_event_id: int | None,
     event_auto_tag_ids: list[int],
@@ -134,11 +135,12 @@ def persist_classification_results(
         "SELECT COALESCE(purchase_datetime, created_at) FROM receipts WHERE id = ?",
         [job.receipt_id],
     ).fetchone()
-    receipt_dt = (
-        receipt_dt_row[0]
-        if receipt_dt_row
-        else datetime.now(UTC).replace(microsecond=0).isoformat()
-    )
+    _user_tz = ZoneInfo(settings.user_timezone)
+    if receipt_dt_row and receipt_dt_row[0]:
+        receipt_dt_obj = datetime.fromisoformat(receipt_dt_row[0]).astimezone(_user_tz)
+    else:
+        receipt_dt_obj = datetime.now(_user_tz)
+    receipt_dt = receipt_dt_obj.isoformat()
 
     auto_event_id = _find_auto_attach_event(conn, receipt_dt)
     event_auto_tag_ids: list[int] = (
@@ -179,7 +181,7 @@ def persist_classification_results(
                 cat_id,
                 conf,
                 norm,
-                receipt_dt,
+                receipt_dt_obj,
                 accounting_rate,
                 auto_event_id,
                 event_auto_tag_ids,

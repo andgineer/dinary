@@ -21,7 +21,7 @@ class TestPostExpenseConflict:
             "currency": "RSD",
             "category_id": 1,
             "comment": "",
-            "date": "2026-04-15",
+            "expense_datetime": "2026-04-15T12:00:00+02:00",
         }
         assert client.post("/api/expenses", json=base).status_code == 200
 
@@ -40,11 +40,11 @@ class TestPostExpenseConflict:
             "currency": "RSD",
             "category_id": 1,
             "comment": "",
-            "date": "2026-01-15",
+            "expense_datetime": "2026-01-15T12:00:00+02:00",
         }
         assert client.post("/api/expenses", json=base).status_code == 200
 
-        modified = {**base, "date": "2027-01-15"}
+        modified = {**base, "expense_datetime": "2027-01-15T12:00:00+02:00"}
         resp = client.post("/api/expenses", json=modified)
         assert resp.status_code == 409
 
@@ -63,7 +63,7 @@ class TestPostExpenseConflict:
             "currency": "RSD",
             "category_id": 1,
             "comment": "",
-            "date": "2026-04-15",
+            "expense_datetime": "2026-04-15T12:00:00+02:00",
         }
         assert client.post("/api/expenses", json=base).status_code == 200
 

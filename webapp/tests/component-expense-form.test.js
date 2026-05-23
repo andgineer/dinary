@@ -162,8 +162,8 @@ describe("ExpenseForm: save flow", () => {
       amount: 123.45,
       currency: "RSD",
       category_id: 10,
-      date: "2026-05-04",
     });
+    expect(queue.items[0].expense_datetime).toMatch(/^2026-05-04T/);
   });
 
   it("uses the currency store's selected code in the enqueued payload", async () => {

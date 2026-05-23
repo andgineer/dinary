@@ -266,7 +266,7 @@ class TestPostExpenseResponse:
                 "client_expense_id": "fc-test-1",
                 "amount": "50.00",
                 "category_id": 1,
-                "date": "2026-05-01",
+                "expense_datetime": "2026-05-01T12:00:00+02:00",
             },
         )
         assert resp.status_code == 200

@@ -106,21 +106,7 @@ export const useReviewStore = defineStore("review", () => {
       const cat = catalog.findCategoryById(categoryId);
       const catName = cat?.name ?? "";
       if (item.is_doubtful) {
-        const filtered = items.value.filter((i) => i.id !== item.id);
-        let insertAt = filtered.length;
-        for (let i = 0; i < filtered.length; i++) {
-          if (!filtered[i].is_doubtful) {
-            insertAt = i;
-            break;
-          }
-        }
-        filtered.splice(insertAt, 0, {
-          ...item,
-          is_doubtful: false,
-          category_id: categoryId,
-          category_name: catName,
-        });
-        items.value = filtered;
+        items.value = items.value.filter((i) => i.id !== item.id);
         doubtfulCount.value = Math.max(0, doubtfulCount.value - 1);
       } else {
         const idx = items.value.findIndex((i) => i.id === item.id);

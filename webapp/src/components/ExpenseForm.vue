@@ -175,6 +175,21 @@ async function init() {
   }
 }
 
+function _buildExpenseDatetime(dateStr) {
+  const now = new Date();
+  const off = now.getTimezoneOffset();
+  const sign = off <= 0 ? "+" : "-";
+  const abs = Math.abs(off);
+  const hh = String(Math.floor(abs / 60)).padStart(2, "0");
+  const mm = String(abs % 60).padStart(2, "0");
+  const time = [
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+    String(now.getSeconds()).padStart(2, "0"),
+  ].join(":");
+  return `${dateStr}T${time}${sign}${hh}:${mm}`;
+}
+
 async function save() {
   const rawAmount = String(amount.value).replace(",", ".").trim();
   const parsedAmount = Number.parseFloat(rawAmount);
@@ -197,7 +212,7 @@ async function save() {
     tag_ids: tagIds.value.map(Number),
     category_name: catalog.findCategoryById(cid)?.name || "",
     comment: comment.value.trim(),
-    date: date.value,
+    expense_datetime: _buildExpenseDatetime(date.value),
   };
 
   submitting.value = true;

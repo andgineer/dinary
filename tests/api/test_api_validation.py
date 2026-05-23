@@ -25,7 +25,7 @@ class TestPostExpenseValidation:
                 "currency": "RSD",
                 "category_id": 999,
                 "comment": "",
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert resp.status_code == 422
@@ -38,7 +38,7 @@ class TestPostExpenseValidation:
                 "amount": 1.0,
                 "category_id": 1,
                 "event_id": 999,
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert resp.status_code == 422
@@ -51,7 +51,7 @@ class TestPostExpenseValidation:
                 "amount": 1.0,
                 "category_id": 1,
                 "tag_ids": [999],
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert resp.status_code == 422
@@ -67,7 +67,7 @@ class TestPostExpenseValidation:
                 "currency": "RSD",
                 "category_id": 3,
                 "comment": "",
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert resp.status_code == 422
@@ -82,7 +82,7 @@ class TestPostExpenseValidation:
             "currency": "RSD",
             "category_id": 999,
             "comment": "",
-            "date": "2026-04-15",
+            "expense_datetime": "2026-04-15T12:00:00+02:00",
         }
         resp = client.post("/api/expenses", json=bad)
         assert resp.status_code == 422
@@ -124,7 +124,7 @@ class TestPostExpenseInactiveCarveout:
             "currency": "RSD",
             "category_id": 1,
             "comment": "",
-            "date": "2026-04-15",
+            "expense_datetime": "2026-04-15T12:00:00+02:00",
         }
         resp = client.post("/api/expenses", json=post_body)
         assert resp.status_code == 200, resp.text
@@ -192,7 +192,7 @@ class TestPostExpenseInactiveCarveout:
             "category_id": 1,
             "tag_ids": [1],
             "comment": "",
-            "date": "2026-04-15",
+            "expense_datetime": "2026-04-15T12:00:00+02:00",
         }
         resp = client.post("/api/expenses", json=post_body)
         assert resp.status_code == 200, resp.text
@@ -241,7 +241,7 @@ class TestPostExpenseInactiveCarveout:
             "category_id": 1,
             "tag_ids": [1],
             "comment": "",
-            "date": "2026-04-15",
+            "expense_datetime": "2026-04-15T12:00:00+02:00",
         }
         resp = client.post("/api/expenses", json=post_body)
         assert resp.status_code == 200, resp.text

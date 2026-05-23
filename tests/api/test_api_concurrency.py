@@ -47,7 +47,7 @@ class TestPostExpenseConcurrency:
             "currency": "RSD",
             "category_id": 1,
             "comment": "",
-            "date": "2026-04-15",
+            "expense_datetime": "2026-04-15T12:00:00+02:00",
         }
         assert client.post("/api/expenses", json=body).status_code == 200
 
@@ -96,7 +96,7 @@ class TestPostExpenseConcurrency:
             "currency": "RSD",
             "category_id": 1,
             "comment": "",
-            "date": "2026-04-15",
+            "expense_datetime": "2026-04-15T12:00:00+02:00",
         }
         n_requests = 8
 
@@ -187,7 +187,7 @@ class TestPostExpenseConcurrency:
             "currency": "RSD",
             "category_id": 1,
             "comment": "",
-            "date": "2026-04-15",
+            "expense_datetime": "2026-04-15T12:00:00+02:00",
         }
         # Distinct amounts => the compare path always sees a payload
         # mismatch, regardless of which racer commits first.
@@ -294,7 +294,7 @@ class TestPostExpenseFailurePropagation:
                     "currency": "RSD",
                     "category_id": 1,
                     "comment": "",
-                    "date": "2026-04-15",
+                    "expense_datetime": "2026-04-15T12:00:00+02:00",
                 },
             )
         assert resp.status_code == 500
@@ -326,7 +326,7 @@ class TestPostExpenseFailurePropagation:
                     "currency": "RSD",
                     "category_id": 1,
                     "comment": "",
-                    "date": "2026-04-15",
+                    "expense_datetime": "2026-04-15T12:00:00+02:00",
                 },
             )
         assert resp.status_code == 500

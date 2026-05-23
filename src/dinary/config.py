@@ -371,6 +371,13 @@ class Settings(BaseSettings):
 
     receipt_classification_enabled: bool = True
 
+    # IANA timezone name used when storing expense timestamps.
+    # All expense datetimes are converted to this zone before writing to DB
+    # so that ORDER BY datetime DESC is consistent within the same UTC offset.
+    # Cross-DST comparisons (e.g. a +01:00 winter receipt vs a +02:00 summer
+    # receipt) may be off by 1 hour — accepted as an extremely rare edge case.
+    user_timezone: str = "Europe/Belgrade"
+
     host: str = "0.0.0.0"  # noqa: S104
     port: int = 8000
     log_level: str = "info"

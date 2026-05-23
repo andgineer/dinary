@@ -41,7 +41,7 @@ export async function flushQueue() {
           event_id: item.event_id ?? null,
           tag_ids: item.tag_ids ?? [],
           comment: item.comment || "",
-          date: item.date,
+          expense_datetime: item.expense_datetime || `${item.date}T12:00:00+01:00`,
         });
         if (typeof resp?.catalog_version === "number") {
           latestCatalogVersion = Math.max(latestCatalogVersion, resp.catalog_version);

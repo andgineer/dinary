@@ -31,7 +31,7 @@ describe("postExpense", () => {
       event_id: null,
       tag_ids: [2, 3],
       comment: "lunch",
-      date: "2026-05-04",
+      expense_datetime: "2026-05-04T15:30:00+02:00",
     });
 
     expect(result).toEqual({ catalog_version: 7, id: 42 });
@@ -51,7 +51,7 @@ describe("postExpense", () => {
       event_id: null,
       tag_ids: [2, 3],
       comment: "lunch",
-      date: "2026-05-04",
+      expense_datetime: "2026-05-04T15:30:00+02:00",
     });
   });
 

@@ -33,7 +33,7 @@ class TestPostExpenseHappyPath:
                 "currency": "RSD",
                 "category_id": 1,
                 "comment": "lunch",
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert resp.status_code == 200, resp.text
@@ -57,7 +57,7 @@ class TestPostExpenseHappyPath:
             "currency": "RSD",
             "category_id": 1,
             "comment": "",
-            "date": "2026-04-15",
+            "expense_datetime": "2026-04-15T12:00:00+02:00",
         }
         first = client.post("/api/expenses", json=body)
         assert first.status_code == 200
@@ -89,7 +89,7 @@ class TestPostExpenseHappyPath:
                 "event_id": 1,
                 "tag_ids": [1, 2],
                 "comment": "",
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert resp.status_code == 200, resp.text
@@ -135,7 +135,7 @@ class TestPostExpenseHappyPath:
                 "event_id": 1,
                 "tag_ids": [2],
                 "comment": "",
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert resp.status_code == 200, resp.text
@@ -161,7 +161,7 @@ class TestPostExpenseHappyPath:
                 "event_id": 1,
                 "tag_ids": [2],
                 "comment": "",
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert replay.status_code == 200, replay.text
@@ -185,7 +185,7 @@ class TestPostExpenseHappyPath:
                 "currency": "EUR",
                 "category_id": 1,
                 "comment": "",
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert resp.status_code == 200, resp.text
@@ -210,7 +210,7 @@ class TestPostExpenseHappyPath:
                 "amount": 10.0,
                 "category_id": 1,
                 "comment": "",
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert resp.status_code == 200, resp.text
@@ -239,7 +239,7 @@ class TestPostExpenseHappyPath:
                     "currency": "RSD",
                     "category_id": 1,
                     "comment": "",
-                    "date": "2026-04-15",
+                    "expense_datetime": "2026-04-15T12:00:00+02:00",
                 },
             )
         assert resp.status_code == 200, resp.text
@@ -284,7 +284,7 @@ class TestPostExpenseSheetLogging:
                 "currency": "RSD",
                 "category_id": 1,
                 "comment": "lunch",
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert resp.status_code == 200, resp.text
@@ -317,7 +317,7 @@ class TestPostExpenseSheetLogging:
                 "currency": "RSD",
                 "category_id": 1,
                 "comment": "lunch",
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert resp.status_code == 200, resp.text
@@ -360,7 +360,7 @@ class TestExpenseDefaults:
                 "amount": 10.0,
                 "currency": "RSD",
                 "category_id": 1,
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         assert resp.status_code == 200
@@ -385,7 +385,7 @@ class TestExpenseDefaults:
                 "amount": 10.0,
                 "currency": "RSD",
                 "category_id": 1,
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         data = resp.json()
@@ -412,7 +412,7 @@ class TestExpenseDefaults:
                 "amount": 10.0,
                 "currency": "RSD",
                 "category_id": 1,
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         data = resp.json()
@@ -435,7 +435,7 @@ class TestExpenseDefaults:
                 "amount": 10.0,
                 "currency": "RSD",
                 "category_id": 1,
-                "date": "2026-04-15",
+                "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
         data = resp.json()

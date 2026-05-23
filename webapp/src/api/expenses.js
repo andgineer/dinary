@@ -12,7 +12,7 @@ export async function postExpense({
   event_id,
   tag_ids,
   comment,
-  date,
+  expense_datetime,
 }) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), POST_EXPENSE_TIMEOUT_MS);
@@ -28,7 +28,7 @@ export async function postExpense({
         event_id: event_id ?? null,
         tag_ids: tag_ids ?? [],
         comment,
-        date,
+        expense_datetime,
       }),
       signal: ctrl.signal,
     });

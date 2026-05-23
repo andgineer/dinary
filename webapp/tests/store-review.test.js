@@ -53,7 +53,7 @@ describe("review store: correct()", () => {
     expect(spy).toHaveBeenCalledWith(42, 2, "all");
   });
 
-  it("converts corrected doubtful item to certain and places it after remaining doubtful items", async () => {
+  it("removes corrected doubtful item from items leaving remaining doubtful items intact", async () => {
     vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
       corrected_expense_id: 42,
       batch_updated_count: 0,
@@ -69,12 +69,9 @@ describe("review store: correct()", () => {
 
     await store.correct(store.items[0], 2);
 
-    expect(store.items).toHaveLength(2);
+    expect(store.items).toHaveLength(1);
     expect(store.items[0].id).toBe(8);
     expect(store.items[0].is_doubtful).toBe(true);
-    expect(store.items[1].id).toBe(7);
-    expect(store.items[1].is_doubtful).toBe(false);
-    expect(store.items[1].category_id).toBe(2);
   });
 
   it("uses item.id directly for certain items (expense_id equals id)", async () => {
@@ -109,7 +106,7 @@ describe("review store: correct()", () => {
     expect(store.items[0].category_name).toBe("snacks");
   });
 
-  it("moves corrected doubtful item into certain section and decrements doubtfulCount", async () => {
+  it("removes corrected doubtful item from items and decrements doubtfulCount", async () => {
     vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
       corrected_expense_id: 42,
       batch_updated_count: 0,
@@ -122,9 +119,7 @@ describe("review store: correct()", () => {
 
     await store.correct(store.items[0], 2);
 
-    expect(store.items).toHaveLength(1);
-    expect(store.items[0].id).toBe(7);
-    expect(store.items[0].is_doubtful).toBe(false);
+    expect(store.items).toHaveLength(0);
     expect(store.doubtfulCount).toBe(0);
   });
 
