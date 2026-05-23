@@ -114,7 +114,13 @@ def correct_category_sync(
 
     with transaction(con):
         con.execute(
-            "UPDATE expenses SET category_id = ?, confidence_level = 4 WHERE id = ?",
+            "UPDATE expenses"
+            " SET category_id = ?,"
+            # manual expenses have no receipt_id — leave their confidence_level untouched
+            " confidence_level = CASE WHEN receipt_id IS NOT NULL"
+            "                         THEN 4"
+            "                         ELSE confidence_level END"
+            " WHERE id = ?",
             [req.category_id, expense_id],
         )
 

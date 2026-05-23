@@ -432,7 +432,7 @@ class TestCategoryCorrection:
             conn.close()
 
         assert exp[0] == 2
-        assert exp[1] == 4
+        assert exp[1] == 3  # manual expense: confidence_level unchanged
         assert rule_count == 0
 
 
