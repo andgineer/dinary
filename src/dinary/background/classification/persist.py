@@ -11,7 +11,7 @@ from dinary.background.classification.item_normalizer import normalize_item_name
 from dinary.background.classification.llm_client import ClassificationResult
 from dinary.background.sheet_logging import sheet_logging
 from dinary.config import settings
-from dinary.db.classification_rules import RuleSpec, create_or_update_rule
+from dinary.db.classification_rules import RuleHit, RuleSpec, create_or_update_rule
 from dinary.db.expenses import enqueue_for_logging
 from dinary.db.receipts import (
     ItemClassification,
@@ -55,7 +55,7 @@ def _write_single_item(  # noqa: PLR0913
     accounting_rate: Decimal,
     auto_event_id: int | None,
     event_auto_tag_ids: list[int],
-    rule_hits: dict[int, tuple[int, int, list[int]]],
+    rule_hits: dict[int, RuleHit],
     llm_results: dict[int, ClassificationResult],
     store_id: int | None,
     receipt_id: int,
@@ -64,12 +64,35 @@ def _write_single_item(  # noqa: PLR0913
         update_receipt_item(conn, item.id, norm, ItemClassification(None, 1, None))
         return
 
+    hit = rule_hits.get(item.id)
+    llm_r = llm_results.get(item.id)
+
+    if hit is not None:
+        rule_id: int | None = hit.rule_id
+        tag_ids_for_item = hit.tag_ids
+    else:
+        tag_ids_for_item = llm_r.tag_ids if llm_r else []
+        rule_id = None
+        if norm and conf >= 2:
+            rule_id = create_or_update_rule(
+                conn,
+                store_id,
+                norm,
+                RuleSpec(
+                    cat_id,
+                    conf,
+                    "llm",
+                    alternative_category_ids=tuple(llm_r.alternative_category_ids if llm_r else []),
+                    tag_ids=tuple(tag_ids_for_item),
+                ),
+            )
+
     conn.execute(
         """
         INSERT INTO expenses
                (client_expense_id, datetime, amount, amount_original, currency_original,
-                category_id, confidence_level, receipt_id, store_id, event_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                category_id, confidence_level, receipt_id, store_id, event_id, rule_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             str(uuid.uuid4()),
@@ -84,17 +107,12 @@ def _write_single_item(  # noqa: PLR0913
             receipt_id,
             store_id,
             auto_event_id,
+            rule_id,
         ],
     )
     expense_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
     enqueue_for_logging(conn, expense_id)
     update_receipt_item(conn, item.id, norm, ItemClassification(cat_id, conf, expense_id))
-
-    if item.id in rule_hits:
-        _, _, tag_ids_for_item = rule_hits[item.id]
-    else:
-        llm_r = llm_results.get(item.id)
-        tag_ids_for_item = llm_r.tag_ids if llm_r else []
 
     seen: set[int] = set()
     for tag_id in [*tag_ids_for_item, *event_auto_tag_ids]:
@@ -105,28 +123,13 @@ def _write_single_item(  # noqa: PLR0913
                 [expense_id, tag_id],
             )
 
-    if item.id not in rule_hits and norm and conf >= 2:
-        llm_r = llm_results.get(item.id)
-        create_or_update_rule(
-            conn,
-            store_id,
-            norm,
-            RuleSpec(
-                cat_id,
-                conf,
-                "llm",
-                alternative_category_ids=tuple(llm_r.alternative_category_ids if llm_r else []),
-                tag_ids=tuple(llm_r.tag_ids if llm_r else []),
-            ),
-        )
-
 
 def persist_classification_results(
     conn: sqlite3.Connection,
     job: ReceiptJobRow,
     items: list[ReceiptItemRow],
     classifications: dict[int, tuple[int | None, int]],
-    rule_hits: dict[int, tuple[int, int, list[int]]],
+    rule_hits: dict[int, RuleHit],
     llm_results: dict[int, ClassificationResult],
     store_id: int | None,
 ) -> None:

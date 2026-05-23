@@ -11,6 +11,16 @@ from datetime import UTC, datetime
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class RuleHit:
+    """Result of a successful rule lookup."""
+
+    rule_id: int
+    category_id: int
+    confidence_level: int
+    tag_ids: list[int]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class RuleSpec:
     """Classification assignment for one item."""
 
@@ -25,16 +35,17 @@ def classify_by_rules(
     conn: sqlite3.Connection,
     store_id: int | None,
     item_name_normalized: str,
-) -> tuple[int, int, list[int]] | None:
-    """Return (category_id, confidence_level, tag_ids) from stored rules, or None on miss.
+) -> RuleHit | None:
+    """Return a RuleHit from stored rules, or None on miss.
 
     Chain-specific rule (store_id IS NOT NULL) beats generic (store_id IS NULL)
     for the same item name. Returns the stored confidence unchanged — no source
     penalty because no LLM call is involved.
     """
+    conn.row_factory = sqlite3.Row
     row = conn.execute(
         """
-        SELECT category_id, confidence_level, tag_ids
+        SELECT id, category_id, confidence_level, tag_ids
           FROM classification_rules
          WHERE (store_id = ? OR store_id IS NULL)
            AND item_name_normalized = ?
@@ -46,13 +57,18 @@ def classify_by_rules(
     if row is None:
         return None
     tag_ids: list[int] = []
-    if row[2]:
+    if row["tag_ids"]:
         try:
-            raw = json.loads(row[2])
+            raw = json.loads(row["tag_ids"])
             tag_ids = [int(t) for t in raw if isinstance(t, (int, float))]
         except (json.JSONDecodeError, ValueError):
             pass
-    return int(row[0]), int(row[1]), tag_ids
+    return RuleHit(
+        rule_id=int(row["id"]),
+        category_id=int(row["category_id"]),
+        confidence_level=int(row["confidence_level"]),
+        tag_ids=tag_ids,
+    )
 
 
 def create_or_update_rule(
@@ -60,7 +76,7 @@ def create_or_update_rule(
     store_id: int | None,
     item_name_normalized: str,
     spec: RuleSpec,
-) -> None:
+) -> int:
     """Upsert a classification rule.
 
     ``spec.source`` must be 'llm' or 'user_correction'.
@@ -76,6 +92,7 @@ def create_or_update_rule(
 
     now = datetime.now(UTC).isoformat()
 
+    conn.row_factory = sqlite3.Row
     existing = conn.execute(
         """
         SELECT id, alternative_category_ids FROM classification_rules
@@ -100,7 +117,7 @@ def create_or_update_rule(
                     source,
                     json.dumps(list(spec.tag_ids)),
                     now,
-                    existing[0],
+                    existing["id"],
                 ],
             )
         else:
@@ -118,27 +135,28 @@ def create_or_update_rule(
                     json.dumps(list(spec.alternative_category_ids)),
                     json.dumps(list(spec.tag_ids)),
                     now,
-                    existing[0],
+                    existing["id"],
                 ],
             )
-    else:
-        conn.execute(
-            """
+        return int(existing["id"])
+    conn.execute(
+        """
             INSERT INTO classification_rules
                    (store_id, item_name_normalized, category_id,
                     confidence_level, source, alternative_category_ids, tag_ids,
                     created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            [
-                store_id,
-                item_name_normalized,
-                category_id,
-                confidence_level,
-                source,
-                json.dumps(list(spec.alternative_category_ids)),
-                json.dumps(list(spec.tag_ids)),
-                now,
-                now,
-            ],
-        )
+        [
+            store_id,
+            item_name_normalized,
+            category_id,
+            confidence_level,
+            source,
+            json.dumps(list(spec.alternative_category_ids)),
+            json.dumps(list(spec.tag_ids)),
+            now,
+            now,
+        ],
+    )
+    return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])

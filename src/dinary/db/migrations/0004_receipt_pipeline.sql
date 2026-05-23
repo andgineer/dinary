@@ -99,6 +99,7 @@ CREATE TABLE llmbroker_call_log (
 ALTER TABLE expenses ADD COLUMN receipt_id       INTEGER REFERENCES receipts(id);
 ALTER TABLE expenses ADD COLUMN store_id         INTEGER REFERENCES stores(id);
 ALTER TABLE expenses ADD COLUMN confidence_level INTEGER;
+ALTER TABLE expenses ADD COLUMN rule_id          INTEGER REFERENCES classification_rules(id);
 
 CREATE INDEX receipt_items_receipt_id    ON receipt_items (receipt_id);
 CREATE INDEX receipt_items_expense_id    ON receipt_items (expense_id);

@@ -97,6 +97,7 @@ class ExpenseListItem(BaseModel):
     confidence_level: int | None
     tags: list[ExpenseListTag]
     has_rule: bool
+    rule_id: int | None
     item_name: str | None = None
     amount_original: float
     currency_original: str
@@ -213,6 +214,7 @@ def list_expenses_sync(
             s.chain_name    AS store_name,
             e.receipt_id,
             e.confidence_level,
+            e.rule_id,
             e.amount_original,
             e.currency_original,
             COALESCE((
@@ -220,17 +222,6 @@ def list_expenses_sync(
                   FROM expense_tags et JOIN tags t ON t.id = et.tag_id
                  WHERE et.expense_id = e.id
             ), '[]') AS tags_json,
-            CASE WHEN e.receipt_id IS NULL THEN 0 ELSE COALESCE((
-                SELECT 1
-                  FROM receipt_items ri
-                 WHERE ri.expense_id = e.id
-                   AND EXISTS (
-                       SELECT 1 FROM classification_rules cr
-                        WHERE cr.item_name_normalized = ri.name_normalized
-                          AND (cr.store_id IS NULL OR cr.store_id = rec.store_id)
-                   )
-                 LIMIT 1
-            ), 0) END AS has_rule,
             (SELECT ri.name_raw FROM receipt_items ri
               WHERE ri.expense_id = e.id LIMIT 1) AS item_name
         FROM expenses e
@@ -266,7 +257,8 @@ def list_expenses_sync(
                 if r["confidence_level"] is not None
                 else None,
                 tags=tags,
-                has_rule=bool(r["has_rule"]),
+                rule_id=int(r["rule_id"]) if r["rule_id"] is not None else None,
+                has_rule=r["rule_id"] is not None,
                 item_name=str(r["item_name"]) if r["item_name"] is not None else None,
                 amount_original=float(r["amount_original"]),
                 currency_original=str(r["currency_original"]),

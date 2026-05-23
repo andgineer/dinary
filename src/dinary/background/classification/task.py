@@ -28,7 +28,7 @@ from dinary.background.classification.persist import (
 from dinary.background.classification.store_resolver import resolve_store
 from dinary.config import settings
 from dinary.db import storage
-from dinary.db.classification_rules import classify_by_rules
+from dinary.db.classification_rules import RuleHit, classify_by_rules
 from dinary.db.receipts import (
     ReceiptItemRow,
     ReceiptJobRow,
@@ -241,14 +241,14 @@ def _run_rules_pass(
     conn,
     items: list[ReceiptItemRow],
     store_id: int | None,
-) -> tuple[dict[int, tuple[int, int, list[int]]], list[tuple[int, str]]]:
+) -> tuple[dict[int, RuleHit], list[tuple[int, str]]]:
     """Classify items by rules; return (rule_hits, llm_queue) for remaining items."""
-    rule_hits: dict[int, tuple[int, int, list[int]]] = {}
+    rule_hits: dict[int, RuleHit] = {}
     llm_queue: list[tuple[int, str]] = []
     for item in items:
         norm = normalize_item_name(item.name_raw)
         rule = classify_by_rules(conn, store_id, norm)
-        if rule and rule[1] > 1:
+        if rule and rule.confidence_level > 1:
             rule_hits[item.id] = rule
         else:
             llm_queue.append((item.id, norm))
@@ -290,7 +290,7 @@ async def _run_llm_pass(
 
 def _compute_classifications(
     items: list[ReceiptItemRow],
-    rule_hits: dict[int, tuple[int, int, list[int]]],
+    rule_hits: dict[int, RuleHit],
     llm_results: dict[int, ClassificationResult],
     total_penalty: int,
 ) -> dict[int, tuple[int | None, int]]:
@@ -298,8 +298,8 @@ def _compute_classifications(
     result: dict[int, tuple[int | None, int]] = {}
     for item in items:
         if item.id in rule_hits:
-            cat_id, conf, _ = rule_hits[item.id]
-            result[item.id] = (cat_id, conf)
+            hit = rule_hits[item.id]
+            result[item.id] = (hit.category_id, hit.confidence_level)
         else:
             llm = llm_results.get(item.id)
             if llm is None:

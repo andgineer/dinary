@@ -118,13 +118,11 @@ export const useReviewStore = defineStore("review", () => {
           };
         }
       }
-      if (item.name) {
-        expenses.value = expenses.value.map((e) =>
-          e.item_name === item.name
-            ? { ...e, category_id: categoryId, category_name: catName, confidence_level: null }
-            : e,
-        );
-      }
+      expenses.value = expenses.value.map((e) =>
+        e.rule_id === item.id
+          ? { ...e, category_id: categoryId, category_name: catName, confidence_level: null }
+          : e,
+      );
       _persistState();
       toast.show(`Updated ${count} expenses → ${catName} · rule saved`, "success");
     } catch (err) {
@@ -200,7 +198,7 @@ export const useReviewStore = defineStore("review", () => {
           _persistState();
         }
         const target = expenses.value.find((e) => e.id === id);
-        if (target?.item_name) {
+        if (target?.rule_id != null) {
           const patch = { confidence_level: null };
           if (payload.scope && payload.scope !== "single" && payload.category_id != null) {
             const catalog = useCatalogStore();
@@ -209,7 +207,7 @@ export const useReviewStore = defineStore("review", () => {
             patch.category_name = cat?.name ?? "";
           }
           expenses.value = expenses.value.map((e) =>
-            e.item_name === target.item_name ? { ...e, ...patch } : e,
+            e.rule_id === target.rule_id ? { ...e, ...patch } : e,
           );
         }
       }

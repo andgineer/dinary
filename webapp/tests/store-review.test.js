@@ -123,7 +123,7 @@ describe("review store: correct()", () => {
     expect(store.doubtfulCount).toBe(0);
   });
 
-  it("clears confidence_level and updates category on matching expenses when correcting a doubtful rule", async () => {
+  it("clears confidence_level and updates category on expenses matching by rule_id", async () => {
     vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
       corrected_expense_id: 42,
       batch_updated_count: 2,
@@ -133,9 +133,9 @@ describe("review store: correct()", () => {
     const store = useReviewStore();
     store.items = [{ id: 7, expense_id: 42, is_doubtful: true, name: "hleb", count: 3 }];
     store.expenses = [
-      { id: 42, item_name: "hleb", confidence_level: 2, category_id: 1, category_name: "old" },
-      { id: 43, item_name: "hleb", confidence_level: 2, category_id: 1, category_name: "old" },
-      { id: 44, item_name: "mleko", confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 42, rule_id: 7, confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 43, rule_id: 7, confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 44, rule_id: 9, confidence_level: 2, category_id: 1, category_name: "old" },
     ];
 
     await store.correct(store.items[0], 2);
@@ -399,14 +399,14 @@ describe("review store: updateExpense()", () => {
     expect(store.doubtfulCount).toBe(1);
   });
 
-  it("clears confidence_level on sibling expenses with same item_name when update_rule is true", async () => {
+  it("clears confidence_level on sibling expenses with same rule_id when update_rule is true", async () => {
     vi.spyOn(expenseCorrections, "editExpense").mockResolvedValueOnce({});
     const store = useReviewStore();
     store.items = [{ id: 7, expense_id: 42, is_doubtful: true, name: "hleb" }];
     store.expenses = [
-      { id: 42, item_name: "hleb", confidence_level: 2, category_id: 1, category_name: "old" },
-      { id: 43, item_name: "hleb", confidence_level: 2, category_id: 1, category_name: "old" },
-      { id: 44, item_name: "mleko", confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 42, rule_id: 7, confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 43, rule_id: 7, confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 44, rule_id: 9, confidence_level: 2, category_id: 1, category_name: "old" },
     ];
     store.doubtfulCount = 1;
 
@@ -426,9 +426,9 @@ describe("review store: updateExpense()", () => {
     const store = useReviewStore();
     store.items = [{ id: 7, expense_id: 42, is_doubtful: true, name: "hleb" }];
     store.expenses = [
-      { id: 42, item_name: "hleb", confidence_level: 2, category_id: 1, category_name: "old" },
-      { id: 43, item_name: "hleb", confidence_level: 2, category_id: 1, category_name: "old" },
-      { id: 44, item_name: "mleko", confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 42, rule_id: 7, confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 43, rule_id: 7, confidence_level: 2, category_id: 1, category_name: "old" },
+      { id: 44, rule_id: 9, confidence_level: 2, category_id: 1, category_name: "old" },
     ];
     store.doubtfulCount = 1;
 
@@ -440,7 +440,7 @@ describe("review store: updateExpense()", () => {
     expect(store.expenses[1].confidence_level).toBeNull();
     expect(store.expenses[1].category_id).toBe(2);
     expect(store.expenses[1].category_name).toBe("snacks");
-    // unrelated item_name: untouched
+    // different rule_id: untouched
     expect(store.expenses[2].confidence_level).toBe(2);
     expect(store.expenses[2].category_id).toBe(1);
   });
