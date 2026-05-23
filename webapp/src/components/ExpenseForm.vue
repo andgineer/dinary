@@ -320,6 +320,7 @@ defineExpose({ save, reset });
       <div v-if="catalog.frequentCategories.length > 0" class="category-picks-row">
         <CategoryQuickPicks
           :categories="catalog.frequentCategories"
+          :selected-category-id="categoryId ? Number(categoryId) : null"
           @select="onQuickPick"
         />
       </div>

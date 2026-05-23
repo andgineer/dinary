@@ -1,6 +1,7 @@
 <script setup>
 const props = defineProps({
   categories: { type: Array, default: () => [] },
+  selectedCategoryId: { type: Number, default: null },
 });
 const emit = defineEmits(["select"]);
 </script>
@@ -12,6 +13,7 @@ const emit = defineEmits(["select"]);
       :key="cat.id"
       type="button"
       class="pick-pill"
+      :class="{ 'is-selected': cat.id === props.selectedCategoryId }"
       @click="emit('select', cat.id)"
     >
       {{ cat.name }}
@@ -37,11 +39,17 @@ const emit = defineEmits(["select"]);
   font-size: 0.8rem;
   cursor: pointer;
   white-space: nowrap;
-  transition: border-color 0.12s;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
   width: auto;
 }
 
 .pick-pill:hover {
   border-color: var(--border-strong);
+}
+
+.pick-pill.is-selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 </style>

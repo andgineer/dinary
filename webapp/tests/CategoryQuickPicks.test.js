@@ -34,3 +34,42 @@ describe("CategoryQuickPicks — no search button", () => {
     expect(w.emitted("search")).toBeUndefined();
   });
 });
+
+describe("CategoryQuickPicks — selected highlight", () => {
+  it("marks the matching pill is-selected when selectedCategoryId matches", () => {
+    const w = mount(CategoryQuickPicks, {
+      props: { categories: CATS, selectedCategoryId: 2 },
+    });
+    const pills = w.findAll(".pick-pill");
+    expect(pills[0].classes()).not.toContain("is-selected");
+    expect(pills[1].classes()).toContain("is-selected");
+  });
+
+  it("marks no pill when selectedCategoryId is null", () => {
+    const w = mount(CategoryQuickPicks, {
+      props: { categories: CATS, selectedCategoryId: null },
+    });
+    for (const pill of w.findAll(".pick-pill")) {
+      expect(pill.classes()).not.toContain("is-selected");
+    }
+  });
+
+  it("marks no pill when selectedCategoryId does not match any category", () => {
+    const w = mount(CategoryQuickPicks, {
+      props: { categories: CATS, selectedCategoryId: 99 },
+    });
+    for (const pill of w.findAll(".pick-pill")) {
+      expect(pill.classes()).not.toContain("is-selected");
+    }
+  });
+
+  it("updates the highlight when selectedCategoryId prop changes", async () => {
+    const w = mount(CategoryQuickPicks, {
+      props: { categories: CATS, selectedCategoryId: 1 },
+    });
+    expect(w.findAll(".pick-pill")[0].classes()).toContain("is-selected");
+    await w.setProps({ selectedCategoryId: 2 });
+    expect(w.findAll(".pick-pill")[0].classes()).not.toContain("is-selected");
+    expect(w.findAll(".pick-pill")[1].classes()).toContain("is-selected");
+  });
+});
