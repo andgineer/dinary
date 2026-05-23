@@ -7,7 +7,7 @@
 | src/dinary/\_\_about\_\_.py                                 |        1 |        0 |    100% |           |
 | src/dinary/adapters/exchange\_rates.py                      |       38 |        1 |     97% |        39 |
 | src/dinary/adapters/llm\_storage.py                         |       98 |       12 |     88% |73-75, 94, 122-125, 162, 184, 188-189 |
-| src/dinary/adapters/llmbroker.py                            |      225 |       44 |     80% |108-109, 114-115, 154-167, 205, 221-222, 235-237, 269-277, 300-301, 306, 310-311, 327-328, 356, 360-361, 369, 383-389, 404-405 |
+| src/dinary/adapters/llmbroker.py                            |      111 |       13 |     88% |106-107, 162-164, 201-202, 229-230, 242-245 |
 | src/dinary/adapters/nbp.py                                  |       37 |        0 |    100% |           |
 | src/dinary/adapters/nbs.py                                  |       47 |        0 |    100% |           |
 | src/dinary/adapters/rate\_helpers.py                        |       27 |        0 |    100% |           |
@@ -34,7 +34,7 @@
 | src/dinary/api/rules.py                                     |       17 |        0 |    100% |           |
 | src/dinary/background/classification/item\_normalizer.py    |       13 |        0 |    100% |           |
 | src/dinary/background/classification/persist.py             |       85 |       10 |     88% |145, 174-176, 201-203, 226-228 |
-| src/dinary/background/classification/receipt\_classifier.py |       73 |        7 |     90% |   153-166 |
+| src/dinary/background/classification/receipt\_classifier.py |       75 |        7 |     91% |   153-166 |
 | src/dinary/background/classification/store\_resolver.py     |       28 |        1 |     96% |        64 |
 | src/dinary/background/classification/task.py                |      173 |       30 |     83% |135-137, 145-161, 165-169, 173-177, 194, 225, 235-241, 282, 310, 334-336 |
 | src/dinary/background/rate\_prefetch/task.py                |       57 |        2 |     96% |   87, 118 |
@@ -42,7 +42,7 @@
 | src/dinary/background/sheet\_logging/sheet\_logging.py      |      227 |       41 |     82% |101-105, 119-126, 134, 200-201, 211, 216-218, 261-263, 287-288, 292-302, 379, 418-422, 433, 437, 467-468, 488-498 |
 | src/dinary/background/sheet\_logging/sheets\_write.py       |       65 |       35 |     46% |114-119, 124-127, 131-136, 158-192 |
 | src/dinary/background/sheet\_logging/task.py                |       54 |        7 |     87% |     45-58 |
-| src/dinary/config.py                                        |      158 |       19 |     88% |38, 48, 111-113, 144, 150, 206-210, 212-216, 219-224, 227-231, 294-296 |
+| src/dinary/config.py                                        |      158 |       20 |     87% |38, 48, 111-113, 144, 150, 206-210, 212-216, 219-224, 227-231, 290, 294-296 |
 | src/dinary/db/catalog.py                                    |       44 |        0 |    100% |           |
 | src/dinary/db/classification\_rules.py                      |       39 |        2 |     95% |     64-65 |
 | src/dinary/db/currencies.py                                 |       34 |        5 |     85% |21-22, 59-64 |
@@ -54,7 +54,7 @@
 | src/dinary/main.py                                          |       85 |        8 |     91% |42-44, 115, 121, 127, 137, 147 |
 | src/dinary/sheets/sheet\_mapping.py                         |      250 |       54 |     78% |239, 311-313, 340-341, 348-354, 404, 407-419, 433-434, 444-462, 539-546, 574-626, 654, 665-670 |
 | src/dinary/sheets/sheets.py                                 |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
-| **TOTAL**                                                   | **3802** |  **503** | **87%** |           |
+| **TOTAL**                                                   | **3690** |  **473** | **87%** |           |
 
 
 ## Setup coverage badge
