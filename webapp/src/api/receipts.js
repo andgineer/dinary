@@ -1,7 +1,19 @@
 // Fetch wrapper for the receipt classification API.
 // No Vue, no DOM, no store imports — pure network layer.
 
+import { apiRequest } from "./_request.js";
+
 const POST_RECEIPT_TIMEOUT_MS = 30_000;
+
+export function getReceipt(id, { include = "" } = {}) {
+  return include
+    ? apiRequest(`/api/receipts/${id}?include=${encodeURIComponent(include)}`)
+    : apiRequest(`/api/receipts/${id}`);
+}
+
+export function deleteReceipt(id) {
+  return apiRequest(`/api/receipts/${id}`, { method: "DELETE" });
+}
 
 export async function postReceipt({ client_receipt_id, url }) {
   const ctrl = new AbortController();

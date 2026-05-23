@@ -1,19 +1,17 @@
-"""POST /api/receipts — idempotent receipt ingestion.
-
-Saves the raw URL and queues a classification job. Parsing and LLM
-classification happen in the background drain, not on this hot path.
-"""
+"""Receipts API: POST, GET, DELETE /api/receipts."""
 
 import asyncio
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from dinary.background.classification.task import notify_new_receipt
 from dinary.db.receipts import (
+    delete_receipt_cascade,
     get_receipt_by_client_id,
+    get_receipt_summary,
     insert_job,
     insert_receipt,
 )
@@ -41,6 +39,32 @@ async def create_receipt(
     if result.status == "ok":
         notify_new_receipt()
     return result
+
+
+@router.get("/api/receipts/{receipt_id}")
+async def get_receipt(
+    receipt_id: int,
+    include: str = Query(""),
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> dict:
+    summary = await asyncio.to_thread(get_receipt_summary, con, receipt_id)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    if "expenses" not in include.split(","):
+        summary.pop("expenses", None)
+    return summary
+
+
+@router.delete("/api/receipts/{receipt_id}", status_code=204)
+async def delete_receipt(
+    receipt_id: int,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> Response:
+    summary = await asyncio.to_thread(get_receipt_summary, con, receipt_id)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    await asyncio.to_thread(delete_receipt_cascade, con, receipt_id)
+    return Response(status_code=204)
 
 
 def _create_receipt_sync(req: ReceiptRequest, con: sqlite3.Connection) -> ReceiptResponse:

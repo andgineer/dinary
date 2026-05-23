@@ -1,9 +1,15 @@
 <script setup>
 import { computed, ref, watch } from "vue";
-import { Check, X } from "lucide-vue-next";
+import { Check, Receipt, Trash2, X } from "lucide-vue-next";
 import { useCatalogStore } from "../stores/catalog.js";
 import { useReviewStore } from "../stores/review.js";
+import { useToastStore } from "../stores/toast.js";
+import { useCurrencyStore } from "../stores/currency.js";
+import { useOnline } from "../composables/useOnline.js";
+import { getReceipt } from "../api/receipts.js";
 import CategorySheet from "./CategorySheet.vue";
+import ConfirmDeleteSheet from "./ConfirmDeleteSheet.vue";
+import CurrencyPicker from "./CurrencyPicker.vue";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -15,6 +21,9 @@ const emit = defineEmits(["close"]);
 
 const catalog = useCatalogStore();
 const reviewStore = useReviewStore();
+const toast = useToastStore();
+const currencyStore = useCurrencyStore();
+const { isOnline } = useOnline();
 
 const selectedCategoryId = ref(null);
 const selectedTagIds = ref(new Set());
@@ -24,6 +33,17 @@ const updateRule = ref(false);
 const categorySheetOpen = ref(false);
 const submitting = ref(false);
 
+// Amount editing (manual expenses only)
+const amount = ref("");
+const selectedCurrency = ref("");
+const currencyPickerOpen = ref(false);
+
+// Delete flow
+const confirmingDelete = ref(false);
+const deleting = ref(false);
+const cascade = ref(null);
+const cascadeLoading = ref(false);
+
 const SCOPE_OPTIONS = [
   { value: "single", label: "Only this" },
   { value: "month", label: "Last month" },
@@ -32,12 +52,18 @@ const SCOPE_OPTIONS = [
 ];
 
 const source = computed(() => props.expense ?? props.ruleItem);
+const isManual = computed(() => props.expense?.receipt_id == null);
+const isReceiptBacked = computed(() => props.expense?.receipt_id != null);
 
 watch(
   () => props.open,
   (isOpen) => {
     if (!isOpen) {
       categorySheetOpen.value = false;
+      confirmingDelete.value = false;
+      cascade.value = null;
+      cascadeLoading.value = false;
+      currencyPickerOpen.value = false;
       return;
     }
     const src = source.value;
@@ -47,6 +73,9 @@ watch(
     scope.value = "single";
     updateRule.value = false;
     submitting.value = false;
+    amount.value = props.expense?.amount_original != null ? String(props.expense.amount_original) : "";
+    selectedCurrency.value =
+      props.expense?.currency_original || currencyStore.preferredCode || "";
   },
   { immediate: true },
 );
@@ -56,12 +85,10 @@ const selectedCategory = computed(() =>
 );
 
 const activeTags = computed(() => catalog.tags);
-
 const activeEvents = computed(() => catalog.events());
-
 const showScope = computed(() => props.expense?.receipt_id != null);
-const showUpdateRule = computed(() =>
-  props.expense?.receipt_id != null && props.expense?.has_rule === true,
+const showUpdateRule = computed(
+  () => props.expense?.receipt_id != null && props.expense?.has_rule === true,
 );
 
 function toggleTag(tagId) {
@@ -97,17 +124,31 @@ function _resolvedTags() {
 
 async function save() {
   if (submitting.value) return;
+
+  if (isManual.value && props.expense) {
+    const parsed = Number.parseFloat(String(amount.value).replace(",", "."));
+    if (!amount.value || Number.isNaN(parsed) || parsed <= 0) {
+      toast.show("Enter a valid amount", "error");
+      return;
+    }
+  }
+
   submitting.value = true;
   try {
     if (props.expense) {
-      await reviewStore.updateExpense(props.expense.id, {
+      const patch = {
         category_id: selectedCategoryId.value,
         tag_ids: [...selectedTagIds.value],
         event_id: selectedEventId.value,
         clear_event: selectedEventId.value === null,
         scope: scope.value,
         update_rule: updateRule.value,
-      });
+      };
+      if (isManual.value) {
+        patch.amount_original = Number.parseFloat(String(amount.value).replace(",", "."));
+        patch.currency_original = selectedCurrency.value;
+      }
+      await reviewStore.updateExpense(props.expense.id, patch);
       const ev = selectedEventId.value
         ? (activeEvents.value.find((e) => e.id === selectedEventId.value) ?? null)
         : null;
@@ -117,6 +158,12 @@ async function save() {
         tags: _resolvedTags(),
         event_id: selectedEventId.value,
         event_name: ev?.name ?? null,
+        ...(isManual.value
+          ? {
+              amount_original: Number.parseFloat(String(amount.value).replace(",", ".")),
+              currency_original: selectedCurrency.value,
+            }
+          : {}),
       });
     } else if (props.ruleItem) {
       await reviewStore.correct(props.ruleItem, selectedCategoryId.value, "all");
@@ -132,6 +179,67 @@ async function save() {
     submitting.value = false;
   }
 }
+
+function openDeleteConfirm() {
+  if (!isOnline.value) {
+    toast.show("Not available offline", "error");
+    return;
+  }
+  if (isReceiptBacked.value && !cascade.value) {
+    _fetchCascade();
+  }
+  confirmingDelete.value = true;
+}
+
+async function _fetchCascade() {
+  cascadeLoading.value = true;
+  try {
+    cascade.value = await getReceipt(props.expense.receipt_id, { include: "expenses" });
+  } catch {
+    // cascade card will show loading until retry
+  } finally {
+    cascadeLoading.value = false;
+  }
+}
+
+async function confirmDelete() {
+  if (!isOnline.value) {
+    toast.show("Not available offline", "error");
+    return;
+  }
+  if (deleting.value) return;
+  deleting.value = true;
+  try {
+    if (isManual.value) {
+      await reviewStore.deleteExpense(props.expense.id);
+      toast.show("Expense deleted", "info");
+    } else {
+      const receiptId = props.expense.receipt_id;
+      const count = cascade.value?.expenses?.length ?? 0;
+      await reviewStore.deleteReceipt(receiptId);
+      toast.show(`Receipt deleted (${count} expense${count !== 1 ? "s" : ""} removed)`, "info");
+    }
+    confirmingDelete.value = false;
+    emit("close");
+  } catch (err) {
+    toast.show(err?.message || "Delete failed", "error");
+  } finally {
+    deleting.value = false;
+  }
+}
+
+function cancelDelete() {
+  confirmingDelete.value = false;
+}
+
+function _formatDate(iso) {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  } catch {
+    return iso;
+  }
+}
 </script>
 
 <template>
@@ -143,6 +251,7 @@ async function save() {
       <div
         v-if="open"
         class="sheet"
+        :class="{ 'sheet-dimmed': confirmingDelete }"
         role="dialog"
         aria-modal="true"
         aria-label="Edit expense"
@@ -151,12 +260,49 @@ async function save() {
         <div class="drag-handle" />
 
         <div class="sheet-header">
+          <span class="sheet-eyebrow">EDIT EXPENSE</span>
+          <span v-if="isReceiptBacked" class="from-receipt-pill" data-testid="from-receipt-pill">
+            <Receipt :size="12" aria-hidden="true" />
+            FROM RECEIPT
+          </span>
           <button type="button" class="sheet-close" aria-label="Close" @click="emit('close')">
             <X :size="16" />
           </button>
         </div>
 
         <div class="sheet-body">
+          <!-- Amount + Currency (manual expenses only) -->
+          <div v-if="isManual && expense" class="field-block" data-testid="amount-block">
+            <div class="field-label">AMOUNT</div>
+            <div class="amount-row">
+              <div class="hero-currency-wrap">
+                <button
+                  type="button"
+                  class="currency-pill"
+                  :class="{ 'is-open': currencyPickerOpen }"
+                  aria-label="Select currency"
+                  data-testid="currency-pill"
+                  @click="currencyPickerOpen = !currencyPickerOpen"
+                >
+                  {{ selectedCurrency || "RSD" }}
+                </button>
+                <div v-if="currencyPickerOpen" class="currency-picker-wrap">
+                  <CurrencyPicker v-model="selectedCurrency" @close="currencyPickerOpen = false" />
+                </div>
+              </div>
+              <input
+                v-model="amount"
+                type="text"
+                inputmode="decimal"
+                placeholder="0"
+                autocomplete="off"
+                class="amount-input"
+                aria-label="Amount"
+                data-testid="amount-input"
+              />
+            </div>
+          </div>
+
           <!-- Category -->
           <div class="field-block">
             <div class="field-label">CATEGORY</div>
@@ -238,6 +384,19 @@ async function save() {
         </div>
 
         <div class="sheet-footer">
+          <!-- Delete button -->
+          <button
+            v-if="expense"
+            type="button"
+            class="btn-delete"
+            :class="{ 'btn-delete-tint': isReceiptBacked }"
+            data-testid="delete-btn"
+            @click="openDeleteConfirm"
+          >
+            <Trash2 :size="14" aria-hidden="true" />
+            {{ isReceiptBacked ? "Delete receipt" : "Delete" }}
+          </button>
+
           <button type="button" class="btn-cancel" @click="emit('close')">Cancel</button>
           <button
             type="button"
@@ -260,6 +419,69 @@ async function save() {
     @select="selectedCategoryId = $event"
     @close="categorySheetOpen = false"
   />
+
+  <!-- Manual expense delete confirm -->
+  <ConfirmDeleteSheet
+    v-if="isManual"
+    :open="confirmingDelete"
+    kind="expense"
+    title="Delete this expense?"
+    :destructive-label="'Delete'"
+    :loading="deleting"
+    @cancel="cancelDelete"
+    @confirm="confirmDelete"
+  >
+    <template #body>
+      <span v-if="expense">
+        <span class="confirm-highlight">{{ expense.amount_original }} {{ expense.currency_original }}</span>
+        on {{ expense.category_name }}{{ expense.datetime ? ", " + _formatDate(expense.datetime) : "" }}.
+        This can't be undone.
+      </span>
+    </template>
+  </ConfirmDeleteSheet>
+
+  <!-- Receipt-backed delete confirm -->
+  <ConfirmDeleteSheet
+    v-if="isReceiptBacked"
+    :open="confirmingDelete"
+    kind="receipt"
+    title="Delete this receipt?"
+    :destructive-label="cascade ? `Delete ${cascade.expenses.length} item${cascade.expenses.length !== 1 ? 's' : ''}` : 'Delete'"
+    :loading="deleting"
+    @cancel="cancelDelete"
+    @confirm="confirmDelete"
+  >
+    <template #body>
+      This deletes the whole receipt and all
+      <span class="confirm-highlight">{{ cascade?.expenses?.length ?? "…" }} expenses</span>
+      created from it — not just this one. This can't be undone.
+    </template>
+    <template #detail>
+      <div class="cascade-card" data-testid="cascade-card">
+        <div v-if="cascadeLoading" class="cascade-loading">Loading…</div>
+        <template v-else-if="cascade">
+          <div class="cascade-header">
+            <span class="cascade-merchant">{{ cascade.merchant || "Receipt" }}</span>
+            <span class="cascade-date">{{ _formatDate(cascade.captured_at) }}</span>
+          </div>
+          <div
+            v-for="item in cascade.expenses"
+            :key="item.id"
+            class="cascade-row"
+          >
+            <span class="cascade-item-name">{{ item.item_name || "—" }}</span>
+            <span class="cascade-item-amount">{{ item.amount }} {{ item.currency }}</span>
+          </div>
+          <div class="cascade-footer">
+            <span class="cascade-total-label">TOTAL</span>
+            <span class="cascade-total-amount">
+              {{ cascade.total.amount.toFixed(2) }} {{ cascade.total.currency }}
+            </span>
+          </div>
+        </template>
+      </div>
+    </template>
+  </ConfirmDeleteSheet>
 </template>
 
 <style scoped>
@@ -300,6 +522,13 @@ async function save() {
   display: flex;
   flex-direction: column;
   box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.35);
+  transition: opacity 0.18s, filter 0.18s;
+}
+
+.sheet-dimmed {
+  opacity: 0.55;
+  filter: blur(0.5px);
+  pointer-events: none;
 }
 
 .drag-handle {
@@ -315,6 +544,9 @@ async function save() {
   padding: 0.75rem 3rem 0.5rem 1rem;
   position: relative;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .sheet-eyebrow {
@@ -322,6 +554,20 @@ async function save() {
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--muted);
+  text-transform: uppercase;
+}
+
+.from-receipt-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -356,6 +602,74 @@ async function save() {
   text-transform: uppercase;
   color: var(--muted);
   margin-bottom: 0.4rem;
+}
+
+/* Amount row */
+.amount-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+.hero-currency-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.currency-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.6rem;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-family: var(--font-num);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  width: auto;
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+
+.currency-pill.is-open {
+  opacity: 0.85;
+}
+
+.currency-picker-wrap {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 0.6rem;
+  min-width: 220px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.amount-input {
+  flex: 1;
+  height: 60px;
+  font-size: 2rem;
+  font-weight: 500;
+  font-family: var(--font-num);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--text);
+  padding: 0 0.25rem;
+  text-align: right;
+}
+
+.amount-input:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
 }
 
 .category-chip {
@@ -469,6 +783,26 @@ async function save() {
   flex-shrink: 0;
 }
 
+.btn-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.5rem 0.7rem;
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.30);
+  border-radius: 8px;
+  color: #fca5a5;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  width: auto;
+  flex-shrink: 0;
+}
+
+.btn-delete-tint {
+  background: rgba(239, 68, 68, 0.10);
+}
+
 .btn-cancel {
   flex: 1;
   padding: 0.5rem 1rem;
@@ -484,5 +818,93 @@ async function save() {
   flex: 1;
   padding: 0.5rem 1rem;
   font-size: 0.9rem;
+}
+
+/* Confirm body text highlight */
+.confirm-highlight {
+  font-family: var(--font-num);
+  color: var(--text);
+}
+
+/* Cascade card (receipt delete summary) */
+.cascade-card {
+  background: var(--field-deep);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 0.85rem;
+}
+
+.cascade-loading {
+  padding: 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.cascade-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.cascade-merchant {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cascade-date {
+  font-family: var(--font-num);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.cascade-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.35rem 0.75rem;
+  gap: 0.5rem;
+}
+
+.cascade-item-name {
+  flex: 1;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cascade-item-amount {
+  font-family: var(--font-num);
+  font-size: 0.82rem;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.cascade-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.cascade-total-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.cascade-total-amount {
+  font-family: var(--font-num);
+  font-weight: 700;
+  color: var(--text);
 }
 </style>

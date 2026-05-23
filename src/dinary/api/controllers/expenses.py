@@ -68,6 +68,8 @@ class ExpenseEditRequest(BaseModel):
     clear_event: bool = False
     scope: CorrectionScope = CorrectionScope.single
     update_rule: bool = False
+    amount_original: Decimal | None = None
+    currency_original: str | None = None
 
 
 class ExpenseEditResponse(BaseModel):
@@ -272,17 +274,65 @@ def list_expenses_sync(
     }
 
 
+def _update_amount(
+    con: sqlite3.Connection,
+    expense_id: int,
+    amount_original: Decimal,
+    currency_original: str | None,
+) -> None:
+    currency = currency_original or settings.app_currency
+    exp_row = con.execute(
+        "SELECT datetime FROM expenses WHERE id = ?",
+        [expense_id],
+    ).fetchone()
+    if exp_row is None:
+        return
+    amount_acc = amount_original
+    if currency.upper() != settings.accounting_currency.upper():
+        rate = get_rate(
+            con,
+            datetime.fromisoformat(str(exp_row[0])).date(),
+            currency,
+            settings.accounting_currency,
+            offline=True,
+        )
+        amount_acc = (amount_original * rate).quantize(Decimal("0.01"))
+    con.execute(
+        "UPDATE expenses SET amount_original = ?, currency_original = ?, amount = ? WHERE id = ?",
+        [float(amount_original), currency, float(amount_acc), expense_id],
+    )
+
+
+def delete_expense_sync(expense_id: int, con: sqlite3.Connection) -> None:
+    """Delete a manual expense. Raises 404 if not found, 409 if receipt-backed."""
+    row = con.execute(
+        "SELECT id, receipt_id FROM expenses WHERE id = ?",
+        [expense_id],
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    if row[1] is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Receipt-backed expenses must be deleted via DELETE /api/receipts/:id",
+        )
+    con.execute("DELETE FROM expense_tags WHERE expense_id = ?", [expense_id])
+    con.execute("DELETE FROM expenses WHERE id = ?", [expense_id])
+
+
 def edit_expense_sync(
     expense_id: int,
     req: ExpenseEditRequest,
     con: sqlite3.Connection,
 ) -> ExpenseEditResponse:
     row = con.execute(
-        "SELECT id FROM expenses WHERE id = ?",
+        "SELECT id, receipt_id FROM expenses WHERE id = ?",
         [expense_id],
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="Expense not found")
+
+    receipt_id = row[1]
 
     if req.category_id is not None:
         correct_category_sync(
@@ -293,6 +343,8 @@ def edit_expense_sync(
         )
 
     with transaction(con):
+        if req.amount_original is not None and receipt_id is None:
+            _update_amount(con, expense_id, req.amount_original, req.currency_original)
         con.execute("DELETE FROM expense_tags WHERE expense_id = ?", [expense_id])
         for tag_id in req.tag_ids:
             con.execute(
@@ -309,53 +361,7 @@ def edit_expense_sync(
             )
 
         if req.update_rule:
-            ri_row = con.execute(
-                """
-                SELECT ri.name_normalized, rec.store_id
-                  FROM receipt_items ri
-                  JOIN receipts rec ON rec.id = ri.receipt_id
-                 WHERE ri.expense_id = ?
-                 LIMIT 1
-                """,
-                [expense_id],
-            ).fetchone()
-            if ri_row and ri_row[0]:
-                item_name = ri_row[0]
-                store_id = ri_row[1]
-                rule_exists = con.execute(
-                    """
-                    SELECT 1 FROM classification_rules
-                     WHERE item_name_normalized = ?
-                       AND (store_id IS NULL OR store_id = ?)
-                     LIMIT 1
-                    """,
-                    [item_name, store_id],
-                ).fetchone()
-                if rule_exists is None:
-                    logger.error(
-                        "update_rule=True for expense_id=%s but no rule exists"
-                        " for item=%r store_id=%s — skipping rule update",
-                        expense_id,
-                        item_name,
-                        store_id,
-                    )
-                else:
-                    exp_row = con.execute(
-                        "SELECT category_id FROM expenses WHERE id = ?",
-                        [expense_id],
-                    ).fetchone()
-                    if exp_row:
-                        create_or_update_rule(
-                            con,
-                            store_id,
-                            item_name,
-                            RuleSpec(
-                                int(exp_row[0]),
-                                4,
-                                "user_correction",
-                                tag_ids=tuple(req.tag_ids),
-                            ),
-                        )
+            _apply_rule_update(con, expense_id, req.tag_ids)
 
     updated = con.execute(
         """
@@ -381,6 +387,56 @@ def edit_expense_sync(
         event_id=int(updated[3]) if updated[3] is not None else None,
         event_name=str(updated[4]) if updated[4] is not None else None,
     )
+
+
+def _apply_rule_update(
+    con: sqlite3.Connection,
+    expense_id: int,
+    tag_ids: list[int],
+) -> None:
+    ri_row = con.execute(
+        """
+        SELECT ri.name_normalized, rec.store_id
+          FROM receipt_items ri
+          JOIN receipts rec ON rec.id = ri.receipt_id
+         WHERE ri.expense_id = ?
+         LIMIT 1
+        """,
+        [expense_id],
+    ).fetchone()
+    if not ri_row or not ri_row[0]:
+        return
+    item_name = ri_row[0]
+    store_id = ri_row[1]
+    rule_exists = con.execute(
+        """
+        SELECT 1 FROM classification_rules
+         WHERE item_name_normalized = ?
+           AND (store_id IS NULL OR store_id = ?)
+         LIMIT 1
+        """,
+        [item_name, store_id],
+    ).fetchone()
+    if rule_exists is None:
+        logger.error(
+            "update_rule=True for expense_id=%s but no rule exists"
+            " for item=%r store_id=%s — skipping rule update",
+            expense_id,
+            item_name,
+            store_id,
+        )
+        return
+    exp_row = con.execute(
+        "SELECT category_id FROM expenses WHERE id = ?",
+        [expense_id],
+    ).fetchone()
+    if exp_row:
+        create_or_update_rule(
+            con,
+            store_id,
+            item_name,
+            RuleSpec(int(exp_row[0]), 4, "user_correction", tag_ids=tuple(tag_ids)),
+        )
 
 
 def _is_replay(con: sqlite3.Connection, client_expense_id: str) -> bool:

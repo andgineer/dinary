@@ -1,9 +1,10 @@
-"""Expenses API: POST /api/expenses, GET /api/expenses, PATCH /api/expenses/{id}"""
+"""Expenses API: POST /api/expenses, GET /api/expenses, PATCH /api/expenses/{id},
+DELETE /api/expenses/{id}"""
 
 import asyncio
 import sqlite3
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 
 from dinary.api.controllers.expenses import (
     ExpenseEditRequest,
@@ -11,6 +12,7 @@ from dinary.api.controllers.expenses import (
     ExpenseRequest,
     ExpenseResponse,
     create_expense_sync,
+    delete_expense_sync,
     edit_expense_sync,
     list_expenses_sync,
 )
@@ -48,3 +50,12 @@ async def patch_expense(
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> ExpenseEditResponse:
     return await asyncio.to_thread(edit_expense_sync, expense_id, req, con)
+
+
+@router.delete("/api/expenses/{expense_id}", status_code=204)
+async def delete_expense(
+    expense_id: int,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> Response:
+    await asyncio.to_thread(delete_expense_sync, expense_id, con)
+    return Response(status_code=204)

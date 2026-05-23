@@ -324,3 +324,88 @@ def count_pending_classification_jobs(conn: sqlite3.Connection) -> int:
         "SELECT COUNT(*) FROM receipt_classification_jobs"
         " WHERE status IN ('pending', 'in_progress')",
     ).fetchone()[0]
+
+
+def get_receipt_summary(conn: sqlite3.Connection, receipt_id: int) -> dict | None:
+    """Return receipt metadata + associated expenses for the cascade-confirm UI.
+
+    Returns None if the receipt does not exist.
+    """
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        """
+        SELECT r.id, r.store_name_raw AS merchant, r.purchase_datetime AS captured_at
+          FROM receipts r
+         WHERE r.id = ?
+        """,
+        [receipt_id],
+    ).fetchone()
+    if row is None:
+        return None
+
+    expense_rows = conn.execute(
+        """
+        SELECT e.id, ri.name_raw AS item_name, e.amount_original AS amount,
+               e.currency_original AS currency
+          FROM expenses e
+          LEFT JOIN receipt_items ri ON ri.expense_id = e.id
+         WHERE e.receipt_id = ?
+         ORDER BY e.id
+        """,
+        [receipt_id],
+    ).fetchall()
+
+    expenses = [
+        {
+            "id": int(r["id"]),
+            "item_name": str(r["item_name"]) if r["item_name"] else "",
+            "amount": float(r["amount"]),
+            "currency": str(r["currency"]),
+        }
+        for r in expense_rows
+    ]
+    total = sum(e["amount"] for e in expenses)
+    currency = expenses[0]["currency"] if expenses else ""
+
+    return {
+        "id": int(row["id"]),
+        "merchant": str(row["merchant"]) if row["merchant"] else "",
+        "captured_at": str(row["captured_at"]) if row["captured_at"] else None,
+        "expenses": expenses,
+        "total": {"amount": total, "currency": currency},
+    }
+
+
+def delete_receipt_cascade(conn: sqlite3.Connection, receipt_id: int) -> None:
+    """Delete a receipt and all its expenses (cascade). Idempotent."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "DELETE FROM receipt_classification_jobs WHERE receipt_id = ?",
+            [receipt_id],
+        )
+        conn.execute(
+            "UPDATE receipt_items SET expense_id = NULL WHERE receipt_id = ?",
+            [receipt_id],
+        )
+        conn.execute(
+            "DELETE FROM expense_tags WHERE expense_id IN "
+            "(SELECT id FROM expenses WHERE receipt_id = ?)",
+            [receipt_id],
+        )
+        conn.execute(
+            "DELETE FROM sheet_logging_jobs WHERE expense_id IN "
+            "(SELECT id FROM expenses WHERE receipt_id = ?)",
+            [receipt_id],
+        )
+        conn.execute("DELETE FROM expenses WHERE receipt_id = ?", [receipt_id])
+        conn.execute("DELETE FROM receipt_items WHERE receipt_id = ?", [receipt_id])
+        conn.execute(
+            "DELETE FROM llmbroker_call_log WHERE receipt_id = ?",
+            [receipt_id],
+        )
+        conn.execute("DELETE FROM receipts WHERE id = ?", [receipt_id])
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise

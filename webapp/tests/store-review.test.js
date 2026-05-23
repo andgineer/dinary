@@ -3,6 +3,8 @@ import { setActivePinia, createPinia } from "pinia";
 import { useReviewStore } from "../src/stores/review.js";
 import * as expenseCorrections from "../src/api/expenseCorrections.js";
 import * as reviewApi from "../src/api/review.js";
+import * as expensesApi from "../src/api/expenses.js";
+import * as receiptsApi from "../src/api/receipts.js";
 import { useCatalogStore } from "../src/stores/catalog.js";
 import { useToastStore } from "../src/stores/toast.js";
 
@@ -602,5 +604,76 @@ describe("review store: setOpenRow()", () => {
     store.setOpenRow(1);
     store.setOpenRow(2);
     expect(store.openRowId).toBe(2);
+  });
+});
+
+describe("review store: deleteExpense()", () => {
+  it("calls deleteExpense API and removes the expense from the list", async () => {
+    vi.spyOn(expensesApi, "deleteExpense").mockResolvedValueOnce(null);
+    const store = useReviewStore();
+    store.expenses = [
+      { id: 10, category_name: "food", receipt_id: null },
+      { id: 20, category_name: "transport", receipt_id: null },
+    ];
+
+    await store.deleteExpense(10);
+
+    expect(expensesApi.deleteExpense).toHaveBeenCalledWith(10);
+    expect(store.expenses.map((e) => e.id)).toEqual([20]);
+  });
+
+  it("marks the cache dirty after deleting an expense", async () => {
+    vi.spyOn(expensesApi, "deleteExpense").mockResolvedValueOnce(null);
+    const store = useReviewStore();
+    store.expenses = [{ id: 5, receipt_id: null }];
+
+    await store.deleteExpense(5);
+
+    expect(store.dirtyFlag).toBe(true);
+  });
+
+  it("does not swallow API errors", async () => {
+    vi.spyOn(expensesApi, "deleteExpense").mockRejectedValueOnce(new Error("Not found"));
+    const store = useReviewStore();
+    store.expenses = [{ id: 7, receipt_id: null }];
+
+    await expect(store.deleteExpense(7)).rejects.toThrow("Not found");
+    expect(store.expenses).toHaveLength(1);
+  });
+});
+
+describe("review store: deleteReceipt()", () => {
+  it("calls deleteReceipt API and removes all expenses with that receipt_id", async () => {
+    vi.spyOn(receiptsApi, "deleteReceipt").mockResolvedValueOnce(null);
+    const store = useReviewStore();
+    store.expenses = [
+      { id: 1, receipt_id: 7 },
+      { id: 2, receipt_id: 7 },
+      { id: 3, receipt_id: 9 },
+    ];
+
+    await store.deleteReceipt(7);
+
+    expect(receiptsApi.deleteReceipt).toHaveBeenCalledWith(7);
+    expect(store.expenses.map((e) => e.id)).toEqual([3]);
+  });
+
+  it("marks the cache dirty after deleting a receipt", async () => {
+    vi.spyOn(receiptsApi, "deleteReceipt").mockResolvedValueOnce(null);
+    const store = useReviewStore();
+    store.expenses = [{ id: 1, receipt_id: 5 }];
+
+    await store.deleteReceipt(5);
+
+    expect(store.dirtyFlag).toBe(true);
+  });
+
+  it("does not swallow API errors", async () => {
+    vi.spyOn(receiptsApi, "deleteReceipt").mockRejectedValueOnce(new Error("Not found"));
+    const store = useReviewStore();
+    store.expenses = [{ id: 1, receipt_id: 3 }];
+
+    await expect(store.deleteReceipt(3)).rejects.toThrow("Not found");
+    expect(store.expenses).toHaveLength(1);
   });
 });

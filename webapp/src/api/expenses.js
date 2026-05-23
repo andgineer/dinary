@@ -2,6 +2,8 @@
 // imports — the catalog cache and offline queue are owned by the
 // corresponding Pinia stores.
 
+import { apiRequest } from "./_request.js";
+
 const POST_EXPENSE_TIMEOUT_MS = 30_000;
 
 export async function postExpense({
@@ -42,6 +44,10 @@ export async function postExpense({
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function deleteExpense(id) {
+  return apiRequest(`/api/expenses/${id}`, { method: "DELETE" });
 }
 
 export async function parseQr(url) {

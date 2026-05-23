@@ -38,6 +38,8 @@ const EXPENSE = {
   event_id: null,
   receipt_id: null,
   has_rule: false,
+  amount_original: 100,
+  currency_original: "RSD",
 };
 
 function mountSheet(props = {}) {

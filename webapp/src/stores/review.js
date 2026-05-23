@@ -2,6 +2,8 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { getReviewFeed, getReviewCounts, getExpensesFeed, confirmAllRules } from "../api/review.js";
 import { correctCategory, editExpense } from "../api/expenseCorrections.js";
+import { deleteExpense as apiDeleteExpense } from "../api/expenses.js";
+import { deleteReceipt as apiDeleteReceipt } from "../api/receipts.js";
 import { useStaleCache } from "../composables/useStaleCache.js";
 import { useToastStore } from "./toast.js";
 import { useCatalogStore } from "./catalog.js";
@@ -221,6 +223,18 @@ export const useReviewStore = defineStore("review", () => {
     expenses.value = expenses.value.map((e) => (e.id === id ? { ...e, ...patch } : e));
   }
 
+  async function deleteExpense(id) {
+    await apiDeleteExpense(id);
+    expenses.value = expenses.value.filter((e) => e.id !== id);
+    markDirty();
+  }
+
+  async function deleteReceipt(receiptId) {
+    await apiDeleteReceipt(receiptId);
+    expenses.value = expenses.value.filter((e) => e.receipt_id !== receiptId);
+    markDirty();
+  }
+
   function reset() {
     items.value = [];
     doubtfulCount.value = 0;
@@ -267,6 +281,8 @@ export const useReviewStore = defineStore("review", () => {
     resetExpenses,
     updateExpense,
     patchExpense,
+    deleteExpense,
+    deleteReceipt,
     reset,
   };
 });

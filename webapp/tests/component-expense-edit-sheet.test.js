@@ -14,6 +14,8 @@ import ExpenseEditSheet from "../src/components/ExpenseEditSheet.vue";
 import { useReviewStore } from "../src/stores/review.js";
 import { useCatalogStore } from "../src/stores/catalog.js";
 import * as expenseCorrections from "../src/api/expenseCorrections.js";
+import * as expensesApi from "../src/api/expenses.js";
+import * as receiptsApi from "../src/api/receipts.js";
 
 const TELEPORT_STUB = { template: "<div><slot /></div>" };
 
@@ -66,7 +68,7 @@ describe("ExpenseEditSheet — save() patches local expense list", () => {
 
     const reviewStore = useReviewStore();
     reviewStore.expenses = [
-      { id: 42, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: null },
+      { id: 42, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: null, amount_original: 100, currency_original: "RSD" },
     ];
 
     const expense = reviewStore.expenses[0];
@@ -96,7 +98,7 @@ describe("ExpenseEditSheet — save() patches local expense list", () => {
 
     const reviewStore = useReviewStore();
     reviewStore.expenses = [
-      { id: 42, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: null },
+      { id: 42, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: null, amount_original: 100, currency_original: "RSD" },
     ];
 
     const expense = reviewStore.expenses[0];
@@ -126,7 +128,7 @@ describe("ExpenseEditSheet — save() patches local expense list", () => {
 
     const reviewStore = useReviewStore();
     reviewStore.expenses = [
-      { id: 42, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: null },
+      { id: 42, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: null, amount_original: 100, currency_original: "RSD" },
       { id: 99, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: null },
     ];
 
@@ -138,6 +140,151 @@ describe("ExpenseEditSheet — save() patches local expense list", () => {
     await flushPromises();
 
     expect(reviewStore.expenses[1].tags).toEqual([]);
+    wrapper.unmount();
+  });
+});
+
+describe("ExpenseEditSheet — amount field (manual expense)", () => {
+  it("shows the amount block for a manual expense (receipt_id null)", () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    seedCatalog();
+    const reviewStore = useReviewStore();
+    reviewStore.expenses = [
+      { id: 42, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: null, amount_original: 480, currency_original: "RSD" },
+    ];
+    const wrapper = mountSheet(reviewStore.expenses[0], pinia);
+    expect(wrapper.find('[data-testid="amount-block"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("hides the amount block for a receipt-backed expense", () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    seedCatalog();
+    const reviewStore = useReviewStore();
+    reviewStore.expenses = [
+      { id: 10, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: 7, amount_original: 200, currency_original: "RSD" },
+    ];
+    const wrapper = mountSheet(reviewStore.expenses[0], pinia);
+    expect(wrapper.find('[data-testid="amount-block"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("patches amount_original and currency_original after save for manual expense", async () => {
+    vi.spyOn(expenseCorrections, "editExpense").mockResolvedValue({});
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    seedCatalog();
+    const reviewStore = useReviewStore();
+    reviewStore.expenses = [
+      { id: 42, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: null, amount_original: 100, currency_original: "RSD" },
+    ];
+    const expense = reviewStore.expenses[0];
+    const wrapper = mountSheet(expense, pinia);
+
+    await wrapper.find('[data-testid="amount-input"]').setValue("250");
+    await wrapper.find('[data-testid="save-btn"]').trigger("click");
+    await flushPromises();
+
+    expect(reviewStore.expenses[0].amount_original).toBe(250);
+    wrapper.unmount();
+  });
+});
+
+describe("ExpenseEditSheet — FROM RECEIPT pill", () => {
+  it("shows FROM RECEIPT pill for receipt-backed expense", () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    seedCatalog();
+    const reviewStore = useReviewStore();
+    reviewStore.expenses = [
+      { id: 10, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: 7, amount_original: 200, currency_original: "RSD" },
+    ];
+    const wrapper = mountSheet(reviewStore.expenses[0], pinia);
+    expect(wrapper.find('[data-testid="from-receipt-pill"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("hides FROM RECEIPT pill for manual expense", () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    seedCatalog();
+    const reviewStore = useReviewStore();
+    reviewStore.expenses = [
+      { id: 42, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: null, amount_original: 100, currency_original: "RSD" },
+    ];
+    const wrapper = mountSheet(reviewStore.expenses[0], pinia);
+    expect(wrapper.find('[data-testid="from-receipt-pill"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+describe("ExpenseEditSheet — delete flow (manual)", () => {
+  it("shows delete button for an expense", () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    seedCatalog();
+    const reviewStore = useReviewStore();
+    reviewStore.expenses = [
+      { id: 42, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: null, amount_original: 100, currency_original: "RSD" },
+    ];
+    const wrapper = mountSheet(reviewStore.expenses[0], pinia);
+    expect(wrapper.find('[data-testid="delete-btn"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("calls reviewStore.deleteExpense and emits close after confirming delete", async () => {
+    vi.spyOn(expensesApi, "deleteExpense").mockResolvedValueOnce(null);
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    seedCatalog();
+    const reviewStore = useReviewStore();
+    reviewStore.expenses = [
+      { id: 42, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: null, amount_original: 100, currency_original: "RSD" },
+    ];
+    const wrapper = mountSheet(reviewStore.expenses[0], pinia);
+
+    await wrapper.find('[data-testid="delete-btn"]').trigger("click");
+    await wrapper.find('[data-testid="confirm-delete"]').trigger("click");
+    await flushPromises();
+
+    expect(expensesApi.deleteExpense).toHaveBeenCalledWith(42);
+    expect(wrapper.emitted("close")).toBeTruthy();
+    wrapper.unmount();
+  });
+});
+
+describe("ExpenseEditSheet — delete flow (receipt-backed)", () => {
+  it("calls reviewStore.deleteReceipt and emits close after confirming cascade delete", async () => {
+    vi.spyOn(receiptsApi, "getReceipt").mockResolvedValueOnce({
+      id: 7,
+      merchant: "Maxi",
+      captured_at: "2026-05-10T12:00:00",
+      expenses: [
+        { id: 10, item_name: "hleb", amount: 100, currency: "RSD" },
+        { id: 11, item_name: "mleko", amount: 80, currency: "RSD" },
+      ],
+      total: { amount: 180, currency: "RSD" },
+    });
+    vi.spyOn(receiptsApi, "deleteReceipt").mockResolvedValueOnce(null);
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    seedCatalog();
+    const reviewStore = useReviewStore();
+    reviewStore.expenses = [
+      { id: 10, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: 7, amount_original: 100, currency_original: "RSD" },
+      { id: 11, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: 7, amount_original: 80, currency_original: "RSD" },
+    ];
+    const wrapper = mountSheet(reviewStore.expenses[0], pinia);
+
+    await wrapper.find('[data-testid="delete-btn"]').trigger("click");
+    await flushPromises();
+    await wrapper.find('[data-testid="confirm-delete"]').trigger("click");
+    await flushPromises();
+
+    expect(receiptsApi.deleteReceipt).toHaveBeenCalledWith(7);
+    expect(wrapper.emitted("close")).toBeTruthy();
     wrapper.unmount();
   });
 });

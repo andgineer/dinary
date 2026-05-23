@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { postExpense, parseQr } from "../src/api/expenses.js";
+import { postExpense, parseQr, deleteExpense } from "../src/api/expenses.js";
 
 let originalFetch;
 
@@ -114,5 +114,47 @@ describe("parseQr", () => {
       "/api/qr/parse",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+});
+
+describe("deleteExpense", () => {
+  it("sends DELETE to /api/expenses/:id and returns null on 204", async () => {
+    mockFetch(async () => ({
+      ok: true,
+      status: 204,
+      headers: { get: () => "0" },
+      json: async () => { throw new Error("no body"); },
+    }));
+
+    const result = await deleteExpense(42);
+
+    expect(result).toBeNull();
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/expenses/42",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("throws an Error with status 404 when expense not found", async () => {
+    mockFetch(async () => ({
+      ok: false,
+      status: 404,
+      json: async () => ({ detail: "Expense not found" }),
+    }));
+
+    await expect(deleteExpense(99)).rejects.toMatchObject({
+      message: "Expense not found",
+      status: 404,
+    });
+  });
+
+  it("throws an Error with status 409 when expense is receipt-backed", async () => {
+    mockFetch(async () => ({
+      ok: false,
+      status: 409,
+      json: async () => ({ detail: "Receipt-backed expenses must be deleted via DELETE /api/receipts/:id" }),
+    }));
+
+    await expect(deleteExpense(10)).rejects.toMatchObject({ status: 409 });
   });
 });
