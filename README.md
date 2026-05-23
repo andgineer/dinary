@@ -48,13 +48,13 @@
 | src/dinary/db/currencies.py                                 |       34 |        5 |     85% |21-22, 59-64 |
 | src/dinary/db/db\_migrations.py                             |       54 |        2 |     96% |    86, 89 |
 | src/dinary/db/expenses.py                                   |      132 |       14 |     89% |126, 146, 149, 168, 201-208, 227-233, 319, 423, 465 |
-| src/dinary/db/receipts.py                                   |      101 |       31 |     69% |120-122, 170-172, 233, 249, 334-370, 381-411 |
+| src/dinary/db/receipts.py                                   |       97 |       27 |     72% |120-122, 170-172, 233, 249, 334-370, 381-400 |
 | src/dinary/db/sql\_loader.py                                |       31 |        0 |    100% |           |
 | src/dinary/db/storage.py                                    |      124 |       11 |     91% |143-144, 254-257, 265-271, 327-329 |
 | src/dinary/main.py                                          |       85 |        8 |     91% |42-44, 115, 121, 127, 137, 147 |
 | src/dinary/sheets/sheet\_mapping.py                         |      250 |       54 |     78% |239, 311-313, 340-341, 348-354, 404, 407-419, 433-434, 444-462, 539-546, 574-626, 654, 665-670 |
 | src/dinary/sheets/sheets.py                                 |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
-| **TOTAL**                                                   | **3761** |  **525** | **86%** |           |
+| **TOTAL**                                                   | **3757** |  **521** | **86%** |           |
 
 
 ## Setup coverage badge
