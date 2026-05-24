@@ -131,10 +131,8 @@ VALID_TUNNELS = ("tailscale", "cloudflare", "none")
 
 LOCAL_ENV_PATH = ".deploy/.env"
 LOCAL_ENV_EXAMPLE_PATH = ".deploy.example/.env"
-LOCAL_IMPORT_SOURCES_PATH = ".deploy/import_sources.json"
 REMOTE_DEPLOY_DIR = "/home/ubuntu/dinary/.deploy"
 REMOTE_ENV_PATH = f"{REMOTE_DEPLOY_DIR}/.env"
-REMOTE_IMPORT_SOURCES_PATH = f"{REMOTE_DEPLOY_DIR}/import_sources.json"
 REMOTE_LITESTREAM_CONFIG_PATH = "/etc/litestream.yml"
 
 # Pinned Litestream release we install on VM 1. Keeping this as a
@@ -202,11 +200,9 @@ __all__ = [
     "LITESTREAM_VERSION",
     "LOCAL_ENV_EXAMPLE_PATH",
     "LOCAL_ENV_PATH",
-    "LOCAL_IMPORT_SOURCES_PATH",
     "REMOTE_DEPLOY_DIR",
     "VM1_LITESTREAM_KEY_PATH",
     "REMOTE_ENV_PATH",
-    "REMOTE_IMPORT_SOURCES_PATH",
     "REMOTE_LITESTREAM_CONFIG_PATH",
     "REPLICA_DB_NAME",
     "REPLICA_LITESTREAM_DIR",

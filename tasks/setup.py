@@ -2,10 +2,8 @@
 
 from invoke import task
 
-from tasks.devtools.constants import (
-    DINARY_SERVICE,
-    REPO_URL,
-)
+from tasks.deploy import sync_remote_deploy_files
+from tasks.devtools.constants import DINARY_SERVICE, REPO_URL
 from tasks.devtools.env import bind_host, host, tunnel
 from tasks.ssh_utils import (
     build_data_dir_permissions_script,
@@ -19,7 +17,6 @@ from tasks.ssh_utils import (
     ssh_run,
     ssh_sudo,
     sync_remote_env,
-    sync_remote_import_sources,
 )
 
 
@@ -66,8 +63,7 @@ def _setup_system_packages(c, no_swap: bool) -> None:
 def _setup_credentials(c, setup_host: str) -> None:
     print("=== Syncing .deploy/.env to server ===")
     sync_remote_env(c)
-    print("=== Syncing .deploy/import_sources.json to server (if present) ===")
-    sync_remote_import_sources(c)
+    sync_remote_deploy_files(c)
     print("=== Uploading credentials ===")
     ssh_run(c, "mkdir -p ~/.config/gspread && chmod 700 ~/.config/gspread")
     c.run(

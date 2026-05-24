@@ -8,7 +8,7 @@ from pathlib import Path
 
 from invoke import task
 
-from tasks.devtools.constants import _REMOTE_DB_PATH, DINARY_SERVICE
+from tasks.devtools.constants import _REMOTE_DB_PATH, DINARY_SERVICE, REMOTE_DEPLOY_DIR
 from tasks.devtools.env import bind_host, host, tunnel
 from tasks.ssh_utils import (
     build_data_dir_permissions_script,
@@ -18,8 +18,19 @@ from tasks.ssh_utils import (
     ssh_run,
     ssh_sudo,
     sync_remote_env,
-    sync_remote_import_sources,
+    sync_remote_file,
 )
+
+_DEPLOY_FILES = [
+    (".deploy/import_sources.json", f"{REMOTE_DEPLOY_DIR}/import_sources.json"),
+    (".deploy/llm_providers.toml", f"{REMOTE_DEPLOY_DIR}/llm_providers.toml"),
+]
+
+
+def sync_remote_deploy_files(c) -> None:
+    """Sync .deploy/ config and secrets files to the server."""
+    for local, remote in _DEPLOY_FILES:
+        sync_remote_file(c, local, remote)
 
 
 def _target_migration_head(ref: str) -> str | None:
@@ -164,9 +175,7 @@ def deploy(c, ref="", no_start=False):
 
     print("=== Syncing .deploy/.env to server ===")
     sync_remote_env(c)
-
-    print("=== Syncing .deploy/import_sources.json to server (if present) ===")
-    sync_remote_import_sources(c)
+    sync_remote_deploy_files(c)
 
     bh = bind_host(deploy_tunnel)
     print(f"=== Re-rendering dinary systemd unit (bind {bh}) ===")

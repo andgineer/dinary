@@ -12,10 +12,8 @@ from tasks.devtools.constants import (
     _UV,
     LITESTREAM_VERSION,
     LOCAL_ENV_PATH,
-    LOCAL_IMPORT_SOURCES_PATH,
     REMOTE_DEPLOY_DIR,
     REMOTE_ENV_PATH,
-    REMOTE_IMPORT_SOURCES_PATH,
 )
 from tasks.devtools.env import host, replica_host
 
@@ -164,19 +162,17 @@ def sync_remote_env(c):
     ssh_sudo(c, f"chown ubuntu:ubuntu {REMOTE_ENV_PATH} && chmod 600 {REMOTE_ENV_PATH}")
 
 
-def sync_remote_import_sources(c):
-    """Upload ``.deploy/import_sources.json`` if it exists locally."""
-    local_path = Path(LOCAL_IMPORT_SOURCES_PATH)
+def sync_remote_file(c, local: str, remote: str) -> None:
+    """Upload a single file to the server if it exists locally."""
+    local_path = Path(local)
     if not local_path.exists():
+        print(f"=== Skipped {local} (not found locally) ===")
         return
+    print(f"=== Syncing {local} → {remote} ===")
     content = local_path.read_text(encoding="utf-8")
     ssh_run(c, f"mkdir -p {REMOTE_DEPLOY_DIR}")
-    write_remote_file(c, REMOTE_IMPORT_SOURCES_PATH, content)
-    ssh_sudo(
-        c,
-        f"chown ubuntu:ubuntu {REMOTE_IMPORT_SOURCES_PATH} "
-        f"&& chmod 600 {REMOTE_IMPORT_SOURCES_PATH}",
-    )
+    write_remote_file(c, remote, content)
+    ssh_sudo(c, f"chown ubuntu:ubuntu {remote} && chmod 600 {remote}")
 
 
 # ---------------------------------------------------------------------------
