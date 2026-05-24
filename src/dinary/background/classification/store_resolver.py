@@ -1,6 +1,7 @@
 """Store resolution: PIB/name cache lookup → LLM chain-name normalisation → DB upsert."""
 
 import logging
+import sqlite3
 
 from dinary.adapters.llmbroker import LLMBroker
 from dinary.background.classification.receipt_classifier import get_chain_name
@@ -9,7 +10,7 @@ from dinary.db import storage
 logger = logging.getLogger(__name__)
 
 
-def _upsert_chain(conn, chain_name: str) -> int:
+def _upsert_chain(conn: sqlite3.Connection, chain_name: str) -> int:
     conn.execute("INSERT OR IGNORE INTO shop_chains (name) VALUES (?)", [chain_name])
     row = conn.execute("SELECT id FROM shop_chains WHERE name = ?", [chain_name]).fetchone()
     return int(row[0])
@@ -19,26 +20,29 @@ async def resolve_store(
     broker: LLMBroker,
     store_pib: str,
     store_name_raw: str,
-) -> int:
-    """Return store_id for the given receipt store.
+) -> tuple[int, int]:
+    """Return (store_id, chain_id) for the given receipt store.
 
     With PIB:    SELECT by pib → return if found; else LLM → insert → SELECT by pib.
     Without PIB: log error; SELECT by name → return if found; else LLM → insert → SELECT by name.
     """
     with storage.connection() as conn:
         if store_pib:
-            row = conn.execute("SELECT id FROM stores WHERE pib = ?", [store_pib]).fetchone()
+            row = conn.execute(
+                "SELECT id, chain_id FROM stores WHERE pib = ?",
+                [store_pib],
+            ).fetchone()
         else:
             logger.error(
                 "resolve_store: no PIB on receipt for store %r — falling back to name lookup",
                 store_name_raw,
             )
             row = conn.execute(
-                "SELECT id FROM stores WHERE name = ? AND pib IS NULL",
+                "SELECT id, chain_id FROM stores WHERE name = ? AND pib IS NULL",
                 [store_name_raw],
             ).fetchone()
     if row:
-        return int(row[0])
+        return int(row[0]), int(row[1])
 
     chain_name = await get_chain_name(broker, store_name_raw)
     chain_name = chain_name.strip() or store_name_raw.strip()
@@ -64,4 +68,4 @@ async def resolve_store(
         raise RuntimeError(
             f"Failed to resolve store: name={store_name_raw!r}, pib={store_pib!r}",
         )
-    return int(row[0])
+    return int(row[0]), chain_id

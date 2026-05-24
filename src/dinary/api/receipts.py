@@ -1,6 +1,5 @@
 """Receipts API: POST, GET, DELETE /api/receipts."""
 
-import asyncio
 import sqlite3
 from typing import Literal
 
@@ -31,23 +30,23 @@ class ReceiptResponse(BaseModel):
 
 
 @router.post("/api/receipts", response_model=ReceiptResponse)
-async def create_receipt(
+def create_receipt(
     req: ReceiptRequest,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> ReceiptResponse:
-    result = await asyncio.to_thread(_create_receipt_sync, req, con)
+    result = _create_receipt_sync(req, con)
     if result.status == "ok":
         notify_new_receipt()
     return result
 
 
 @router.get("/api/receipts/{receipt_id}")
-async def get_receipt(
+def get_receipt(
     receipt_id: int,
     include: str = Query(""),
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> dict:
-    summary = await asyncio.to_thread(get_receipt_summary, con, receipt_id)
+    summary = get_receipt_summary(con, receipt_id)
     if summary is None:
         raise HTTPException(status_code=404, detail="Receipt not found")
     if "expenses" not in include.split(","):
@@ -56,14 +55,14 @@ async def get_receipt(
 
 
 @router.delete("/api/receipts/{receipt_id}", status_code=204)
-async def delete_receipt(
+def delete_receipt(
     receipt_id: int,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> Response:
-    summary = await asyncio.to_thread(get_receipt_summary, con, receipt_id)
+    summary = get_receipt_summary(con, receipt_id)
     if summary is None:
         raise HTTPException(status_code=404, detail="Receipt not found")
-    await asyncio.to_thread(delete_receipt_cascade, con, receipt_id)
+    delete_receipt_cascade(con, receipt_id)
     return Response(status_code=204)
 
 

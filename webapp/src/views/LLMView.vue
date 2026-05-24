@@ -83,7 +83,6 @@ onBeforeUnmount(() => {
       @toggle="isOnline ? llmStore.toggle(provider.id) : requireOnline()"
       @move-up="isOnline ? llmStore.move(provider.id, 'up') : requireOnline()"
       @move-down="isOnline ? llmStore.move(provider.id, 'down') : requireOnline()"
-      @test="isOnline ? llmStore.test(provider.id) : requireOnline()"
     />
 
     <div

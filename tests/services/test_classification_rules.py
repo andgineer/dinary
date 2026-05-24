@@ -74,21 +74,33 @@ class TestClassifyByRules:
         assert result.category_id == 2
         assert result.confidence_level == 4
 
-    def test_generic_rule_applies_to_different_store(self, conn):
+    def test_generic_rule_applies_to_different_chain(self, conn):
         conn.execute("INSERT INTO shop_chains (id, name) VALUES (2, 'Maxi')")
-        conn.execute("INSERT INTO stores (id, name, chain_id) VALUES (2, 'MAXI DOO', 2)")
         create_or_update_rule(conn, None, "sir", RuleSpec(1, 3, "llm"))
         result = classify_by_rules(conn, 2, "sir")
         assert isinstance(result, RuleHit)
         assert result.category_id == 1
         assert result.confidence_level == 3
 
-    def test_no_store_id_miss(self, conn):
+    def test_chain_rule_shared_across_stores_of_same_chain(self, conn):
+        conn.execute("INSERT INTO stores (id, name, chain_id) VALUES (2, 'LIDL NOVI SAD KD', 1)")
+        create_or_update_rule(conn, 1, "mleko", RuleSpec(1, 3, "llm"))
+        result = classify_by_rules(conn, 1, "mleko")
+        assert isinstance(result, RuleHit)
+        assert result.category_id == 1
+
+    def test_chain_rule_does_not_apply_to_other_chain(self, conn):
+        conn.execute("INSERT INTO shop_chains (id, name) VALUES (2, 'Maxi')")
+        create_or_update_rule(conn, 1, "jogurt", RuleSpec(1, 3, "llm"))
+        result = classify_by_rules(conn, 2, "jogurt")
+        assert result is None
+
+    def test_no_chain_id_miss(self, conn):
         create_or_update_rule(conn, 1, "jogurt", RuleSpec(1, 3, "llm"))
         result = classify_by_rules(conn, None, "jogurt")
         assert result is None
 
-    def test_no_store_id_generic_hit(self, conn):
+    def test_no_chain_id_generic_hit(self, conn):
         create_or_update_rule(conn, None, "jogurt", RuleSpec(2, 3, "llm"))
         result = classify_by_rules(conn, None, "jogurt")
         assert isinstance(result, RuleHit)
@@ -98,7 +110,7 @@ class TestClassifyByRules:
     def test_returns_tag_ids_from_rule(self, conn):
         conn.execute(
             "INSERT INTO classification_rules"
-            " (store_id, item_name_normalized, category_id, confidence_level, source, tag_ids)"
+            " (chain_id, item_name_normalized, category_id, confidence_level, source, tag_ids)"
             " VALUES (1, 'testitem', 1, 3, 'llm', ?)",
             [json.dumps([5, 7])],
         )
@@ -111,7 +123,7 @@ class TestClassifyByRules:
     def test_returns_empty_tag_ids_when_empty_json(self, conn):
         conn.execute(
             "INSERT INTO classification_rules"
-            " (store_id, item_name_normalized, category_id, confidence_level, source, tag_ids)"
+            " (chain_id, item_name_normalized, category_id, confidence_level, source, tag_ids)"
             " VALUES (1, 'nulltags', 1, 4, 'user_correction', '[]')",
         )
         result = classify_by_rules(conn, 1, "nulltags")

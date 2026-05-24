@@ -49,12 +49,12 @@ CREATE TABLE receipt_items (
     expense_id       INTEGER REFERENCES expenses(id) ON DELETE SET NULL
 );
 
--- Chain-specific rules: (store_id, item_name_normalized) must be unique when store_id IS NOT NULL.
--- Generic rules:         (item_name_normalized) must be unique when store_id IS NULL.
+-- Chain-specific rules: (chain_id, item_name_normalized) must be unique when chain_id IS NOT NULL.
+-- Generic rules:         (item_name_normalized) must be unique when chain_id IS NULL.
 -- Two partial unique indexes enforce both constraints (SQLite UNIQUE treats NULLs as distinct).
 CREATE TABLE classification_rules (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-    store_id             INTEGER REFERENCES stores(id),
+    chain_id             INTEGER REFERENCES shop_chains(id),
     item_name_normalized TEXT NOT NULL,
     category_id          INTEGER NOT NULL REFERENCES categories(id),
     confidence_level     INTEGER NOT NULL,
@@ -63,19 +63,19 @@ CREATE TABLE classification_rules (
     updated_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE UNIQUE INDEX classification_rules_store_item
-    ON classification_rules (store_id, item_name_normalized)
-    WHERE store_id IS NOT NULL;
+CREATE UNIQUE INDEX classification_rules_chain_item
+    ON classification_rules (chain_id, item_name_normalized)
+    WHERE chain_id IS NOT NULL;
 
 CREATE UNIQUE INDEX classification_rules_null_item
     ON classification_rules (item_name_normalized)
-    WHERE store_id IS NULL;
+    WHERE chain_id IS NULL;
 
 ALTER TABLE classification_rules ADD COLUMN alternative_category_ids TEXT;
 ALTER TABLE classification_rules ADD COLUMN tag_ids TEXT NOT NULL DEFAULT '[]';
 
-CREATE INDEX IF NOT EXISTS idx_cr_store_name
-    ON classification_rules (store_id, item_name_normalized);
+CREATE INDEX IF NOT EXISTS idx_cr_chain_name
+    ON classification_rules (chain_id, item_name_normalized);
 
 CREATE TABLE receipt_classification_jobs (
     receipt_id   INTEGER PRIMARY KEY REFERENCES receipts(id) ON DELETE CASCADE,
@@ -100,12 +100,13 @@ CREATE TABLE llmbroker_providers (
 );
 
 CREATE TABLE llmbroker_call_log (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    provider_id INTEGER REFERENCES llmbroker_providers(id),
-    receipt_id  INTEGER REFERENCES receipts(id) ON DELETE SET NULL,
-    called_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    status      TEXT NOT NULL,
-    latency_ms  INTEGER
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_id  INTEGER REFERENCES llmbroker_providers(id),
+    context_id   TEXT,
+    called_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status       TEXT NOT NULL,
+    latency_ms   INTEGER,
+    error_detail TEXT
 );
 
 ALTER TABLE expenses ADD COLUMN receipt_id       INTEGER REFERENCES receipts(id);

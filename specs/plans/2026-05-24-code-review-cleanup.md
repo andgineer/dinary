@@ -341,6 +341,74 @@ is failing without digging through server logs.
 
 ---
 
+## Phase 9 — Chain-Level Classification Rules
+
+**Files:** `src/dinary/db/migrations/0004_receipt_pipeline.sql` (done — already edited),
+`src/dinary/db/classification_rules.py`,
+`src/dinary/background/classification/store_resolver.py`,
+`src/dinary/background/classification/task.py`,
+`src/dinary/background/classification/persist.py`,
+`src/dinary/api/controllers/expense_corrections.py`,
+`src/dinary/api/controllers/rules.py`,
+`tests/services/test_receipt_classifier.py`
+
+### Problem
+
+`classification_rules.store_id` scopes rules to a physical store location. Every new
+Lidl branch starts with no rules and wastes LLM calls re-learning what all other Lidl
+branches already know. The chain concept exists in `shop_chains` and `stores.chain_id`
+but was not wired into the rules engine.
+
+### Change
+
+Migration 0004 has been updated in place (not yet deployed):
+- `store_id INTEGER REFERENCES stores(id)` → `chain_id INTEGER REFERENCES shop_chains(id)`
+- Indexes renamed: `classification_rules_store_item` → `classification_rules_chain_item`,
+  `idx_cr_store_name` → `idx_cr_chain_name`.
+
+Remaining code changes:
+
+**`db/classification_rules.py`**
+- `classify_by_rules(conn, store_id, ...)` → `classify_by_rules(conn, chain_id, ...)`
+  — update the `WHERE (store_id = ? OR store_id IS NULL)` query to use `chain_id`.
+- `create_or_update_rule(conn, store_id, ...)` → `create_or_update_rule(conn, chain_id, ...)`
+  — update all queries referencing `store_id` to `chain_id`.
+
+**`background/classification/store_resolver.py`**
+- `resolve_store()` currently returns `int` (store_id). Change to return `tuple[int, int]`
+  — `(store_id, chain_id)` — so callers don't need a second DB round-trip.
+- The `chain_id` is already available in the upsert block after `_upsert_chain()`.
+
+**`background/classification/task.py`**
+- Thread `chain_id` from `resolve_store()` through `_process_job()` to `_classify_and_persist()`.
+- Pass `chain_id` (not `store_id`) to `_run_rules_pass()` and on to `classify_by_rules()`.
+
+**`background/classification/persist.py`**
+- `persist_classification_results(conn, job, ..., store_id)` → replace `store_id` parameter
+  with `chain_id` and pass it to `create_or_update_rule()`.
+
+**`api/controllers/expense_corrections.py`**
+- Before calling `create_or_update_rule()`, look up `chain_id`:
+  ```sql
+  SELECT s.chain_id FROM expenses e JOIN stores s ON s.id = e.store_id WHERE e.id = ?
+  ```
+- Pass `chain_id` (not `store_id`) to `create_or_update_rule()`.
+
+**`api/controllers/rules.py`**
+- `build_rules_feed()`: join to `shop_chains` via `cr.chain_id` directly (drop the
+  intermediate `stores s` join for the chain name). Update the `WHERE` filter from
+  `rec.store_id = cr.store_id` to `s.chain_id = cr.chain_id`.
+- `build_rules_counts()` / `count_doubtful()`: update the same join.
+- Return field name stays `"store"` (it is the chain name in both old and new code).
+
+**Tests**
+- Update any fixture or assertion that passes `store_id` to `classify_by_rules` or
+  `create_or_update_rule` to pass `chain_id` instead.
+- Add a test: two stores with the same `chain_id` share a rule — classifying an item at
+  store A creates a rule, classifying the same item at store B hits that rule.
+
+---
+
 ## Done Gate (all phases)
 
 Each phase ships independently. Before marking a phase complete:

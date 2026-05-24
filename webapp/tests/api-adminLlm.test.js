@@ -3,7 +3,6 @@ import {
   createProvider,
   updateProvider,
   deleteProvider,
-  testProvider,
   getStatus,
 } from "../src/api/adminLlm.js";
 
@@ -46,13 +45,6 @@ describe("LLM provider API URLs", () => {
     await deleteProvider(3);
     expect(globalThis.fetch.mock.calls[0][0]).toBe("/api/llm/providers/3");
     expect(globalThis.fetch.mock.calls[0][1].method).toBe("DELETE");
-  });
-
-  it("testProvider POSTs to /api/llm/providers/{id}/test", async () => {
-    globalThis.fetch = vi.fn(async () => okJson({ status: "ok" }));
-    await testProvider(2);
-    expect(globalThis.fetch.mock.calls[0][0]).toBe("/api/llm/providers/2/test");
-    expect(globalThis.fetch.mock.calls[0][1].method).toBe("POST");
   });
 
   it("getStatus GETs /api/llm/status", async () => {

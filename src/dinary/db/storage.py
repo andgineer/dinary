@@ -327,7 +327,3 @@ def transaction(con: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     except BaseException:
         con.execute("ROLLBACK")
         raise
-
-
-def close_connection() -> None:
-    """No-op tear-down hook for fixtures."""

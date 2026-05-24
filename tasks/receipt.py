@@ -1,18 +1,20 @@
 """Receipt tasks: classify-receipt experiment and reclassify-receipts operator tool."""
 
 import asyncio
-import sys
 
 from invoke import task
 
+from dinary.adapters.llm_storage import TomlLLMBrokerStorage
+from dinary.adapters.llmbroker import LLMBroker
 from dinary.adapters.serbian_receipt_parser import (
     ParserParseError,
     ParserRequestError,
     parse_receipt,
 )
 from dinary.background.classification.item_normalizer import normalize_item_name
-from dinary.background.classification.receipt_classifier import OpenAICompatibleClient
-from dinary.config import settings
+from dinary.background.classification.receipt_classifier import (
+    classify_receipt as llm_classify_receipt,
+)
 from dinary.db.catalog import list_categories
 from dinary.db.receipts import requeue_receipts
 from dinary.db.storage import get_connection
@@ -22,8 +24,7 @@ from dinary.db.storage import get_connection
 def classify_receipt(c, url):  # noqa: ARG001
     """Classify items from one or more Serbian fiscal receipt URLs using a real LLM.
 
-    Requires DINARY_LLM_BASE_URL and DINARY_LLM_API_KEY env vars.
-    DINARY_LLM_MODEL defaults to gemini-2.5-flash.
+    Providers are read from .deploy/llm_providers.toml.
 
     Example:
         inv classify-receipt --url https://suf.purs.gov.rs/v/?vl=...
@@ -33,14 +34,7 @@ def classify_receipt(c, url):  # noqa: ARG001
         print("Usage: inv classify-receipt --url URL [--url URL2 ...]")
         return
 
-    if not settings.llm_base_url:
-        print("Error: DINARY_LLM_BASE_URL is not set", file=sys.stderr)
-        sys.exit(1)
-    if not settings.llm_api_key:
-        print("Error: DINARY_LLM_API_KEY is not set", file=sys.stderr)
-        sys.exit(1)
-
-    llm = OpenAICompatibleClient(settings.llm_base_url, settings.llm_api_key, settings.llm_model)
+    broker = LLMBroker(TomlLLMBrokerStorage())
 
     con = get_connection()
     try:
@@ -51,20 +45,27 @@ def classify_receipt(c, url):  # noqa: ARG001
         con.close()
     categories = {row.id: f"{row.group_name}: {row.name}" for row in cats}
 
-    for receipt_url in url:
-        print(f"\n{'=' * 70}")
-        _run_receipt(receipt_url, llm, categories, tags)
+    async def _run_all() -> None:
+        await broker.start()
+        try:
+            for receipt_url in url:
+                print(f"\n{'=' * 70}")
+                await _run_receipt(receipt_url, broker, categories, tags)
+        finally:
+            await broker.stop()
+
+    asyncio.run(_run_all())
 
 
-def _run_receipt(
+async def _run_receipt(
     url: str,
-    llm: OpenAICompatibleClient,
+    broker: LLMBroker,
     categories: dict[int, str],
     tags: dict[int, str],
 ) -> None:
     print(f"URL: {url[:80]}{'...' if len(url) > 80 else ''}")
     try:
-        receipt = asyncio.run(parse_receipt(url))
+        receipt = await parse_receipt(url)
     except (ParserParseError, ParserRequestError) as exc:
         print(f"  Parse error: {exc}")
         return
@@ -84,8 +85,12 @@ def _run_receipt(
     normalized = [normalize_item_name(item.name_raw) for item in receipt.items]
 
     try:
-        results = asyncio.run(
-            llm.classify_receipt(normalized, receipt.store_name, categories, tags),
+        results, _ = await llm_classify_receipt(
+            broker,
+            normalized,
+            receipt.store_name,
+            categories,
+            tags,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"  LLM error: {exc}")

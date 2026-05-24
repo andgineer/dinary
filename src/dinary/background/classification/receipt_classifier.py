@@ -1,16 +1,9 @@
-"""LLM classification adapter: prompt building, response parsing, and data loading.
-
-Provides the bridge between the drain loop and LLMBroker. Also ships
-OpenAICompatibleClient for contexts that use the LLM directly without the broker
-(admin test endpoint, CLI tasks).
-"""
+"""LLM classification adapter: prompt building, response parsing, and data loading."""
 
 import json
 import logging
 import sqlite3
 from dataclasses import dataclass, field
-
-import httpx
 
 from dinary.adapters.llmbroker import LLMBroker
 
@@ -114,56 +107,6 @@ def _parse_response(
             ClassificationResult(item_name_normalized=item, category_id=None, confidence_level=1)
             for item in items
         ]
-
-
-class OpenAICompatibleClient:
-    def __init__(self, base_url: str, api_key: str, model: str) -> None:
-        self._base_url = base_url.rstrip("/")
-        self._api_key = api_key
-        self._model = model
-
-    async def classify_receipt(
-        self,
-        items: list[str],
-        store_name_raw: str,
-        categories: dict[int, str],
-        tags: dict[int, str] | None = None,
-    ) -> list[ClassificationResult]:
-        if tags is None:
-            tags = {}
-        user_msg = _build_user_message(items, store_name_raw, categories, tags)
-        payload = {
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
-            ],
-        }
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{self._base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                json=payload,
-            )
-            resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-        return _parse_response(content, items, set(tags.keys()))
-
-    async def get_chain_name(self, store_name_raw: str) -> str:
-        prompt = _CHAIN_NAME_PROMPT.format(store_name_raw=store_name_raw)
-        payload = {
-            "model": self._model,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{self._base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                json=payload,
-            )
-            resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-        return next((ln.strip() for ln in content.splitlines() if ln.strip()), "")
 
 
 async def classify_receipt(

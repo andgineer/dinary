@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from dinary import __version__
-from dinary.adapters.llm_storage import LLMBrokerStorage
+from dinary.adapters.llm_storage import SqliteLLMBrokerStorage
 from dinary.adapters.llmbroker import LLMBroker
 from dinary.api import (
     catalog,
@@ -64,7 +64,7 @@ def _setup_logging() -> None:
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     storage.init_db()
-    broker = LLMBroker(LLMBrokerStorage())
+    broker = LLMBroker(SqliteLLMBrokerStorage())
     await broker.start()
     await warm_sheet_mapping()
     sheet_logging_bg = asyncio.create_task(sheet_logging_task(), name="sheet-logging-task")

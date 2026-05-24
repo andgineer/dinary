@@ -20,7 +20,7 @@ def _seed_review_data(conn):
     )
     conn.execute(
         "INSERT INTO classification_rules"
-        " (store_id, item_name_normalized, category_id, confidence_level, source)"
+        " (chain_id, item_name_normalized, category_id, confidence_level, source)"
         " VALUES (1, 'hleb', 1, 3, 'llm')"
     )
     conn.execute(
@@ -44,7 +44,7 @@ def _seed_certain_rule(conn):
     )
     conn.execute(
         "INSERT INTO classification_rules"
-        " (store_id, item_name_normalized, category_id, confidence_level, source)"
+        " (chain_id, item_name_normalized, category_id, confidence_level, source)"
         " VALUES (1, 'mleko', 1, 4, 'llm')"
     )
     conn.execute(
@@ -121,25 +121,25 @@ class TestReviewFeed:
             )
             conn.execute(
                 "INSERT INTO classification_rules"
-                " (id, store_id, item_name_normalized, category_id, confidence_level, source)"
-                " VALUES (10, 1, 'item_a', 1, 4, 'llm')"
+                " (id, chain_id, item_name_normalized, category_id, confidence_level, source)"
+                " VALUES (10, 1, 'item_a', 1, 3, 'llm')"
             )
             conn.execute(
                 "INSERT INTO classification_rules"
-                " (id, store_id, item_name_normalized, category_id, confidence_level, source)"
-                " VALUES (11, 1, 'item_b', 1, 4, 'llm')"
+                " (id, chain_id, item_name_normalized, category_id, confidence_level, source)"
+                " VALUES (11, 1, 'item_b', 1, 3, 'llm')"
             )
             conn.execute(
                 "INSERT INTO expenses"
                 " (id, datetime, amount, amount_original, currency_original,"
                 "  category_id, confidence_level, receipt_id, store_id)"
-                " VALUES (10, '2026-05-02T10:00:00', 100.0, 100.0, 'RSD', 1, 4, 1, 1)"
+                " VALUES (10, '2026-05-02T10:00:00', 100.0, 100.0, 'RSD', 1, 3, 1, 1)"
             )
             conn.execute(
                 "INSERT INTO expenses"
                 " (id, datetime, amount, amount_original, currency_original,"
                 "  category_id, confidence_level, receipt_id, store_id)"
-                " VALUES (11, '2026-05-01T10:00:00', 200.0, 200.0, 'RSD', 1, 4, 2, 1)"
+                " VALUES (11, '2026-05-01T10:00:00', 200.0, 200.0, 'RSD', 1, 3, 2, 1)"
             )
             conn.execute(
                 "INSERT INTO receipt_items"
@@ -172,6 +172,23 @@ class TestReviewFeedCertainRules:
         conn = storage.get_connection()
         try:
             _seed_certain_rule(conn)
+            # Add a doubtful rule so d_total > 0 and the feed query runs
+            conn.execute(
+                "INSERT INTO classification_rules"
+                " (chain_id, item_name_normalized, category_id, confidence_level, source)"
+                " VALUES (1, 'jogurt', 1, 3, 'llm')"
+            )
+            conn.execute(
+                "INSERT INTO expenses"
+                " (id, datetime, amount, amount_original, currency_original,"
+                "  category_id, confidence_level, receipt_id, store_id)"
+                " VALUES (99, '2026-05-01T10:00:00', 50.0, 50.0, 'RSD', 1, 3, 1, 1)"
+            )
+            conn.execute(
+                "INSERT INTO receipt_items"
+                " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
+                " VALUES (99, 1, 'jogurt raw', 'jogurt', 50.0, 1, 50.0, 99)"
+            )
         finally:
             conn.close()
 
@@ -203,6 +220,23 @@ class TestReviewFeedCertainRules:
         conn = storage.get_connection()
         try:
             _seed_certain_rule(conn)
+            # Add a doubtful rule so d_total > 0 and the feed query runs
+            conn.execute(
+                "INSERT INTO classification_rules"
+                " (chain_id, item_name_normalized, category_id, confidence_level, source)"
+                " VALUES (1, 'jogurt', 1, 3, 'llm')"
+            )
+            conn.execute(
+                "INSERT INTO expenses"
+                " (id, datetime, amount, amount_original, currency_original,"
+                "  category_id, confidence_level, receipt_id, store_id)"
+                " VALUES (99, '2026-05-01T10:00:00', 50.0, 50.0, 'RSD', 1, 3, 1, 1)"
+            )
+            conn.execute(
+                "INSERT INTO receipt_items"
+                " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
+                " VALUES (99, 1, 'jogurt raw', 'jogurt', 50.0, 1, 50.0, 99)"
+            )
         finally:
             conn.close()
 
@@ -225,7 +259,7 @@ class TestReviewFeedCertainRules:
             )
             conn.execute(
                 "INSERT INTO classification_rules"
-                " (store_id, item_name_normalized, category_id, confidence_level, source)"
+                " (chain_id, item_name_normalized, category_id, confidence_level, source)"
                 " VALUES (1, 'jogurt', 1, 3, 'llm')"
             )
             conn.execute(
@@ -256,7 +290,7 @@ class TestReviewCounts:
     def test_counts_empty(self, client, db):  # noqa: ARG002
         resp = client.get("/api/rules/counts")
         assert resp.status_code == 200
-        assert resp.json()["doubtful_rules"] == 0
+        assert resp.json()["doubtful_count"] == 0
 
     def test_counts_with_doubtful(self, client, db):  # noqa: ARG002
         conn = storage.get_connection()
@@ -266,7 +300,7 @@ class TestReviewCounts:
             conn.close()
 
         resp = client.get("/api/rules/counts")
-        assert resp.json()["doubtful_rules"] == 1
+        assert resp.json()["doubtful_count"] == 1
 
     def test_counts_includes_pending_receipts_zero_when_empty(self, client, db):  # noqa: ARG002
         resp = client.get("/api/rules/counts")
@@ -305,14 +339,14 @@ class TestReviewCounts:
             )
             conn.execute(
                 "INSERT INTO classification_rules"
-                " (store_id, item_name_normalized, category_id, confidence_level, source)"
+                " (chain_id, item_name_normalized, category_id, confidence_level, source)"
                 " VALUES (1, 'orphan-item', 1, 2, 'llm')"
             )
         finally:
             conn.close()
 
         resp = client.get("/api/rules/counts")
-        assert resp.json()["doubtful_rules"] == 0
+        assert resp.json()["doubtful_count"] == 0
 
 
 @allure.epic("API")
@@ -889,7 +923,7 @@ class TestRulesFeedAlternativesAndTags:
         conn.execute("INSERT INTO tags (id, name, is_active) VALUES (10, 'special', 1)")
         conn.execute(
             "INSERT INTO classification_rules"
-            " (store_id, item_name_normalized, category_id, confidence_level, source,"
+            " (chain_id, item_name_normalized, category_id, confidence_level, source,"
             "  alternative_category_ids, tag_ids)"
             " VALUES (1, 'keks', 1, 3, 'llm', ?, ?)",
             [json.dumps([2]), json.dumps([10])],
@@ -978,7 +1012,7 @@ class TestRulesFeedAlternativesAndTags:
             )
             conn.execute(
                 "INSERT INTO classification_rules"
-                " (store_id, item_name_normalized, category_id, confidence_level, source)"
+                " (chain_id, item_name_normalized, category_id, confidence_level, source)"
                 " VALUES (1, 'voda', 1, 3, 'llm')"
             )
             conn.execute(

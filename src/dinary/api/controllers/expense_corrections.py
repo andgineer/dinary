@@ -31,35 +31,26 @@ class CategoryCorrectionResponse(BaseModel):
 def _query_other_items(
     con: sqlite3.Connection,
     name_norm: str,
-    store_id: int | None,
+    chain_id: int | None,
     expense_id: int,
     since: str | None,
 ) -> list:
-    if since is not None:
-        return con.execute(
-            """
-            SELECT DISTINCT ri.expense_id
-              FROM receipt_items ri
-              JOIN receipts rec ON rec.id = ri.receipt_id
-             WHERE ri.name_normalized = ?
-               AND rec.store_id IS ?
-               AND ri.expense_id != ?
-               AND ri.expense_id IS NOT NULL
-               AND rec.created_at >= ?
-            """,
-            [name_norm, store_id, expense_id, since],
-        ).fetchall()
     return con.execute(
         """
         SELECT DISTINCT ri.expense_id
           FROM receipt_items ri
           JOIN receipts rec ON rec.id = ri.receipt_id
+          LEFT JOIN stores s ON s.id = rec.store_id
          WHERE ri.name_normalized = ?
-           AND rec.store_id IS ?
+           AND (
+               (? IS NOT NULL AND s.chain_id = ?)
+               OR (? IS NULL AND rec.store_id IS NULL)
+           )
            AND ri.expense_id != ?
            AND ri.expense_id IS NOT NULL
+           AND (? IS NULL OR rec.created_at >= ?)
         """,
-        [name_norm, store_id, expense_id],
+        [name_norm, chain_id, chain_id, chain_id, expense_id, since, since],
     ).fetchall()
 
 
@@ -72,15 +63,22 @@ def _since_for_scope(scope: CorrectionScope) -> str | None:
     return None
 
 
+def _chain_id_for_store(con: sqlite3.Connection, store_id: int | None) -> int | None:
+    if store_id is None:
+        return None
+    row = con.execute("SELECT chain_id FROM stores WHERE id = ?", [store_id]).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def _upsert_rule_in_tx(
     con: sqlite3.Connection,
-    store_id: int | None,
+    chain_id: int | None,
     item_name_normalized: str,
     category_id: int,
 ) -> None:
     create_or_update_rule(
         con,
-        store_id,
+        chain_id,
         item_name_normalized,
         RuleSpec(category_id, 4, "user_correction"),
     )
@@ -111,6 +109,7 @@ def correct_category_sync(
 
     receipt_id = row[0]
     store_id = row[1]
+    chain_id = _chain_id_for_store(con, store_id)
 
     with transaction(con):
         con.execute(
@@ -138,12 +137,12 @@ def correct_category_sync(
         batch_count = 0
         for name_norm in set(item_names):
             if not skip_rule:
-                _upsert_rule_in_tx(con, store_id, name_norm, req.category_id)
+                _upsert_rule_in_tx(con, chain_id, name_norm, req.category_id)
 
             if req.scope == CorrectionScope.single:
                 continue
 
-            other_expense_ids = _query_other_items(con, name_norm, store_id, expense_id, since)
+            other_expense_ids = _query_other_items(con, name_norm, chain_id, expense_id, since)
             for (old_exp_id,) in other_expense_ids:
                 con.execute(
                     "UPDATE expenses SET category_id = ?, confidence_level = 4 WHERE id = ?",

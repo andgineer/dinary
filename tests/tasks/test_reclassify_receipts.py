@@ -63,14 +63,14 @@ def _seed(conn):
     )
     conn.execute(
         "INSERT INTO classification_rules"
-        " (store_id, item_name_normalized, category_id, confidence_level, source)"
+        " (chain_id, item_name_normalized, category_id, confidence_level, source)"
         " VALUES (?, 'hleb', 1, 4, 'user_correction')",
-        [store_id],
+        [chain_id_Lidl],
     )
-    # Generic rule — should survive store-scoped clear
+    # Generic rule — should survive chain-scoped clear
     conn.execute(
         "INSERT INTO classification_rules"
-        " (store_id, item_name_normalized, category_id, confidence_level, source)"
+        " (chain_id, item_name_normalized, category_id, confidence_level, source)"
         " VALUES (NULL, 'mleko', 1, 3, 'llm')"
     )
     return int(r1), int(r2)
@@ -151,27 +151,25 @@ class TestRequeuReceipts:
         finally:
             conn.close()
 
-    def test_clear_rules_removes_store_scoped_and_generic_rules(self, db):  # noqa: ARG002
+    def test_clear_rules_removes_chain_scoped_and_generic_rules(self, db):  # noqa: ARG002
         conn = storage.get_connection()
         try:
             r1, _ = _seed(conn)
-            lidl_id = conn.execute("SELECT store_id FROM receipts WHERE id = ?", [r1]).fetchone()[0]
-            # Add a DIFFERENT store and a hleb rule for it — should survive
+            chain_id_Lidl = conn.execute(
+                "SELECT s.chain_id FROM receipts rec JOIN stores s ON s.id = rec.store_id"
+                " WHERE rec.id = ?",
+                [r1],
+            ).fetchone()[0]
+            # Add a DIFFERENT chain and a hleb rule for it — should survive
             conn.execute("INSERT OR IGNORE INTO shop_chains (name) VALUES ('Maxi')")
             chain_id_Maxi = conn.execute("SELECT id FROM shop_chains WHERE name='Maxi'").fetchone()[
                 0
             ]
             conn.execute(
-                "INSERT INTO stores (name, chain_id, pib) VALUES ('Maxi', "
-                + str(chain_id_Maxi)
-                + ", '200')"
-            )
-            maxi_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-            conn.execute(
                 "INSERT INTO classification_rules"
-                " (store_id, item_name_normalized, category_id, confidence_level, source)"
+                " (chain_id, item_name_normalized, category_id, confidence_level, source)"
                 " VALUES (?, 'hleb', 1, 3, 'llm')",
-                [maxi_id],
+                [chain_id_Maxi],
             )
             conn.execute("BEGIN IMMEDIATE")
             requeue_receipts(conn, [r1], clear_rules=True)
@@ -180,16 +178,16 @@ class TestRequeuReceipts:
             # Lidl-scoped hleb rule deleted
             lidl_rule = conn.execute(
                 "SELECT id FROM classification_rules"
-                " WHERE store_id = ? AND item_name_normalized = 'hleb'",
-                [lidl_id],
+                " WHERE chain_id = ? AND item_name_normalized = 'hleb'",
+                [chain_id_Lidl],
             ).fetchone()
             assert lidl_rule is None
 
-            # Maxi-scoped hleb rule survives (different store)
+            # Maxi-scoped hleb rule survives (different chain)
             maxi_rule = conn.execute(
                 "SELECT id FROM classification_rules"
-                " WHERE store_id = ? AND item_name_normalized = 'hleb'",
-                [maxi_id],
+                " WHERE chain_id = ? AND item_name_normalized = 'hleb'",
+                [chain_id_Maxi],
             ).fetchone()
             assert maxi_rule is not None
 
@@ -202,14 +200,14 @@ class TestRequeuReceipts:
             conn.close()
 
     def test_clear_rules_removes_generic_rule_for_item_in_receipt(self, db):  # noqa: ARG002
-        """clear_rules=True must also delete generic (store_id IS NULL) rules for items in the target receipts."""
+        """clear_rules=True must also delete generic (chain_id IS NULL) rules for items in the target receipts."""
         conn = storage.get_connection()
         try:
             r1, _ = _seed(conn)
             # Add a generic "hleb" rule (same item that IS in r1)
             conn.execute(
                 "INSERT INTO classification_rules"
-                " (store_id, item_name_normalized, category_id, confidence_level, source)"
+                " (chain_id, item_name_normalized, category_id, confidence_level, source)"
                 " VALUES (NULL, 'hleb', 1, 3, 'llm')"
             )
             conn.execute("BEGIN IMMEDIATE")
@@ -219,7 +217,7 @@ class TestRequeuReceipts:
             # Generic hleb rule must be deleted (hleb is in r1)
             generic_hleb = conn.execute(
                 "SELECT id FROM classification_rules"
-                " WHERE store_id IS NULL AND item_name_normalized = 'hleb'"
+                " WHERE chain_id IS NULL AND item_name_normalized = 'hleb'"
             ).fetchone()
             assert generic_hleb is None, "generic hleb rule must be deleted when r1 is cleared"
 

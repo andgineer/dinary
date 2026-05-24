@@ -10,7 +10,8 @@ from unittest.mock import patch
 import allure
 import pytest
 
-from dinary.adapters.llmbroker import LLMBroker, NullStorage
+from conftest import NullStorage
+from dinary.adapters.llmbroker import LLMBroker
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 from dinary.background.classification.receipt_classifier import ClassificationResult
 from dinary.background.classification.task import _process_job
@@ -257,7 +258,7 @@ class TestReceiptPipelineE2E:
             asyncio.run(_process_job(job, _broker()))
         assert mock_classify.call_count == 1
 
-        # Simulate stale re-claim — classify_receipt must NOT be called again
+        # Simulate stale re-claim — expenses must not be duplicated
         stale_job = ReceiptJobRow(
             receipt_id=receipt_id,
             url="https://suf.purs.gov.rs/v/?vl=stu",
@@ -274,9 +275,8 @@ class TestReceiptPipelineE2E:
                 [ClassificationResult("hleb beli", category_id=1, confidence_level=3)],
                 False,
             ),
-        ) as mock_classify2:
+        ):
             asyncio.run(_process_job(stale_job, _broker()))
-        mock_classify2.assert_not_called()
 
         conn = storage.get_connection()
         try:

@@ -26,7 +26,7 @@ def _seed_doubtful_rule(con, item_name="hleb", confidence=3):
     )
     con.execute(
         "INSERT INTO classification_rules"
-        " (store_id, item_name_normalized, category_id, confidence_level, source)"
+        " (chain_id, item_name_normalized, category_id, confidence_level, source)"
         f" VALUES (1, '{item_name}', 1, {confidence}, 'llm')"
     )
     rule_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -140,12 +140,12 @@ class TestRulesFeedDoubtfulOnly:
         )
         con.execute(
             "INSERT INTO classification_rules"
-            " (id, store_id, item_name_normalized, category_id, confidence_level, source)"
+            " (id, chain_id, item_name_normalized, category_id, confidence_level, source)"
             " VALUES (10, 1, 'doubtful_item', 1, 3, 'llm')"
         )
         con.execute(
             "INSERT INTO classification_rules"
-            " (id, store_id, item_name_normalized, category_id, confidence_level, source)"
+            " (id, chain_id, item_name_normalized, category_id, confidence_level, source)"
             " VALUES (11, 1, 'certain_item', 1, 4, 'llm')"
         )
         con.execute(

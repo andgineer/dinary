@@ -363,12 +363,6 @@ class Settings(BaseSettings):
     # hosts; set to 0 to skip the warm-up entirely.
     warm_sheet_mapping_timeout_sec: float = 10.0
 
-    # LLM provider for receipt classification (DINARY_LLM_* env vars).
-    # Used by ``inv classify-receipt`` and the classification drain.
-    llm_base_url: str = ""
-    llm_api_key: str = ""
-    llm_model: str = "gemini-2.5-flash"
-
     receipt_classification_enabled: bool = True
 
     # IANA timezone name used when storing expense timestamps.

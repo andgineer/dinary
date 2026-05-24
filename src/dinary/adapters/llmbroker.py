@@ -37,25 +37,13 @@ class CallEvent:
     latency_ms: int
     timestamp: datetime
     rate_limited_until: datetime | None = field(default=None)
+    error_detail: str | None = field(default=None)
 
 
 class BrokerStorage(Protocol):
     async def load_providers(self) -> list[ProviderConfig]: ...
     async def on_call_logged(self, event: CallEvent) -> None: ...
     async def on_rate_limited(self, provider_id: Any, until: datetime) -> None: ...
-
-
-class NullStorage:
-    """No-op storage for no-persistence mode."""
-
-    async def load_providers(self) -> list[ProviderConfig]:
-        return []
-
-    async def on_call_logged(self, event: CallEvent) -> None:
-        pass
-
-    async def on_rate_limited(self, provider_id: Any, until: datetime) -> None:
-        pass
 
 
 class LLMBroker:
@@ -133,13 +121,14 @@ class LLMBroker:
                 return None
 
             t0 = time.monotonic()
-            status, rate_limited_until = "ok", None
+            status, rate_limited_until, error_detail = "ok", None, None
             try:
                 content = await self._call_provider(provider, messages)
                 self._queue.put_nowait(provider)
                 return content
             except httpx.HTTPStatusError as exc:
                 code = exc.response.status_code
+                error_detail = exc.response.text[:300]
                 if code in (429, 503):
                     delay = self._parse_retry_after(exc.response, provider.rate_limit_sec)
                     rate_limited_until = datetime.now(UTC) + timedelta(seconds=delay)
@@ -178,6 +167,7 @@ class LLMBroker:
                     status,
                     int((time.monotonic() - t0) * 1000),
                     rate_limited_until=rate_limited_until,
+                    error_detail=error_detail,
                 )
 
     # ------------------------------------------------------------------
@@ -213,6 +203,7 @@ class LLMBroker:
         latency_ms: int,
         *,
         rate_limited_until: datetime | None = None,
+        error_detail: str | None = None,
     ) -> None:
         event = CallEvent(
             provider_id=provider_id,
@@ -221,6 +212,7 @@ class LLMBroker:
             latency_ms=latency_ms,
             timestamp=datetime.now(UTC),
             rate_limited_until=rate_limited_until,
+            error_detail=error_detail,
         )
         try:
             await self._storage.on_call_logged(event)

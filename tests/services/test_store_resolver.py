@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 import allure
 import pytest
 
-from dinary.adapters.llmbroker import LLMBroker, NullStorage
+from conftest import NullStorage
+from dinary.adapters.llmbroker import LLMBroker
 from dinary.background.classification.store_resolver import resolve_store
 from dinary.db import db_migrations, storage
 
@@ -55,10 +56,13 @@ class TestResolveStore:
             "dinary.background.classification.store_resolver.get_chain_name",
             new_callable=AsyncMock,
         ) as mock_chain:
-            store_id = asyncio.run(resolve_store(_broker(), "100000001", "LIDL SRBIJA KD"))
+            store_id, got_chain_id = asyncio.run(
+                resolve_store(_broker(), "100000001", "LIDL SRBIJA KD")
+            )
             mock_chain.assert_not_called()
         row = conn.execute("SELECT name FROM stores WHERE id = ?", [store_id]).fetchone()
         assert row[0] == "LIDL SRBIJA KD"
+        assert got_chain_id == chain_id
 
     def test_new_pib_new_chain_inserts(self, conn):
         with patch(
@@ -66,7 +70,9 @@ class TestResolveStore:
             new_callable=AsyncMock,
             return_value="Maxi",
         ):
-            store_id = asyncio.run(resolve_store(_broker(), "200000002", "MAXI DOO BEOGRAD"))
+            store_id, chain_id = asyncio.run(
+                resolve_store(_broker(), "200000002", "MAXI DOO BEOGRAD")
+            )
         row = conn.execute(
             "SELECT s.name, s.pib, sc.name FROM stores s"
             " JOIN shop_chains sc ON sc.id = s.chain_id WHERE s.id = ?",
@@ -75,21 +81,25 @@ class TestResolveStore:
         assert row[0] == "MAXI DOO BEOGRAD"
         assert row[1] == "200000002"
         assert row[2] == "Maxi"
+        assert (
+            chain_id == conn.execute("SELECT id FROM shop_chains WHERE name='Maxi'").fetchone()[0]
+        )
 
     def test_same_chain_multiple_stores(self, conn):
-        """Two stores with different PIBs can share one shop_chains row."""
+        """Two stores with different PIBs share one shop_chains row and the same chain_id."""
         with patch(
             "dinary.background.classification.store_resolver.get_chain_name",
             new_callable=AsyncMock,
             return_value="Lidl",
         ):
-            id1 = asyncio.run(resolve_store(_broker(), "300000001", "LIDL SRBIJA KD"))
-            id2 = asyncio.run(resolve_store(_broker(), "300000002", "LIDL SRBIJA KD"))
-        assert id1 != id2
-        chain_ids = conn.execute(
-            "SELECT DISTINCT chain_id FROM stores WHERE id IN (?, ?)", [id1, id2]
-        ).fetchall()
-        assert len(chain_ids) == 1, "both stores must share the same shop_chains row"
+            store_id1, chain_id1 = asyncio.run(
+                resolve_store(_broker(), "300000001", "LIDL SRBIJA KD")
+            )
+            store_id2, chain_id2 = asyncio.run(
+                resolve_store(_broker(), "300000002", "LIDL SRBIJA KD")
+            )
+        assert store_id1 != store_id2
+        assert chain_id1 == chain_id2, "both stores must share the same shop_chains row"
 
     def test_no_pib_cache_hit_no_llm(self, conn):
         conn.execute("INSERT INTO shop_chains (name) VALUES ('Roda')")
@@ -99,10 +109,11 @@ class TestResolveStore:
             "dinary.background.classification.store_resolver.get_chain_name",
             new_callable=AsyncMock,
         ) as mock_chain:
-            store_id = asyncio.run(resolve_store(_broker(), "", "RODA CENTAR"))
+            store_id, got_chain_id = asyncio.run(resolve_store(_broker(), "", "RODA CENTAR"))
             mock_chain.assert_not_called()
         row = conn.execute("SELECT name FROM stores WHERE id = ?", [store_id]).fetchone()
         assert row[0] == "RODA CENTAR"
+        assert got_chain_id == chain_id
 
     def test_no_pib_inserts_and_resolves(self, conn):
         with patch(
@@ -110,7 +121,7 @@ class TestResolveStore:
             new_callable=AsyncMock,
             return_value="Idea",
         ):
-            store_id = asyncio.run(resolve_store(_broker(), "", "IDEA PLUS BEOGRAD"))
+            store_id, chain_id = asyncio.run(resolve_store(_broker(), "", "IDEA PLUS BEOGRAD"))
         row = conn.execute(
             "SELECT s.name, s.pib, sc.name FROM stores s"
             " JOIN shop_chains sc ON sc.id = s.chain_id WHERE s.id = ?",
@@ -119,6 +130,9 @@ class TestResolveStore:
         assert row[0] == "IDEA PLUS BEOGRAD"
         assert row[1] is None
         assert row[2] == "Idea"
+        assert (
+            chain_id == conn.execute("SELECT id FROM shop_chains WHERE name='Idea'").fetchone()[0]
+        )
 
     def test_repeat_same_pib_returns_same_store(self, conn):
         with patch(
@@ -126,8 +140,8 @@ class TestResolveStore:
             new_callable=AsyncMock,
             return_value="Idea",
         ) as mock_chain:
-            id1 = asyncio.run(resolve_store(_broker(), "400000004", "IDEA PLUS"))
-            id2 = asyncio.run(resolve_store(_broker(), "400000004", "IDEA PLUS"))
+            id1, _ = asyncio.run(resolve_store(_broker(), "400000004", "IDEA PLUS"))
+            id2, _ = asyncio.run(resolve_store(_broker(), "400000004", "IDEA PLUS"))
         assert id1 == id2
         mock_chain.assert_called_once()
 
@@ -148,7 +162,7 @@ class TestResolveStore:
             "dinary.background.classification.store_resolver.get_chain_name",
             side_effect=competing_insert,
         ):
-            store_id = asyncio.run(resolve_store(_broker(), "555000001", "WINNER STORE"))
+            store_id, _ = asyncio.run(resolve_store(_broker(), "555000001", "WINNER STORE"))
 
         row = conn.execute("SELECT name FROM stores WHERE id = ?", [store_id]).fetchone()
         assert row[0] == "WINNER STORE"

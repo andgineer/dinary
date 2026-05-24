@@ -17,7 +17,7 @@ def _seed(con, *, rule_category_id=1, expense_confidence=3):
     )
     con.execute(
         "INSERT INTO classification_rules"
-        " (id, store_id, item_name_normalized, category_id, confidence_level, source)"
+        " (id, chain_id, item_name_normalized, category_id, confidence_level, source)"
         f" VALUES (10, 1, 'hleb', {rule_category_id}, {expense_confidence}, 'llm')"
     )
     con.execute(
@@ -140,7 +140,7 @@ class TestApproveRuleCategory:
             )
             con.execute(
                 "INSERT INTO classification_rules"
-                " (id, store_id, item_name_normalized, category_id, confidence_level, source)"
+                " (id, chain_id, item_name_normalized, category_id, confidence_level, source)"
                 " VALUES (10, 1, 'mleko', 1, 3, 'llm')"
             )
         finally:

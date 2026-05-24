@@ -18,23 +18,9 @@ def count_doubtful(con: sqlite3.Connection) -> int:
               FROM classification_rules cr
               JOIN receipt_items ri ON ri.name_normalized = cr.item_name_normalized
               JOIN receipts rec ON rec.id = ri.receipt_id
-                 AND (cr.store_id IS NULL OR rec.store_id = cr.store_id)
+              LEFT JOIN stores s ON s.id = rec.store_id
              WHERE cr.confidence_level < 4
-             GROUP BY cr.id
-        )
-        """,
-    ).fetchone()[0]
-
-
-def count_total(con: sqlite3.Connection) -> int:
-    return con.execute(
-        """
-        SELECT COUNT(*) FROM (
-            SELECT cr.id
-              FROM classification_rules cr
-              JOIN receipt_items ri ON ri.name_normalized = cr.item_name_normalized
-              JOIN receipts rec ON rec.id = ri.receipt_id
-                 AND (cr.store_id IS NULL OR rec.store_id = cr.store_id)
+               AND (cr.chain_id IS NULL OR s.chain_id = cr.chain_id)
              GROUP BY cr.id
         )
         """,
@@ -89,12 +75,12 @@ def query_rules(
                 MAX(rec.created_at)         AS last_receipt_date
               FROM classification_rules cr
               JOIN categories c   ON c.id = cr.category_id
-              LEFT JOIN stores s  ON s.id = cr.store_id
-              LEFT JOIN shop_chains sc ON sc.id = s.chain_id
+              LEFT JOIN shop_chains sc ON sc.id = cr.chain_id
               JOIN receipt_items ri ON ri.name_normalized = cr.item_name_normalized
               JOIN receipts rec   ON rec.id = ri.receipt_id
-                   AND (cr.store_id IS NULL OR rec.store_id = cr.store_id)
+              LEFT JOIN stores rec_s ON rec_s.id = rec.store_id
               LEFT JOIN expenses e ON e.id = ri.expense_id
+             WHERE (cr.chain_id IS NULL OR rec_s.chain_id = cr.chain_id)
              GROUP BY cr.id
         )
         SELECT *
@@ -199,8 +185,7 @@ def build_rules_feed(
     con.row_factory = sqlite3.Row
     offset = (page - 1) * page_size
     d_total = count_doubtful(con)
-    total = count_total(con)
-    effective_total = d_total if doubtful_only else total
+    effective_total = d_total
     rows = (
         query_rules(con, page_size, offset, doubtful_only=doubtful_only)
         if effective_total > 0
@@ -215,17 +200,7 @@ def build_rules_feed(
 
 
 def build_rules_counts(con: sqlite3.Connection) -> dict[str, Any]:
-    count = con.execute(
-        """
-        SELECT COUNT(DISTINCT cr.id)
-          FROM classification_rules cr
-          JOIN receipt_items ri ON ri.name_normalized = cr.item_name_normalized
-          JOIN receipts rec ON rec.id = ri.receipt_id
-             AND (cr.store_id IS NULL OR rec.store_id = cr.store_id)
-         WHERE cr.confidence_level < 4
-        """,
-    ).fetchone()[0]
     return {
-        "doubtful_rules": int(count),
+        "doubtful_count": count_doubtful(con),
         "pending_receipts": count_pending_classification_jobs(con),
     }

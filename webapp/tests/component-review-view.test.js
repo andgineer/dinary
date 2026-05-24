@@ -160,7 +160,6 @@ describe("ReviewView", () => {
       review.doubtfulCount = FEED_PAGE_1.doubtful_count;
       review.hasMore = FEED_PAGE_1.has_more;
       review.page = 1;
-      review.totalLoaded = FEED_PAGE_1.items.length;
     });
     const wrapper = mountView(pinia);
     await flushPromises();
@@ -194,7 +193,6 @@ describe("ReviewView", () => {
       review.doubtfulCount = FEED_PAGE_1.doubtful_count;
       review.hasMore = true;
       review.page = 1;
-      review.totalLoaded = FEED_PAGE_1.items.length;
     });
     vi.spyOn(review, "loadNextPage").mockImplementation(async () => {
       nextPageCalls += 1;
@@ -222,7 +220,6 @@ describe("ReviewView", () => {
       review.items = FEED_PAGE_1.items;
       review.hasMore = false;
       review.page = 1;
-      review.totalLoaded = FEED_PAGE_1.items.length;
     });
     vi.spyOn(review, "loadNextPage").mockImplementation(async () => {
       nextPageCalls += 1;
@@ -248,7 +245,6 @@ describe("ReviewView", () => {
       review.doubtfulCount = FEED_PAGE_1.doubtful_count;
       review.hasMore = false;
       review.page = 1;
-      review.totalLoaded = FEED_PAGE_1.items.length;
     });
 
     const wrapper = mountView(pinia);
@@ -268,7 +264,6 @@ describe("ReviewView", () => {
       review.doubtfulCount = FEED_PAGE_1.doubtful_count;
       review.hasMore = true;
       review.page = 1;
-      review.totalLoaded = FEED_PAGE_1.items.length;
     });
 
     const wrapper = mountView(pinia);
@@ -287,7 +282,6 @@ describe("ReviewView", () => {
       review.doubtfulCount = 1;
       review.hasMore = false;
       review.page = 1;
-      review.totalLoaded = 1;
     });
 
     const confirmSpy = vi.spyOn(review, "confirmAll").mockResolvedValue();

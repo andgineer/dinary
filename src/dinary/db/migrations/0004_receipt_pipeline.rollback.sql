@@ -1,4 +1,4 @@
-DROP INDEX IF EXISTS idx_cr_store_name;
+DROP INDEX IF EXISTS idx_cr_chain_name;
 ALTER TABLE classification_rules ADD COLUMN IF NOT EXISTS alternative_category_ids TEXT;
 ALTER TABLE classification_rules ADD COLUMN IF NOT EXISTS tag_ids TEXT;
 DROP INDEX IF EXISTS llmbroker_call_log_provider_id;
@@ -10,7 +10,7 @@ DROP TABLE IF EXISTS llmbroker_call_log;
 DROP TABLE IF EXISTS llmbroker_providers;
 DROP TABLE IF EXISTS receipt_classification_jobs;
 DROP INDEX IF EXISTS classification_rules_null_item;
-DROP INDEX IF EXISTS classification_rules_store_item;
+DROP INDEX IF EXISTS classification_rules_chain_item;
 DROP TABLE IF EXISTS classification_rules;
 DROP TABLE IF EXISTS receipt_items;
 DROP TABLE IF EXISTS receipts;

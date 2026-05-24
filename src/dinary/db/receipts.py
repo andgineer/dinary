@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt
+from dinary.db.storage import transaction
 
 
 @dataclass(slots=True)
@@ -118,8 +119,7 @@ def save_parsed_receipt(
 ) -> None:
     """Store parsed receipt metadata and items atomically."""
     now = datetime.now(UTC).isoformat()
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with transaction(conn):
         conn.execute(
             """
             UPDATE receipts
@@ -155,10 +155,6 @@ def save_parsed_receipt(
                     item.tax_label,
                 ],
             )
-        conn.execute("COMMIT")
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
 
 
 def get_receipt_items(conn: sqlite3.Connection, receipt_id: int) -> list[ReceiptItemRow]:
@@ -272,22 +268,23 @@ def requeue_receipts(
         receipt_ids,
     )
     if clear_rules:
-        # Delete rules scoped to the stores of the target receipts, plus
-        # generic rules (store_id IS NULL) that map names found in those receipts.
+        # Delete rules scoped to the chains of the target receipts, plus
+        # generic rules (chain_id IS NULL) that map names found in those receipts.
         scoped_items = conn.execute(
-            f"SELECT DISTINCT ri.name_normalized, rec.store_id"  # noqa: S608
+            f"SELECT DISTINCT ri.name_normalized, s.chain_id"  # noqa: S608
             f"  FROM receipt_items ri"
             f"  JOIN receipts rec ON rec.id = ri.receipt_id"
+            f"  LEFT JOIN stores s ON s.id = rec.store_id"
             f" WHERE ri.receipt_id IN ({placeholders})"
             f"   AND ri.name_normalized IS NOT NULL",
             receipt_ids,
         ).fetchall()
-        for name, item_store_id in scoped_items:
+        for name, item_chain_id in scoped_items:
             conn.execute(
                 "DELETE FROM classification_rules"
                 " WHERE item_name_normalized = ?"
-                "   AND (store_id IS NULL OR store_id IS ?)",
-                [name, item_store_id],
+                "   AND (chain_id IS NULL OR chain_id IS ?)",
+                [name, item_chain_id],
             )
     conn.execute(
         f"""
@@ -359,8 +356,7 @@ def get_receipt_summary(conn: sqlite3.Connection, receipt_id: int) -> dict | Non
 
 def delete_receipt_cascade(conn: sqlite3.Connection, receipt_id: int) -> None:
     """Delete a receipt and all its expenses (cascade). Idempotent."""
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with transaction(conn):
         # expense_tags and sheet_logging_jobs (from migration 0001) have no ON DELETE action;
         # all 0004 child tables are handled automatically by CASCADE / SET NULL.
         conn.execute(
@@ -375,7 +371,3 @@ def delete_receipt_cascade(conn: sqlite3.Connection, receipt_id: int) -> None:
         )
         conn.execute("DELETE FROM expenses WHERE receipt_id = ?", [receipt_id])
         conn.execute("DELETE FROM receipts WHERE id = ?", [receipt_id])
-        conn.execute("COMMIT")
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise

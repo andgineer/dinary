@@ -1,7 +1,7 @@
-"""aiosqlite-backed BrokerStorage for LLMBroker.
+"""BrokerStorage implementations for LLMBroker.
 
-Absorbs the provider-seeding logic previously in llm_bootstrap.py.
-Each method opens its own aiosqlite connection, does its work, and closes it.
+SqliteLLMBrokerStorage — production: seeds from toml, persists to SQLite.
+TomlLLMBrokerStorage   — CLI/standalone: reads toml directly, logs via Python logging, no DB.
 """
 
 import contextlib
@@ -16,7 +16,6 @@ from urllib.parse import urlparse
 import aiosqlite
 
 from dinary.adapters.llmbroker import CallEvent, ProviderConfig
-from dinary.config import settings
 from dinary.db import storage as db_storage
 
 logger = logging.getLogger(__name__)
@@ -39,7 +38,7 @@ async def _open(db_path: str) -> AsyncGenerator[aiosqlite.Connection]:
         yield db
 
 
-class LLMBrokerStorage:
+class SqliteLLMBrokerStorage:
     """aiosqlite-backed LLMBroker storage. Every method opens a short-lived connection."""
 
     def __init__(self, providers_toml: Path | None = None) -> None:
@@ -90,17 +89,11 @@ class LLMBrokerStorage:
     async def _seed(self, db: aiosqlite.Connection) -> None:
         providers = _providers_from_toml(self._providers_toml)
         if not providers:
-            if not settings.llm_base_url or not settings.llm_api_key:
-                return
-            providers = [
-                {
-                    "label": _label_from_base_url(settings.llm_base_url),
-                    "base_url": settings.llm_base_url,
-                    "api_key": settings.llm_api_key,
-                    "model": settings.llm_model,
-                    "rate_limit_sec": 60,
-                },
-            ]
+            logger.warning(
+                "no LLM providers found in %s — skipping seed",
+                self._providers_toml.name,
+            )
+            return
 
         try:
             await db.execute("BEGIN IMMEDIATE")
@@ -134,8 +127,15 @@ class LLMBrokerStorage:
         async with _open(db_path) as db:
             await db.execute(
                 "INSERT INTO llmbroker_call_log"
-                " (provider_id, receipt_id, status, latency_ms) VALUES (?, ?, ?, ?)",
-                [event.provider_id, event.context_id, event.status, event.latency_ms],
+                " (provider_id, context_id, status, latency_ms, error_detail)"
+                " VALUES (?, ?, ?, ?, ?)",
+                [
+                    event.provider_id,
+                    event.context_id,
+                    event.status,
+                    event.latency_ms,
+                    event.error_detail,
+                ],
             )
             await db.commit()
 
@@ -170,6 +170,42 @@ def _providers_from_toml(path: Path) -> list[dict]:
             },
         )
     return providers
+
+
+class TomlLLMBrokerStorage:
+    """CLI/standalone BrokerStorage — reads toml directly, logs via Python logging, no DB."""
+
+    def __init__(self, providers_toml: Path | None = None) -> None:
+        self._providers_toml = providers_toml if providers_toml is not None else _LLM_PROVIDERS_TOML
+
+    async def load_providers(self) -> list[ProviderConfig]:
+        raw = _providers_from_toml(self._providers_toml)
+        if not raw:
+            logger.warning("no LLM providers found in %s", self._providers_toml.name)
+        return [
+            ProviderConfig(
+                id=None,
+                label=p["label"],
+                base_url=p["base_url"],
+                api_key=p["api_key"],
+                model=p["model"],
+                priority=i,
+                rate_limit_sec=p.get("rate_limit_sec", 60),
+                rate_limited_until=None,
+            )
+            for i, p in enumerate(raw)
+        ]
+
+    async def on_call_logged(self, event: CallEvent) -> None:
+        logger.info(
+            "llmbroker provider=%s status=%s latency=%dms",
+            event.provider_id,
+            event.status,
+            event.latency_ms,
+        )
+
+    async def on_rate_limited(self, provider_id: object, until: datetime) -> None:
+        logger.warning("llmbroker provider %s rate-limited until %s", provider_id, until)
 
 
 def _label_from_base_url(base_url: str) -> str:

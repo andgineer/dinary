@@ -6,7 +6,6 @@ from typing import Any
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from dinary.background.classification.receipt_classifier import OpenAICompatibleClient
 from dinary.db.receipts import count_pending_classification_jobs
 from dinary.db.storage import transaction
 
@@ -140,26 +139,6 @@ def delete_provider(provider_id: int, con: sqlite3.Connection) -> dict[str, Any]
     return {"status": "ok"}
 
 
-async def test_provider(provider_id: int, con: sqlite3.Connection) -> dict[str, Any]:
-    row = con.execute(
-        "SELECT base_url, api_key, model FROM llmbroker_providers WHERE id = ?",
-        [provider_id],
-    ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Provider not found")
-    base_url, api_key, model = str(row[0]), str(row[1]), str(row[2])
-    try:
-        client = OpenAICompatibleClient(base_url, api_key, model)
-        results = await client.classify_receipt(
-            ["хлеб"],
-            "Test Store",
-            {1: "Food", 2: "Non-food"},
-        )
-        return {"status": "ok", "items_classified": len(results)}
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "detail": str(exc)}
-
-
 def llm_status(con: sqlite3.Connection) -> dict[str, Any]:
     con.row_factory = sqlite3.Row
     rows = con.execute(
@@ -170,7 +149,10 @@ def llm_status(con: sqlite3.Connection) -> dict[str, Any]:
                SUM(CASE WHEN l.status = 'ok' THEN 1 ELSE 0 END) AS ok_calls,
                (SELECT status FROM llmbroker_call_log
                  WHERE provider_id = p.id
-                 ORDER BY id DESC LIMIT 1) AS last_status
+                 ORDER BY id DESC LIMIT 1) AS last_status,
+               (SELECT error_detail FROM llmbroker_call_log
+                 WHERE provider_id = p.id AND error_detail IS NOT NULL
+                 ORDER BY id DESC LIMIT 1) AS last_error_detail
           FROM llmbroker_providers p
           LEFT JOIN llmbroker_call_log l ON l.provider_id = p.id
          GROUP BY p.id
@@ -190,6 +172,7 @@ def llm_status(con: sqlite3.Connection) -> dict[str, Any]:
             "used_today": int(r["used_today"] or 0),
             "ok_calls": int(r["ok_calls"] or 0),
             "last_status": r["last_status"],
+            "last_error_detail": r["last_error_detail"],
         }
         for r in rows
     ]

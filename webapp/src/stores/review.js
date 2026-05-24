@@ -28,8 +28,6 @@ export const useReviewStore = defineStore("review", () => {
   const hasMore = ref(cached?.hasMore ?? true);
   const page = ref(cached?.page ?? 0);
   const loading = ref(false);
-  const totalLoaded = ref(cached?.totalLoaded ?? 0);
-  const fromCache = ref(!!cached);
   const openRowId = ref(null);
 
   const expenses = ref([]);
@@ -43,7 +41,6 @@ export const useReviewStore = defineStore("review", () => {
       doubtfulCount: doubtfulCount.value,
       hasMore: hasMore.value,
       page: page.value,
-      totalLoaded: totalLoaded.value,
     });
   }
 
@@ -80,8 +77,6 @@ export const useReviewStore = defineStore("review", () => {
       doubtfulCount.value = data.doubtful_count ?? doubtfulCount.value;
       hasMore.value = data.has_more ?? false;
       page.value = nextPage;
-      totalLoaded.value += incoming.length;
-      fromCache.value = false;
       if ((data.pending_receipts ?? 0) === 0) {
         stampFresh();
       } else {
@@ -148,7 +143,6 @@ export const useReviewStore = defineStore("review", () => {
       const confirmedCount = result?.confirmed ?? ruleIds.length;
       items.value = items.value.filter((i) => !ruleIds.includes(i.id));
       doubtfulCount.value = Math.max(0, doubtfulCount.value - confirmedCount);
-      totalLoaded.value = items.value.length;
       _persistState();
       resetExpenses();
       await loadExpensesNextPage();
@@ -247,8 +241,6 @@ export const useReviewStore = defineStore("review", () => {
     hasMore.value = true;
     page.value = 0;
     loading.value = false;
-    totalLoaded.value = 0;
-    fromCache.value = false;
     lastFetchedAt.value = null;
     expenses.value = [];
     expensesPage.value = 0;
@@ -266,8 +258,6 @@ export const useReviewStore = defineStore("review", () => {
     hasMore,
     page,
     loading,
-    totalLoaded,
-    fromCache,
     dirtyFlag,
     lastFetchedAt,
     openRowId,

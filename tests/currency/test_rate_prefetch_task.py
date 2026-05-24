@@ -92,7 +92,7 @@ class TestBeforePublicationHour:
                 asyncio.run(rate_prefetch_task())
 
             mock_get_rate.assert_not_called()
-            mock_repo.get_connection.assert_not_called()
+            mock_repo.connection.assert_not_called()
             mock_sleep.assert_awaited_with(7200)
 
 
@@ -134,7 +134,7 @@ class TestWorkingDayFetch:
         ):
             mock_dt.now.return_value = monday_9am
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            mock_repo.get_connection.return_value = con
+            mock_repo.connection.return_value.__enter__.return_value = con
 
             with pytest.raises(asyncio.CancelledError):
                 asyncio.run(rate_prefetch_task())
@@ -145,8 +145,6 @@ class TestWorkingDayFetch:
                 settings.app_currency,
                 settings.accounting_currency,
             )
-            # 3 connections: already_stored check, _get_rate_blocking, stored_now check
-            assert con.close.call_count == 3
 
 
 @allure.epic("Background Tasks")
@@ -186,7 +184,7 @@ class TestWeekendFetch:
         ):
             mock_dt.now.return_value = saturday_10am
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            mock_repo.get_connection.return_value = con
+            mock_repo.connection.return_value.__enter__.return_value = con
 
             with pytest.raises(asyncio.CancelledError):
                 asyncio.run(rate_prefetch_task())
@@ -235,7 +233,7 @@ class TestAlreadyCached:
         ):
             mock_dt.now.return_value = monday_9am
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            mock_repo.get_connection.return_value = con
+            mock_repo.connection.return_value.__enter__.return_value = con
 
             with pytest.raises(asyncio.CancelledError):
                 asyncio.run(rate_prefetch_task())
@@ -277,14 +275,12 @@ class TestFetchError:
         ):
             mock_dt.now.return_value = monday_9am
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            mock_repo.get_connection.return_value = con
+            mock_repo.connection.return_value.__enter__.return_value = con
 
             with pytest.raises(asyncio.CancelledError):
                 asyncio.run(rate_prefetch_task())
 
             mock_sleep.assert_awaited_with(_RETRY_INTERVAL_SEC)
-            # 2 connections: already_stored check + _get_rate_blocking (error before stored_now check)
-            assert con.close.call_count == 2
 
 
 @allure.epic("Background Tasks")
@@ -326,11 +322,9 @@ class TestStaleFallback:
         ):
             mock_dt.now.return_value = monday_9am
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            mock_repo.get_connection.return_value = con
+            mock_repo.connection.return_value.__enter__.return_value = con
 
             with pytest.raises(asyncio.CancelledError):
                 asyncio.run(rate_prefetch_task())
 
             mock_sleep.assert_awaited_with(_RETRY_INTERVAL_SEC)
-            # 3 connections: already_stored check, _get_rate_blocking, stored_now check
-            assert con.close.call_count == 3

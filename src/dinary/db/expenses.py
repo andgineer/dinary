@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import Literal
 
 from dinary.db.sql_loader import fetchall_as, fetchone_as, load_sql
-from dinary.db.storage import best_effort_rollback, get_connection
+from dinary.db.storage import best_effort_rollback, connection
 
 logger = logging.getLogger(__name__)
 
@@ -292,16 +292,13 @@ def lookup_existing_expense(
             load_sql("get_existing_expense.sql"),
             [client_expense_id],
         )
-    own_con = get_connection()
-    try:
+    with connection() as own_con:
         return fetchone_as(
             ExistingExpenseRow,
             own_con,
             load_sql("get_existing_expense.sql"),
             [client_expense_id],
         )
-    finally:
-        own_con.close()
 
 
 def describe_expense_conflict(

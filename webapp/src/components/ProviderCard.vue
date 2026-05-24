@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from "vue";
-import { ChevronUp, ChevronDown, Zap, Power } from "lucide-vue-next";
+import { ChevronUp, ChevronDown, Power } from "lucide-vue-next";
 import StatusDot from "./StatusDot.vue";
 
 const props = defineProps({
@@ -8,7 +8,7 @@ const props = defineProps({
   isFirst: { type: Boolean, default: false },
   isLast: { type: Boolean, default: false },
 });
-const emit = defineEmits(["edit", "toggle", "move-up", "move-down", "test"]);
+const emit = defineEmits(["edit", "toggle", "move-up", "move-down"]);
 
 const statusKind = computed(() => {
   const p = props.provider;
@@ -63,6 +63,7 @@ const latencyColor = computed(() => {
         <span v-if="rateLimitSecsLeft > 0" class="rate-limit-pill">{{ rateLimitSecsLeft }}s</span>
       </div>
       <div class="card-model">{{ provider.model }}</div>
+      <div v-if="provider.last_error_detail" class="error-detail">{{ provider.last_error_detail }}</div>
     </div>
 
     <div class="usage-row">
@@ -118,14 +119,6 @@ const latencyColor = computed(() => {
         @click.stop="emit('move-down')"
       >
         <ChevronDown :size="15" />
-      </button>
-      <button
-        type="button"
-        class="icon-action"
-        aria-label="Test provider"
-        @click.stop="emit('test')"
-      >
-        <Zap :size="15" />
       </button>
       <button
         type="button"
@@ -196,6 +189,15 @@ const latencyColor = computed(() => {
   color: var(--warning);
   border: 1px solid rgba(245, 158, 11, 0.3);
   font-family: var(--font-num);
+}
+
+.error-detail {
+  font-size: 0.7rem;
+  color: var(--danger, #ef4444);
+  margin-top: 0.2rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card-model {

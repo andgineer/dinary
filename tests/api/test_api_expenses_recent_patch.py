@@ -152,7 +152,7 @@ class TestPatchExpense:
             self._seed_receipt_expense(con)
             con.execute(
                 "INSERT INTO classification_rules"
-                " (item_name_normalized, store_id, category_id, confidence_level, source)"
+                " (item_name_normalized, chain_id, category_id, confidence_level, source)"
                 " VALUES ('hleb', 1, 1, 3, 'llm')"
             )
             rule_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -182,7 +182,7 @@ class TestPatchExpense:
             self._seed_receipt_expense(con)
             con.execute(
                 "INSERT INTO classification_rules"
-                " (item_name_normalized, store_id, category_id, confidence_level, source)"
+                " (item_name_normalized, chain_id, category_id, confidence_level, source)"
                 " VALUES ('hleb', 1, 1, 3, 'llm')"
             )
             rule_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -274,7 +274,7 @@ class TestPatchExpense:
             self._seed_receipt_expense(con)
             con.execute(
                 "INSERT INTO classification_rules"
-                " (item_name_normalized, store_id, category_id, confidence_level, source)"
+                " (item_name_normalized, chain_id, category_id, confidence_level, source)"
                 " VALUES ('hleb', 1, 1, 3, 'llm')"
             )
             rule_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]

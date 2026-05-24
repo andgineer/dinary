@@ -61,3 +61,29 @@ Occasional LLM inconsistency (e.g. "Lidl" vs "Lidl Srbija" on different receipts
 produces duplicate `shop_chains` rows. Deduplication is deferred to a future
 maintenance task — the analytical layer joins on `chain_id` so fixing duplicates
 only requires updating `stores.chain_id` rows.
+
+## Every store always has a chain
+
+`resolve_store()` always calls `get_chain_name` before inserting a new store and
+sets `chain_id` on the `stores` row at creation time. `stores.chain_id` is never
+NULL in practice — the column is nullable only to avoid a circular FK dependency
+during schema creation.
+
+This guarantee means code that needs the chain for a store can always do a single
+`JOIN stores s ON s.id = e.store_id JOIN shop_chains sc ON sc.id = s.chain_id`
+without NULL-guarding the chain side.
+
+## Classification rules attach to chains, not stores
+
+`classification_rules.chain_id` references `shop_chains(id)` — **not** `stores(id)`.
+
+A rule learned from one Lidl branch (e.g. "mleko" → Dairy) applies automatically
+to all other Lidl branches. Writing rules at store granularity would waste LLM calls
+and leave new branches without coverage until they accumulate their own history.
+
+The lookup precedence in `classify_by_rules()`:
+1. Chain-specific rule (`chain_id IS NOT NULL, chain_id = ?`) — highest priority.
+2. Generic rule (`chain_id IS NULL`) — fallback when no chain rule exists.
+
+When `resolve_store()` returns a `store_id`, callers must resolve `chain_id` from
+`stores.chain_id` before calling `classify_by_rules()` or `create_or_update_rule()`.

@@ -20,6 +20,7 @@ from dinary.db.receipts import (
     trim_llm_call_log,
     update_receipt_item,
 )
+from dinary.db.storage import get_connection, transaction
 from dinary.sheets.sheet_mapping import resolve_event_auto_tag_ids
 
 RECEIPT_CURRENCY = "RSD"  # Serbian fiscal receipts are always denominated in RSD
@@ -57,6 +58,7 @@ def _write_single_item(  # noqa: PLR0913
     rule_hits: dict[int, RuleHit],
     llm_results: dict[int, ClassificationResult],
     store_id: int | None,
+    chain_id: int | None,
     receipt_id: int,
 ) -> None:
     if cat_id is None or conf <= 1:
@@ -75,7 +77,7 @@ def _write_single_item(  # noqa: PLR0913
         if norm and conf >= 2:
             rule_id = create_or_update_rule(
                 conn,
-                store_id,
+                chain_id,
                 norm,
                 RuleSpec(
                     cat_id,
@@ -124,82 +126,89 @@ def _write_single_item(  # noqa: PLR0913
 
 
 def persist_classification_results(
-    conn: sqlite3.Connection,
     job: ReceiptJobRow,
     items: list[ReceiptItemRow],
     classifications: dict[int, tuple[int | None, int]],
     rule_hits: dict[int, RuleHit],
     llm_results: dict[int, ClassificationResult],
     store_id: int | None,
+    chain_id: int | None,
+    norms: dict[int, str] | None = None,
 ) -> None:
     """Write classification results atomically; handles idempotency inside the transaction."""
-    receipt_dt_row = conn.execute(
-        "SELECT COALESCE(purchase_datetime, created_at) FROM receipts WHERE id = ?",
-        [job.receipt_id],
-    ).fetchone()
-    _user_tz = ZoneInfo(settings.user_timezone)
-    if receipt_dt_row and receipt_dt_row[0]:
-        receipt_dt_obj = datetime.fromisoformat(receipt_dt_row[0]).astimezone(_user_tz)
-    else:
-        receipt_dt_obj = datetime.now(_user_tz)
-    receipt_dt = receipt_dt_obj.isoformat()
-
-    auto_event_id = _find_auto_attach_event(conn, receipt_dt)
-    event_auto_tag_ids: list[int] = (
-        resolve_event_auto_tag_ids(conn, auto_event_id) if auto_event_id is not None else []
-    )
-    if settings.accounting_currency.upper() != RECEIPT_CURRENCY:
-        try:
-            receipt_date = date.fromisoformat(receipt_dt[:10])
-            accounting_rate = get_rate(
-                conn,
-                receipt_date,
-                RECEIPT_CURRENCY,
-                settings.accounting_currency,
-                offline=True,
-            )
-        except ValueError as exc:
-            raise RateMissingError(
-                f"No {RECEIPT_CURRENCY}/{settings.accounting_currency} rate for {receipt_dt[:10]}",
-            ) from exc
-    else:
-        accounting_rate = Decimal(1)
-    conn.execute("BEGIN IMMEDIATE")
+    conn = get_connection()
     try:
-        if conn.execute(
-            "SELECT 1 FROM expenses WHERE receipt_id = ? LIMIT 1",
+        receipt_dt_row = conn.execute(
+            "SELECT COALESCE(purchase_datetime, created_at) FROM receipts WHERE id = ?",
             [job.receipt_id],
-        ).fetchone():
+        ).fetchone()
+        _user_tz = ZoneInfo(settings.user_timezone)
+        if receipt_dt_row and receipt_dt_row[0]:
+            receipt_dt_obj = datetime.fromisoformat(receipt_dt_row[0]).astimezone(_user_tz)
+        else:
+            receipt_dt_obj = datetime.now(_user_tz)
+        receipt_dt = receipt_dt_obj.isoformat()
+
+        auto_event_id = _find_auto_attach_event(conn, receipt_dt)
+        event_auto_tag_ids: list[int] = (
+            resolve_event_auto_tag_ids(conn, auto_event_id) if auto_event_id is not None else []
+        )
+        if settings.accounting_currency.upper() != RECEIPT_CURRENCY:
+            try:
+                receipt_date = date.fromisoformat(receipt_dt[:10])
+                accounting_rate = get_rate(
+                    conn,
+                    receipt_date,
+                    RECEIPT_CURRENCY,
+                    settings.accounting_currency,
+                    offline=True,
+                )
+            except ValueError as exc:
+                raise RateMissingError(
+                    f"No {RECEIPT_CURRENCY}/{settings.accounting_currency}"
+                    f" rate for {receipt_dt[:10]}",
+                ) from exc
+        else:
+            accounting_rate = Decimal(1)
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if conn.execute(
+                "SELECT 1 FROM expenses WHERE receipt_id = ? LIMIT 1",
+                [job.receipt_id],
+            ).fetchone():
+                complete_job(conn, job.receipt_id)
+                conn.execute("COMMIT")
+                return
+
+            for item in items:
+                cat_id, conf = classifications.get(item.id, (None, 1))
+                norm = (norms or {}).get(item.id) or normalize_item_name(item.name_raw)
+                _write_single_item(
+                    conn,
+                    item,
+                    cat_id,
+                    conf,
+                    norm,
+                    receipt_dt_obj,
+                    accounting_rate,
+                    auto_event_id,
+                    event_auto_tag_ids,
+                    rule_hits,
+                    llm_results,
+                    store_id,
+                    chain_id,
+                    job.receipt_id,
+                )
+
+            trim_llm_call_log(conn)
             complete_job(conn, job.receipt_id)
             conn.execute("COMMIT")
-            return
-
-        for item in items:
-            cat_id, conf = classifications.get(item.id, (None, 1))
-            norm = normalize_item_name(item.name_raw)
-            _write_single_item(
-                conn,
-                item,
-                cat_id,
-                conf,
-                norm,
-                receipt_dt_obj,
-                accounting_rate,
-                auto_event_id,
-                event_auto_tag_ids,
-                rule_hits,
-                llm_results,
-                store_id,
-                job.receipt_id,
-            )
-
-        trim_llm_call_log(conn)
-        complete_job(conn, job.receipt_id)
-        conn.execute("COMMIT")
-        sheet_logging.notify_new_work()
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
+            sheet_logging.notify_new_work()
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    finally:
+        conn.close()
 
 
 def write_fetch_fallback_metadata(
@@ -209,8 +218,7 @@ def write_fetch_fallback_metadata(
 ) -> None:
     now = datetime.now(UTC).isoformat()
     value = f"{now} | invoice: {invoice_number} | reason: {reason}"
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with transaction(conn):
         conn.execute(
             "INSERT INTO app_metadata (key, value) VALUES ('receipt_fetch_fallback_last', ?)"
             " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -221,7 +229,3 @@ def write_fetch_fallback_metadata(
             " ON CONFLICT(key) DO UPDATE SET value ="
             "   CAST(CAST(value AS INTEGER) + 1 AS TEXT)",
         )
-        conn.execute("COMMIT")
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise

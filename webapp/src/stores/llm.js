@@ -96,23 +96,6 @@ export const useLlmStore = defineStore("llm", () => {
     }
   }
 
-  async function test(id) {
-    const toast = useToastStore();
-    toast.show("Testing…", "info");
-    try {
-      const result = await llmApi.testProvider(id);
-      const ms = result?.latency_ms ?? result?.ms;
-      if (ms !== undefined) {
-        toast.show(`OK · ${ms}ms`, "success");
-      } else {
-        toast.show("Test passed", "success");
-      }
-      await refresh();
-    } catch (err) {
-      toast.show(`Test failed: ${err?.message || err}`, "error");
-    }
-  }
-
   return {
     providers,
     health,
@@ -126,6 +109,5 @@ export const useLlmStore = defineStore("llm", () => {
     move,
     save,
     remove,
-    test,
   };
 });

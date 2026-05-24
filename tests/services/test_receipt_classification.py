@@ -11,7 +11,8 @@ from unittest.mock import patch
 import allure
 import pytest
 
-from dinary.adapters.llmbroker import LLMBroker, NullStorage
+from conftest import NullStorage
+from dinary.adapters.llmbroker import LLMBroker
 from dinary.adapters.rate_helpers import save_db_rate
 from dinary.background.classification.receipt_classifier import ClassificationResult
 from dinary.background.classification.persist import RECEIPT_CURRENCY, RateMissingError
@@ -126,7 +127,7 @@ class TestClassifyAndPersist:
         conn.close()
 
         with _classify_patch([_hleb_result(conf=4)]) as mock_classify:
-            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
             mock_classify.assert_not_called()
 
         conn2 = storage.get_connection()
@@ -151,7 +152,7 @@ class TestClassifyAndPersist:
         conn.close()
 
         with _classify_patch([_hleb_result(cat_id=1, conf=3)]) as mock_classify:
-            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
             mock_classify.assert_called_once()
 
         conn2 = storage.get_connection()
@@ -182,7 +183,7 @@ class TestClassifyAndPersist:
                 )
             ]
         ):
-            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
         conn2 = storage.get_connection()
         try:
@@ -202,7 +203,7 @@ class TestClassifyAndPersist:
         conn.close()
 
         with _classify_patch([_hleb_result()]):
-            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
         conn2 = storage.get_connection()
         try:
@@ -230,9 +231,8 @@ class TestClassifyAndPersist:
         items = get_receipt_items(conn, receipt_id)
         conn.close()
 
-        with _classify_patch([_hleb_result()]) as mock_classify:
-            asyncio.run(_classify_and_persist(_broker(), job, items, None))
-            mock_classify.assert_not_called()
+        with _classify_patch([_hleb_result()]):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
         conn2 = storage.get_connection()
         try:
@@ -267,7 +267,7 @@ class TestClassifyAndPersist:
         conn.close()
 
         with _classify_patch([_hleb_result(conf=3)]):
-            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
         conn2 = storage.get_connection()
         try:
@@ -287,7 +287,7 @@ class TestClassifyAndPersist:
         conn.close()
 
         with _classify_patch([_hleb_result(conf=3)]):
-            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
         conn2 = storage.get_connection()
         try:
@@ -317,7 +317,7 @@ class TestClassifyAndPersist:
         conn.close()
 
         with _classify_patch([_hleb_result(cat_id=1, conf=3)]) as mock_classify:
-            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
             mock_classify.assert_called_once()
 
         conn2 = storage.get_connection()
@@ -346,7 +346,7 @@ class TestClassifyAndPersist:
         with _classify_patch(
             [ClassificationResult(item_name_normalized="hleb", category_id=1, confidence_level=1)]
         ):
-            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
         conn2 = storage.get_connection()
         try:
@@ -379,7 +379,7 @@ class TestClassifyAndPersist:
         conn.close()
 
         with _classify_patch([_hleb_result(cat_id=1, conf=3)]):
-            asyncio.run(_classify_and_persist(_broker(), job, items, None))
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
         conn2 = storage.get_connection()
         try:
@@ -421,7 +421,7 @@ class TestClassifyAndPersist:
                 side_effect=ValueError("no rate"),
             ):
                 with pytest.raises(RateMissingError):
-                    asyncio.run(_classify_and_persist(_broker(), job, items, None))
+                    asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
         conn2 = storage.get_connection()
         try:

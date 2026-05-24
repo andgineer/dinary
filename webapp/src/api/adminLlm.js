@@ -6,6 +6,4 @@ export const updateProvider = (id, patch) =>
   apiRequest(`/api/llm/providers/${id}`, { method: "PATCH", body: patch });
 export const deleteProvider = (id) =>
   apiRequest(`/api/llm/providers/${id}`, { method: "DELETE" });
-export const testProvider = (id) =>
-  apiRequest(`/api/llm/providers/${id}/test`, { method: "POST" });
 export const getStatus = () => apiRequest("/api/llm/status");

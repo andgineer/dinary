@@ -55,11 +55,8 @@ def _get_rate_blocking(rate_date: date, source: str, target: str) -> Decimal:
     across thread boundaries (avoids CPython 3.14 access violations
     caused by passing a connection object between threads).
     """
-    con = storage.get_connection()
-    try:
+    with storage.connection() as con:
         return get_rate(con, rate_date, source, target)
-    finally:
-        con.close()
 
 
 async def rate_prefetch_task() -> None:
@@ -75,11 +72,8 @@ async def rate_prefetch_task() -> None:
                 await asyncio.sleep(_seconds_until_prefetch_hour())
                 continue
 
-            con = storage.get_connection()
-            try:
+            with storage.connection() as con:
                 already_stored = get_db_rate(con, today, source, target) is not None
-            finally:
-                con.close()
 
             if already_stored:
                 logger.debug("rate for %s already stored", today)
@@ -88,11 +82,8 @@ async def rate_prefetch_task() -> None:
 
             rate = await asyncio.to_thread(_get_rate_blocking, today, source, target)
 
-            con = storage.get_connection()
-            try:
+            with storage.connection() as con:
                 stored_now = get_db_rate(con, today, source, target) is not None
-            finally:
-                con.close()
 
             if not stored_now:
                 # get_rate returned a stale fallback without writing today's rate.

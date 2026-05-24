@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import allure
 import httpx
 
-from dinary.adapters.llmbroker import CallEvent, LLMBroker, NullStorage, ProviderConfig
+from conftest import NullStorage
+from dinary.adapters.llmbroker import CallEvent, LLMBroker, ProviderConfig
 
 
 def _make_provider(pid: int = 1, *, label: str = "P1", rate_limit_sec: int = 60) -> ProviderConfig:
@@ -274,6 +275,85 @@ class TestLLMBrokerChat:
         assert any(e.status == "429" for e in logged)
         assert any(e.status == "ok" for e in logged)
         assert len(rate_limited) == 1, "on_rate_limited only called on 429"
+
+    def test_error_detail_set_on_non_429_http_error(self):
+        storage = _TrackingStorage([_make_provider(1)])
+        body = '{"error": {"message": "Incorrect API key provided"}}'
+
+        async def run():
+            broker = LLMBroker(storage)
+            await broker.start()
+            resp = MagicMock()
+            resp.status_code = 401
+            resp.text = body
+            resp.raise_for_status = MagicMock(
+                side_effect=httpx.HTTPStatusError("401", request=MagicMock(), response=resp)
+            )
+            resp.json.return_value = {}
+            client = AsyncMock()
+            client.post = AsyncMock(return_value=resp)
+            ctx = MagicMock()
+            ctx.__aenter__ = AsyncMock(return_value=client)
+            ctx.__aexit__ = AsyncMock(return_value=False)
+            with patch("dinary.adapters.llmbroker.httpx.AsyncClient", return_value=ctx):
+                try:
+                    await broker.chat([{"role": "user", "content": "hi"}])
+                except httpx.HTTPStatusError:
+                    pass
+            await broker.stop()
+            return storage.logged
+
+        logged = asyncio.run(run())
+        assert len(logged) == 1
+        assert logged[0].status == "error"
+        assert logged[0].error_detail == body
+
+    def test_error_detail_truncated_to_300_chars(self):
+        storage = _TrackingStorage([_make_provider(1)])
+        long_body = "x" * 500
+
+        async def run():
+            broker = LLMBroker(storage)
+            await broker.start()
+            resp = MagicMock()
+            resp.status_code = 500
+            resp.text = long_body
+            resp.raise_for_status = MagicMock(
+                side_effect=httpx.HTTPStatusError("500", request=MagicMock(), response=resp)
+            )
+            resp.json.return_value = {}
+            client = AsyncMock()
+            client.post = AsyncMock(return_value=resp)
+            ctx = MagicMock()
+            ctx.__aenter__ = AsyncMock(return_value=client)
+            ctx.__aexit__ = AsyncMock(return_value=False)
+            with patch("dinary.adapters.llmbroker.httpx.AsyncClient", return_value=ctx):
+                try:
+                    await broker.chat([{"role": "user", "content": "hi"}])
+                except httpx.HTTPStatusError:
+                    pass
+            await broker.stop()
+            return storage.logged
+
+        logged = asyncio.run(run())
+        assert logged[0].error_detail == "x" * 300
+
+    def test_error_detail_none_on_success(self):
+        storage = _TrackingStorage([_make_provider(1)])
+
+        async def run():
+            broker = LLMBroker(storage)
+            await broker.start()
+            with patch(
+                "dinary.adapters.llmbroker.httpx.AsyncClient",
+                return_value=_http_ctx(_ok_response("ok")),
+            ):
+                await broker.chat([{"role": "user", "content": "hi"}])
+            await broker.stop()
+            return storage.logged
+
+        logged = asyncio.run(run())
+        assert logged[0].error_detail is None
 
     def test_background_tasks_start_and_stop_cleanly(self):
         async def run():

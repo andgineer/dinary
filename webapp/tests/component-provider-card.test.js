@@ -91,12 +91,19 @@ describe("ProviderCard", () => {
     expect(wrapper.emitted("toggle")).toBeTruthy();
   });
 
-  it("emits test when beaker button is clicked", async () => {
+  it("shows error detail when last_error_detail is set", () => {
     const wrapper = mount(ProviderCard, {
-      props: { provider: BASE_PROVIDER },
+      props: { provider: { ...BASE_PROVIDER, last_error_detail: "401 Incorrect API key provided" } },
     });
-    await wrapper.find('[aria-label="Test provider"]').trigger("click");
-    expect(wrapper.emitted("test")).toBeTruthy();
+    expect(wrapper.find(".error-detail").exists()).toBe(true);
+    expect(wrapper.text()).toContain("401 Incorrect API key provided");
+  });
+
+  it("hides error detail when last_error_detail is null", () => {
+    const wrapper = mount(ProviderCard, {
+      props: { provider: { ...BASE_PROVIDER, last_error_detail: null } },
+    });
+    expect(wrapper.find(".error-detail").exists()).toBe(false);
   });
 
   it("shows rate-limit pill when rate_limited_until is in the future", () => {

@@ -124,9 +124,6 @@ Key settings:
 | `DINARY_APP_CURRENCY` | `RSD` | Currency the PWA UI works in |
 | `DINARY_ACCOUNTING_CURRENCY` | `EUR` | Currency all `amount` columns are denominated in |
 | `DINARY_SHEET_LOGGING_SPREADSHEET` | — | Google Sheets spreadsheet ID/URL for expense logging |
-| `DINARY_LLM_BASE_URL` | — | OpenAI-compatible LLM API base URL |
-| `DINARY_LLM_API_KEY` | — | LLM API key |
-| `DINARY_LLM_MODEL` | `gemini-2.5-flash` | LLM model name |
 | `DINARY_GOOGLE_SHEETS_CREDENTIALS_PATH` | `~/.config/gspread/service_account.json` | Google service account JSON |
 
 Import sources (per-year Google Sheets spreadsheets) are configured in `.deploy/import_sources.json` — this file is optional and only needed for `inv import-*` tasks.

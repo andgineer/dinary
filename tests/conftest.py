@@ -2,19 +2,35 @@ import shutil
 import socket
 import sqlite3
 import unittest.mock
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from dinary.adapters import rate_helpers
-from dinary.adapters.llm_storage import LLMBrokerStorage
-
-_REAL_LLM_SEED = LLMBrokerStorage._seed
+from dinary.adapters.llm_storage import SqliteLLMBrokerStorage
+from dinary.adapters.llmbroker import CallEvent, ProviderConfig
 from dinary.config import settings
 from dinary.db import db_migrations, storage
 from dinary.main import create_app
 from dinary.sheets import sheet_mapping
+
+_REAL_LLM_SEED = SqliteLLMBrokerStorage._seed
+
+
+class NullStorage:
+    """No-op BrokerStorage for tests — no providers, no persistence."""
+
+    async def load_providers(self) -> list[ProviderConfig]:
+        return []
+
+    async def on_call_logged(self, event: CallEvent) -> None:
+        pass
+
+    async def on_rate_limited(self, provider_id: object, until: datetime) -> None:
+        pass
+
 
 # Tests that need the built Vue PWA must depend on ``built_static_dir``;
 # the fixture FAILS LOUDLY when ``_static/`` is absent (instead of
@@ -58,29 +74,15 @@ def db(tmp_path, monkeypatch, blank_db):
     monkeypatch.setattr(storage, "DB_PATH", dst)
 
 
-def _reset_db_singleton() -> None:
-    """Reset repo-level DB state between tests.
-
-    ``storage.get_connection`` returns a fresh ``sqlite3``
-    connection per call, so there is no singleton to close today —
-    ``close_connection`` is a no-op. The fixture hook is retained as
-    a known tear-down point if any future connection-pool-style
-    caching is added.
-    """
-    storage.close_connection()
-
-
 @pytest.fixture(autouse=True)
 def _reset_db_connection():
-    """Reset repo-level DB state before AND after each test."""
-    _reset_db_singleton()
+    """Reset repo-level DB state before AND after each test (currently a no-op placeholder)."""
     yield
-    _reset_db_singleton()
 
 
 @pytest.fixture(autouse=True)
 def _disable_llm_seed(monkeypatch):
-    """Prevent LLMBrokerStorage from auto-seeding providers from .deploy/llm_providers.toml.
+    """Prevent SqliteLLMBrokerStorage from auto-seeding providers from .deploy/llm_providers.toml.
 
     Tests that specifically assert on llmbroker_providers state start from an empty
     table; the operator's real credentials or local TOML must not interfere.
@@ -89,13 +91,13 @@ def _disable_llm_seed(monkeypatch):
     async def _no_op(self, db):  # noqa: ARG001
         pass
 
-    monkeypatch.setattr(LLMBrokerStorage, "_seed", _no_op)
+    monkeypatch.setattr(SqliteLLMBrokerStorage, "_seed", _no_op)
 
 
 @pytest.fixture
 def real_llm_seed(monkeypatch):
     """Opt out of _disable_llm_seed for tests that specifically verify provider seeding."""
-    monkeypatch.setattr(LLMBrokerStorage, "_seed", _REAL_LLM_SEED)
+    monkeypatch.setattr(SqliteLLMBrokerStorage, "_seed", _REAL_LLM_SEED)
 
 
 @pytest.fixture(autouse=True)

@@ -269,8 +269,7 @@ def _drain_one_job(
     spreadsheet_id: str,
 ) -> DrainResult:
     """Atomically claim, append, and clear one queue row."""
-    con = storage.get_connection()
-    try:
+    with storage.connection() as con:
         resolved = _claim_and_resolve(con, expense_pk)
         if isinstance(resolved, DrainResult):
             return resolved
@@ -330,8 +329,6 @@ def _drain_one_job(
             logger.exception("Append to sheet failed for expense pk=%d", expense_pk)
             _release_claim_best_effort(con, expense_pk, resolved.claim_token)
             raise
-    finally:
-        con.close()
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -415,11 +412,8 @@ def _append_row_to_sheet(
 
 
 def _poison_failing_job(expense_pk: int, exc: Exception) -> None:
-    con = storage.get_connection()
-    try:
+    with storage.connection() as con:
         poison_logging_job(con, expense_pk, f"{type(exc).__name__}: {exc}")
-    finally:
-        con.close()
 
 
 def _update_drain_summary(summary: dict, outcome: DrainResult) -> None:
@@ -457,11 +451,8 @@ def drain_pending() -> dict:
         "poisoned": 0,
     }
 
-    con = storage.get_connection()
-    try:
+    with storage.connection() as con:
         expense_pks = list_logging_jobs(con)
-    finally:
-        con.close()
 
     if not expense_pks:
         _reset_backoff()

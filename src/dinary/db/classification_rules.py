@@ -1,6 +1,6 @@
-"""Classification rules engine: (store_id, item_name_normalized) → category.
+"""Classification rules engine: (chain_id, item_name_normalized) → category.
 
-Chain-specific rules take precedence over generic rules (store_id IS NULL).
+Chain-specific rules take precedence over generic rules (chain_id IS NULL).
 User corrections always store confidence_level=4.
 """
 
@@ -33,12 +33,12 @@ class RuleSpec:
 
 def classify_by_rules(
     conn: sqlite3.Connection,
-    store_id: int | None,
+    chain_id: int | None,
     item_name_normalized: str,
 ) -> RuleHit | None:
     """Return a RuleHit from stored rules, or None on miss.
 
-    Chain-specific rule (store_id IS NOT NULL) beats generic (store_id IS NULL)
+    Chain-specific rule (chain_id IS NOT NULL) beats generic (chain_id IS NULL)
     for the same item name. Returns the stored confidence unchanged — no source
     penalty because no LLM call is involved.
     """
@@ -47,12 +47,12 @@ def classify_by_rules(
         """
         SELECT id, category_id, confidence_level, tag_ids
           FROM classification_rules
-         WHERE (store_id = ? OR store_id IS NULL)
+         WHERE (chain_id = ? OR chain_id IS NULL)
            AND item_name_normalized = ?
-         ORDER BY store_id NULLS LAST
+         ORDER BY chain_id NULLS LAST
          LIMIT 1
         """,
-        [store_id, item_name_normalized],
+        [chain_id, item_name_normalized],
     ).fetchone()
     if row is None:
         return None
@@ -73,7 +73,7 @@ def classify_by_rules(
 
 def create_or_update_rule(
     conn: sqlite3.Connection,
-    store_id: int | None,
+    chain_id: int | None,
     item_name_normalized: str,
     spec: RuleSpec,
 ) -> int:
@@ -96,10 +96,10 @@ def create_or_update_rule(
     existing = conn.execute(
         """
         SELECT id, alternative_category_ids FROM classification_rules
-         WHERE (store_id IS ? OR (store_id IS NULL AND ? IS NULL))
+         WHERE (chain_id IS ? OR (chain_id IS NULL AND ? IS NULL))
            AND item_name_normalized = ?
         """,
-        [store_id, store_id, item_name_normalized],
+        [chain_id, chain_id, item_name_normalized],
     ).fetchone()
 
     if existing:
@@ -142,13 +142,13 @@ def create_or_update_rule(
     conn.execute(
         """
             INSERT INTO classification_rules
-                   (store_id, item_name_normalized, category_id,
+                   (chain_id, item_name_normalized, category_id,
                     confidence_level, source, alternative_category_ids, tag_ids,
                     created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
         [
-            store_id,
+            chain_id,
             item_name_normalized,
             category_id,
             confidence_level,

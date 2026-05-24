@@ -63,11 +63,8 @@ def get_catalog(
     if_none_match: str | None = Header(default=None),
 ) -> CatalogResponse | Response:
     try:
-        con = storage.get_connection()
-        try:
+        with storage.connection() as con:
             snapshot = build_catalog_snapshot(con)
-        finally:
-            con.close()
     except Exception:
         logger.exception("Failed to load catalog snapshot")
         raise HTTPException(status_code=500, detail="Failed to load catalog") from None

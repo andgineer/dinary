@@ -11,7 +11,6 @@ from dinary.api.controllers.llm import (
     delete_provider,
     list_providers,
     llm_status,
-    test_provider,
     update_provider,
 )
 from dinary.db.storage import get_db
@@ -44,14 +43,6 @@ def remove_provider(
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> dict:
     return delete_provider(provider_id, con)
-
-
-@router.post("/api/llm/providers/{provider_id}/test")
-async def test_provider_endpoint(
-    provider_id: int,
-    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> dict:
-    return await test_provider(provider_id, con)
 
 
 @router.get("/api/llm/status")

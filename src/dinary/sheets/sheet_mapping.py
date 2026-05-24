@@ -355,8 +355,7 @@ def reload_now(*, check_after: bool = True) -> dict:
 
     raw = ws.get_all_values()[1:]
 
-    con = storage.get_connection()
-    try:
+    with storage.connection() as con:
         cat_id_by_name, event_id_by_name, tag_id_by_name = _load_catalog(con)
         rows = parse_rows(
             raw,
@@ -365,8 +364,6 @@ def reload_now(*, check_after: bool = True) -> dict:
             tag_id_by_name=tag_id_by_name,
         )
         _atomic_swap(con, rows)
-    finally:
-        con.close()
 
     global _last_seen_modified_time  # noqa: PLW0603
     if not check_after:
@@ -577,15 +574,11 @@ def ensure_default_map_tab() -> None:
     except gspread.WorksheetNotFound:
         pass
     else:
-        con = storage.get_connection()
-        try:
+        with storage.connection() as con:
             _warn_if_existing_map_tab_is_stale(existing_ws, con)
-        finally:
-            con.close()
         return
 
-    con = storage.get_connection()
-    try:
+    with storage.connection() as con:
         cat_rows = con.execute(
             "SELECT c.name FROM categories c"
             " JOIN category_groups g ON g.id = c.group_id"
@@ -595,8 +588,6 @@ def ensure_default_map_tab() -> None:
         tag_rows = con.execute(
             "SELECT name FROM tags WHERE is_active",
         ).fetchall()
-    finally:
-        con.close()
 
     category_names = [str(r[0]) for r in cat_rows]
     active_tag_names = {str(r[0]) for r in tag_rows}

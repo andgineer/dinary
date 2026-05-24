@@ -46,17 +46,13 @@ class TestConnectionLifecycle:
             con.close()
         assert row == (1,)
 
-    def test_close_releases_singleton(self, fresh_db):
-        # ``close_connection`` is a post-SQLite-port no-op retained for
-        # test-harness compatibility; ``get_connection`` always returns
-        # a fresh connection after the port. The test still exercises
-        # the call to pin the no-op contract.
-        storage.close_connection()
+    def test_get_connection_returns_usable_connection(self, fresh_db):
         con = storage.get_connection()
         try:
-            con.execute("SELECT 1").fetchone()
+            row = con.execute("SELECT 1").fetchone()
         finally:
             con.close()
+        assert row == (1,)
 
     def test_multiple_connections_see_each_others_commits(self, fresh_db):
         """Two independent connections observe each other's commits.

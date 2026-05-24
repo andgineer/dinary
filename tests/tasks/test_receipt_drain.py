@@ -15,7 +15,8 @@ import pytest
 
 import dinary.background.classification.task as drain_mod
 from dinary.background.classification.receipt_classifier import ClassificationResult
-from dinary.adapters.llmbroker import LLMBroker, NullStorage
+from conftest import NullStorage
+from dinary.adapters.llmbroker import LLMBroker
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 from dinary.background.classification.task import (
     _drain_all_pending,
@@ -1185,10 +1186,17 @@ class TestDrainLoop:
 
         async def run():
             event = asyncio.Event()
+            loop = asyncio.get_running_loop()
             drain_mod._wakeup_event = event
-            assert not event.is_set()
-            notify_new_receipt()
-            assert event.is_set()
+            drain_mod._wakeup_loop = loop
+            try:
+                assert not event.is_set()
+                notify_new_receipt()
+                await asyncio.sleep(0)  # allow call_soon_threadsafe to fire
+                assert event.is_set()
+            finally:
+                drain_mod._wakeup_event = None
+                drain_mod._wakeup_loop = None
 
         asyncio.run(run())
 

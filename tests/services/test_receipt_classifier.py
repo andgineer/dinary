@@ -1,14 +1,11 @@
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import allure
-import httpx
-import pytest
 
 from dinary.adapters.llmbroker import LLMBroker
 from dinary.background.classification.receipt_classifier import (
-    OpenAICompatibleClient,
     _build_user_message,
     _parse_response,
     classify_receipt,
@@ -119,105 +116,6 @@ class TestParseResponse:
         raw = json.dumps([{"item": "x", "category_id": 1, "confidence": 3}])
         results = _parse_response(raw, ["x"], {1, 2})
         assert results[0].tag_ids == []
-
-
-@allure.epic("Services")
-@allure.feature("LLM Client")
-class TestOpenAICompatibleClient:
-    def _mock_http(self, response_body: str):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"choices": [{"message": {"content": response_body}}]}
-        mock_async_client = AsyncMock()
-        mock_async_client.post = AsyncMock(return_value=mock_response)
-        mock_ctx = MagicMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_async_client)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-        return mock_ctx, mock_async_client
-
-    def test_classify_receipt_success(self):
-        response_body = json.dumps(
-            [
-                {"item": "hleb", "category_id": 1, "confidence": 4},
-            ]
-        )
-        mock_ctx, _ = self._mock_http(response_body)
-
-        with patch(
-            "dinary.background.classification.receipt_classifier.httpx.AsyncClient",
-            return_value=mock_ctx,
-        ):
-            client = OpenAICompatibleClient("https://api.example.com/v1", "key", "model")
-            results = asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
-
-        assert len(results) == 1
-        assert results[0].category_id == 1
-        assert results[0].confidence_level == 4
-        assert results[0].item_name_normalized == "hleb"
-
-    def test_classify_receipt_sends_correct_model(self):
-        response_body = json.dumps([{"item": "hleb", "category_id": 1, "confidence": 3}])
-        mock_ctx, mock_async_client = self._mock_http(response_body)
-
-        with patch(
-            "dinary.background.classification.receipt_classifier.httpx.AsyncClient",
-            return_value=mock_ctx,
-        ):
-            client = OpenAICompatibleClient("https://api.example.com/v1", "key", "my-model")
-            asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
-
-        payload = mock_async_client.post.call_args.kwargs["json"]
-        assert payload["model"] == "my-model"
-
-    def test_classify_receipt_trailing_slash_stripped(self):
-        response_body = json.dumps([{"item": "hleb", "category_id": 1, "confidence": 3}])
-        mock_ctx, mock_async_client = self._mock_http(response_body)
-
-        with patch(
-            "dinary.background.classification.receipt_classifier.httpx.AsyncClient",
-            return_value=mock_ctx,
-        ):
-            client = OpenAICompatibleClient("https://api.example.com/v1/", "key", "model")
-            asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
-
-        url = mock_async_client.post.call_args.args[0]
-        assert not url.endswith("//chat/completions")
-        assert url.endswith("/chat/completions")
-
-    def test_http_error_propagates(self):
-        mock_async_client = AsyncMock()
-        mock_async_client.post = AsyncMock(
-            side_effect=httpx.HTTPStatusError(
-                "429 Too Many Requests",
-                request=MagicMock(),
-                response=MagicMock(),
-            )
-        )
-        mock_ctx = MagicMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_async_client)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "dinary.background.classification.receipt_classifier.httpx.AsyncClient",
-            return_value=mock_ctx,
-        ):
-            client = OpenAICompatibleClient("https://api.example.com/v1", "key", "model")
-            with pytest.raises(httpx.HTTPStatusError):
-                asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
-
-    def test_malformed_llm_response_falls_back(self):
-        mock_ctx, _ = self._mock_http("this is not json")
-
-        with patch(
-            "dinary.background.classification.receipt_classifier.httpx.AsyncClient",
-            return_value=mock_ctx,
-        ):
-            client = OpenAICompatibleClient("https://api.example.com/v1", "key", "model")
-            results = asyncio.run(client.classify_receipt(["hleb"], "Lidl", _CATEGORIES))
-
-        assert len(results) == 1
-        assert results[0].confidence_level == 1
-        assert results[0].category_id is None
 
 
 @allure.epic("Services")
