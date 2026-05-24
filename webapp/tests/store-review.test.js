@@ -718,3 +718,108 @@ describe("review store: deleteReceipt()", () => {
     expect(store.expenses).toHaveLength(1);
   });
 });
+
+describe("review store: expenses localStorage cache", () => {
+  it("initialises expenses from localStorage on store creation", () => {
+    localStorage.setItem("dinary:review:expenses:v1", JSON.stringify({
+      items: [{ id: 1, category_name: "food" }, { id: 2, category_name: "transport" }],
+      page: 1,
+      hasMore: false,
+    }));
+    setActivePinia(createPinia());
+    const store = useReviewStore();
+    expect(store.expenses).toHaveLength(2);
+    expect(store.expensesPage).toBe(1);
+    expect(store.expensesHasMore).toBe(false);
+  });
+
+  it("persists expenses to localStorage after loadExpensesNextPage succeeds", async () => {
+    vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValueOnce({
+      items: [{ id: 10, category_name: "food" }],
+      has_more: false,
+    });
+    const store = useReviewStore();
+    await store.loadExpensesNextPage();
+    const cached = JSON.parse(localStorage.getItem("dinary:review:expenses:v1"));
+    expect(cached.items).toHaveLength(1);
+    expect(cached.items[0].id).toBe(10);
+    expect(cached.page).toBe(1);
+    expect(cached.hasMore).toBe(false);
+  });
+
+  it("loadExpensesIfNeeded skips fetch when not stale and cache is loaded (page > 0)", async () => {
+    localStorage.setItem("dinary:review:fetchedAt", String(Date.now() - 60_000));
+    localStorage.setItem("dinary:review:expenses:v1", JSON.stringify({
+      items: [{ id: 5, category_name: "food" }],
+      page: 1,
+      hasMore: false,
+    }));
+    const feedSpy = vi.spyOn(reviewApi, "getExpensesFeed");
+    setActivePinia(createPinia());
+    const store = useReviewStore();
+    await store.loadExpensesIfNeeded();
+    expect(feedSpy).not.toHaveBeenCalled();
+    expect(store.expenses).toHaveLength(1);
+  });
+
+  it("loadExpensesIfNeeded refetches when stale even if page > 0 from cache", async () => {
+    localStorage.setItem("dinary:review:dirty", "1");
+    localStorage.setItem("dinary:review:expenses:v1", JSON.stringify({
+      items: [{ id: 5, category_name: "food" }],
+      page: 1,
+      hasMore: false,
+    }));
+    vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValueOnce({
+      items: [{ id: 99, category_name: "new" }],
+      has_more: false,
+    });
+    setActivePinia(createPinia());
+    const store = useReviewStore();
+    await store.loadExpensesIfNeeded();
+    expect(reviewApi.getExpensesFeed).toHaveBeenCalledTimes(1);
+    expect(store.expenses[0].id).toBe(99);
+  });
+
+  it("resetExpenses clears the localStorage cache", async () => {
+    localStorage.setItem("dinary:review:expenses:v1", JSON.stringify({
+      items: [{ id: 1 }], page: 1, hasMore: false,
+    }));
+    const store = useReviewStore();
+    store.resetExpenses();
+    expect(localStorage.getItem("dinary:review:expenses:v1")).toBeNull();
+    expect(store.expenses).toHaveLength(0);
+    expect(store.expensesPage).toBe(0);
+  });
+
+  it("reset() clears the expenses localStorage cache", () => {
+    localStorage.setItem("dinary:review:expenses:v1", JSON.stringify({
+      items: [{ id: 1 }], page: 1, hasMore: false,
+    }));
+    const store = useReviewStore();
+    store.reset();
+    expect(localStorage.getItem("dinary:review:expenses:v1")).toBeNull();
+  });
+
+  it("patchExpense persists updated expenses to localStorage", () => {
+    localStorage.setItem("dinary:review:expenses:v1", JSON.stringify({
+      items: [{ id: 10, category_name: "old" }], page: 1, hasMore: false,
+    }));
+    setActivePinia(createPinia());
+    const store = useReviewStore();
+    store.patchExpense(10, { category_name: "new" });
+    const cached = JSON.parse(localStorage.getItem("dinary:review:expenses:v1"));
+    expect(cached.items[0].category_name).toBe("new");
+  });
+
+  it("deleteExpense persists removal to localStorage", async () => {
+    vi.spyOn(expensesApi, "deleteExpense").mockResolvedValueOnce(null);
+    localStorage.setItem("dinary:review:expenses:v1", JSON.stringify({
+      items: [{ id: 10 }, { id: 20 }], page: 1, hasMore: false,
+    }));
+    setActivePinia(createPinia());
+    const store = useReviewStore();
+    await store.deleteExpense(10);
+    const cached = JSON.parse(localStorage.getItem("dinary:review:expenses:v1"));
+    expect(cached.items.map((e) => e.id)).toEqual([20]);
+  });
+});

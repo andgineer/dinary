@@ -1,5 +1,6 @@
 """Development tasks: version, test, dev, build-static, backup."""
 
+import errno
 import re
 import shutil
 import subprocess
@@ -161,6 +162,9 @@ def dev(c, port=8000, sheet_logging=False, reset=False, rebuild=False):
         print(f"\n=== Local only: http://127.0.0.1:{port} ===\n")
     try:
         c.run(cmd, pty=True)
+    except OSError as exc:
+        if exc.errno != errno.EIO:
+            raise
     finally:
         _tailscale_serve_stop()
 

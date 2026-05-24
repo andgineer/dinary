@@ -11,6 +11,7 @@ import { useCatalogStore } from "./catalog.js";
 const CACHE_KEY = "dinary:review:v1";
 const DIRTY_KEY = "dinary:review:dirty";
 const FETCHED_KEY = "dinary:review:fetchedAt";
+const EXPENSES_CACHE_KEY = "dinary:review:expenses:v1";
 
 export const useReviewStore = defineStore("review", () => {
   const { dirtyFlag, lastFetchedAt, markDirty, stampFresh, bumpFetchTime, isStale, readCache, writeCache, clearCache } = useStaleCache({
@@ -30,10 +31,28 @@ export const useReviewStore = defineStore("review", () => {
   const loading = ref(false);
   const openRowId = ref(null);
 
-  const expenses = ref([]);
-  const expensesPage = ref(0);
-  const expensesHasMore = ref(true);
+  const cachedExpenses = (() => {
+    try {
+      const raw = localStorage.getItem(EXPENSES_CACHE_KEY);
+      if (!raw) return null;
+      const c = JSON.parse(raw);
+      return Array.isArray(c?.items) && c.items.length > 0 ? c : null;
+    } catch { return null; }
+  })();
+  const expenses = ref(cachedExpenses?.items ?? []);
+  const expensesPage = ref(cachedExpenses?.page ?? 0);
+  const expensesHasMore = ref(cachedExpenses?.hasMore ?? true);
   const expensesLoading = ref(false);
+
+  function _persistExpenses() {
+    try {
+      localStorage.setItem(EXPENSES_CACHE_KEY, JSON.stringify({
+        items: expenses.value,
+        page: expensesPage.value,
+        hasMore: expensesHasMore.value,
+      }));
+    } catch {}
+  }
 
   function _persistState() {
     writeCache({
@@ -125,6 +144,7 @@ export const useReviewStore = defineStore("review", () => {
           ? { ...e, category_id: categoryId, category_name: catName, confidence_level: null }
           : e,
       );
+      _persistExpenses();
       _persistState();
       toast.show(`Updated ${count} expenses → ${catName} · rule saved`, "success");
     } catch (err) {
@@ -164,6 +184,7 @@ export const useReviewStore = defineStore("review", () => {
       expenses.value = [...expenses.value, ...incoming];
       expensesHasMore.value = data.has_more ?? false;
       expensesPage.value = nextPage;
+      _persistExpenses();
     } catch (err) {
       if (navigator.onLine) {
         const toast = useToastStore();
@@ -175,7 +196,10 @@ export const useReviewStore = defineStore("review", () => {
   }
 
   async function loadExpensesIfNeeded() {
-    if (expensesPage.value === 0) {
+    if (isStale()) {
+      resetExpenses();
+      await loadExpensesNextPage();
+    } else if (expensesPage.value === 0) {
       await loadExpensesNextPage();
     }
   }
@@ -185,6 +209,7 @@ export const useReviewStore = defineStore("review", () => {
     expensesPage.value = 0;
     expensesHasMore.value = true;
     expensesLoading.value = false;
+    try { localStorage.removeItem(EXPENSES_CACHE_KEY); } catch {}
   }
 
   async function updateExpense(id, payload) {
@@ -210,6 +235,7 @@ export const useReviewStore = defineStore("review", () => {
           expenses.value = expenses.value.map((e) =>
             e.rule_id === target.rule_id ? { ...e, ...patch } : e,
           );
+          _persistExpenses();
         }
       }
     } catch (err) {
@@ -220,11 +246,13 @@ export const useReviewStore = defineStore("review", () => {
 
   function patchExpense(id, patch) {
     expenses.value = expenses.value.map((e) => (e.id === id ? { ...e, ...patch } : e));
+    _persistExpenses();
   }
 
   async function deleteExpense(id) {
     await apiDeleteExpense(id);
     expenses.value = expenses.value.filter((e) => e.id !== id);
+    _persistExpenses();
     markDirty();
   }
 
@@ -242,10 +270,7 @@ export const useReviewStore = defineStore("review", () => {
     page.value = 0;
     loading.value = false;
     lastFetchedAt.value = null;
-    expenses.value = [];
-    expensesPage.value = 0;
-    expensesHasMore.value = true;
-    expensesLoading.value = false;
+    resetExpenses();
     clearCache();
     try {
       localStorage.removeItem(FETCHED_KEY);

@@ -208,9 +208,10 @@ onBeforeUnmount(() => {
 .offline-notice {
   text-align: center;
   font-size: 0.8rem;
-  color: var(--muted);
+  color: var(--warning);
   padding: 0.3rem 1.25rem 0.4rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
 }
 
 .app-main {
