@@ -37,7 +37,7 @@
 
 ## Plan files and in-repo docs
 
-- All plan files (`.cursor/plans/*.md`, `.plans/*.md`) and in-repo
+- All plan files (`.cursor/plans/*.md`, `specs/plans/*.md`) and in-repo
   documentation (`docs/**/*.md`, `README.md`, `AGENTS.md`, etc.) must be
   written in **English only**. No Russian prose in plans or docs.
 - Exception: user-facing docs explicitly meant for a Russian audience

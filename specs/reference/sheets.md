@@ -40,3 +40,29 @@ When the map tab is reloaded (e.g. after the operator edits it), the derived DB
 tables are swapped atomically. A parse error in the new map tab leaves the
 previous tables in place — the system continues operating with the last known
 good mapping rather than failing open with an empty or corrupt one.
+
+## Logging column layout
+
+Each row in the logging spreadsheet covers one expense. Columns:
+
+| Col | Content | Notes |
+|-----|---------|-------|
+| A | First day of the expense's month (`YYYY-MM-DD`, `USER_ENTERED`) | Google displays as `Apr-1`; underlying date serial retains the year |
+| B | RSD amount (sum formula extended per append) | If `currency_original == "RSD"`, `amount_original` is used verbatim; otherwise `amount` (accounting currency) is converted to RSD at the NBS rate for the expense date |
+| C | EUR conversion formula `=IF(H{r}="","",B{r}/H{r})` | Sheet-side approximation; not reconciled against `expenses.amount` |
+| D | `sheet_category` — resolved by the drain via `sheet_mapping` | Fallback: `categories.name` |
+| E | `sheet_group` (envelope) — resolved by the drain via `sheet_mapping` | Fallback: empty string |
+| F | Free-text comment | Semicolon-separated when multiple expenses share a row |
+| G | Month number 1–12 (literal) | Used for fast month-block scans; year-aware matching uses column A |
+| H | Manual EUR↔RSD rate cell | Written only when empty (set-if-missing) |
+| J | Idempotency marker — see below | |
+
+Column B is always RSD regardless of the accounting currency, so switching `accounting_currency` does not invalidate historical sheet values.
+
+## Idempotency — column J
+
+The append path is at-least-once: a Sheets API call may succeed on the server even if the response is never received (network timeout). Column J holds the `client_expense_id` UUID of the most recent expense appended to that row. Before each append the drain reads J; if it already equals the incoming UUID, the write is skipped entirely.
+
+**Last-key-only**: each successful append overwrites the previous J value with the new UUID. The cell size stays bounded (one UUID regardless of how many expenses share the row) at the cost of not recovering the full contributor list from the sheet — the SQLite ledger is the source of truth for that.
+
+A queue row whose expense has `client_expense_id = NULL` is marked `poisoned` rather than falling back to a synthetic marker. Writing a non-UUID value into J would corrupt duplicate detection for all subsequent appends to the same row. Bootstrap-imported rows carry `NULL` but are never enqueued for logging, so a `NULL` UUID in the drain is always a producer bug, not a normal state. See `src/dinary/background/sheet_logging/` for the implementation.
