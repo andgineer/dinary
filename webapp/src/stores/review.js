@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { getReviewFeed, getReviewCounts, getExpensesFeed, confirmAllRules } from "../api/review.js";
+import { getReviewFeed, getReviewCounts, getExpensesFeed, confirmAllRules, approveRule } from "../api/review.js";
 import { correctCategory, editExpense } from "../api/expenseCorrections.js";
 import { deleteExpense as apiDeleteExpense } from "../api/expenses.js";
 import { deleteReceipt as apiDeleteReceipt } from "../api/receipts.js";
@@ -102,9 +102,14 @@ export const useReviewStore = defineStore("review", () => {
     const toast = useToastStore();
     const catalog = useCatalogStore();
     try {
-      const expenseId = item.expense_id ?? item.id;
-      const result = await correctCategory(expenseId, categoryId, scope);
-      const count = result?.count ?? item.count ?? 1;
+      let result;
+      if (item.is_doubtful) {
+        result = await approveRule(item.id, categoryId);
+      } else {
+        const expenseId = item.expense_id ?? item.id;
+        result = await correctCategory(expenseId, categoryId, scope);
+      }
+      const count = result?.updated_expenses_count ?? result?.count ?? item.count ?? 1;
       const cat = catalog.findCategoryById(categoryId);
       const catName = cat?.name ?? "";
       if (item.is_doubtful) {
@@ -231,8 +236,9 @@ export const useReviewStore = defineStore("review", () => {
 
   async function deleteReceipt(receiptId) {
     await apiDeleteReceipt(receiptId);
-    expenses.value = expenses.value.filter((e) => e.receipt_id !== receiptId);
-    markDirty();
+    reset();
+    await loadNextPage();
+    await loadExpensesNextPage();
   }
 
   function reset() {

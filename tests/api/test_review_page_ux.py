@@ -29,10 +29,11 @@ def _seed_doubtful_rule(con, item_name="hleb", confidence=3):
         " (store_id, item_name_normalized, category_id, confidence_level, source)"
         f" VALUES (1, '{item_name}', 1, {confidence}, 'llm')"
     )
+    rule_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
     con.execute(
         "INSERT INTO expenses (id, datetime, amount, amount_original, currency_original,"
-        "                      category_id, confidence_level, receipt_id, store_id)"
-        " VALUES (1, '2026-05-01T10:00:00', 100.0, 100.0, 'RSD', 1, 3, 1, 1)"
+        "                      category_id, confidence_level, receipt_id, store_id, rule_id)"
+        f" VALUES (1, '2026-05-01T10:00:00', 100.0, 100.0, 'RSD', 1, 3, 1, 1, {rule_id})"
     )
     con.execute(
         "INSERT INTO receipt_items"
@@ -66,27 +67,6 @@ class TestConfirmRulesBulk:
 
         assert row[0] == 4
         assert row[1] == "user_correction"
-
-    def test_sets_confidence_to_4_on_receipt_items(self, db):  # noqa: ARG002
-        con = storage.get_connection()
-        try:
-            _seed_doubtful_rule(con)
-            rule_id = con.execute(
-                "SELECT id FROM classification_rules WHERE item_name_normalized='hleb'"
-            ).fetchone()[0]
-        finally:
-            con.close()
-
-        con = storage.get_connection()
-        try:
-            confirm_rules_bulk(con, [rule_id])
-            level = con.execute(
-                "SELECT confidence_level FROM receipt_items WHERE name_normalized='hleb'"
-            ).fetchone()[0]
-        finally:
-            con.close()
-
-        assert level == 4
 
     def test_sets_confidence_to_4_on_expenses(self, db):  # noqa: ARG002
         con = storage.get_connection()

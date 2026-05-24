@@ -327,9 +327,8 @@ class TestCategoryCorrection:
         )
         conn.execute(
             "INSERT INTO receipt_items"
-            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-            "  category_id, confidence_level)"
-            " VALUES (1, 1, 'hleb raw', 'hleb', 120.0, 1, 120.0, 1, 3)"
+            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price)"
+            " VALUES (1, 1, 'hleb raw', 'hleb', 120.0, 1, 120.0)"
         )
         conn.execute(
             "INSERT INTO expenses (id, datetime, amount, amount_original, currency_original,"
@@ -355,16 +354,11 @@ class TestCategoryCorrection:
             exp = conn.execute(
                 "SELECT category_id, confidence_level FROM expenses WHERE id = 1"
             ).fetchone()
-            item = conn.execute(
-                "SELECT category_id, confidence_level FROM receipt_items WHERE id = 1"
-            ).fetchone()
         finally:
             conn.close()
 
         assert exp[0] == 2
         assert exp[1] == 4
-        assert item[0] == 2
-        assert item[1] == 4
 
     def test_correction_creates_rule(self, client, db):  # noqa: ARG002
         conn = storage.get_connection()
@@ -453,9 +447,8 @@ class TestBatchPropagation:
         )
         conn.execute(
             "INSERT INTO receipt_items"
-            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-            "  category_id, confidence_level)"
-            " VALUES (1, 1, 'hleb raw', 'hleb', 100.0, 1, 100.0, 1, 3)"
+            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price)"
+            " VALUES (1, 1, 'hleb raw', 'hleb', 100.0, 1, 100.0)"
         )
         conn.execute("UPDATE receipt_items SET expense_id = 1 WHERE id = 1")
 
@@ -470,9 +463,8 @@ class TestBatchPropagation:
         )
         conn.execute(
             "INSERT INTO receipt_items"
-            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-            "  category_id, confidence_level)"
-            " VALUES (2, 2, 'hleb raw', 'hleb', 80.0, 1, 80.0, 1, 3)"
+            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price)"
+            " VALUES (2, 2, 'hleb raw', 'hleb', 80.0, 1, 80.0)"
         )
         conn.execute("UPDATE receipt_items SET expense_id = 2 WHERE id = 2")
 
@@ -498,12 +490,9 @@ class TestBatchPropagation:
             exp1 = conn.execute(
                 "SELECT category_id, confidence_level FROM expenses WHERE id = 1"
             ).fetchone()
-            # Batch: expense2 had only "hleb" → all items moved → category updated
+            # Batch: expense2 had only "hleb" → category updated
             exp2 = conn.execute(
                 "SELECT category_id, confidence_level FROM expenses WHERE id = 2"
-            ).fetchone()
-            item2 = conn.execute(
-                "SELECT category_id, confidence_level FROM receipt_items WHERE id = 2"
             ).fetchone()
         finally:
             conn.close()
@@ -511,8 +500,6 @@ class TestBatchPropagation:
         assert exp1[0] == 2
         assert exp2[0] == 2
         assert exp2[1] == 4
-        assert item2[0] == 2
-        assert item2[1] == 4
 
     def test_batch_creates_rule_for_corrected_item(
         self,
@@ -559,9 +546,8 @@ class TestBatchPropagationNullStore:
         )
         conn.execute(
             "INSERT INTO receipt_items"
-            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-            "  category_id, confidence_level)"
-            " VALUES (10, 10, 'hleb raw', 'hleb', 100.0, 1, 100.0, 1, 3)"
+            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price)"
+            " VALUES (10, 10, 'hleb raw', 'hleb', 100.0, 1, 100.0)"
         )
         conn.execute("UPDATE receipt_items SET expense_id = 10 WHERE id = 10")
 
@@ -576,9 +562,8 @@ class TestBatchPropagationNullStore:
         )
         conn.execute(
             "INSERT INTO receipt_items"
-            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-            "  category_id, confidence_level)"
-            " VALUES (11, 11, 'hleb raw', 'hleb', 80.0, 1, 80.0, 1, 3)"
+            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price)"
+            " VALUES (11, 11, 'hleb raw', 'hleb', 80.0, 1, 80.0)"
         )
         conn.execute("UPDATE receipt_items SET expense_id = 11 WHERE id = 11")
 
@@ -596,9 +581,8 @@ class TestBatchPropagationNullStore:
         )
         conn.execute(
             "INSERT INTO receipt_items"
-            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-            "  category_id, confidence_level)"
-            " VALUES (12, 12, 'hleb raw', 'hleb', 60.0, 1, 60.0, 1, 3)"
+            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price)"
+            " VALUES (12, 12, 'hleb raw', 'hleb', 60.0, 1, 60.0)"
         )
         conn.execute("UPDATE receipt_items SET expense_id = 12 WHERE id = 12")
 
@@ -645,14 +629,11 @@ class TestBatchPropagationNullStore:
 
         conn = storage.get_connection()
         try:
-            item11 = conn.execute(
-                "SELECT category_id, confidence_level FROM receipt_items WHERE id = 11"
-            ).fetchone()
+            exp11 = conn.execute("SELECT category_id FROM expenses WHERE id = 11").fetchone()
         finally:
             conn.close()
 
-        assert item11[0] == 2
-        assert item11[1] == 4
+        assert exp11[0] == 2
 
 
 @allure.epic("API")
@@ -675,9 +656,8 @@ class TestCategoryBatchCorrection:
         )
         conn.execute(
             "INSERT INTO receipt_items"
-            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-            "  category_id, confidence_level)"
-            " VALUES (1, 1, 'hleb raw', 'hleb', 100.0, 1, 100.0, 1, 3)"
+            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price)"
+            " VALUES (1, 1, 'hleb raw', 'hleb', 100.0, 1, 100.0)"
         )
         conn.execute("UPDATE receipt_items SET expense_id = 1 WHERE id = 1")
 
@@ -693,9 +673,8 @@ class TestCategoryBatchCorrection:
         )
         conn.execute(
             "INSERT INTO receipt_items"
-            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-            "  category_id, confidence_level)"
-            " VALUES (2, 2, 'hleb raw', 'hleb', 80.0, 1, 80.0, 1, 3)"
+            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price)"
+            " VALUES (2, 2, 'hleb raw', 'hleb', 80.0, 1, 80.0)"
         )
         conn.execute("UPDATE receipt_items SET expense_id = 2 WHERE id = 2")
 
@@ -756,9 +735,8 @@ class TestScopedCorrections:
         )
         conn.execute(
             "INSERT INTO receipt_items"
-            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-            "  category_id, confidence_level)"
-            " VALUES (1, 1, 'hleb raw', 'hleb', 120.0, 1, 120.0, 1, 3)"
+            " (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price)"
+            " VALUES (1, 1, 'hleb raw', 'hleb', 120.0, 1, 120.0)"
         )
         conn.execute(
             f"INSERT INTO expenses (id, datetime, amount, amount_original, currency_original,"
@@ -779,9 +757,8 @@ class TestScopedCorrections:
         )
         conn.execute(
             f"INSERT INTO receipt_items"
-            f" (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-            f"  category_id, confidence_level)"
-            f" VALUES ({expense_id}, {receipt_id}, 'hleb raw', 'hleb', 80.0, 1, 80.0, 1, 3)"
+            f" (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price)"
+            f" VALUES ({expense_id}, {receipt_id}, 'hleb raw', 'hleb', 80.0, 1, 80.0)"
         )
         conn.execute(f"UPDATE receipt_items SET expense_id = {expense_id} WHERE id = {expense_id}")
 

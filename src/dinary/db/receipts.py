@@ -8,15 +8,6 @@ from datetime import UTC, datetime
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt
 
 
-@dataclass(frozen=True, slots=True)
-class ItemClassification:
-    """Classification output for one receipt item."""
-
-    category_id: int | None
-    confidence_level: int | None
-    expense_id: int | None
-
-
 @dataclass(slots=True)
 class ReceiptJobRow:
     receipt_id: int
@@ -38,8 +29,6 @@ class ReceiptItemRow:
     quantity: float
     total_price: float
     tax_label: str
-    category_id: int | None
-    confidence_level: int | None
     expense_id: int | None
 
 
@@ -176,7 +165,7 @@ def get_receipt_items(conn: sqlite3.Connection, receipt_id: int) -> list[Receipt
     rows = conn.execute(
         """
         SELECT id, name_raw, name_normalized, unit_price, quantity, total_price,
-               tax_label, category_id, confidence_level, expense_id
+               tax_label, expense_id
           FROM receipt_items
          WHERE receipt_id = ?
          ORDER BY id
@@ -192,9 +181,7 @@ def get_receipt_items(conn: sqlite3.Connection, receipt_id: int) -> list[Receipt
             quantity=float(r[4]),
             total_price=float(r[5]),
             tax_label=str(r[6]),
-            category_id=int(r[7]) if r[7] is not None else None,
-            confidence_level=int(r[8]) if r[8] is not None else None,
-            expense_id=int(r[9]) if r[9] is not None else None,
+            expense_id=int(r[7]) if r[7] is not None else None,
         )
         for r in rows
     ]
@@ -204,21 +191,15 @@ def update_receipt_item(
     conn: sqlite3.Connection,
     item_id: int,
     name_normalized: str,
-    classification: ItemClassification,
+    expense_id: int | None,
 ) -> None:
     conn.execute(
         """
         UPDATE receipt_items
-           SET name_normalized = ?, category_id = ?, confidence_level = ?, expense_id = ?
+           SET name_normalized = ?, expense_id = ?
          WHERE id = ?
         """,
-        [
-            name_normalized,
-            classification.category_id,
-            classification.confidence_level,
-            classification.expense_id,
-            item_id,
-        ],
+        [name_normalized, expense_id, item_id],
     )
 
 
@@ -277,11 +258,11 @@ def requeue_receipts(
     if not receipt_ids:
         return
     placeholders = ",".join("?" * len(receipt_ids))
-    # Clear FK references on items before deleting parent expenses.
+    # Clear FK reference on items before deleting parent expenses.
     conn.execute(
         f"""
         UPDATE receipt_items
-           SET category_id = NULL, confidence_level = NULL, expense_id = NULL
+           SET expense_id = NULL
          WHERE receipt_id IN ({placeholders})
         """,  # noqa: S608
         receipt_ids,

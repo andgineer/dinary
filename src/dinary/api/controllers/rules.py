@@ -4,7 +4,10 @@ import json
 import sqlite3
 from typing import Any
 
+from fastapi import HTTPException
+
 from dinary.db.receipts import count_pending_classification_jobs
+from dinary.db.storage import transaction
 
 
 def count_doubtful(con: sqlite3.Connection) -> int:
@@ -138,59 +141,52 @@ def confirm_rules_bulk(con: sqlite3.Connection, rule_ids: list[int]) -> int:
     if not rule_ids:
         return 0
     placeholders = ",".join("?" * len(rule_ids))
-    with con:
+    with transaction(con):
         con.execute(
             f"UPDATE classification_rules SET confidence_level=4, source='user_correction'"  # noqa: S608
             f" WHERE id IN ({placeholders})",
             rule_ids,
         )
-        item_rows = con.execute(
-            f"SELECT item_name_normalized, store_id FROM classification_rules"  # noqa: S608
-            f" WHERE id IN ({placeholders})",
+        con.execute(
+            f"UPDATE expenses SET confidence_level=4 WHERE rule_id IN ({placeholders})",  # noqa: S608
             rule_ids,
-        ).fetchall()
-        for item_name, store_id in item_rows:
-            if store_id is None:
-                con.execute(
-                    """
-                    UPDATE receipt_items SET confidence_level=4
-                     WHERE name_normalized=?
-                       AND receipt_id IN (SELECT id FROM receipts WHERE store_id IS NULL)
-                    """,
-                    [item_name],
-                )
-                con.execute(
-                    """
-                    UPDATE expenses SET confidence_level=4
-                     WHERE id IN (
-                         SELECT ri.expense_id FROM receipt_items ri
-                          JOIN receipts rec ON rec.id = ri.receipt_id
-                         WHERE ri.name_normalized=? AND rec.store_id IS NULL
-                     )
-                    """,
-                    [item_name],
-                )
-            else:
-                con.execute(
-                    """
-                    UPDATE receipt_items SET confidence_level=4
-                     WHERE name_normalized=?
-                       AND receipt_id IN (SELECT id FROM receipts WHERE store_id=?)
-                    """,
-                    [item_name, store_id],
-                )
-                con.execute(
-                    """
-                    UPDATE expenses SET confidence_level=4
-                     WHERE id IN (
-                         SELECT ri.expense_id FROM receipt_items ri
-                          JOIN receipts rec ON rec.id = ri.receipt_id
-                         WHERE ri.name_normalized=? AND rec.store_id=?
-                     )
-                    """,
-                    [item_name, store_id],
-                )
+        )
     return len(rule_ids)
+
+
+def approve_rule_category(rule_id: int, category_id: int, con: sqlite3.Connection) -> dict:
+    if (
+        con.execute(
+            "SELECT id FROM classification_rules WHERE id = ?",
+            [rule_id],
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(status_code=404, detail="Rule not found")
+    if (
+        con.execute(
+            "SELECT id FROM categories WHERE id = ? AND is_active = 1",
+            [category_id],
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown or inactive category_id: {category_id}",
+        )
+    with transaction(con):
+        con.execute(
+            "UPDATE classification_rules"
+            " SET category_id=?, confidence_level=4, source='user_correction'"
+            " WHERE id=?",
+            [category_id, rule_id],
+        )
+        con.execute(
+            "UPDATE expenses SET category_id=?, confidence_level=4 WHERE rule_id=?",
+            [category_id, rule_id],
+        )
+        count = con.execute("SELECT changes()").fetchone()[0]
+    return {"updated_expenses_count": int(count)}
 
 
 def build_rules_feed(

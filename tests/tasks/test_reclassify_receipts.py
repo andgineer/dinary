@@ -51,16 +51,14 @@ def _seed(conn):
     e2 = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.execute(
         "INSERT INTO receipt_items"
-        " (receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-        "  category_id, confidence_level, expense_id)"
-        " VALUES (?, 'hleb raw', 'hleb', 100, 1, 100, 1, 4, ?)",
+        " (receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
+        " VALUES (?, 'hleb raw', 'hleb', 100, 1, 100, ?)",
         [r1, e1],
     )
     conn.execute(
         "INSERT INTO receipt_items"
-        " (receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-        "  category_id, confidence_level, expense_id)"
-        " VALUES (?, 'hleb raw', 'hleb', 200, 1, 200, 1, 4, ?)",
+        " (receipt_id, name_raw, name_normalized, total_price, quantity, unit_price, expense_id)"
+        " VALUES (?, 'hleb raw', 'hleb', 200, 1, 200, ?)",
         [r2, e2],
     )
     conn.execute(
@@ -97,13 +95,10 @@ class TestRequeuReceipts:
 
             # Items reset
             item = conn.execute(
-                "SELECT category_id, confidence_level, expense_id"
-                " FROM receipt_items WHERE receipt_id = ?",
+                "SELECT expense_id FROM receipt_items WHERE receipt_id = ?",
                 [r1],
             ).fetchone()
             assert item[0] is None
-            assert item[1] is None
-            assert item[2] is None
 
             # Job queued
             job = conn.execute(
@@ -150,9 +145,9 @@ class TestRequeuReceipts:
 
             # r2 items untouched
             item2 = conn.execute(
-                "SELECT category_id FROM receipt_items WHERE receipt_id = ?", [r2]
+                "SELECT expense_id FROM receipt_items WHERE receipt_id = ?", [r2]
             ).fetchone()
-            assert item2[0] == 1
+            assert item2[0] is not None
         finally:
             conn.close()
 

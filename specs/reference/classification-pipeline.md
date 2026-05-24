@@ -91,12 +91,18 @@ into `event_id` on every expense inserted from this receipt, and its auto-tag ID
 (`resolve_event_auto_tag_ids`) are merged into each expense's `expense_tags`.
 
 Items at confidence ≤ 1 or with no category receive no expense row; their
-`receipt_items` row is updated with `category_id = NULL` and `confidence_level = 1`.
+`receipt_items` row is updated with `expense_id = NULL` (name_normalized is still
+written so the rule engine can match them on a future reclassification).
 
-After each expense insert: `enqueue_for_logging`, `update_receipt_item`, and
+After each expense insert: `enqueue_for_logging`, `update_receipt_item` (sets
+`name_normalized` and `expense_id` on the `receipt_items` row), and
 `create_or_update_rule` (guarded by `conf >= 2` and item not already in `rule_hits`)
 are called per item. `expense_tags` rows are inserted for every tag id from the
 matched rule or LLM result, plus any event auto-tag ids, deduplicated.
+
+`receipt_items` is pipeline-side storage only. It has no `category_id` or
+`confidence_level` columns — category and confidence are owned by `expenses` and
+`classification_rules` exclusively.
 
 ### Confidence penalty
 
@@ -386,20 +392,55 @@ class ExpenseEditRequest(BaseModel):
    affected by the scope correction retain their own tags.
 3. Updates `event_id`: `clear_event=True` sets NULL; non-None `event_id` updates;
    otherwise keeps current.
-4. If `update_rule=True` and the expense has a linked `receipt_items` row with
-   `name_normalized` set: looks up whether a matching rule exists in
-   `classification_rules` (store-specific or generic). If a rule exists, calls
-   `create_or_update_rule` with `source='user_correction'`, the current
-   `category_id`, and `tag_ids`. If no rule exists, logs an error and skips — this
-   indicates a classification bug since `update_rule=True` is only valid for
-   receipt-derived expenses that should already have a rule from the drain.
+4. If `update_rule=True`: reads `rule_id` from the expense row. If `rule_id` is
+   not set, logs an error and skips (this indicates a classification bug — every
+   receipt-derived expense should have a `rule_id` set by the drain). Otherwise:
+   - Updates the `classification_rules` row: `category_id`, `confidence_level=4`,
+     `source='user_correction'`, `tag_ids`. `category_id` is the request value when
+     provided, otherwise the expense's current value.
+   - Propagates `category_id` and `confidence_level=4` to **all** `expenses` rows
+     that share the same `rule_id`, not just the one being patched.
 
 Returns `ExpenseEditResponse(id, category_id, category_name, tag_ids, event_id, event_name)`.
 
-### Rules feed (`api/controllers/rules.py`)
+### Rules feed and approval (`api/controllers/rules.py`)
 
-Each rule row in the feed includes:
-- `alternative_categories: [{id, name}]` — resolved from the stored
-  `alternative_category_ids` JSON array; inactive categories are silently dropped.
-  Empty when the array is empty or all stored ids are inactive.
-- `tags: [{id, name}]` — resolved from `tag_ids`; empty list when none.
+**`GET /api/rules/feed`** accepts `doubtful_only` (bool, default `true`). When
+`doubtful_only=true` only rules with `confidence_level < 4` are returned; `false`
+returns all rules with observed receipt items. Both modes share the same ordering:
+doubtful first (amount at stake DESC), then certain (last receipt date DESC).
+
+Each feed item shape:
+
+| Field | Source |
+|---|---|
+| `id` | `classification_rules.id` |
+| `is_doubtful` | `confidence_level < 4` |
+| `name` | `item_name_normalized` |
+| `store` | `shop_chains.name` (null for generic rules) |
+| `total` | `SUM(receipt_items.total_price)` across matched items |
+| `count` | number of matched `receipt_items` rows |
+| `currency` | `MAX(expenses.currency_original)` |
+| `confidence_level` | stored rule confidence |
+| `category_id` / `category_name` | current rule category |
+| `expense_id` | `MAX(receipt_items.expense_id)` — most-recent linked expense |
+| `datetime` | `MAX(receipts.created_at)` |
+| `alternative_categories` | `[{id, name}]` resolved from stored JSON; inactive dropped |
+| `tags` | `[{id, name}]` resolved from stored JSON |
+
+**`POST /api/rules/confirm-all`** (`confirm_rules_bulk`): accepts `rule_ids: list[int]`
+and in a single transaction:
+1. `UPDATE classification_rules SET confidence_level=4, source='user_correction' WHERE id IN (...)`
+2. `UPDATE expenses SET confidence_level=4 WHERE rule_id IN (...)`
+
+Returns `{"confirmed": N}` where N is `len(rule_ids)`.
+
+**`PATCH /api/rules/{rule_id}/category`** (`approve_rule_category`): changes a rule's
+category and propagates to all linked expenses in one transaction.
+
+- 404 if the rule does not exist.
+- 422 if `category_id` is missing or inactive.
+- In transaction:
+  1. `UPDATE classification_rules SET category_id=?, confidence_level=4, source='user_correction' WHERE id=?`
+  2. `UPDATE expenses SET category_id=?, confidence_level=4 WHERE rule_id=?`
+- Returns `{"updated_expenses_count": N}` (count from the expenses UPDATE).

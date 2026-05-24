@@ -41,10 +41,10 @@ function seedCatalog() {
 }
 
 describe("review store: correct()", () => {
-  it("uses item.expense_id (not item.id) for doubtful items", async () => {
+  it("calls approveRule with item.id (not expense_id)", async () => {
     const spy = vi
-      .spyOn(expenseCorrections, "correctCategory")
-      .mockResolvedValueOnce({ corrected_expense_id: 42, batch_updated_count: 0, count: 1 });
+      .spyOn(reviewApi, "approveRule")
+      .mockResolvedValueOnce({ updated_expenses_count: 1 });
 
     seedCatalog();
     const store = useReviewStore();
@@ -52,15 +52,56 @@ describe("review store: correct()", () => {
 
     await store.correct(store.items[0], 2);
 
-    expect(spy).toHaveBeenCalledWith(42, 2, "all");
+    expect(spy).toHaveBeenCalledWith(7, 2);
+  });
+
+  it("calls correctCategory with scope all for certain items", async () => {
+    const spy = vi
+      .spyOn(expenseCorrections, "correctCategory")
+      .mockResolvedValueOnce({ count: 2, corrected_expense_id: 101, batch_updated_count: 1 });
+
+    seedCatalog();
+    const store = useReviewStore();
+    store.items = [{ id: 100, expense_id: 101, is_doubtful: false, store: "Lidl", total: 200 }];
+
+    await store.correct(store.items[0], 2, "all");
+
+    expect(spy).toHaveBeenCalledWith(101, 2, "all");
+  });
+
+  it("calls correctCategory with scope for certain items with non-all scope", async () => {
+    const spy = vi
+      .spyOn(expenseCorrections, "correctCategory")
+      .mockResolvedValueOnce({ count: 2, corrected_expense_id: 101, batch_updated_count: 1 });
+
+    seedCatalog();
+    const store = useReviewStore();
+    store.items = [{ id: 100, expense_id: 101, is_doubtful: false, store: "Lidl", total: 200 }];
+
+    await store.correct(store.items[0], 2, "month");
+
+    expect(spy).toHaveBeenCalledWith(101, 2, "month");
+  });
+
+  it("uses count from correctCategory result for scoped correction toast", async () => {
+    vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
+      count: 3,
+      corrected_expense_id: 101,
+      batch_updated_count: 2,
+    });
+    seedCatalog();
+    const toast = useToastStore();
+    const showSpy = vi.spyOn(toast, "show");
+    const store = useReviewStore();
+    store.items = [{ id: 100, expense_id: 101, is_doubtful: false, store: "Lidl", total: 200 }];
+
+    await store.correct(store.items[0], 2, "month");
+
+    expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("3"), "success");
   });
 
   it("removes corrected doubtful item from items leaving remaining doubtful items intact", async () => {
-    vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
-      corrected_expense_id: 42,
-      batch_updated_count: 0,
-      count: 1,
-    });
+    vi.spyOn(reviewApi, "approveRule").mockResolvedValueOnce({ updated_expenses_count: 1 });
 
     seedCatalog();
     const store = useReviewStore();
@@ -76,30 +117,12 @@ describe("review store: correct()", () => {
     expect(store.items[0].is_doubtful).toBe(true);
   });
 
-  it("uses item.id directly for certain items (expense_id equals id)", async () => {
-    const spy = vi
-      .spyOn(expenseCorrections, "correctCategory")
-      .mockResolvedValueOnce({ corrected_expense_id: 100, batch_updated_count: 0, count: 1 });
-
-    seedCatalog();
-    const store = useReviewStore();
-    // For certain items expense_id is undefined, so item.expense_id ?? item.id == item.id
-    store.items = [{ id: 100, is_doubtful: false, store: "Lidl", total: 200 }];
-
-    await store.correct(store.items[0], 2);
-
-    expect(spy).toHaveBeenCalledWith(100, 2, "all");
-  });
-
   it("keeps certain items in the list after correction and updates their category", async () => {
-    vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
-      corrected_expense_id: 100,
-      batch_updated_count: 0,
-    });
+    vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({ count: 1 });
 
     seedCatalog();
     const store = useReviewStore();
-    store.items = [{ id: 100, is_doubtful: false, store: "Lidl", total: 200, category_id: 1 }];
+    store.items = [{ id: 100, expense_id: 100, is_doubtful: false, store: "Lidl", total: 200, category_id: 1 }];
 
     await store.correct(store.items[0], 2);
 
@@ -109,10 +132,7 @@ describe("review store: correct()", () => {
   });
 
   it("removes corrected doubtful item from items and decrements doubtfulCount", async () => {
-    vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
-      corrected_expense_id: 42,
-      batch_updated_count: 0,
-    });
+    vi.spyOn(reviewApi, "approveRule").mockResolvedValueOnce({ updated_expenses_count: 1 });
 
     seedCatalog();
     const store = useReviewStore();
@@ -126,11 +146,7 @@ describe("review store: correct()", () => {
   });
 
   it("clears confidence_level and updates category on expenses matching by rule_id", async () => {
-    vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
-      corrected_expense_id: 42,
-      batch_updated_count: 2,
-      count: 3,
-    });
+    vi.spyOn(reviewApi, "approveRule").mockResolvedValueOnce({ updated_expenses_count: 3 });
     seedCatalog();
     const store = useReviewStore();
     store.items = [{ id: 7, expense_id: 42, is_doubtful: true, name: "hleb", count: 3 }];
@@ -152,10 +168,7 @@ describe("review store: correct()", () => {
   });
 
   it("does not decrement doubtfulCount when correcting a certain item", async () => {
-    vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({
-      corrected_expense_id: 100,
-      batch_updated_count: 0,
-    });
+    vi.spyOn(reviewApi, "approveRule").mockResolvedValueOnce({ updated_expenses_count: 1 });
 
     seedCatalog();
     const store = useReviewStore();
@@ -167,18 +180,17 @@ describe("review store: correct()", () => {
     expect(store.doubtfulCount).toBe(3);
   });
 
-  it("forwards chosen scope to API for certain items", async () => {
-    const spy = vi
-      .spyOn(expenseCorrections, "correctCategory")
-      .mockResolvedValueOnce({ corrected_expense_id: 100, batch_updated_count: 0 });
-
+  it("uses updated_expenses_count from result for toast count", async () => {
+    vi.spyOn(reviewApi, "approveRule").mockResolvedValueOnce({ updated_expenses_count: 5 });
     seedCatalog();
+    const toast = useToastStore();
+    const showSpy = vi.spyOn(toast, "show");
     const store = useReviewStore();
-    store.items = [{ id: 100, expense_id: 100, is_doubtful: false, store: "Lidl", total: 200 }];
+    store.items = [{ id: 7, expense_id: 42, is_doubtful: true, name: "hleb", count: 1 }];
 
-    await store.correct(store.items[0], 2, "month");
+    await store.correct(store.items[0], 2);
 
-    expect(spy).toHaveBeenCalledWith(100, 2, "month");
+    expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("5"), "success");
   });
 });
 
@@ -643,29 +655,58 @@ describe("review store: deleteExpense()", () => {
 });
 
 describe("review store: deleteReceipt()", () => {
-  it("calls deleteReceipt API and removes all expenses with that receipt_id", async () => {
+  it("calls deleteReceipt API", async () => {
     vi.spyOn(receiptsApi, "deleteReceipt").mockResolvedValueOnce(null);
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValueOnce({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      pending_receipts: 0,
+    });
+    vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValueOnce({ items: [], has_more: false });
     const store = useReviewStore();
-    store.expenses = [
-      { id: 1, receipt_id: 7 },
-      { id: 2, receipt_id: 7 },
-      { id: 3, receipt_id: 9 },
-    ];
+    store.expenses = [{ id: 1, receipt_id: 7 }];
 
     await store.deleteReceipt(7);
 
     expect(receiptsApi.deleteReceipt).toHaveBeenCalledWith(7);
-    expect(store.expenses.map((e) => e.id)).toEqual([3]);
   });
 
-  it("marks the cache dirty after deleting a receipt", async () => {
+  it("reloads the rules feed after deleting a receipt", async () => {
     vi.spyOn(receiptsApi, "deleteReceipt").mockResolvedValueOnce(null);
+    const feedSpy = vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValueOnce({
+      items: [{ id: 99, is_doubtful: true }],
+      doubtful_count: 1,
+      has_more: false,
+      pending_receipts: 0,
+    });
+    vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValueOnce({ items: [], has_more: false });
     const store = useReviewStore();
-    store.expenses = [{ id: 1, receipt_id: 5 }];
 
     await store.deleteReceipt(5);
 
-    expect(store.dirtyFlag).toBe(true);
+    expect(feedSpy).toHaveBeenCalledTimes(1);
+    expect(store.items.map((i) => i.id)).toEqual([99]);
+  });
+
+  it("reloads the expenses feed after deleting a receipt", async () => {
+    vi.spyOn(receiptsApi, "deleteReceipt").mockResolvedValueOnce(null);
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValueOnce({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      pending_receipts: 0,
+    });
+    const expSpy = vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValueOnce({
+      items: [{ id: 10, receipt_id: 9 }],
+      has_more: false,
+    });
+    const store = useReviewStore();
+
+    await store.deleteReceipt(5);
+
+    expect(expSpy).toHaveBeenCalledTimes(1);
+    expect(store.expenses.map((e) => e.id)).toEqual([10]);
   });
 
   it("does not swallow API errors", async () => {

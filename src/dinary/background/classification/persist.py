@@ -14,7 +14,6 @@ from dinary.config import settings
 from dinary.db.classification_rules import RuleHit, RuleSpec, create_or_update_rule
 from dinary.db.expenses import enqueue_for_logging
 from dinary.db.receipts import (
-    ItemClassification,
     ReceiptItemRow,
     ReceiptJobRow,
     complete_job,
@@ -61,7 +60,7 @@ def _write_single_item(  # noqa: PLR0913
     receipt_id: int,
 ) -> None:
     if cat_id is None or conf <= 1:
-        update_receipt_item(conn, item.id, norm, ItemClassification(None, 1, None))
+        update_receipt_item(conn, item.id, norm, None)
         return
 
     hit = rule_hits.get(item.id)
@@ -112,7 +111,7 @@ def _write_single_item(  # noqa: PLR0913
     )
     expense_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
     enqueue_for_logging(conn, expense_id)
-    update_receipt_item(conn, item.id, norm, ItemClassification(cat_id, conf, expense_id))
+    update_receipt_item(conn, item.id, norm, expense_id)
 
     seen: set[int] = set()
     for tag_id in [*tag_ids_for_item, *event_auto_tag_ids]:

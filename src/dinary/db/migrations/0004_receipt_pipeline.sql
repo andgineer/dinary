@@ -46,8 +46,6 @@ CREATE TABLE receipt_items (
     quantity         DECIMAL(12,4) NOT NULL DEFAULT 0,
     total_price      DECIMAL(12,2) NOT NULL DEFAULT 0,
     tax_label        TEXT NOT NULL DEFAULT '',
-    category_id      INTEGER REFERENCES categories(id),
-    confidence_level INTEGER,
     expense_id       INTEGER REFERENCES expenses(id) ON DELETE SET NULL
 );
 

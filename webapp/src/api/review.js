@@ -18,3 +18,10 @@ export function confirmAllRules(ruleIds) {
     body: { rule_ids: ruleIds },
   });
 }
+
+export function approveRule(ruleId, categoryId) {
+  return apiRequest(`/api/rules/${ruleId}/category`, {
+    method: "PATCH",
+    body: { category_id: categoryId },
+  });
+}

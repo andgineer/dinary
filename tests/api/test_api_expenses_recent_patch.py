@@ -46,8 +46,8 @@ class TestPatchExpense:
         con.execute(
             f"INSERT INTO receipt_items"
             f" (id, receipt_id, name_raw, name_normalized, total_price, quantity, unit_price,"
-            f"  category_id, confidence_level, expense_id)"
-            f" VALUES (1, 1, 'hleb raw', 'hleb', 100.0, 1, 100.0, {category_id}, 3, {expense_id})",
+            f"  expense_id)"
+            f" VALUES (1, 1, 'hleb raw', 'hleb', 100.0, 1, 100.0, {expense_id})",
         )
 
     def test_not_found_returns_404(self, client, db):  # noqa: ARG002
@@ -155,6 +155,8 @@ class TestPatchExpense:
                 " (item_name_normalized, store_id, category_id, confidence_level, source)"
                 " VALUES ('hleb', 1, 1, 3, 'llm')"
             )
+            rule_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+            con.execute("UPDATE expenses SET rule_id = ? WHERE id = 1", [rule_id])
         finally:
             con.close()
 
@@ -172,6 +174,47 @@ class TestPatchExpense:
         assert rule is not None, "rule must still exist after update"
         assert rule[0] == 1  # expense category_id=1
         assert rule[1] == "user_correction"
+
+    def test_update_rule_true_cascades_to_all_linked_expenses(self, client, db):  # noqa: ARG002
+        """update_rule=True propagates the new category to ALL expenses sharing the same rule_id."""
+        con = storage.get_connection()
+        try:
+            self._seed_receipt_expense(con)
+            con.execute(
+                "INSERT INTO classification_rules"
+                " (item_name_normalized, store_id, category_id, confidence_level, source)"
+                " VALUES ('hleb', 1, 1, 3, 'llm')"
+            )
+            rule_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+            con.execute("UPDATE expenses SET rule_id = ? WHERE id = 1", [rule_id])
+            # Second expense linked to the same rule (different receipt)
+            con.execute(
+                "INSERT INTO receipts (id, client_receipt_id, url, store_id)"
+                " VALUES (2, 'pe-r2', 'https://y', 1)"
+            )
+            con.execute(
+                "INSERT INTO expenses (id, client_expense_id, datetime, amount,"
+                " amount_original, currency_original, category_id, confidence_level,"
+                " receipt_id, store_id, rule_id)"
+                f" VALUES (2, 'pe-e2', '2026-05-02T10:00:00', 80.0, 80.0,"
+                f" 'RSD', 1, 3, 2, 1, {rule_id})"
+            )
+        finally:
+            con.close()
+
+        resp = client.patch("/api/expenses/1", json={"category_id": 2, "update_rule": True})
+        assert resp.status_code == 200
+
+        con = storage.get_connection()
+        try:
+            exp2 = con.execute(
+                "SELECT category_id, confidence_level FROM expenses WHERE id = 2"
+            ).fetchone()
+        finally:
+            con.close()
+
+        assert exp2[0] == 2, "sibling expense must receive the new category"
+        assert exp2[1] == 4, "sibling expense confidence must be set to 4"
 
     def test_update_rule_true_logs_error_when_no_rule_exists(self, client, db, caplog):  # noqa: ARG002
         """update_rule=True on a receipt expense with no pre-existing rule logs an error and skips."""
@@ -191,7 +234,7 @@ class TestPatchExpense:
         finally:
             con.close()
         assert rule_count == 0, "no rule must be created when none exists"
-        assert any("no rule exists" in r.message for r in caplog.records)
+        assert any("rule_id is not set" in r.message for r in caplog.records)
 
     def test_update_rule_true_no_rule_for_non_receipt_expense(self, client, db):  # noqa: ARG002
         """PATCH with update_rule=True on a non-receipt expense creates no rules."""
@@ -234,6 +277,8 @@ class TestPatchExpense:
                 " (item_name_normalized, store_id, category_id, confidence_level, source)"
                 " VALUES ('hleb', 1, 1, 3, 'llm')"
             )
+            rule_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+            con.execute("UPDATE expenses SET rule_id = ? WHERE id = 1", [rule_id])
         finally:
             con.close()
 

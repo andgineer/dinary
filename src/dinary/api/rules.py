@@ -5,7 +5,12 @@ import sqlite3
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from dinary.api.controllers.rules import build_rules_counts, build_rules_feed, confirm_rules_bulk
+from dinary.api.controllers.rules import (
+    approve_rule_category,
+    build_rules_counts,
+    build_rules_feed,
+    confirm_rules_bulk,
+)
 from dinary.db.storage import get_db
 
 router = APIRouter()
@@ -37,3 +42,16 @@ def rules_confirm_all(
 ) -> dict:
     confirmed = confirm_rules_bulk(con, body.rule_ids)
     return {"confirmed": confirmed}
+
+
+class ApproveCategoryRequest(BaseModel):
+    category_id: int
+
+
+@router.patch("/api/rules/{rule_id}/category")
+def approve_rule_category_route(
+    rule_id: int,
+    body: ApproveCategoryRequest,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> dict:
+    return approve_rule_category(rule_id, body.category_id, con)

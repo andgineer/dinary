@@ -25,7 +25,6 @@ from dinary.api.controllers.expense_corrections import (
 )
 from dinary.config import settings
 from dinary.db.catalog import get_catalog_version
-from dinary.db.classification_rules import RuleSpec, create_or_update_rule
 from dinary.db.expenses import (
     ExpensePayload,
     describe_expense_conflict,
@@ -361,7 +360,7 @@ def edit_expense_sync(
             )
 
         if req.update_rule:
-            _apply_rule_update(con, expense_id, req.tag_ids)
+            _apply_rule_update(con, expense_id, req.category_id, req.tag_ids)
 
     updated = con.execute(
         """
@@ -392,51 +391,31 @@ def edit_expense_sync(
 def _apply_rule_update(
     con: sqlite3.Connection,
     expense_id: int,
+    category_id: int | None,
     tag_ids: list[int],
 ) -> None:
-    ri_row = con.execute(
-        """
-        SELECT ri.name_normalized, rec.store_id
-          FROM receipt_items ri
-          JOIN receipts rec ON rec.id = ri.receipt_id
-         WHERE ri.expense_id = ?
-         LIMIT 1
-        """,
+    row = con.execute(
+        "SELECT rule_id, category_id FROM expenses WHERE id = ?",
         [expense_id],
     ).fetchone()
-    if not ri_row or not ri_row[0]:
-        return
-    item_name = ri_row[0]
-    store_id = ri_row[1]
-    rule_exists = con.execute(
-        """
-        SELECT 1 FROM classification_rules
-         WHERE item_name_normalized = ?
-           AND (store_id IS NULL OR store_id = ?)
-         LIMIT 1
-        """,
-        [item_name, store_id],
-    ).fetchone()
-    if rule_exists is None:
+    if row is None or row[0] is None:
         logger.error(
-            "update_rule=True for expense_id=%s but no rule exists"
-            " for item=%r store_id=%s — skipping rule update",
+            "update_rule=True for expense_id=%s but rule_id is not set — skipping",
             expense_id,
-            item_name,
-            store_id,
         )
         return
-    exp_row = con.execute(
-        "SELECT category_id FROM expenses WHERE id = ?",
-        [expense_id],
-    ).fetchone()
-    if exp_row:
-        create_or_update_rule(
-            con,
-            store_id,
-            item_name,
-            RuleSpec(int(exp_row[0]), 4, "user_correction", tag_ids=tuple(tag_ids)),
-        )
+    effective_category_id = category_id if category_id is not None else int(row[1])
+    rule_id = int(row[0])
+    con.execute(
+        "UPDATE classification_rules"
+        " SET category_id=?, confidence_level=4, source='user_correction', tag_ids=?"
+        " WHERE id=?",
+        [effective_category_id, json.dumps(tag_ids), rule_id],
+    )
+    con.execute(
+        "UPDATE expenses SET category_id=?, confidence_level=4 WHERE rule_id=?",
+        [effective_category_id, rule_id],
+    )
 
 
 def _is_replay(con: sqlite3.Connection, client_expense_id: str) -> bool:

@@ -38,7 +38,7 @@ def _query_other_items(
     if since is not None:
         return con.execute(
             """
-            SELECT ri.id, ri.receipt_id, ri.expense_id, ri.total_price
+            SELECT DISTINCT ri.expense_id
               FROM receipt_items ri
               JOIN receipts rec ON rec.id = ri.receipt_id
              WHERE ri.name_normalized = ?
@@ -51,7 +51,7 @@ def _query_other_items(
         ).fetchall()
     return con.execute(
         """
-        SELECT ri.id, ri.receipt_id, ri.expense_id, ri.total_price
+        SELECT DISTINCT ri.expense_id
           FROM receipt_items ri
           JOIN receipts rec ON rec.id = ri.receipt_id
          WHERE ri.name_normalized = ?
@@ -127,16 +127,12 @@ def correct_category_sync(
         item_names: list[str] = []
         if receipt_id is not None:
             items = con.execute(
-                "SELECT id, name_normalized FROM receipt_items WHERE expense_id = ?",
+                "SELECT name_normalized FROM receipt_items WHERE expense_id = ?",
                 [expense_id],
             ).fetchall()
-            for item_id, name_norm in items:
+            for (name_norm,) in items:
                 if name_norm:
                     item_names.append(name_norm)
-                con.execute(
-                    "UPDATE receipt_items SET category_id = ?, confidence_level = 4 WHERE id = ?",
-                    [req.category_id, item_id],
-                )
 
         since = _since_for_scope(req.scope)
         batch_count = 0
@@ -147,12 +143,8 @@ def correct_category_sync(
             if req.scope == CorrectionScope.single:
                 continue
 
-            other_items = _query_other_items(con, name_norm, store_id, expense_id, since)
-            for other_item_id, _other_receipt_id, old_exp_id, _total_price in other_items:
-                con.execute(
-                    "UPDATE receipt_items SET category_id = ?, confidence_level = 4 WHERE id = ?",
-                    [req.category_id, other_item_id],
-                )
+            other_expense_ids = _query_other_items(con, name_norm, store_id, expense_id, since)
+            for (old_exp_id,) in other_expense_ids:
                 con.execute(
                     "UPDATE expenses SET category_id = ?, confidence_level = 4 WHERE id = ?",
                     [req.category_id, old_exp_id],

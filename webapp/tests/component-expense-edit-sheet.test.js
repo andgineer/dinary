@@ -16,6 +16,7 @@ import { useCatalogStore } from "../src/stores/catalog.js";
 import * as expenseCorrections from "../src/api/expenseCorrections.js";
 import * as expensesApi from "../src/api/expenses.js";
 import * as receiptsApi from "../src/api/receipts.js";
+import * as reviewApi from "../src/api/review.js";
 
 const TELEPORT_STUB = { template: "<div><slot /></div>" };
 
@@ -268,6 +269,13 @@ describe("ExpenseEditSheet — delete flow (receipt-backed)", () => {
       total: { amount: 180, currency: "RSD" },
     });
     vi.spyOn(receiptsApi, "deleteReceipt").mockResolvedValueOnce(null);
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValueOnce({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      pending_receipts: 0,
+    });
+    vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValueOnce({ items: [], has_more: false });
     const pinia = createPinia();
     setActivePinia(pinia);
     seedCatalog();

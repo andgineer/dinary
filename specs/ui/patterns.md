@@ -270,7 +270,7 @@ References: `ReviewView.vue`.
 - Gate on `!loading && hasMore && isOnline` to avoid duplicate calls.
 - Page size: 20 items (server side).
 - Render skeleton rows below the last item while loading.
-- When `!hasMore`, render `─── end · N loaded ───` in muted-2 monospace.
+- When `!hasMore`, render `─── end · N loaded ───` in muted-2 monospace. Exception: the NEEDS REVIEW section in `ReviewView` instead shows the **Confirm All** button at the end — the `─── end` footer is omitted there.
 - Don't render the sentinel when `!hasMore` (no false triggers).
 
 References: `ReviewView.vue`.
@@ -349,4 +349,4 @@ For any parent → child / belongs-to / narrows-into relationship in a vertical 
 - Child is indented `padding-left: ~30px` past the line.
 - The indent IS the label. Don't write "Group" / "Category" above the fields.
 
-References: `ExpenseForm.vue` (group → category).
+References: this pattern is no longer used in `ExpenseForm.vue` (the group→category dropdowns were replaced by `CategoryQuickPicks` + `category-pick-btn`). The pattern document is kept for any future parent→child select pairs.

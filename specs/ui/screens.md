@@ -33,9 +33,10 @@ The entry form. The most-used screen — defaults to opening here.
 │  [RSD]      0           📅 17.05    │ hero row
 │  ────────────              ───       │
 │                                      │
-│  [ Еда                       ▾  +⚙]  │ group → category
-│   │                                  │   (connector line)
-│   └─►  [ еда                ▾  +⚙]  │
+│  [ Еда  Мясо  Перекус  Сладости ]    │ CategoryQuickPicks pills
+│                                      │
+│  ┌─────────────────────── Мясо  › ┐  │ category-pick-btn
+│  └────────────────────────────────┘  │   (tap → CategorySheet)
 │                                      │
 │  [ — no event —             ▾  +⚙]  │ event
 │                                      │
@@ -60,9 +61,14 @@ Owned by `views/AddView.vue` + `components/ExpenseForm.vue`.
 
 This compresses three fields into one line because each is self-explanatory by content and position.
 
-### Group → Category hierarchy
+### Category selection
 
-Visualized as a vertical line + L-elbow connector under the Group select, with Category indented `padding-left` past the line. The indent IS the label. Changing the group filters the category list.
+The group → category dropdown hierarchy is replaced by two components stacked vertically:
+
+1. **`CategoryQuickPicks`** — wrap-flow of frequently-used category pills. Tap selects without opening any sheet.
+2. **Category pick button** (`category-pick-btn`) — full-width tappable button showing the current category name (or "Select category…" placeholder). Tap opens `CategorySheet`. Styled with an accent border when a category is set, neutral border otherwise. `ChevronRight` icon right-aligned. `min-height: 48px`, `border-radius: 10px`.
+
+The group field is still tracked internally (for the group → category hierarchy logic) and pre-filled when a category is chosen, but no separate group selector is shown to the user.
 
 ### Event / Tags / Comment
 
@@ -81,7 +87,7 @@ After save, the form resets but keeps the user's default group/category and curr
 
 Two ordered sections in a single scroll container: **NEEDS REVIEW** (classification rules awaiting confirmation, one per unique item-name) and **EXPENSES** (individual receipt lines, newest first).
 
-The feed `GET /api/receipts/review/feed` returns rule items with `is_doubtful: bool`. Doubtful items appear in NEEDS REVIEW. Certain items are filtered out of NEEDS REVIEW; individual expenses are loaded separately from `GET /api/expenses/feed` (paginated).
+`GET /api/rules/feed?doubtful_only=true` returns rule items with `is_doubtful: bool`. The default `doubtful_only=true` means only rules with `confidence_level < 4` are returned. Certain items are filtered out of NEEDS REVIEW; individual expenses are loaded separately from `GET /api/expenses` (paginated).
 
 ```
 ┌──────────────────────────────────────┐
@@ -141,11 +147,17 @@ The feed `GET /api/receipts/review/feed` returns rule items with `is_doubtful: b
 
 ### Approve flow (fast path)
 
-Tapping any approve/alt/freq chip emits `approve({ item, categoryId })`. The store calls `correctCategory(expenseId, categoryId, "all")` — same endpoint as the sheet, scope forced to `all` because correcting a doubtful row is fundamentally rule creation. On success the row is removed from NEEDS REVIEW and re-inserted as a certain row above the existing certain section (so the user can see the result without losing position).
+Tapping any approve/alt/freq chip emits `approve({ item, categoryId })`. For doubtful rows the store calls `approveRule(item.id, categoryId)` — `PATCH /api/rules/{rule_id}/category` — which sets the rule to `confidence_level=4, source='user_correction'` and propagates the new category to every expense linked to that rule in one transaction. The `item.id` in the feed is the `classification_rules.id`, so no expense-id lookup is needed and a deleted expense cannot cause a 404. On success the row is removed from NEEDS REVIEW.
+
+For certain rows edited via the sheet (not the fast-path chips), category changes go through `PATCH /api/expenses/{id}` with an explicit `scope` and optional `update_rule` flag.
 
 ### Confirm all
 
-When the doubtful list has fully paginated (`!hasMore`) and at least one doubtful row remains, a green outlined **Confirm all (N)** button appears below the list. Tap confirms every visible doubtful rule in one batch (`confirmAllRules(ruleIds)`), then refreshes the EXPENSES section to reflect the new classifications.
+When the doubtful list has fully paginated (`!hasMore`) and at least one doubtful row remains, a green outlined **Confirm all (N)** button appears below the list. Tap confirms every visible doubtful rule in one batch (`POST /api/rules/confirm-all` with `rule_ids`), then refreshes the EXPENSES section to reflect the new classifications.
+
+### Delete receipt
+
+When the user deletes a receipt (swipe-to-delete or edit sheet), the store calls `DELETE /api/receipts/{id}` then does a full feed reset — `reset()` + `loadNextPage()` + `loadExpensesNextPage()` — so stale rule rows from the deleted receipt disappear immediately rather than staying visible until the next manual refresh.
 
 ### Swipe-to-act
 
