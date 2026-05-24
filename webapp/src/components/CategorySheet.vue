@@ -2,6 +2,7 @@
 import { computed, ref, watch, nextTick } from "vue";
 import { Check, Sparkles, X } from "lucide-vue-next";
 import { useCatalogStore } from "../stores/catalog.js";
+import BaseSheet from "./BaseSheet.vue";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -67,186 +68,107 @@ function onKeydown(e) {
 </script>
 
 <template>
-  <Teleport to="body">
-    <Transition name="scrim">
-      <div v-if="open" class="sheet-scrim" @click="emit('close')" />
-    </Transition>
-    <Transition name="sheet">
-      <div
-        v-if="open"
-        class="sheet"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="title"
-        data-testid="category-sheet"
-      >
-        <div class="drag-handle" />
+  <BaseSheet
+    :open="open"
+    :full-height="true"
+    :z-index="50"
+    :aria-label="title"
+    data-testid="category-sheet"
+    @close="emit('close')"
+  >
+    <template #header>
+      <div class="sheet-eyebrow">{{ title }}</div>
+    </template>
 
-        <div class="sheet-header">
-          <div class="sheet-eyebrow">{{ title }}</div>
-          <button type="button" class="sheet-close" aria-label="Close" @click="emit('close')">
-            <X :size="16" />
-          </button>
-        </div>
-
-        <div class="search-wrap">
-          <input
-            ref="searchEl"
-            v-model="query"
-            type="search"
-            placeholder="Search…"
-            class="search-input"
-            aria-label="Search categories"
-            @keydown="onKeydown"
-          />
-          <button
-            v-if="query"
-            type="button"
-            class="clear-btn"
-            aria-label="Clear search"
-            @click="query = ''"
-          >
-            <X :size="14" />
-          </button>
-        </div>
-
-        <div ref="bodyEl" class="sheet-body">
-          <template v-if="showSearch">
-            <div class="flat-list" data-testid="flat-results">
-              <button
-                v-for="item in flatResults"
-                :key="item.id"
-                type="button"
-                class="flat-item"
-                @click="select(item.id)"
-              >
-                <span class="flat-group">{{ item.groupName }}</span>
-                <span class="flat-sep"> › </span>
-                <span>{{ item.name }}</span>
-              </button>
-              <div v-if="flatResults.length === 0" class="no-results">No matches</div>
-            </div>
-          </template>
-
-          <template v-else>
-            <template v-if="suggestions.length > 0">
-              <div class="section-label">SUGGESTIONS</div>
-              <div class="suggestions-row" data-testid="suggestion-pills">
-                <button
-                  v-for="sug in suggestions"
-                  :key="sug.id"
-                  type="button"
-                  class="cat-btn is-suggested"
-                  @click="select(sug.id)"
-                >
-                  <Sparkles :size="10" class="suggest-icon" aria-hidden="true" />
-                  {{ sug.name }}
-                </button>
-              </div>
-            </template>
-
-            <div
-              v-for="{ group, categories } in allGroupsWithCategories"
-              :key="group.id"
-              class="group-section"
-              data-testid="category-group"
-            >
-              <div class="group-label">{{ group.name }}</div>
-              <div class="categories-grid">
-                <button
-                  v-for="cat in categories"
-                  :key="cat.id"
-                  type="button"
-                  class="cat-btn"
-                  @click="select(cat.id)"
-                >
-                  {{ cat.name }}
-                </button>
-              </div>
-            </div>
-          </template>
-        </div>
+    <template #pre-body>
+      <div class="search-wrap">
+        <input
+          ref="searchEl"
+          v-model="query"
+          type="search"
+          placeholder="Search…"
+          class="search-input"
+          aria-label="Search categories"
+          @keydown="onKeydown"
+        />
+        <button
+          v-if="query"
+          type="button"
+          class="clear-btn"
+          aria-label="Clear search"
+          @click="query = ''"
+        >
+          <X :size="14" />
+        </button>
       </div>
-    </Transition>
-  </Teleport>
+    </template>
+
+    <div ref="bodyEl">
+      <template v-if="showSearch">
+        <div class="flat-list" data-testid="flat-results">
+          <button
+            v-for="item in flatResults"
+            :key="item.id"
+            type="button"
+            class="flat-item"
+            @click="select(item.id)"
+          >
+            <span class="flat-group">{{ item.groupName }}</span>
+            <span class="flat-sep"> › </span>
+            <span>{{ item.name }}</span>
+          </button>
+          <div v-if="flatResults.length === 0" class="no-results">No matches</div>
+        </div>
+      </template>
+
+      <template v-else>
+        <template v-if="suggestions.length > 0">
+          <div class="section-label">SUGGESTIONS</div>
+          <div class="suggestions-row" data-testid="suggestion-pills">
+            <button
+              v-for="sug in suggestions"
+              :key="sug.id"
+              type="button"
+              class="cat-btn is-suggested"
+              @click="select(sug.id)"
+            >
+              <Sparkles :size="10" class="suggest-icon" aria-hidden="true" />
+              {{ sug.name }}
+            </button>
+          </div>
+        </template>
+
+        <div
+          v-for="{ group, categories } in allGroupsWithCategories"
+          :key="group.id"
+          class="group-section"
+          data-testid="category-group"
+        >
+          <div class="group-label">{{ group.name }}</div>
+          <div class="categories-grid">
+            <button
+              v-for="cat in categories"
+              :key="cat.id"
+              type="button"
+              class="cat-btn"
+              @click="select(cat.id)"
+            >
+              {{ cat.name }}
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </BaseSheet>
 </template>
 
 <style scoped>
-.scrim-enter-active,
-.scrim-leave-active {
-  transition: opacity 0.26s;
-}
-.scrim-enter-from,
-.scrim-leave-to {
-  opacity: 0;
-}
-
-.sheet-enter-active,
-.sheet-leave-active {
-  transition: transform 0.28s cubic-bezier(0.32, 0, 0.67, 0);
-}
-.sheet-enter-from,
-.sheet-leave-to {
-  transform: translateY(100%);
-}
-
-.sheet-scrim {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  z-index: 48;
-}
-
-.sheet {
-  position: fixed;
-  left: 0;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  z-index: 50;
-  background: var(--surface);
-  border-radius: 18px 18px 0 0;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.35);
-  overscroll-behavior: contain;
-}
-
-.drag-handle {
-  width: 36px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--border-strong);
-  margin: 10px auto 0;
-  flex-shrink: 0;
-}
-
-.sheet-header {
-  padding: 0.75rem 3rem 0.5rem 1rem;
-  position: relative;
-  flex-shrink: 0;
-}
-
 .sheet-eyebrow {
   font-size: 0.65rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--muted);
   text-transform: uppercase;
-}
-
-.sheet-close {
-  position: absolute;
-  top: 0.75rem;
-  right: 1rem;
-  background: none;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 0.25rem;
-  width: auto;
-  display: flex;
-  align-items: center;
 }
 
 .search-wrap {
@@ -281,12 +203,6 @@ function onKeydown(e) {
   width: auto;
   display: flex;
   align-items: center;
-}
-
-.sheet-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0.5rem 1rem;
 }
 
 .section-label {
