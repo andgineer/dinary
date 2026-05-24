@@ -1,36 +1,18 @@
-# inv sql — Interactive SQL Runner
-
-Invoked via `inv sql` (locally or over `--remote`).
+# inv sql — Design Decisions
 
 ## Read-only default
 
-The module opens the SQLite DB with a `file:...?mode=ro` URI so `UPDATE` /
-`DELETE` / `INSERT` statements error out at the SQLite layer. An operator
-peeking at prod cannot accidentally mutate the ledger by typoing a query.
+The SQL runner opens the database read-only by default. An operator querying
+production cannot accidentally mutate the ledger by a typo or by running a
+script that expected a different database.
 
-`--write` is the explicit opt-in for mutation (one-off fixups, ad-hoc
-cleanups). It is deliberately absent from the `--remote` path so the opt-in
-can never ride an SSH pipe into a snapshot that gets torn down on exit.
+Write mode is an explicit opt-in flag, intended for one-off surgical fixups
+under deliberate operator review.
 
-## Output formats
+## No write over remote
 
-| Flag | Output |
-|------|--------|
-| _(default)_ | Rich table to stdout, one-line footer with row count |
-| `--csv` | CSV with header row, suitable for piping into `wc` / `csvkit` / a spreadsheet |
-| `--json` | Single envelope `{"columns": [...], "rows": [[...], ...], "row_count": N}` |
-
-Non-primitive values (`Decimal`, `date`, `datetime`) in `--json` are
-stringified. Callers that need typed JSON should cast in SQL
-(`CAST(amount AS REAL)`).
-
-## Remote dispatch
-
-`--remote` goes through the same `_remote_snapshot_cmd` wrapper as
-`inv report-*`. A `/tmp` snapshot of the live DB is opened read-only on the
-server (via `sqlite3 .backup`, not a raw file copy, to honour the WAL), the
-JSON envelope comes back over SSH, and the local process renders it.
-
-Reading a snapshot rather than the live file avoids any interaction with the
-in-flight Litestream replication and keeps Cyrillic / box-drawing bytes intact
-across the wire.
+The write flag is intentionally absent from the remote execution path. The
+remote path operates on a snapshot of the live database; writing to a snapshot
+that is torn down on exit would silently discard changes. Allowing `--write
+--remote` would create a footgun where the operator believes they modified
+production but actually modified a throwaway copy.

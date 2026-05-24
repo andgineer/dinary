@@ -1,156 +1,29 @@
-# Income Import — Implementation Notes
+# Income Import
 
-> **Scope.** This document is the deep-dive reference for the historical
-> income import only. Everything cross-cutting (the single-file DuckDB
-> model, `settings.accounting_currency` storage semantics, the unified
-> `0001_initial_schema.sql` migration stream, FK-safe catalog sync,
-> etc.) is owned by [architecture.md](../architecture/architecture.md) and must be
-> consulted first. If this file and `architecture.md` ever disagree,
-> `architecture.md` wins.
+## Operator-local source registry
 
-## Schema
+Import sources (per-year Google Sheets spreadsheets) are stored in a gitignored
+JSON file at `.deploy/import_sources.json`, not in the database. This is
+operator-local configuration that varies per deployment and has no business in
+the shared schema or repository.
 
-### `data/dinary.duckdb` — table `income`
+## Mid-year currency transitions
 
-```sql
-CREATE TABLE income (
-    year   INTEGER NOT NULL,
-    month  INTEGER NOT NULL,
-    amount DECIMAL(12,2) NOT NULL,          -- settings.accounting_currency (default EUR)
-    PRIMARY KEY (year, month),
-    CHECK (month BETWEEN 1 AND 12)
-);
-```
+Some years have income received in different currencies across the year (e.g.
+RUB through July, RSD from August). The layout system handles this by keying on
+the month number within a single worksheet column rather than splitting into
+separate columns or separate import passes. The month boundary that triggers the
+currency switch is part of the layout configuration for that year.
 
-Defined in `src/dinary/migrations/0001_initial_schema.sql` alongside every
-other ledger and catalog table — the per-year `budget_YYYY.duckdb` /
-`config.duckdb` split was removed in the single-file reset, so there is
-exactly one migration stream. `income.amount` is stored in the DB-wide
-accounting currency (default `"EUR"`), anchored in
-`app_metadata.accounting_currency` on first `init_db` and read back via
-`settings.accounting_currency` at runtime — see the "Accounting-currency
-anchor" subsection in `specs/architecture/architecture.md` for the invariant and the
-operator migration path. The column is dimensionless at the schema level
-because the accounting-currency choice is a deployment-wide constant, not
-a per-row attribute.
+## Destructive import requires explicit confirmation
 
-### `.deploy/import_sources.json` — operator-local source registry
+All income import tasks that overwrite existing DB rows require an explicit
+`--yes` flag. A missing flag is a no-op. This prevents accidental data loss from
+a mistyped command or a script that runs without human review.
 
-```json
-[
-  {
-    "year": 2022,
-    "spreadsheet_id": "…",
-    "worksheet_name": "Budget 2022",
-    "layout_key": "rub_fallback",
-    "income_worksheet_name": "Balance",
-    "income_layout_key": "balance_rub_rsd"
-  }
-]
-```
+## Verification against source sheets
 
-The per-year source registry used to live as an `import_sources`
-DuckDB table; it now lives as a gitignored JSON file at
-`.deploy/import_sources.json`, loaded by
-`dinary.config.read_import_sources`. The file is OPTIONAL and only
-consumed by `inv import-*` tasks. One record per year carries both
-expense and income source metadata; the ``income_*`` fields are
-absent or empty for years without a structured income worksheet
-(e.g. 2012–2018). See the repo-root `imports/` directory for the
-full schema and workflow documentation.
-
-## Layouts
-
-`IncomeLayout` dataclass in `tasks/imports/income_import.py` maps sheet columns:
-
-| Layout key | col_date | col_amount | currency | transition |
-|------------|----------|------------|----------|------------|
-| `balance_rub` | 1 | 2 | RUB | — |
-| `balance_rub_rsd` | 1 | 2 | RUB | month ≥ 8 → RSD |
-| `balance_rsd` | 1 | 2 | RSD | — |
-| `income_rsd` | 1 | 2 | RSD | — |
-
-### Mid-year currency transition (2022)
-
-2022 income was received in RUB through July, then in RSD from August.
-`balance_rub_rsd` layout handles this: `transition_month=8`, `transition_currency="RSD"`.
-The same column contains amounts in both currencies; the month determines which rate to apply.
-
-## Year → source mapping
-
-Registered in `.deploy/import_sources.json` (one entry per year with
-an `income_worksheet_name` populated):
-
-| Year | Worksheet | Layout |
-|------|-----------|--------|
-| 2019 | Balance | balance_rub |
-| 2020 | Balance | balance_rub |
-| 2021 | Balance | balance_rub |
-| 2022 | Balance | balance_rub_rsd |
-| 2023 | Balance | balance_rsd |
-| 2024 | Income | income_rsd |
-| 2025 | Income | income_rsd |
-| 2026 | Income | income_rsd |
-
-Years 2012–2018 have no income source — no structured income data in those sheets.
-
-## Import flow (`import_year_income`)
-
-1. Read `.deploy/import_sources.json` via `dinary.config.get_import_source(year)` → spreadsheet ID, worksheet, layout key.
-2. Pre-fetch NBS middle rates for the 1st of each month for every currency
-   the layout will need (source currency and the accounting currency).
-   Rates are held as `RSD per 1 unit of X` so an identity entry (RSD
-   itself, or the accounting currency when it is RSD) is just `Decimal(1)`.
-   This runs inside a short-lived writer cursor so the subsequent sheet
-   loop does not hold the DuckDB write slot across HTTP round-trips.
-3. Open the Google Sheet via `gspread`, read all rows from the income
-   worksheet.
-4. For each row after `header_rows`:
-   - Parse date → extract `(year, month)`. Skip rows where year ≠ target.
-   - Parse amount (handles `$`, spaces, commas).
-   - Determine currency (base or transition based on month).
-   - Convert to the accounting currency via the pre-fetched rates
-     (`amount * rate_src / rate_acc`). Missing rate → skip row with a
-     warning.
-5. Aggregate by month.
-6. In a single DuckDB transaction: `DELETE FROM income WHERE year = ?`
-   then insert one row per `(year, month)`.
-
-## Verification (`verify_income_equivalence`)
-
-Re-reads the sheet, re-aggregates in the accounting currency (EUR by
-default), and compares month-by-month against DB with a ±0.02
-tolerance. The result dict uses `total_sheet_acc`, `total_db_acc`,
-and `accounting_currency`.
-
-## Invoke tasks
-
-All destructive income-import tasks require explicit `--yes` confirmation:
-
-- `inv import-income --year=YYYY --yes` — destructive re-import of one year.
-- `inv import-income-all --yes` — destructive re-import of every registered year (run as part of the coordinated reset flow).
-- `inv import-verify-income --year=YYYY` — verify one year against the source sheet (no `--yes` needed; read-only).
-
-## Historical results (2026-04, EUR snapshot)
-
-The table below is the import log at the time income was last fully
-re-imported against the EUR accounting currency (the current default).
-It should be re-checked with `inv import-verify-income-all` after
-any re-import, and after any deliberate accounting-currency migration
-(`app_metadata.accounting_currency` is normally immutable — see the
-"Accounting-currency anchor" subsection in `specs/architecture/architecture.md` —
-but a planned change to the DB-wide unit would shift every stored row
-and invalidate the totals below).
-
-| Year | Months | Total EUR |
-|------|--------|-----------|
-| 2019 | 12 | 25,520.45 |
-| 2020 | 12 | 30,616.14 |
-| 2021 | 12 | 30,468.42 |
-| 2022 | 12 | 60,722.47 |
-| 2023 | 9 | 36,402.40 |
-| 2024 | 10 | 43,237.91 |
-| 2025 | 10 | 50,334.96 |
-| 2026 | 3 | 15,158.71 |
-
-All years passed zero-diff verification at the time of that snapshot.
+After import, a verify task re-reads the source spreadsheet and compares
+month-by-month totals against the DB with a small tolerance for floating-point
+rounding. This confirms that the DB faithfully represents the sheets, which are
+the authoritative historical source.

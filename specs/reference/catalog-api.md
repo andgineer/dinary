@@ -1,74 +1,74 @@
-# Catalog API
+# Catalog API — Architecture
 
-## Write path
+## Version-gated writes
 
-Catalog mutations flow through four focused modules (`catalog_writer_groups`,
-`catalog_writer_categories`, `catalog_writer_events`, `catalog_writer`) plus
-shared types in `catalog_writer_errors`. Every mutation:
+Catalog mutations only bump `catalog_version` when the observable content
+actually changes (hash gate). This prevents no-op rewrites (e.g. re-seeding an
+unchanged config) from invalidating PWA caches.
 
-1. Opens `BEGIN IMMEDIATE`.
-2. Snapshots `_hash_state` (sha256 over all four catalog tables ordered by id).
-3. Applies the change.
-4. Calls `_commit_with_bump`: re-hashes; bumps `catalog_version` only when
-   the hash changed.
+Both write paths — direct API mutations and the seed/import path — share the
+same hash function so "observable change" has one definition across the system.
 
-This means no-op rewrites (re-adding an already-active row) never bump the
-version and never invalidate PWA caches.
+## FK-safe sync
 
-The seed path (`imports.seed.rebuild_config_from_sheets`) uses the same
-`hash_catalog_state` function for its own bump gate, so both write paths
-share one definition of "observable catalog change".
-
-## FK-safe sync (`seed_config`)
-
-`seed_classification_catalog` never deletes or renumbers rows. Ledger tables
-carry real FKs into the catalog; removing a referenced row would violate them.
-
-Algorithm: mark every catalog row `is_active=FALSE`, then upsert by name
-(natural key). Matched rows get `is_active=TRUE` restored and keep their
-existing integer `id`. New rows get `id = max(id)+1`. Unmatched rows stay
-`is_active=FALSE` — hidden from the live API but still FK-valid.
+The catalog is never wiped and re-inserted during sync. Ledger tables hold real
+foreign keys into catalog rows, so deleting or renumbering a row would violate
+referential integrity. Instead, sync marks all rows inactive then upserts by
+name (natural key): matched rows are restored with their existing integer ID; new
+rows get the next ID; unmatched rows stay inactive but remain FK-valid.
 
 ## Soft vs hard delete
 
-`delete_*` auto-degrades to soft-delete (`is_active=FALSE`) when the row is
-still referenced by `expenses`, `expense_tags`, or any mapping table. The
-`DeleteResult.status` field reports `"hard"` vs `"soft"` so the PWA can tell
-the operator "gone for good" vs "still available under Show inactive".
+Delete auto-degrades to soft-deactivation when a row is still referenced by
+expenses or mapping tables. The response reports which mode happened so the UI
+can distinguish "gone" from "hidden but still used in history".
 
-`delete_group` is stricter: it raises `CatalogInUseError` (409) if any
-category (active or inactive) still points at the group. Moving a group while
-its categories remain attached would silently orphan those categories; the
-operator must relocate or delete the children first.
+Group deletion is intentionally stricter — it rejects the request if any child
+category still points at the group, active or not. Silently orphaning categories
+would break the category hierarchy for all expenses that reference them.
 
-## `GET /api/catalog` — ETag caching
+## ETag caching
 
-ETag is `W/"catalog-v<N>"` derived from `catalog_version`. The body does not
-echo the ETag — clients derive it from `catalog_version`. Sending
-`If-None-Match` returns `304 Not Modified` on a cache hit.
+`catalog_version` is the ETag. Clients send `If-None-Match` and get 304 on a
+cache hit, avoiding full payload retransmission on every PWA refresh.
 
-`removable=true` on an item means a DELETE would hard-delete it (no references
-anywhere). The PWA hides the "Удалить" button on non-removable rows.
+The response includes a `removable` flag per item so the UI can decide whether
+to show a delete button before the user attempts it — avoids a round-trip error.
 
-All rows including `is_active=FALSE` are always returned; the PWA filters
-client-side and exposes per-picker "show inactive" toggles.
+## Auto-tags on events
 
-## Auto-tags
+Event auto-tags are stored as tag names, not IDs. At expense-insert time names
+are resolved to live IDs. This decouples event configuration from catalog row
+IDs, which can change across seeds. Tag deactivation (hiding from the picker)
+does not block auto-attach — retired tags must still work for events that
+reference them.
 
-`events.auto_tags` is a denormalised JSON array of tag **names** (not ids).
-When `event_id` is attached to an expense (at insert time or via the drain
-loop), those names are resolved to live tag ids and unioned into the expense's
-`tag_ids`. This lets vacation events auto-tag every attached row with
-`["отпуск", "путешествия"]` without the PWA replicating that logic.
+## Frequent categories
 
-`is_active` on a tag means "hide from the manual picker" — it does **not**
-block auto-attach. Events must keep working against tags the operator has
-retired from the picker.
+Manual-expense categories dominate the quick-pick list; LLM-classified items are
+excluded. If LLM choices counted, the quick-pick would converge on whatever the
+receipt pipeline classifies most often rather than reflecting the user's
+deliberate manual choices.
+
+## Expense and receipt deletion
+
+Manual expenses and receipt-backed expenses follow different deletion paths.
+Manual expense DELETE removes a single row. Receipt-backed expense DELETE is
+rejected (409) — those expenses must be deleted through their receipt.
+
+Receipt DELETE cascades server-side, atomically removing the receipt row and
+every expense derived from it. Cascading in the server (not the client) ensures
+no orphaned expense rows can exist without their receipt, regardless of client
+failures or partial retries.
+
+Receipt-backed expense amounts are not editable through the expense PATCH
+endpoint. The receipt is the source of truth for item amounts; allowing edits
+out of receipt context would create inconsistency between stored receipt items
+and the derived expenses that reference them.
 
 ## Authentication
 
-No auth on admin endpoints yet. The previous `DINARY_ADMIN_API_TOKEN` gate was
-removed because it was shared across every operator and the PWA stored it in
-localStorage. A proper layer (OAuth / session / per-user key) will land with
-multi-user support. Until then, deployments must sit behind a private network
-or reverse-proxy ACL.
+No auth on admin endpoints yet. The previous shared-token approach was removed
+because a single token across all operators stored in localStorage has poor
+security properties. A proper auth layer will land with multi-user support; until
+then, deployments must sit behind a private network or reverse-proxy ACL.

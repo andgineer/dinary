@@ -1,63 +1,42 @@
 # Google Sheets Integration
 
-## Roles
+## Two distinct roles
 
-`services.sheets` is shared between two paths:
-- **Historical import** (`imports.expense_import`) — read-only, one-time, destructive for the target year in SQLite.
-- **Runtime sheet logging** (`services.sheet_logging`) — append-only drain loop; enabled when `DINARY_SHEET_LOGGING_SPREADSHEET` is set.
+The sheets layer serves two separate use cases with different requirements:
+
+- **Historical import** — one-time destructive bootstrap. Reads a year's worth of
+  expenses from a source spreadsheet and overwrites the corresponding DB rows.
+  Does not enqueue sheet-logging jobs because the rows are already in the sheet.
+- **Runtime sheet logging** — ongoing append-only drain. Writes new expenses to the
+  spreadsheet as they are classified. Enabled when the logging spreadsheet is
+  configured.
+
+These paths share sheet-reading utilities but have separate concerns around
+idempotency and destructiveness.
 
 ## Year-aware row matching
 
-The sheet-logging spreadsheet accumulates expenses across multiple calendar
-years. Column G stores only the month number (1–12), which is insufficient to
-distinguish e.g. January 2026 from January 2027.
+The logging spreadsheet accumulates expenses across multiple years but column G
+stores only the month number. When reading back display values over the Sheets
+API, the year is dropped from formatted date strings. Column A stores the full
+date as a serial value, which must be fetched with the raw-value format to
+recover the year. All row-matching helpers operate on year+month pairs, with a
+month-only fallback for unit tests and single-year diagnostics.
 
-Column A stores the first day of the expense's month as `YYYY-MM-DD`
-(`USER_ENTERED` format so Sheets parses it as a date serial).
-`ws.get_all_values()` returns the *formatted* display string (`"Apr-1"` etc.)
-which drops the year, so `fetch_row_years()` fetches column A separately with
-`UNFORMATTED_VALUE` to read the underlying serial and decode the year.
+## Map tab as 3D→2D resolver
 
-All matching helpers (`find_category_row`, `find_month_range`,
-`_find_insertion_row`) accept `(target_year, years_by_row)` as a paired
-optional argument. When both are absent they fall back to month-only matching
-for unit tests and single-year diagnostics.
+Each expense has three classifying dimensions: category, event, and tags.
+The destination spreadsheet is organised in 2D (category rows, envelope columns).
+The `map` worksheet resolves this: each row specifies a (category, event, tags)
+match pattern and the target sheet category and envelope. Rows are evaluated
+top-to-bottom; the first match wins for each output dimension.
 
-## Map tab protocol (`sheet_mapping`)
+Fallback when no row matches: use the raw category name as the sheet category
+and an empty envelope.
 
-The `map` worksheet tab (name in `settings.sheet_mapping_tab_name`) is the
-source of truth for 3D→2D resolution. Its schema:
+## Atomic reload with error protection
 
-| Col | Name      | Semantics                                                            |
-|-----|-----------|----------------------------------------------------------------------|
-| A   | category  | Canonical category name, or `*` for any                             |
-| B   | event     | Event name, or `*` for any (including no event)                     |
-| C   | tags      | Comma/whitespace-separated names that must ALL be present; `*` = none required |
-| D   | Расходы   | Target `sheet_category`; `*`/empty = don't decide here              |
-| E   | Конверт   | Target `sheet_group`; same three semantics                           |
-
-Evaluation: rows are scanned top-to-bottom. For each output column (D, E) the
-first non-`*` value from a matching row wins; scanning continues for the other
-column until both are resolved. Fallback when no row decides: `sheet_category`
-→ `categories.name`; `sheet_group` → `""`.
-
-The DB tables `sheet_mapping` / `sheet_mapping_tags` are derived state.
-`reload_now()` validates the tab against the live catalog and swaps them
-atomically; a parse error leaves the existing tables in place.
-
-## Historical import (`expense_import`)
-
-One-time destructive bootstrap. For a given year it:
-1. Wipes existing rows for that year in SQLite (`sheet_logging_jobs` →
-   `expense_tags` → `expenses`).
-2. Reads every sheet row through `iter_parsed_sheet_rows` (FX conversion,
-   layout detection, month filtering).
-3. Resolves `(sheet_category, sheet_group, year)` via `import_mapping`
-   (year-scoped first, `year=0` fallback), then applies housing/DIY keyword
-   heuristics and unions `events.auto_tags`.
-4. Inserts with `enqueue_logging=False` (rows are already in the sheet) and
-   `client_expense_id=None` (legacy rows have no PWA-generated key; `UNIQUE`
-   allows multiple NULLs).
-5. Runs post-import fixes (surgical category/event rewrites for known edge cases).
-
-Does not touch `sheet_logging_jobs` and does not bump `catalog_version`.
+When the map tab is reloaded (e.g. after the operator edits it), the derived DB
+tables are swapped atomically. A parse error in the new map tab leaves the
+previous tables in place — the system continues operating with the last known
+good mapping rather than failing open with an empty or corrupt one.
