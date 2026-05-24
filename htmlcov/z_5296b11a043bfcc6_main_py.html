@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_b312e140614962ca_sheet_mapping_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-24 10:52 +0000
+            created at 2026-05-24 12:37 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -95,7 +95,7 @@
     <p class="run"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t"><span class="key">from</span> <span class="nam">starlette</span><span class="op">.</span><span class="nam">middleware</span><span class="op">.</span><span class="nam">base</span> <span class="key">import</span> <span class="nam">BaseHTTPMiddleware</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span> <span class="key">import</span> <span class="nam">__version__</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">adapters</span><span class="op">.</span><span class="nam">llm_storage</span> <span class="key">import</span> <span class="nam">LLMBrokerStorage</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">adapters</span><span class="op">.</span><span class="nam">llm_storage</span> <span class="key">import</span> <span class="nam">SqliteLLMBrokerStorage</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">adapters</span><span class="op">.</span><span class="nam">llmbroker</span> <span class="key">import</span> <span class="nam">LLMBroker</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t"><span class="key">from</span> <span class="nam">dinary</span><span class="op">.</span><span class="nam">api</span> <span class="key">import</span> <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t19" href="#t19">19</a></span><span class="t">    <span class="nam">catalog</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -146,7 +146,7 @@
     <p class="run"><span class="n"><a id="t64" href="#t64">64</a></span><span class="t"><span class="op">@</span><span class="nam">asynccontextmanager</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t65" href="#t65">65</a></span><span class="t"><span class="key">async</span> <span class="key">def</span> <span class="nam">_lifespan</span><span class="op">(</span><span class="nam">_app</span><span class="op">:</span> <span class="nam">FastAPI</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t66" href="#t66">66</a></span><span class="t">    <span class="nam">storage</span><span class="op">.</span><span class="nam">init_db</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t">    <span class="nam">broker</span> <span class="op">=</span> <span class="nam">LLMBroker</span><span class="op">(</span><span class="nam">LLMBrokerStorage</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t">    <span class="nam">broker</span> <span class="op">=</span> <span class="nam">LLMBroker</span><span class="op">(</span><span class="nam">SqliteLLMBrokerStorage</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t68" href="#t68">68</a></span><span class="t">    <span class="key">await</span> <span class="nam">broker</span><span class="op">.</span><span class="nam">start</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t">    <span class="key">await</span> <span class="nam">warm_sheet_mapping</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t">    <span class="nam">sheet_logging_bg</span> <span class="op">=</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">create_task</span><span class="op">(</span><span class="nam">sheet_logging_task</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="nam">name</span><span class="op">=</span><span class="str">"sheet-logging-task"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -236,7 +236,7 @@
             <a class="nav" href="z_b312e140614962ca_sheet_mapping_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-05-24 10:52 +0000
+            created at 2026-05-24 12:37 +0000
         </p>
     </div>
 </footer>
