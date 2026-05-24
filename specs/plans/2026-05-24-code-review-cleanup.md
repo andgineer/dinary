@@ -120,14 +120,21 @@ Add `conn: sqlite3.Connection` to:
 
 ## Phase 5 — LLMBroker Isolation
 
-**Files:** `src/dinary/adapters/llmbroker.py` (no changes — already clean),
-`src/dinary/adapters/llm_direct.py` (new),
+**Files:** `src/dinary/adapters/llmbroker.py`,
+`src/dinary/adapters/llm_direct.py` (delete),
 `src/dinary/background/classification/receipt_classifier.py`,
 `src/dinary/adapters/llm_storage.py`,
 `src/dinary/db/migrations/0004_receipt_pipeline.sql`,
 `src/dinary/api/controllers/llm.py`,
+`src/dinary/api/llm.py`,
 `tasks/receipt.py`,
-`tests/services/test_receipt_classifier.py`
+`tests/conftest.py`,
+`tests/services/test_llm_direct.py` (delete),
+`tests/services/test_llm_storage.py`,
+`tests/services/test_receipt_classifier.py`,
+`webapp/src/api/adminLlm.js`,
+`webapp/src/stores/llm.js`,
+`webapp/src/views/LLMView.vue`
 
 ### 5a — Rename `receipt_id` → `context_id` in `llmbroker_call_log`
 The column name is a dinary-specific concern bleeding into what should be a generic broker
@@ -139,20 +146,79 @@ table. Migration 0004 has not been deployed; edit it in place.
 - In `llm_storage.py`: update `on_call_logged()` to write `context_id` instead of `receipt_id`.
 - Run `inv migrate` locally to verify the schema applies cleanly after the edit.
 
-### 5b — Move `OpenAICompatibleClient` to `adapters/llm_direct.py`
-`OpenAICompatibleClient` lives in `receipt_classifier.py` but has no connection to receipt
-classification — it is a general-purpose direct-HTTP bypass used by admin and CLI tasks.
+### 5b — Delete `llm_direct.py` and its `OpenAICompatibleClient`
 
-- Create `src/dinary/adapters/llm_direct.py` containing `OpenAICompatibleClient`.
-- The class can delegate to the shared helpers in `receipt_classifier.py`
-  (`_build_user_message`, `_parse_response`, `_SYSTEM_PROMPT`, `_CHAIN_NAME_PROMPT`) to avoid
-  duplicating logic; import them from `receipt_classifier`.
-- Remove `OpenAICompatibleClient` from `receipt_classifier.py`.
-- Update importers:
-  - `src/dinary/api/controllers/llm.py`: `from dinary.adapters.llm_direct import OpenAICompatibleClient`
-  - `tasks/receipt.py`: same
-- Move `TestOpenAICompatibleClient` from `tests/services/test_receipt_classifier.py` to a new
-  `tests/services/test_llm_direct.py`.
+`OpenAICompatibleClient` was created as a direct-HTTP bypass for admin and CLI tasks but is
+the wrong abstraction: it duplicates broker HTTP logic, `get_chain_name()` on it is dead code
+(production uses `receipt_classifier.get_chain_name(broker, ...)`), and `test_provider`
+admin endpoint built on it gave no advantage over the broker.
+
+- Delete `src/dinary/adapters/llm_direct.py`.
+- Delete `tests/services/test_llm_direct.py`.
+- Update the module docstring in `receipt_classifier.py` to remove the reference to
+  `OpenAICompatibleClient`.
+
+### 5c — Remove `DINARY_LLM_*` env vars
+
+Providers are configured via `.deploy/llm_providers.toml`. The env var settings were a legacy
+fallback that predates the toml; they are now dead.
+
+- `src/dinary/config.py`: delete the three fields `llm_base_url`, `llm_api_key`, `llm_model`
+  and their comment.
+- `src/dinary/adapters/llm_storage.py`: in `_seed()`, remove the entire env var fallback
+  block (the `if not providers:` branch that reads from `settings`). If no toml or toml has
+  no valid entries, `_seed()` simply logs a warning and returns without inserting anything.
+  Remove the `from dinary.config import settings` import if it becomes unused.
+- `CLAUDE.md`: remove the three `DINARY_LLM_*` rows from the configuration table.
+- `.deploy.example/.env`: remove the three commented-out `DINARY_LLM_*` lines.
+- `tests/services/test_llm_storage.py`: delete the test cases that monkeypatch
+  `settings.llm_base_url / llm_api_key / llm_model` — they cover code being deleted.
+
+### 5d — Rename `LLMBrokerStorage` → `SqliteLLMBrokerStorage`, add `TomlLLMBrokerStorage`, move `NullStorage` to tests
+
+**Rename** `LLMBrokerStorage` → `SqliteLLMBrokerStorage` everywhere (production code + tests).
+
+**Add `TomlLLMBrokerStorage`** to `llm_storage.py` — CLI/standalone path, no DB:
+- `load_providers()` → delegates to `_providers_from_toml()`, returns `list[ProviderConfig]`
+- `on_call_logged(event)` → `logger.info("provider=%s status=%s latency=%dms", ...)`
+- `on_rate_limited(provider_id, until)` → `logger.warning("provider %s rate-limited until %s", ...)`
+
+**Move `NullStorage` out of `llmbroker.py`** — it is test infrastructure, not production code.
+- Delete `NullStorage` from `src/dinary/adapters/llmbroker.py`.
+- Add it to `tests/conftest.py` so all test files can import it from there.
+- Update the five test files that currently import it from `llmbroker`.
+
+### 5e — Switch `tasks/receipt.py` to `LLMBroker(TomlLLMBrokerStorage())`
+
+- Remove `from dinary.adapters.llm_direct import OpenAICompatibleClient` and all
+  `settings.llm_base_url / llm_api_key / llm_model` references.
+- Remove the manual env var validation block (`if not settings.llm_base_url ...`).
+- Add imports:
+  ```python
+  from dinary.adapters.llmbroker import LLMBroker
+  from dinary.adapters.llm_storage import TomlLLMBrokerStorage
+  from dinary.background.classification.receipt_classifier import classify_receipt as llm_classify_receipt
+  ```
+- Replace the `llm = OpenAICompatibleClient(...)` block with:
+  ```python
+  broker = LLMBroker(TomlLLMBrokerStorage())
+  await broker.start()
+  ```
+- Replace `asyncio.run(llm.classify_receipt(...))` with
+  `results, _ = asyncio.run(llm_classify_receipt(broker, ...))`.
+- Call `await broker.stop()` in a `finally` block after the classification loop.
+- Update tests for `_run_receipt` accordingly.
+
+### 5e — Remove `test_provider` endpoint and Test button
+
+The per-provider test endpoint fires a synthetic `["хлеб"]` call bypassing the broker's
+accounting. Provider health is better surfaced via the enriched call log (Phase 8).
+
+- Delete `test_provider()` from `src/dinary/api/controllers/llm.py`.
+- Remove the `POST /api/llm/providers/{provider_id}/test` route from `src/dinary/api/llm.py`.
+- Remove `testProvider` from `webapp/src/api/adminLlm.js`.
+- Remove `test()` action from `webapp/src/stores/llm.js`.
+- Remove the Test button (`@test` handler) from `webapp/src/views/LLMView.vue`.
 
 ---
 
@@ -229,6 +295,49 @@ them too for consistency: `await asyncio.to_thread(_release, ...)` / `await asyn
 Each extracted helper must open and close its own connection internally (the existing
 discipline: never hold a connection across an `await`). The connection parameter on
 `persist_classification_results()` is removed; it opens its own connection.
+
+---
+
+## Phase 8 — Provider Error Diagnostics
+
+**Files:** `src/dinary/adapters/llmbroker.py`,
+`src/dinary/adapters/llm_storage.py`,
+`src/dinary/db/migrations/0004_receipt_pipeline.sql`,
+`src/dinary/api/controllers/llm.py`,
+`webapp/src/components/ProviderCard.vue` (or equivalent)
+
+### Problem
+
+When a provider has a bad API key, an exhausted quota, or a billing issue, the call log
+only stores `"error"` or `"429"` in `status`. The admin has no way to see *why* a provider
+is failing without digging through server logs.
+
+### Changes
+
+**Schema** (`0004_receipt_pipeline.sql`):
+- Add `error_detail TEXT` column to `llmbroker_call_log`. Stores the first 300 chars of the
+  HTTP response body on non-2xx responses; NULL on success.
+
+**Broker** (`llmbroker.py`):
+- In `_call_provider()`, on `httpx.HTTPStatusError`, extract `exc.response.text[:300]` and
+  pass it through to `_log_call()` as `error_detail`.
+- Add `error_detail: str | None = None` to `CallEvent`.
+
+**Storage** (`llm_storage.py`):
+- In `on_call_logged()`, write `event.error_detail` to the new column.
+
+**Status endpoint** (`controllers/llm.py`):
+- In `llm_status()`, add a subquery for `last_error_detail`:
+  ```sql
+  (SELECT error_detail FROM llmbroker_call_log
+    WHERE provider_id = p.id AND error_detail IS NOT NULL
+    ORDER BY id DESC LIMIT 1) AS last_error_detail
+  ```
+- Include `last_error_detail` in each provider dict in the response.
+
+**Frontend** (`ProviderCard.vue`):
+- Show `last_error_detail` below the provider status when it is non-null (e.g. a muted
+  red text line: "401 Incorrect API key provided").
 
 ---
 
