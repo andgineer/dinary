@@ -2,15 +2,18 @@
 
 ## Overview
 
-A new top-level view in the Dinary webapp for recording **incomes** (salary,
-refunds, freelance payments, gifts). The view sits between **Add expense** and
-**Review** in the segmented header. It has two parts:
+A new top-level view in the Dinary webapp for recording **monthly incomes**
+(salary, refunds, freelance payments, gifts). The view sits between **Add
+expense** and **Review** in the segmented header. It has two parts:
 
-1. A compact form at the top (amount + currency + comment) for entering a new income.
-2. An infinite-scroll list of past incomes below, grouped by month, with
-   swipe-to-edit on each row.
+1. A compact form at the top (amount + currency + month/year) for entering a
+   new income entry. One row per calendar month — trying to POST for a month
+   that already has a row returns **409**; to change it, use the edit sheet
+   (PATCH).
+2. An infinite-scroll list of past monthly incomes below, sorted newest-first,
+   grouped by year.
 
-Offline, the view behaves like Review: read-only, no queueing.
+Offline: read-only. No queueing (incomes are not queued offline).
 
 ## About the Design Files
 
@@ -20,20 +23,102 @@ into the app directly.
 
 The task is to **recreate these designs inside the existing Dinary webapp
 (`dinary/webapp/`)**, which is a Vue 3 + Pinia + Vite SPA, reusing the existing
-components and patterns wherever possible. Most of the building blocks already
-exist — this is mostly composition + a new Pinia store.
+components and patterns wherever possible.
 
-To preview the prototype: open `Add Income.html` in a browser. The canvas is
-zoomable / pannable; double-click any phone artboard to focus it.
+To preview the prototype: open `Add Income.html` in a browser.
 
 ## Fidelity
 
 **High-fidelity.** Colors, typography, spacing, and layout exactly match the
 existing Dinary v0.9 design tokens in `dinary/webapp/src/assets/base.css`.
-Reuse the existing CSS variables (`--success`, `--surface`, `--field`,
-`--border`, `--font-num`, etc.) — do not introduce new values.
+Reuse the existing CSS variables — do not introduce new values.
 
-## Where it lives in the codebase
+---
+
+## Data Model
+
+### Existing `income` table — unchanged
+
+```sql
+-- from 0001_initial_schema.sql — do not touch
+CREATE TABLE income (
+    year   INTEGER NOT NULL,
+    month  INTEGER NOT NULL,
+    amount DECIMAL(12,2) NOT NULL,   -- stored in accounting_currency (EUR)
+    PRIMARY KEY (year, month),
+    CHECK (month BETWEEN 1 AND 12)
+);
+```
+
+`amount` is always in `settings.accounting_currency`. The server converts the
+user-entered value on write; `currency_original`/`amount_original` are **not**
+stored (conversion is one-way, same pattern as `expenses.amount`).
+
+### New migration `0005_income_logging`
+
+Add only the logging-jobs queue table:
+
+```sql
+-- 0005_income_logging.sql
+CREATE TABLE income_logging_jobs (
+    year        INTEGER NOT NULL,
+    month       INTEGER NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    claimed_at  TIMESTAMP,
+    last_error  TEXT,
+    PRIMARY KEY (year, month),
+    FOREIGN KEY (year, month) REFERENCES income (year, month) ON DELETE CASCADE,
+    CHECK (status IN ('pending', 'in_progress', 'poisoned'))
+);
+```
+
+Rollback: `DROP TABLE IF EXISTS income_logging_jobs;`
+
+### Currency conversion on write
+
+For both POST and PATCH the server:
+
+1. Takes `amount_original` (Decimal > 0) and `currency_original` (string).
+2. If `currency_original.upper() == settings.accounting_currency.upper()`,
+   stores `amount_original` directly.
+3. Otherwise calls `get_rate(con, today, currency_original,
+   settings.accounting_currency, offline=True)` and multiplies.
+4. Stores the result in `income.amount`.
+
+This is identical to `create_expense_sync` in
+`src/dinary/api/controllers/expenses.py`.
+
+---
+
+## Backend Files
+
+New files:
+
+```
+src/dinary/
+├── db/
+│   ├── migrations/
+│   │   ├── 0005_income_logging.sql          ← NEW
+│   │   └── 0005_income_logging.rollback.sql ← NEW
+│   ├── sql/
+│   │   ├── list_incomes.sql                 ← NEW
+│   │   ├── insert_income.sql                ← NEW
+│   │   └── delete_income.sql                ← NEW
+│   └── income.py                            ← NEW  (DB layer)
+├── api/
+│   ├── controllers/
+│   │   └── income.py                        ← NEW  (business logic + Pydantic models)
+│   └── income.py                            ← NEW  (FastAPI router)
+├── background/
+│   └── sheet_logging/
+│       └── income_sheet_logging.py          ← NEW  (Income-tab drain)
+└── main.py                                  ← MODIFIED (register income router;
+                                                         import + include_router)
+tests/
+└── test_income.py                           ← NEW
+```
+
+Frontend:
 
 ```
 dinary/webapp/src/
@@ -42,14 +127,13 @@ dinary/webapp/src/
 │   ├── IncomeForm.vue        ← NEW
 │   ├── IncomeRow.vue         ← NEW
 │   ├── IncomeEditSheet.vue   ← NEW
-│   ├── CurrencyPicker.vue    ← REUSED as-is
-│   ├── KeyboardSaveBar.vue   ← REUSED as-is
 │   └── HeaderSegmented.vue   ← MODIFIED (add income tab)
-├── composables/useStaleCache.js  ← REUSED as-is
 ├── stores/income.js          ← NEW
 ├── views/IncomeView.vue      ← NEW
-└── App.vue                   ← MODIFIED (route to IncomeView)
+└── App.vue                   ← MODIFIED (route + offline message)
 ```
+
+---
 
 ## Screens / Views
 
@@ -57,147 +141,146 @@ The prototype shows **7 phone states** + 1 cache-flow diagram. All run inside a
 390×780 iOS frame, dark mode.
 
 ### A · Idle (cache fresh, online)
-The default render when the cache is &lt;24h old and not dirty.
 
 - **Header** (sticky, `var(--surface)`, 1px bottom border `var(--surface-2)`):
-  - Left: `Dinary v0.9` title (1.25rem, 600 weight) + queued badge if applicable.
-  - Right: `<HeaderSegmented>` with **4** segments now: `Add` (red), **`Income`
-    (green, new)**, `Review`, `LLM`. The income segment uses `--success` for
-    its active/inactive states the way Add uses `--accent`.
+  - Left: `Dinary v0.9` title + queued badge if applicable.
+  - Right: `<HeaderSegmented>` with **4** segments: `Add` (red), **`Income`
+    (green, new)**, `Review`, `LLM`. Income segment uses `--success` for its
+    active/inactive states the way Add uses `--accent`.
 - **Form** (`<IncomeForm>`):
   - Card surface (`var(--surface)`, radius 12, padding 1.25rem).
-  - **Hero row**: currency pill (left) + amount input (flex 1) + date (right),
-    gap 8px. Layout identical to `ExpenseForm.vue` `.hero-row`.
-  - Currency pill: 0.3rem 0.6rem padding, `var(--success)` background,
-    `#04140a` text, radius 8, font 0.78rem 700 in `var(--font-num)`.
-    **Note:** the expense pill uses `var(--accent)`; here we swap to
-    `var(--success)` so the screen reads positive.
-  - Amount input: 64px tall, font 2rem 500 in `var(--font-num)`, right-aligned,
-    1px bottom border (`var(--border)` resting → `var(--success)` focused —
-    again, swap from `--accent`).
-  - Date: 14px Calendar icon + native date input, 0.8rem in `--muted`.
-  - **Comment row**: full-width `<input>` with placeholder `Comment (optional)`.
-    Field surface (`var(--field)`), 1px `var(--border)`, radius 8, padding
-    0.55rem 0.75rem, 0.9rem font.
+  - **Hero row**: currency pill (left) + amount input (flex 1) + **month
+    picker** (right), gap 8px. Layout mirrors `ExpenseForm.vue` `.hero-row`.
+  - Currency pill: `var(--success)` background, `#04140a` text, 0.3rem
+    0.6rem padding, radius 8, 0.78rem 700 `var(--font-num)`.
+  - Amount input: 64px tall, 2rem 500 `var(--font-num)`, right-aligned, 1px
+    bottom border (`var(--border)` resting → `var(--success)` focused).
+  - **Month picker**: Calendar icon (14px) + `<input type="month">` native
+    input, 0.8rem `--muted`. Default = current YYYY-MM. Replaces the
+    day-level date picker from the original prototype — income is per month.
+  - No comment field — the `income` table has no comment column.
 - **Section header** "INCOMES" (0.6875rem 700, letter-spacing 0.07em,
-  `var(--success)`) + count badge (1px pill, `var(--field)` bg) + age note
-  (`updated 3h ago` in `var(--muted-2)`) + refresh icon button on the right.
-- **Month bucket**: small uppercase label on the left, per-currency totals on
-  the right in `var(--font-num)`. Sticky? **No** — just a header per group.
+  `var(--success)`) + count badge + age note + refresh icon button on right.
+- **Year bucket**: small uppercase year label left, per-currency totals right
+  in `var(--font-num)`. Not sticky — plain header per group.
 - **Income row** (`<IncomeRow>`):
-  - 4px left border in `var(--success)`, radius `0 10px 10px 0`.
-  - Two lines: top = comment (or italic "no comment" placeholder) + amount on
-    the right (`+540 EUR`, the `+` and number in `var(--success)`, the currency
-    code in `var(--muted)`).
-  - Bottom = full date `18 May, 2026` in `var(--font-num)` 0.72rem.
-  - Swipe-left reveals a green Edit panel (same gesture/animation as
-    `ExpenseRow.vue` via `useSwipeRow`).
-- **Action bar** (sticky bottom): one big green Save button. **No QR button**
-  here (incomes have no receipts).
+  - 4px left border `var(--success)`, radius `0 10px 10px 0`.
+  - Two lines: top = month name + year (e.g. `May 2026`) on the left + amount
+    on the right (`+540 EUR`, the `+` and number in `var(--success)`, the
+    currency code in `var(--muted)`) — displayed amount is
+    `income.amount` in `settings.accounting_currency`.
+  - Bottom = `var(--font-num)` 0.72rem repeating the YYYY-MM for
+    scan-readability, e.g. `2026-05`.
+  - Swipe-left reveals a green Edit panel (via `useSwipeRow`).
+- **Action bar** (sticky bottom): one big green Save button. No QR button.
 
 ### B · Amount focused + keyboard
-Same screen but the amount input has the green caret/border and the iOS
-keyboard is up. The standard `<KeyboardSaveBar>` floats above the keyboard
-(component already exists — reuse it; just pass green styling via prop or
-overrride). Action bar is hidden behind the keyboard.
+
+Same screen with green caret/border and iOS keyboard up. `<KeyboardSaveBar>`
+floats above keyboard (reuse as-is; pass green styling via prop). Action bar
+hidden behind keyboard.
 
 ### C · Currency picker open
-Tapping the green currency pill opens `<CurrencyPicker>` below it in a popover
-(absolute, top `calc(100% + 6px)`, `var(--surface)` bg, 1px
-`var(--border-strong)`, radius 10, padding 0.6rem, min-width 260px, the same
-shadow as `ExpenseForm.vue`'s `.currency-picker-wrap`). Selected code is
-highlighted in `var(--success)` (the picker component already handles this —
-it uses `--accent`; either parameterize it or rely on it staying red and just
-visually reading as "selected").
+
+Tapping the currency pill opens `<CurrencyPicker>` in a popover below it
+(same dimensions and shadow as `ExpenseForm.vue`'s `.currency-picker-wrap`).
 
 ### D · Row swiped (reveal Edit)
-One row is offset 84px left, exposing the green `Edit` panel underneath.
-Identical mechanism to `ExpenseRow.vue` — extract that swipe logic via
-`useSwipeRow` composable, which already exists.
+
+One row offset 84px left, exposing the green `Edit` panel. Identical
+mechanism to `ExpenseRow.vue` via `useSwipeRow`.
 
 ### E · Edit sheet
+
 Bottom-sheet modal, same chrome as `<ExpenseEditSheet>`:
-- Scrim (`rgba(0,0,0,0.55)`) + sheet sliding up from the bottom.
+- Scrim + sheet sliding up from bottom.
 - 36×4 drag handle, eyebrow `EDIT INCOME`, X button top-right.
-- Hero row reused (currency pill + amount + date).
-- Comment field.
+- Hero row: currency pill + amount input + month display (read-only — year
+  and month cannot change via edit; only amount and currency can).
+- No comment field.
 - Footer: outline Delete button (red text `#fca5a5`) + filled Save button
   (`var(--success)`).
-- No category / tags / event blocks (incomes don't have them).
 
 ### F · Empty (first run)
-Form on top, then an empty-state card: 44×44 green circle with the trend-up
-icon, "No incomes yet" heading (0.95rem 600 `--text`), one-line subtitle
+
+Form on top, empty-state card: 44×44 green circle with `TrendingUp` icon,
+"No incomes yet" heading (0.95rem 600 `--text`), one-line subtitle
 (0.82rem `--muted`, max-width 240px). Dashed border (`var(--border)`),
-`var(--field)` background, 3rem vertical padding.
+`var(--field)` bg, 3rem vertical padding.
 
 ### G · Offline (read-only)
-- The standard offline banner from `App.vue` shows
-  `Offline — incomes can't be added or edited`.
-- Above the form, an amber callout (`rgba(245,158,11,0.06)` bg + 0.25 alpha
-  border): wifi-off icon + "Offline — showing cached incomes from
-  **22 May, 09:14**. New incomes can't be added until you're back online."
-- The form card is rendered at 0.55 opacity with `pointerEvents: none`.
-- The Save button switches to `var(--surface-2)` bg + `var(--muted)` text,
+
+- The standard offline banner in `App.vue` shows
+  `"Offline — incomes can't be added or edited"` when `tab === 'income'`.
+  Add this case to the existing `offlineMessage` computed in `App.vue`.
+- The form card renders at 0.55 opacity with `pointerEvents: none`.
+- Save button switches to `var(--surface-2)` bg + `var(--muted)` text,
   `cursor: not-allowed`, no shadow.
 - Row swipe still works visually but the Edit panel renders in
-  `var(--surface-2)` instead of `--success`, and tapping it shows a toast
-  `Not available offline` (mirror `ReviewView.vue`).
+  `var(--surface-2)` instead of `--success`; tapping it shows a toast
+  `Not available offline`.
+
+---
 
 ## Interactions & Behavior
 
 ### Form
-- **Validate on save**: amount must parse as `Number > 0`. Show toast
+
+- **Validate on save**: amount must parse as `Number > 0`. Toast
   `Enter a valid amount` on failure (existing toast store).
-- **Default currency**: `useCurrencyStore().preferredCode` (whatever the user
-  last picked across the app — same source as expenses).
-- **Default date**: today's ISO date (`new Date().toISOString().slice(0,10)`).
+- **Default currency**: `useCurrencyStore().preferredCode`.
+- **Default month**: current YYYY-MM (`new Date().toISOString().slice(0,7)`).
 - **Submit flow**:
-  1. POST to `/api/incomes` with `{ amount, currency, comment, date }`.
-  2. On success: prepend the returned row into the store's cached array,
-     `currency.setLastUsed(code)`, reset the form (keep date = today),
-     `markDirty()` then `stampFresh()` on the next list refetch.
-  3. On failure: toast the error message, keep form contents.
-- **Auto-flush queue**: NOT applicable — incomes are not queued offline.
+  1. Parse `year` and `month` (int) from the month picker value.
+  2. `POST /api/incomes` with `{ year, month, amount_original, currency_original }`.
+  3. Server converts currency and inserts. Returns `409` if the month already
+     has an entry — show toast `Income for this month already exists`.
+  4. On success: `currency.setLastUsed(code)`, reset form (keep month =
+     current), call `incomeStore.reset()` + `incomeStore.loadNextPage()` to
+     refresh the list.
+  5. On failure (non-409): toast the error, keep form contents.
 
 ### List
-- **Initial load**:
-  - Hydrate from `localStorage` cache synchronously (same pattern as
-    `stores/review.js` — read inside the `defineStore` factory).
-  - If `isStale()` (dirty OR &gt;24h old), call `loadNextPage()`.
+
+- **Initial load**: hydrate from `localStorage` synchronously. If `isStale()`
+  (dirty OR >24h old), call `loadNextPage()`.
 - **Pagination**: 20 per page, infinite scroll via `IntersectionObserver`
-  (copy the pattern in `ReviewView.vue` exactly — sentinel `<div>` at the
-  bottom, `rootMargin: '120px'`, only fires if `!loading && hasMore && isOnline`).
-- **Sort**: server returns descending by date; client preserves order.
-- **Month grouping**: derived on the fly via `computed` — do not store grouped
-  data, store the flat array.
+  (copy pattern from `ReviewView.vue` — sentinel `<div>` at bottom,
+  `rootMargin: '120px'`, only fires if `!loading && hasMore && isOnline`).
+- **Sort**: server returns descending by `year DESC, month DESC`.
+- **Year grouping**: derived on the fly via `computed` from the flat items
+  array — do not store grouped data.
 - **Refresh icon**: `reset()` + `loadNextPage()`. Disabled if offline or
-  already loading.
+  loading.
 
 ### Swipe / edit
+
 - Reuse `useSwipeRow({ panelWidth: 84, commitOver: 60, onPrimary: () => emit('tap') })`.
 - Tap or commit-swipe → open `<IncomeEditSheet :open :income>`.
-- On save → PATCH `/api/incomes/:id`, patch the cached row in place, refresh
-  the affected month's total (computed re-runs).
-- On delete → confirm dialog, DELETE, splice from cached array.
-- Offline: tapping the row or Edit button → toast `Not available offline`.
+- On save → `PATCH /api/incomes/{year}/{month}` (only
+  `amount_original`/`currency_original`), then `reset()` + `loadNextPage()`.
+- On delete → confirm dialog, `DELETE /api/incomes/{year}/{month}`, then
+  `reset()` + `loadNextPage()`.
+- Offline: tapping row or Edit → toast `Not available offline`.
 
 ### Header tab
-- Add a fourth segment in `HeaderSegmented.vue` between `Add` and `Review`:
-  ```
-  <button class="seg-btn seg-income" :class="{ active: tab === 'income' }"
-          @click="$emit('update:tab', 'income')">
-    <TrendingUp :size="20" />
-  </button>
-  ```
-- New CSS: `.seg-income` mirrors `.seg-add` dimensions (50×38) but uses
-  `--success` instead of `--accent` for bg/shadow/active.
-- Route in `App.vue`: `<IncomeView v-else-if="tab === 'income'" />`.
+
+```html
+<button class="seg-btn seg-income" :class="{ active: tab === 'income' }"
+        @click="$emit('update:tab', 'income')">
+  <TrendingUp :size="20" />
+</button>
+```
+
+New CSS: `.seg-income` mirrors `.seg-add` dimensions (50×38) but uses
+`--success` for bg/shadow/active. Route in `App.vue`:
+`<IncomeView v-else-if="tab === 'income'" />`.
+
+---
 
 ## State Management
 
-New Pinia store: `stores/income.js`. Lift it almost verbatim from
-`stores/review.js` (the expenses half), dropping rules/doubtful concepts.
+New Pinia store: `stores/income.js`. Modeled on `stores/review.js`.
 
 ```js
 // stores/income.js
@@ -207,36 +290,40 @@ import { listIncomes, createIncome, updateIncome, deleteIncome } from "../api/in
 import { useStaleCache } from "../composables/useStaleCache.js";
 import { useToastStore } from "./toast.js";
 
-const CACHE_KEY    = "dinary:income:v1";
-const DIRTY_KEY    = "dinary:income:dirty";
-const FETCHED_KEY  = "dinary:income:fetchedAt";
+const CACHE_KEY   = "dinary:income:v1";
+const DIRTY_KEY   = "dinary:income:dirty";
+const FETCHED_KEY = "dinary:income:fetchedAt";
 
 export const useIncomeStore = defineStore("income", () => {
-  const { dirtyFlag, lastFetchedAt, markDirty, stampFresh, bumpFetchTime,
+  const { dirtyFlag, lastFetchedAt, markDirty, stampFresh,
           isStale, readCache, writeCache, clearCache } = useStaleCache({
     dirtyKey: DIRTY_KEY, fetchedKey: FETCHED_KEY, dataKey: CACHE_KEY,
   });
 
-  const cached = readCache() || {};
-  const items    = ref(cached.items   ?? []);
-  const hasMore  = ref(cached.hasMore ?? true);
-  const page     = ref(cached.page    ?? 0);
-  const loading  = ref(false);
+  const cached    = readCache() || {};
+  const items     = ref(cached.items   ?? []);
+  const hasMore   = ref(cached.hasMore ?? true);
+  const page      = ref(cached.page    ?? 0);
+  const loading   = ref(false);
   const fromCache = ref(Array.isArray(cached.items) && cached.items.length > 0);
   const openRowId = ref(null);
 
-  function _persist() { writeCache({ items: items.value, hasMore: hasMore.value, page: page.value }); }
+  function _persist() {
+    writeCache({ items: items.value, hasMore: hasMore.value, page: page.value });
+  }
 
   async function loadIfNeeded() {
     if (isStale()) { reset(); await loadNextPage(); }
   }
 
-  async function loadNextPage() { /* paginate, dedupe by id, stampFresh on success */ }
-  async function add(payload)    { /* POST, prepend to items, markDirty, _persist */ }
-  async function patch(id, payload) { /* PATCH, replace in place, _persist */ }
-  async function remove(id)      { /* DELETE, splice, _persist */ }
-  function setOpenRow(id)        { openRowId.value = id; }
-  function reset()               { /* zero out + clearCache */ }
+  async function loadNextPage() { /* paginate, dedupe by year+month, stampFresh on success */ }
+
+  // All writes reset and reload the list after server confirms.
+  async function add(payload)        { /* POST, on 409 toast "already exists"; on success reset()+loadNextPage() */ }
+  async function patch(year, month, payload) { /* PATCH /{year}/{month}, on success reset()+loadNextPage() */ }
+  async function remove(year, month) { /* DELETE /{year}/{month}, on success reset()+loadNextPage() */ }
+  function setOpenRow(key)           { openRowId.value = key; }  // key = `${year}-${month}`
+  function reset()                   { /* zero items/page/hasMore, clearCache */ }
 
   return { items, hasMore, page, loading, fromCache, openRowId,
            dirtyFlag, lastFetchedAt,
@@ -244,129 +331,201 @@ export const useIncomeStore = defineStore("income", () => {
 });
 ```
 
-### Cache rules (this is the load-bearing logic)
-
-The list is the only thing fetched. Cache it aggressively:
+### Cache rules
 
 | Trigger | Action |
 |---|---|
-| View opens, cache empty or stale (`>24h` old) or dirty | Fetch page 1 |
-| View opens, cache fresh and not dirty | **Render from cache, no fetch** |
-| User adds an income | Optimistically prepend, `markDirty()`, POST, on success `stampFresh()` |
-| User edits an income | Patch the cached row in place, `markDirty()`, PATCH, `stampFresh()` |
-| User deletes an income | Splice from cache, `markDirty()`, DELETE, `stampFresh()` |
-| User pulls refresh / taps the refresh icon | `reset()` + `loadNextPage()` (manual force) |
-| Offline | Render cache. Disable form & edit. **Do not** queue. |
+| View opens, cache empty / stale (>24h) / dirty | Fetch page 1 |
+| View opens, cache fresh and not dirty | Render from cache, no fetch |
+| User creates income (POST 2xx) | `reset()` + `loadNextPage()` |
+| User edits income (PATCH 2xx) | `reset()` + `loadNextPage()` |
+| User deletes income (DELETE 2xx) | `reset()` + `loadNextPage()` |
+| User taps refresh icon | `reset()` + `loadNextPage()` |
+| Offline | Render cache; disable form and edit; do not queue |
 
-`useStaleCache` already implements `isStale()` = `dirtyFlag || !lastFetchedAt || age > 24h`. Reuse it.
-
-`stampFresh()` clears dirty AND bumps `lastFetchedAt`; call it on every
-successful fetch / write to the server. `bumpFetchTime()` updates the
-timestamp without clearing dirty (use it when you fetched a later page and the
-data is still potentially stale).
-
-## Design Tokens
-
-All tokens come from `dinary/webapp/src/assets/base.css`. Do not invent new
-ones. The income view uses:
-
-| Token | Value | Used for |
-|---|---|---|
-| `--bg` | `#1a1a2e` | App background |
-| `--surface` | `#16213e` | Header, form card, edit sheet |
-| `--surface-2` | `#0f3460` | Disabled buttons, picker chips |
-| `--success` | `#22c55e` | All "income" accents (pill, button, row border, amount, segment) |
-| `--text` | `#eeeeee` | Primary text |
-| `--muted` | `#94a3b8` | Secondary text, currency code |
-| `--muted-2` | `#64748b` | Tertiary (italic placeholder, cache age) |
-| `--warning` | `#f59e0b` | Offline banner accent |
-| `--field` | `rgba(255,255,255,0.04)` | Comment field, count badge |
-| `--border` | `rgba(255,255,255,0.08)` | All hairlines |
-| `--border-strong` | `rgba(255,255,255,0.12)` | Sheet drag handle, popover border |
-| `--font-num` | `"JetBrains Mono", ui-monospace, …` | Amounts, currency code, dates |
-
-Income-specific dark-text-on-green color: `#04140a` (used for text on
-`--success` buttons/pills, to mirror how the expense pill uses white on
-`--accent`).
-
-Sizes match existing components:
-- Card radius: `12`
-- Row radius: `10` (with `0 10px 10px 0` when there's a left accent)
-- Button radius: `8` (small), `10`–`12` (large)
-- Section label: `0.6875rem 700` with `letter-spacing: 0.07em` uppercase
-- Hero amount: `2rem 500` in `--font-num`
-- Row primary text: `0.9375rem 600`
-- Row meta: `0.72rem` in `--font-num`
+---
 
 ## API
 
-New endpoints (see `dinary/webapp/src/api/income.js`):
+### `Income` shape
+
+```ts
+{
+  year:   number,   // e.g. 2026
+  month:  number,   // 1–12
+  amount: number,   // always in accounting_currency (EUR)
+}
+```
+
+No `id` — the natural key `(year, month)` is used in all path parameters.
+No `currency_original`, `amount_original`, or `comment` — the table does not
+store them.
+
+### Endpoints
 
 ```
 GET    /api/incomes?page=1&page_size=20
        → { items: Income[], has_more: bool }
+       Ordered year DESC, month DESC.
+       No `total` field.
 
 POST   /api/incomes
-       body: { amount: number, currency: string, comment: string|null, date: "YYYY-MM-DD" }
-       → Income
+       body: { year: int, month: int,
+               amount_original: number, currency_original: string }
+       → Income (201)
+       409 if (year, month) already exists.
+       Server converts currency to accounting_currency via NBS rate.
+       Enqueues income_logging_jobs row on success.
 
-PATCH  /api/incomes/:id
-       body: partial of the POST body
+PATCH  /api/incomes/{year}/{month}
+       body: { amount_original?: number, currency_original?: string }
        → Income
+       404 if row not found.
+       Recomputes amount when amount_original or currency_original changes.
+       Replaces income_logging_jobs row (upsert) on success.
 
-DELETE /api/incomes/:id
+DELETE /api/incomes/{year}/{month}
        → 204
+       404 if row not found.
+       income_logging_jobs row deleted via CASCADE.
 ```
 
-`Income` shape:
-```ts
-{ id: number, amount: number, currency: string, comment: string|null, date: "YYYY-MM-DD", created_at: ISO }
+### `main.py` change
+
+```python
+from dinary.api import income          # add to existing import block
+# …
+app.include_router(income.router)      # add after existing include_router calls
 ```
 
-Wire through the existing `api/_request.js` helper so auth + base URL + error
-handling come for free.
+### Remove `total` from `GET /api/expenses`
+
+The `list_expenses_sync` function currently returns `"total": total` in its
+dict. Remove that key. Update `ReviewView.vue` / `review.js` if they consume
+it (grep for `\.total` and `data.total`).
+
+---
+
+## Google Sheets — "Income" tab
+
+When `settings.sheet_logging_enabled` is true, each successful income write
+enqueues a row in `income_logging_jobs`. The existing background drain task in
+`background/sheet_logging/task.py` calls `drain_income_pending()` from
+`income_sheet_logging.py` on each sweep (add the call after the existing
+`drain_pending()` call).
+
+### "Income" worksheet column layout
+
+Rows are written to a worksheet named **"Income"** in the same logging
+spreadsheet (created automatically if absent). One sheet row per calendar
+month per year.
+
+| Col | Content | Notes |
+|-----|---------|-------|
+| A | First day of the income's month (`YYYY-MM-DD`, `USER_ENTERED`) | Underlying date serial retains the year; same as expense col A |
+| B | App-currency amount (RSD) | If `accounting_currency == app_currency` use `income.amount` verbatim; otherwise convert at NBS rate for the first day of that month |
+| C | EUR formula `=IF(E{r}="","",B{r}/E{r})` | Sheet-side approximation |
+| D | Manual EUR↔RSD rate (set-if-missing) | Same as expense col H |
+| E | Month number 1–12 (literal) | Fast month scan |
+| F | Idempotency marker — `"{year}-{month}"` string | Before each write check col F; if already equal skip the write |
+
+### Drain logic (`income_sheet_logging.py`)
+
+1. Find the worksheet named `"Income"`; create it (as a new tab) if absent.
+2. For each pending `income_logging_jobs` row, load the matching `income` row.
+3. Identify the target sheet row: search col A for the first-of-month date
+   (year-aware, using the same `fetch_row_years` helper the expense drain
+   uses).
+4. If found: update cols B, D (set-if-missing), F in one batch write.
+5. If not found: append a new row.
+6. Idempotency check: if col F already equals `"{year}-{month}"` and col B
+   already holds the same amount, mark job done without writing.
+7. Errors follow the same circuit-breaker pattern as `drain_pending`
+   (`_is_transient`, exponential back-off, poison on permanent error).
+
+---
+
+## Backend Tests (`tests/test_income.py`)
+
+Required for every new function. Minimum coverage:
+
+- `insert_income`: happy path, duplicate (year, month) raises expected error.
+- `update_income`: amount recompute, 404 on unknown row.
+- `delete_income`: happy path, 404 on unknown row.
+- `list_incomes`: pagination, `has_more` boundary, descending sort.
+- API via `TestClient`: `POST /api/incomes` (201 + 409), `PATCH`, `DELETE`,
+  `GET`.
+- Currency conversion: passthrough when currency == accounting_currency;
+  NBS-rate path mocked.
+- Income-sheet drain: append-new-row path, update-existing-row path,
+  idempotency skip.
+
+---
+
+## Design Tokens
+
+All from `dinary/webapp/src/assets/base.css`. Income view uses:
+
+| Token | Used for |
+|---|---|
+| `--success` `#22c55e` | All income accents (pill, button, row border, amount, segment) |
+| `#04140a` | Text on `--success` buttons/pills |
+| `--bg` | App background |
+| `--surface` | Header, form card, edit sheet |
+| `--surface-2` | Disabled buttons, offline edit panel |
+| `--text` | Primary text |
+| `--muted` | Secondary text, currency code |
+| `--muted-2` | Italic placeholder, cache age |
+| `--warning` `#f59e0b` | Offline banner accent |
+| `--field` | Count badge |
+| `--border` | All hairlines |
+| `--border-strong` | Sheet drag handle, popover border |
+| `--font-num` | Amounts, currency code, month/year |
+
+---
 
 ## Assets
 
-No new assets. Icons used (all already in `lucide-vue-next`, which is
-already a dep):
+No new assets. Icons (all in `lucide-vue-next`):
 
-- `TrendingUp` — header tab + empty state
-- `Save` — action bar + edit sheet
-- `Calendar` — date field
-- `Pencil` — swipe-edit panel
-- `Trash2` — edit sheet delete button
-- `X` — edit sheet close
-- `RefreshCw` — list refresh
-- `WifiOff` — offline banner
+`TrendingUp`, `Save`, `Calendar`, `Pencil`, `Trash2`, `X`, `RefreshCw`, `WifiOff`
 
-## Files in this bundle
-
-| File | What it is |
-|---|---|
-| `Add Income.html` | Self-contained prototype — open in any browser. |
-| `README.md` | This document — the spec. |
-
-The Vue templates you're cloning are already in the repo:
-`dinary/webapp/src/components/ExpenseForm.vue`, `ExpenseRow.vue`, and
-`ExpenseEditSheet.vue`.
+---
 
 ## Checklist for the implementer
 
-- [ ] Add `IncomeView.vue` with form + list + observer-driven pagination
-- [ ] Build `IncomeForm.vue` cloning `ExpenseForm.vue`'s hero row, dropping
-      category / event / tag blocks, swapping `--accent` for `--success`
-- [ ] Build `IncomeRow.vue` cloning `ExpenseRow.vue`'s swipe mechanics with
-      a green left border + green amount + simplified body
-- [ ] Build `IncomeEditSheet.vue` cloning `ExpenseEditSheet.vue` minus the
-      category / tags / event / scope / rule blocks; add a Delete button
-- [ ] Add `stores/income.js` modeled on `stores/review.js` (cache + 24h TTL)
-- [ ] Add `api/income.js` with the 4 endpoints above
-- [ ] Add the `income` tab to `HeaderSegmented.vue` (`--success` variant of
-      `.seg-add`) and route it in `App.vue`
-- [ ] Wire the offline banner copy:
-      `tab === 'income' ? "Offline — incomes can't be added or edited" : …`
-- [ ] Disable the form + edit sheet + swipe-edit panel when `!isOnline`,
-      mirroring `ReviewView.vue`'s pattern
-- [ ] Verify cache rules: open the view twice in a row offline → no network
-      call; after `>24h` or after add/edit → fetch fires once
+- [ ] Migration `0005_income_logging.sql` + rollback: add `income_logging_jobs`
+      table only (income table unchanged)
+- [ ] `src/dinary/db/income.py`: `insert_income`, `update_income`,
+      `delete_income`, `list_incomes`, `get_income_by_year_month`
+- [ ] `src/dinary/api/controllers/income.py`: Pydantic models +
+      controller functions with currency conversion (same pattern as
+      `create_expense_sync`) + `income_logging_jobs` enqueueing
+- [ ] `src/dinary/api/income.py`: FastAPI router with the 4 endpoints
+- [ ] `src/dinary/main.py`: import and `include_router(income.router)`
+- [ ] `src/dinary/background/sheet_logging/income_sheet_logging.py`:
+      `drain_income_pending()` writing to the "Income" worksheet
+- [ ] Wire `drain_income_pending()` into `sheet_logging/task.py`'s sweep loop
+- [ ] `tests/test_income.py`: all backend tests (see section above)
+- [ ] Remove `total` from `list_expenses_sync` return dict; grep for
+      consumers in frontend and remove
+- [ ] `dinary/webapp/src/api/income.js`: `listIncomes`, `createIncome`,
+      `updateIncome`, `deleteIncome` via existing `_request.js`
+- [ ] `dinary/webapp/src/stores/income.js`: Pinia store with 24h cache, reset
+      after every write
+- [ ] `dinary/webapp/src/components/IncomeForm.vue`: currency pill + amount +
+      month picker (`type="month"`); no comment field
+- [ ] `dinary/webapp/src/components/IncomeRow.vue`: green left border, swipe,
+      two-line layout (month name + year | accounting-currency amount)
+- [ ] `dinary/webapp/src/components/IncomeEditSheet.vue`: currency pill +
+      amount + read-only month display, Delete + Save footer; no comment field
+- [ ] `dinary/webapp/src/views/IncomeView.vue`: form + list + observer
+      pagination
+- [ ] `HeaderSegmented.vue`: 4th `income` segment (`--success` variant of
+      `.seg-add`)
+- [ ] `App.vue`: add `income` route + add `tab === 'income'` case to
+      `offlineMessage` → `"Offline — incomes can't be added or edited"`
+- [ ] Disable form + swipe-edit when `!isOnline`
+- [ ] Verify: open view twice offline → no network call; after write → list
+      refetches; after >24h → single fetch on open; POST for existing month →
+      409 toast

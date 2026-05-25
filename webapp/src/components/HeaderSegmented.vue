@@ -1,5 +1,5 @@
 <script setup>
-import { Plus, ListChecks, Cpu } from "lucide-vue-next";
+import { Plus, ListChecks, Cpu, TrendingUp } from "lucide-vue-next";
 
 defineProps({
   tab: { type: String, default: "add" },
@@ -21,6 +21,19 @@ defineEmits(["update:tab"]);
       @click="$emit('update:tab', 'add')"
     >
       <Plus :size="22" aria-hidden="true" />
+    </button>
+
+    <button
+      type="button"
+      class="seg-btn seg-income"
+      :class="{ active: tab === 'income' }"
+      role="tab"
+      :aria-selected="tab === 'income'"
+      aria-label="Income"
+      data-testid="seg-income"
+      @click="$emit('update:tab', 'income')"
+    >
+      <TrendingUp :size="20" aria-hidden="true" />
     </button>
 
     <button
@@ -97,6 +110,19 @@ defineEmits(["update:tab"]);
   background: var(--accent);
   color: #fff;
   box-shadow: 0 4px 12px rgba(91, 141, 239, 0.4);
+}
+
+.seg-income {
+  width: 50px;
+  height: 38px;
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--success);
+}
+
+.seg-income.active {
+  background: var(--success);
+  color: #04140a;
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
 }
 
 .seg-review,

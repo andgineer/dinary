@@ -269,7 +269,6 @@ def list_expenses_sync(
     return {
         "items": items,
         "has_more": offset + page_size < total,
-        "total": total,
     }
 
 

@@ -3,6 +3,7 @@ import { Save } from "lucide-vue-next";
 
 const props = defineProps({
   bottom: { type: Number, default: 0 },
+  accentColor: { type: String, default: null },
 });
 
 const emit = defineEmits(["save"]);
@@ -10,7 +11,12 @@ const emit = defineEmits(["save"]);
 
 <template>
   <div class="kb-save-bar" :style="{ bottom: props.bottom + 'px' }">
-    <button type="button" class="kb-save-btn" @click="emit('save')">
+    <button
+      type="button"
+      class="kb-save-btn"
+      :style="props.accentColor ? { background: props.accentColor, color: '#04140a' } : {}"
+      @click="emit('save')"
+    >
       <Save :size="18" aria-hidden="true" />
       Save
     </button>

@@ -1,5 +1,6 @@
 """DB write path for receipt classification results."""
 
+import dataclasses
 import sqlite3
 import uuid
 from datetime import UTC, date, datetime
@@ -30,6 +31,19 @@ class RateMissingError(Exception):
     """Exchange rate unavailable; release job for retry."""
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ReceiptContext:
+    receipt_dt: datetime
+    accounting_rate: Decimal
+    auto_event_id: int | None
+    event_auto_tag_ids: list[int]
+    rule_hits: dict[int, RuleHit]
+    llm_results: dict[int, ClassificationResult]
+    store_id: int | None
+    chain_id: int | None
+    receipt_id: int
+
+
 def _find_auto_attach_event(conn: sqlite3.Connection, receipt_dt: str) -> int | None:
     """Return id of the active auto-attach event covering receipt_dt, or None."""
     row = conn.execute(
@@ -45,28 +59,20 @@ def _find_auto_attach_event(conn: sqlite3.Connection, receipt_dt: str) -> int | 
     return int(row[0]) if row else None
 
 
-def _write_single_item(  # noqa: PLR0913
+def _write_single_item(
     conn: sqlite3.Connection,
     item: ReceiptItemRow,
     cat_id: int | None,
     conf: int,
     norm: str,
-    receipt_dt: datetime,
-    accounting_rate: Decimal,
-    auto_event_id: int | None,
-    event_auto_tag_ids: list[int],
-    rule_hits: dict[int, RuleHit],
-    llm_results: dict[int, ClassificationResult],
-    store_id: int | None,
-    chain_id: int | None,
-    receipt_id: int,
+    ctx: _ReceiptContext,
 ) -> None:
     if cat_id is None or conf <= 1:
         update_receipt_item(conn, item.id, norm, None)
         return
 
-    hit = rule_hits.get(item.id)
-    llm_r = llm_results.get(item.id)
+    hit = ctx.rule_hits.get(item.id)
+    llm_r = ctx.llm_results.get(item.id)
 
     if hit is not None:
         rule_id: int | None = hit.rule_id
@@ -77,7 +83,7 @@ def _write_single_item(  # noqa: PLR0913
         if norm and conf >= 2:
             rule_id = create_or_update_rule(
                 conn,
-                chain_id,
+                ctx.chain_id,
                 norm,
                 RuleSpec(
                     cat_id,
@@ -97,17 +103,17 @@ def _write_single_item(  # noqa: PLR0913
         """,
         [
             str(uuid.uuid4()),
-            receipt_dt,
+            ctx.receipt_dt,
             float(
-                (Decimal(str(item.total_price)) * accounting_rate).quantize(Decimal("0.01")),
+                (Decimal(str(item.total_price)) * ctx.accounting_rate).quantize(Decimal("0.01")),
             ),
             item.total_price,
             RECEIPT_CURRENCY,
             cat_id,
             conf,
-            receipt_id,
-            store_id,
-            auto_event_id,
+            ctx.receipt_id,
+            ctx.store_id,
+            ctx.auto_event_id,
             rule_id,
         ],
     )
@@ -116,7 +122,7 @@ def _write_single_item(  # noqa: PLR0913
     update_receipt_item(conn, item.id, norm, expense_id)
 
     seen: set[int] = set()
-    for tag_id in [*tag_ids_for_item, *event_auto_tag_ids]:
+    for tag_id in [*tag_ids_for_item, *ctx.event_auto_tag_ids]:
         if tag_id not in seen:
             seen.add(tag_id)
             conn.execute(
@@ -170,6 +176,17 @@ def persist_classification_results(
                 ) from exc
         else:
             accounting_rate = Decimal(1)
+        ctx = _ReceiptContext(
+            receipt_dt=receipt_dt_obj,
+            accounting_rate=accounting_rate,
+            auto_event_id=auto_event_id,
+            event_auto_tag_ids=event_auto_tag_ids,
+            rule_hits=rule_hits,
+            llm_results=llm_results,
+            store_id=store_id,
+            chain_id=chain_id,
+            receipt_id=job.receipt_id,
+        )
         conn.execute("BEGIN IMMEDIATE")
         try:
             if conn.execute(
@@ -183,22 +200,7 @@ def persist_classification_results(
             for item in items:
                 cat_id, conf = classifications.get(item.id, (None, 1))
                 norm = (norms or {}).get(item.id) or normalize_item_name(item.name_raw)
-                _write_single_item(
-                    conn,
-                    item,
-                    cat_id,
-                    conf,
-                    norm,
-                    receipt_dt_obj,
-                    accounting_rate,
-                    auto_event_id,
-                    event_auto_tag_ids,
-                    rule_hits,
-                    llm_results,
-                    store_id,
-                    chain_id,
-                    job.receipt_id,
-                )
+                _write_single_item(conn, item, cat_id, conf, norm, ctx)
 
             trim_llm_call_log(conn)
             complete_job(conn, job.receipt_id)

@@ -10,8 +10,15 @@ describe("HeaderSegmented", () => {
   it("marks the add button active when tab=add", () => {
     const w = mountSeg("add");
     expect(w.find('[data-testid="seg-add"]').classes()).toContain("active");
+    expect(w.find('[data-testid="seg-income"]').classes()).not.toContain("active");
     expect(w.find('[data-testid="seg-review"]').classes()).not.toContain("active");
     expect(w.find('[data-testid="seg-llm"]').classes()).not.toContain("active");
+  });
+
+  it("marks the income button active when tab=income", () => {
+    const w = mountSeg("income");
+    expect(w.find('[data-testid="seg-income"]').classes()).toContain("active");
+    expect(w.find('[data-testid="seg-add"]').classes()).not.toContain("active");
   });
 
   it("marks the review button active when tab=review", () => {
@@ -53,5 +60,11 @@ describe("HeaderSegmented", () => {
     const w = mountSeg("review");
     await w.find('[data-testid="seg-add"]').trigger("click");
     expect(w.emitted("update:tab")[0][0]).toBe("add");
+  });
+
+  it("emits update:tab with 'income' when the income button is clicked", async () => {
+    const w = mountSeg("add");
+    await w.find('[data-testid="seg-income"]').trigger("click");
+    expect(w.emitted("update:tab")[0][0]).toBe("income");
   });
 });

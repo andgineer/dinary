@@ -5,6 +5,7 @@ import contextlib
 import logging
 
 from dinary.background.sheet_logging import sheet_logging
+from dinary.background.sheet_logging.income_sheet_logging import drain_income_pending
 from dinary.config import settings
 from dinary.sheets import sheet_mapping
 
@@ -84,6 +85,7 @@ async def sheet_logging_task() -> None:
             first = False
             try:
                 summary = await asyncio.to_thread(sheet_logging.drain_pending)
+                income_summary = await asyncio.to_thread(drain_income_pending)
                 attempted = summary.get("attempted", 0)
                 cap_reached = summary.get("cap_reached", False)
                 poisoned = summary.get("poisoned", 0)
@@ -92,6 +94,10 @@ async def sheet_logging_task() -> None:
                     logger.info("drain sweep: %s", summary)
                 else:
                     logger.debug("drain sweep: %s", summary)
+                if income_summary.get("attempted", 0) > 0 or income_summary.get("poisoned", 0) > 0:
+                    logger.info("income drain sweep: %s", income_summary)
+                else:
+                    logger.debug("income drain sweep: %s", income_summary)
             except asyncio.CancelledError:
                 raise
             except Exception:

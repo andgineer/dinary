@@ -3,6 +3,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import QueueModal from "./components/QueueModal.vue";
 import HeaderSegmented from "./components/HeaderSegmented.vue";
 import AddView from "./views/AddView.vue";
+import IncomeView from "./views/IncomeView.vue";
 import ReviewView from "./views/ReviewView.vue";
 import LLMView from "./views/LLMView.vue";
 import { useQueueStore } from "./stores/queue.js";
@@ -24,13 +25,13 @@ const toast = useToastStore();
 const reviewStore = useReviewStore();
 
 const { isOnline } = useOnline();
-const tab = ref("add"); // 'add' | 'review' | 'llm'
+const tab = ref("add"); // 'add' | 'income' | 'review' | 'llm'
 
-const offlineMessage = computed(() =>
-  tab.value === "add"
-    ? "Offline — expenses will be queued"
-    : "Offline — changes not available"
-);
+const offlineMessage = computed(() => {
+  if (tab.value === "add") return "Offline — expenses will be queued";
+  if (tab.value === "income") return "Offline — incomes can't be added or edited";
+  return "Offline — changes not available";
+});
 const queueModalOpen = ref(false);
 
 const queueCount = computed(() => queue.items.length + receiptQueue.items.length);
@@ -110,6 +111,7 @@ onBeforeUnmount(() => {
 
   <main class="app-main">
     <AddView v-if="tab === 'add'" />
+    <IncomeView v-else-if="tab === 'income'" />
     <ReviewView v-else-if="tab === 'review'" />
     <LLMView v-else-if="tab === 'llm'" />
   </main>
