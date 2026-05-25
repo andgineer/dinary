@@ -10,6 +10,6 @@ export default defineConfig({
   test: {
     environment: "happy-dom",
     setupFiles: ["allure-vitest/setup", "./tests/setup.js"],
-    reporters: ["verbose", new AllureReporter({ resultsDir: "allure-results" })],
+    reporters: ["verbose", new AllureReporter({ resultsDir: "../allure-results" })],
   },
 });
