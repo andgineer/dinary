@@ -4,8 +4,9 @@ import { useCatalogStore } from "../src/stores/catalog.js";
 import * as catalogApi from "../src/api/catalog.js";
 
 beforeEach(async () => {
-  await allure.epic("Stores");
-  await allure.feature("Catalog store");
+  await allure.epic("Catalog");
+  await allure.feature("Frontend");
+  await allure.story("Catalog store");
 });
 
 const SAMPLE = {

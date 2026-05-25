@@ -24,8 +24,8 @@ def _mock_httpx_get(json_body):
     return resp
 
 
-@allure.epic("Services")
-@allure.feature("QR Parser")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
 class TestQrParser:
     def test_parse_receipt(self):
         with patch(

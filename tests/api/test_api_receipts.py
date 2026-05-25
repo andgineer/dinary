@@ -7,8 +7,8 @@ from dinary.db import storage
 from _api_helpers import db  # noqa: F401 (autouse fixture)
 
 
-@allure.epic("API")
-@allure.feature("Receipts ingestion")
+@allure.epic("Receipts")
+@allure.feature("API")
 class TestPostReceipt:
     def test_create_receipt_ok(self, client, db):  # noqa: ARG002
         resp = client.post(

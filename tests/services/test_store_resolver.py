@@ -42,8 +42,8 @@ def _broker() -> LLMBroker:
     return LLMBroker(NullStorage())
 
 
-@allure.epic("Services")
-@allure.feature("Store Resolver")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
 class TestResolveStore:
     def test_pib_cache_hit_no_llm(self, conn):
         conn.execute("INSERT INTO shop_chains (name) VALUES ('Lidl')")

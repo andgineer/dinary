@@ -47,8 +47,8 @@ def _extract_webapp_urls() -> set[str]:
     return {u.strip("'\"`") for u in urls}
 
 
-@allure.epic("Contract")
-@allure.feature("Webapp ↔ Backend API contract")
+@allure.epic("Expenses")
+@allure.feature("API")
 class TestWebappApiContract:
     @pytest.fixture(scope="class")
     def backend_paths(self):

@@ -11,8 +11,8 @@ import allure
 import pytest
 
 
-@allure.epic("Report")
-@allure.feature("CLI dispatch")
+@allure.epic("Reports")
+@allure.feature("2D/3D aggregation")
 class TestCliDispatch:
     """Argparse-level contract for the ``--csv`` / ``--json`` mutex.
 

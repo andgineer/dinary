@@ -4,8 +4,9 @@ import { useCurrencyStore } from "../src/stores/currency.js";
 import * as currenciesApi from "../src/api/currencies.js";
 
 beforeEach(async () => {
-  await allure.epic("Stores");
-  await allure.feature("Currency store");
+  await allure.epic("Currencies");
+  await allure.feature("Frontend");
+  await allure.story("Currency store");
 });
 
 beforeEach(() => {

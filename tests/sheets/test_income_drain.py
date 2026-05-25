@@ -62,7 +62,7 @@ def _make_ss(ws=None, has_income_ws=True):
 
 
 @allure.epic("Income")
-@allure.feature("sheet drain")
+@allure.feature("Sheets")
 class TestIncomeDrain:
     def test_append_new_row(self):
         ss, ws = _make_ss()

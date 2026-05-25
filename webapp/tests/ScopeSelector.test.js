@@ -3,8 +3,9 @@ import { mount } from "@vue/test-utils";
 import ScopeSelector from "../src/components/ScopeSelector.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("ScopeSelector");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("ScopeSelector");
 });
 
 const OPTIONS = [

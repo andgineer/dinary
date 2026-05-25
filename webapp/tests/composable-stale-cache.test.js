@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useStaleCache } from "../src/composables/useStaleCache.js";
 
 beforeEach(async () => {
-  await allure.epic("Composables");
-  await allure.feature("useStaleCache");
+  await allure.epic("Infrastructure");
+  await allure.feature("Frontend");
+  await allure.story("useStaleCache");
 });
 
 const DIRTY_KEY = "test:dirty";

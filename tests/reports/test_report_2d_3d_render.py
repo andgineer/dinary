@@ -27,8 +27,8 @@ from tasks.imports.report_2d_3d import (
 )
 
 
-@allure.epic("Report")
-@allure.feature("Renderers")
+@allure.epic("Reports")
+@allure.feature("2D/3D aggregation")
 class TestRenderers:
     def test_render_years_single(self):
         assert render_years([2022]) == "2022"
@@ -79,8 +79,8 @@ class TestRenderers:
         assert "еда" in output
 
 
-@allure.epic("Report")
-@allure.feature("Rich renderer")
+@allure.epic("Reports")
+@allure.feature("2D/3D aggregation")
 class TestRenderRich:
     """Smoke tests for the rich summary / detail renderer.
 
@@ -159,8 +159,8 @@ class TestRenderRich:
         assert _style_for_resolution_kind("") == ""
 
 
-@allure.epic("Report")
-@allure.feature("render_json / rows_from_json — remote transport")
+@allure.epic("Reports")
+@allure.feature("2D/3D aggregation")
 class TestRenderJson:
     """The JSON wire format used by ``inv import-report-2d-3d --remote``
     for ``rich`` / ``stdout`` output. Same motivation as

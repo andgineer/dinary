@@ -34,8 +34,8 @@ def _insert_receipt(url="https://suf.purs.gov.rs/v/?vl=test"):
         con.close()
 
 
-@allure.epic("API")
-@allure.feature("Expense deletion")
+@allure.epic("Expenses")
+@allure.feature("API")
 class TestDeleteExpense:
     def test_delete_manual_expense_returns_204(self, client, db):  # noqa: ARG002
         eid = _insert_expense(client)

@@ -3,8 +3,9 @@ import { mount } from "@vue/test-utils";
 import ManageList from "../src/components/ManageList.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("ManageList");
+  await allure.epic("Infrastructure");
+  await allure.feature("Frontend");
+  await allure.story("ManageList");
 });
 
 const ACTIVE = [

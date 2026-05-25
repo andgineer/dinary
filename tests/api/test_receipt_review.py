@@ -59,8 +59,9 @@ def _seed_certain_rule(conn):
     )
 
 
-@allure.epic("API")
-@allure.feature("Receipt Review")
+@allure.epic("Receipts")
+@allure.feature("API")
+@allure.story("Receipt review")
 class TestReviewFeed:
     def test_empty_feed(self, client, db):  # noqa: ARG002
         resp = client.get("/api/rules/feed")
@@ -165,8 +166,9 @@ class TestReviewFeed:
         assert p1["items"][0]["id"] != p2["items"][0]["id"]
 
 
-@allure.epic("API")
-@allure.feature("Receipt Review")
+@allure.epic("Receipts")
+@allure.feature("API")
+@allure.story("Receipt review")
 class TestReviewFeedCertainRules:
     def test_certain_rule_in_feed(self, client, db):  # noqa: ARG002
         conn = storage.get_connection()
@@ -284,8 +286,9 @@ class TestReviewFeedCertainRules:
         assert doubtful[0]["confidence_level"] == 3
 
 
-@allure.epic("API")
-@allure.feature("Receipt Review")
+@allure.epic("Receipts")
+@allure.feature("API")
+@allure.story("Receipt review")
 class TestReviewCounts:
     def test_counts_empty(self, client, db):  # noqa: ARG002
         resp = client.get("/api/rules/counts")
@@ -349,8 +352,9 @@ class TestReviewCounts:
         assert resp.json()["doubtful_count"] == 0
 
 
-@allure.epic("API")
-@allure.feature("Receipt Review")
+@allure.epic("Receipts")
+@allure.feature("API")
+@allure.story("Receipt review")
 class TestCategoryCorrection:
     def _seed_correction(self, conn):
         conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
@@ -464,8 +468,9 @@ class TestCategoryCorrection:
         assert rule_count == 0
 
 
-@allure.epic("API")
-@allure.feature("Receipt Review")
+@allure.epic("Receipts")
+@allure.feature("API")
+@allure.story("Receipt review")
 class TestBatchPropagation:
     def _seed(self, conn):
         conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
@@ -563,8 +568,9 @@ class TestBatchPropagation:
         assert rule[2] == "user_correction"
 
 
-@allure.epic("API")
-@allure.feature("Receipt Review")
+@allure.epic("Receipts")
+@allure.feature("API")
+@allure.story("Receipt review")
 class TestBatchPropagationNullStore:
     """Batch correction must use NULL-safe store matching (IS instead of =)."""
 
@@ -670,8 +676,9 @@ class TestBatchPropagationNullStore:
         assert exp11[0] == 2
 
 
-@allure.epic("API")
-@allure.feature("Receipt Review")
+@allure.epic("Receipts")
+@allure.feature("API")
+@allure.story("Receipt review")
 class TestCategoryBatchCorrection:
     """scope=all updates each matched expense directly — no rows created or split."""
 
@@ -757,8 +764,9 @@ class TestCategoryBatchCorrection:
         assert after == before
 
 
-@allure.epic("API")
-@allure.feature("Receipt Review")
+@allure.epic("Receipts")
+@allure.feature("API")
+@allure.story("Receipt review")
 class TestScopedCorrections:
     def _seed(self, conn, expense_date: str, expense_id: int = 1):
         conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
@@ -908,8 +916,9 @@ class TestScopedCorrections:
         assert exp3[0] == 1, "last-year expense must not be updated"
 
 
-@allure.epic("API")
-@allure.feature("Receipt Review")
+@allure.epic("Receipts")
+@allure.feature("API")
+@allure.story("Receipt review")
 class TestRulesFeedAlternativesAndTags:
     """Rules feed items must include alternative_categories and tags fields."""
 

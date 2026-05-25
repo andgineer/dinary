@@ -43,7 +43,7 @@ def _error_result(year: int = 2024, *, error: str = "no entry for year 2024") ->
 
 
 @allure.epic("Reports")
-@allure.feature("verify_income — render_single")
+@allure.feature("Income verify")
 class TestRenderSingle:
     def test_passing_year_renders_summary_no_diffs(self):
         buf = io.StringIO()
@@ -84,7 +84,7 @@ class TestRenderSingle:
 
 
 @allure.epic("Reports")
-@allure.feature("verify_income — render_batch")
+@allure.feature("Income verify")
 class TestRenderBatch:
     def test_all_ok_no_drilldown(self):
         buf = io.StringIO()
@@ -124,7 +124,7 @@ class TestRenderBatch:
 
 
 @allure.epic("Reports")
-@allure.feature("verify_income — exit codes")
+@allure.feature("Income verify")
 class TestExitCodes:
     def test_single_ok(self):
         assert verify_income.exit_code_for_single(_passing_result()) == 0
@@ -165,7 +165,7 @@ class TestExitCodes:
 
 
 @allure.epic("Reports")
-@allure.feature("verify_income — print_json")
+@allure.feature("Income verify")
 class TestPrintJson:
     @pytest.mark.parametrize(
         "payload",

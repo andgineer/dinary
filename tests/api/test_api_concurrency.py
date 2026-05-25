@@ -27,8 +27,9 @@ from _api_helpers import (  # noqa: F401  (autouse + helpers)
 )
 
 
-@allure.epic("API")
-@allure.feature("Expenses (3D) — concurrency")
+@allure.epic("Expenses")
+@allure.feature("API")
+@allure.story("Concurrency")
 class TestPostExpenseConcurrency:
     @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
     def test_concurrent_post_with_same_client_expense_id_is_atomic(
@@ -270,8 +271,9 @@ class TestPostExpenseConcurrency:
         )
 
 
-@allure.epic("API")
-@allure.feature("Expenses (3D) — failure propagation")
+@allure.epic("Expenses")
+@allure.feature("API")
+@allure.story("Concurrency")
 class TestPostExpenseFailurePropagation:
     def test_insert_unexpected_failure_propagates_cleanly(self, client):
         """A non-constraint ``insert_expense`` failure must bubble up as

@@ -45,8 +45,8 @@ def conn(tmp_path, monkeypatch):
     c.close()
 
 
-@allure.epic("Services")
-@allure.feature("Classification Rules")
+@allure.epic("Review & Rules")
+@allure.feature("Classification")
 class TestClassifyByRules:
     def test_miss_returns_none(self, conn):
         result = classify_by_rules(conn, 1, "jabuka")
@@ -131,8 +131,8 @@ class TestClassifyByRules:
         assert result.tag_ids == []
 
 
-@allure.epic("Services")
-@allure.feature("Classification Rules")
+@allure.epic("Review & Rules")
+@allure.feature("Classification")
 class TestCreateOrUpdateRule:
     def test_insert_new_rule(self, conn):
         create_or_update_rule(conn, 1, "banana", RuleSpec(1, 3, "llm"))

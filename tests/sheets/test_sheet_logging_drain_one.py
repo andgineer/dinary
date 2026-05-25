@@ -26,8 +26,9 @@ from _sheet_logging_helpers import (  # noqa: F401  (autouse + fixtures)
 )
 
 
-@allure.epic("SheetLogging")
-@allure.feature("_drain_one_job (return contract)")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
+@allure.story("Drain one job")
 class TestDrainOneJobReturnContract:
     @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
     @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
@@ -70,8 +71,9 @@ class TestDrainOneJobReturnContract:
             con.close()
 
 
-@allure.epic("SheetLogging")
-@allure.feature("_drain_one_job (post-append claim-stolen recovery)")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
+@allure.story("Drain one job")
 class TestDrainOneJobClaimStolen:
     """When ``clear_logging_job`` returns False after we already appended
     to Sheets, ``_drain_one_job`` must:

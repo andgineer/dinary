@@ -70,8 +70,8 @@ def _run_drain(job, results=None):
         asyncio.run(_process_job(job, _broker()))
 
 
-@allure.epic("Integration")
-@allure.feature("Receipt pipeline end-to-end")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
 class TestReceiptPipelineE2E:
     @pytest.fixture(autouse=True)
     def _no_fx_conversion(self, monkeypatch):

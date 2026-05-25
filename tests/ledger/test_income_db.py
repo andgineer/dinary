@@ -217,7 +217,7 @@ class TestGetIncomeTotalForMonth:
 
 
 @allure.epic("Income")
-@allure.feature("Currency conversion")
+@allure.feature("DB layer")
 class TestCurrencyConversion:
     def test_passthrough_when_same_currency(self, con, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")

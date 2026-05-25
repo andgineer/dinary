@@ -5,8 +5,9 @@ import { useCatalogStore } from "../src/stores/catalog.js";
 import { useToastStore } from "../src/stores/toast.js";
 
 beforeEach(async () => {
-  await allure.epic("Composables");
-  await allure.feature("useCatalogManage");
+  await allure.epic("Catalog");
+  await allure.feature("Frontend");
+  await allure.story("useCatalogManage");
 });
 
 beforeEach(() => {

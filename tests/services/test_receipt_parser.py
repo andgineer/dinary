@@ -99,8 +99,9 @@ def _mock_async_client(json_resp, html_resp, specs_resp):
     return ctx, client
 
 
-@allure.epic("Services")
-@allure.feature("Receipt Parser — /specifications primary path")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("Receipt parser")
 class TestParseReceiptPrimary:
     def test_returns_store_info(self):
         ctx, _ = _mock_async_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
@@ -165,8 +166,9 @@ class TestParseReceiptPrimary:
         assert receipt.purchase_datetime is None
 
 
-@allure.epic("Services")
-@allure.feature("Receipt Parser — journal fallback")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("Receipt parser")
 class TestParseReceiptFallback:
     def test_falls_back_when_specs_empty(self):
         ctx, _ = _mock_async_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_EMPTY)
@@ -207,8 +209,9 @@ class TestParseReceiptFallback:
                 asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
 
 
-@allure.epic("Services")
-@allure.feature("Receipt Parser — journal parser unit tests")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("Receipt parser")
 class TestParseJournal:
     def test_kg_item_decimal_quantity(self):
         items = _parse_journal(_JOURNAL_WITH_KG)
@@ -228,8 +231,9 @@ class TestParseJournal:
         assert any("Karamel" in n for n in names)
 
 
-@allure.epic("Services")
-@allure.feature("Receipt Parser — _rsd")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("Receipt parser")
 class TestRsd:
     def test_simple_decimal(self):
         assert _rsd("133,55") == pytest.approx(133.55)

@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { runLegacyPwaCleanup } from "../src/legacy-pwa-cleanup.js";
 
 beforeEach(async () => {
-  await allure.epic("PWA");
-  await allure.feature("Legacy cache cleanup");
+  await allure.epic("Infrastructure");
+  await allure.feature("PWA");
 });
 
 const SWEEP_FLAG = "dinary:legacy-pwa-sweep-done";

@@ -3,8 +3,9 @@ import { setActivePinia, createPinia } from "pinia";
 import { useToastStore } from "../src/stores/toast.js";
 
 beforeEach(async () => {
-  await allure.epic("Stores");
-  await allure.feature("Toast store");
+  await allure.epic("Infrastructure");
+  await allure.feature("Frontend");
+  await allure.story("Toast store");
 });
 
 beforeEach(() => {

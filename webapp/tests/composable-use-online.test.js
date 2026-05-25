@@ -4,8 +4,9 @@ import { defineComponent } from "vue";
 import { useOnline } from "../src/composables/useOnline.js";
 
 beforeEach(async () => {
-  await allure.epic("Composables");
-  await allure.feature("useOnline");
+  await allure.epic("Infrastructure");
+  await allure.feature("Frontend");
+  await allure.story("useOnline");
 });
 
 function mockOnLine(value) {

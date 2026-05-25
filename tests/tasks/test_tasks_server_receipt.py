@@ -5,8 +5,8 @@ import allure
 from tasks.healthcheck import _healthcheck_receipt_fetch, _healthcheck_receipt_llm
 
 
-@allure.epic("Tasks")
-@allure.feature("Healthcheck — Receipt Pipeline")
+@allure.epic("Receipts")
+@allure.feature("Admin")
 class TestHealthcheckReceiptLLM:
     def test_ok_when_all_clear(self):
         results = {"llm_switch": "", "llm_exhausted": "", "llm_switch_count": "0"}
@@ -48,8 +48,8 @@ class TestHealthcheckReceiptLLM:
         assert "5" in out
 
 
-@allure.epic("Tasks")
-@allure.feature("Healthcheck — Receipt Pipeline")
+@allure.epic("Receipts")
+@allure.feature("Admin")
 class TestHealthcheckReceiptFetch:
     def test_ok_when_all_clear(self):
         results = {"receipt_fallback": "", "receipt_fallback_count": "0"}

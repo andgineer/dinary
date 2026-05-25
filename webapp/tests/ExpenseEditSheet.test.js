@@ -6,8 +6,9 @@ import { useCatalogStore } from "../src/stores/catalog.js";
 import { useReviewStore } from "../src/stores/review.js";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("ExpenseEditSheet");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("ExpenseEditSheet");
 });
 
 const TELEPORT_STUB = { props: ["to"], template: "<div><slot /></div>" };

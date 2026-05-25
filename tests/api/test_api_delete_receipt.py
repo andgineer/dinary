@@ -35,8 +35,8 @@ def _insert_receipt_with_expenses(n_expenses=2):
         con.close()
 
 
-@allure.epic("API")
-@allure.feature("Receipt fetch")
+@allure.epic("Receipts")
+@allure.feature("API")
 class TestGetReceipt:
     def test_get_receipt_returns_metadata(self, client, db):  # noqa: ARG002
         rid, _ = _insert_receipt_with_expenses(2)
@@ -66,8 +66,8 @@ class TestGetReceipt:
         assert resp.status_code == 404
 
 
-@allure.epic("API")
-@allure.feature("Receipt deletion")
+@allure.epic("Receipts")
+@allure.feature("API")
 class TestDeleteReceipt:
     def test_delete_receipt_returns_204(self, client, db):  # noqa: ARG002
         rid, _ = _insert_receipt_with_expenses(2)

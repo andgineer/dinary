@@ -16,8 +16,8 @@ stays scoped to the tests that actually rely on it.
 import allure
 
 
-@allure.epic("API")
-@allure.feature("Health")
+@allure.epic("Infrastructure")
+@allure.feature("App startup")
 def test_health(client):
     resp = client.get("/api/health")
     assert resp.status_code == 200

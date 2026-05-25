@@ -25,8 +25,8 @@ def _add_provider(
     )
 
 
-@allure.epic("API")
-@allure.feature("LLM Admin")
+@allure.epic("Receipts")
+@allure.feature("Admin")
 class TestLLMProvidersCRUD:
     def test_list_empty(self, client, db):  # noqa: ARG002
         resp = client.get("/api/llm/providers")
@@ -81,8 +81,8 @@ class TestLLMProvidersCRUD:
         assert resp.status_code == 404
 
 
-@allure.epic("API")
-@allure.feature("LLM Admin")
+@allure.epic("Receipts")
+@allure.feature("Admin")
 class TestLLMStatus:
     def test_status_empty(self, client, db):  # noqa: ARG002
         resp = client.get("/api/llm/status")

@@ -14,8 +14,9 @@ import { useReviewStore } from "../src/stores/review.js";
 import * as receiptsApi from "../src/api/receipts.js";
 
 beforeEach(async () => {
-  await allure.epic("Composables");
-  await allure.feature("flushReceiptQueue");
+  await allure.epic("Receipts");
+  await allure.feature("Frontend");
+  await allure.story("flushReceiptQueue");
 });
 
 async function resetDb() {

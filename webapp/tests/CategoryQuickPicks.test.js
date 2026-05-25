@@ -3,8 +3,9 @@ import { mount } from "@vue/test-utils";
 import CategoryQuickPicks from "../src/components/CategoryQuickPicks.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("CategoryQuickPicks");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("CategoryQuickPicks");
 });
 
 const CATS = [

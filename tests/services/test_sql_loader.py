@@ -38,8 +38,8 @@ class _WrongRow:
     b: str
 
 
-@allure.epic("SQL Loader")
-@allure.feature("File Loading")
+@allure.epic("Infrastructure")
+@allure.feature("SQL loader")
 class TestLoadSql:
     @pytest.mark.parametrize("name", ALL_SQL_FILES)
     def test_all_sql_files_loadable(self, name):
@@ -59,8 +59,8 @@ class TestLoadSql:
             load_sql("nonexistent.sql")
 
 
-@allure.epic("SQL Loader")
-@allure.feature("Row Mapping")
+@allure.epic("Infrastructure")
+@allure.feature("SQL loader")
 class TestRowMapper:
     def test_fetchone_as_maps_columns(self):
         con = sqlite3.connect(":memory:")

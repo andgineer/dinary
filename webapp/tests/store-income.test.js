@@ -5,8 +5,8 @@ import * as incomeApi from "../src/api/income.js";
 import { useToastStore } from "../src/stores/toast.js";
 
 beforeEach(async () => {
-  await allure.epic("Stores");
-  await allure.feature("Income store");
+  await allure.epic("Income");
+  await allure.feature("Frontend");
 });
 
 beforeEach(() => {

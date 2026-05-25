@@ -3,8 +3,8 @@ import allure
 from dinary.background.classification.item_normalizer import normalize_item_name
 
 
-@allure.epic("Services")
-@allure.feature("Item Normalizer")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
 class TestNormalizeItemName:
     def test_lowercase(self):
         assert normalize_item_name("HLEB") == "hleb"

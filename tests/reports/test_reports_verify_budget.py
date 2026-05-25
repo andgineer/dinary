@@ -74,7 +74,7 @@ def _failing_result(year: int = 2024) -> dict:
 
 
 @allure.epic("Reports")
-@allure.feature("verify_budget — render_single")
+@allure.feature("Budget verify")
 class TestRenderSingle:
     def test_passing_year_renders_only_summary(self):
         buf = io.StringIO()
@@ -112,7 +112,7 @@ class TestRenderSingle:
 
 
 @allure.epic("Reports")
-@allure.feature("verify_budget — render_batch")
+@allure.feature("Budget verify")
 class TestRenderBatch:
     def test_all_ok_shows_only_summary(self):
         buf = io.StringIO()
@@ -146,7 +146,7 @@ class TestRenderBatch:
 
 
 @allure.epic("Reports")
-@allure.feature("verify_budget — exit codes")
+@allure.feature("Budget verify")
 class TestExitCodes:
     def test_single_ok_returns_zero(self):
         assert verify_budget.exit_code_for_single(_passing_result()) == 0
@@ -177,7 +177,7 @@ class TestExitCodes:
 
 
 @allure.epic("Reports")
-@allure.feature("verify_budget — print_json")
+@allure.feature("Budget verify")
 class TestPrintJson:
     @pytest.mark.parametrize(
         "payload",

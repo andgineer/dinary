@@ -27,8 +27,8 @@ from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
 )
 
 
-@allure.epic("Services")
-@allure.feature("NBP Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("NBP rates")
 @allure.story("_fetch_nbp_pln_leg — table A then table B")
 class TestFetchNbpPlnLeg:
     @patch("dinary.adapters.nbp._get_json_or_none")
@@ -71,8 +71,8 @@ class TestFetchNbpPlnLeg:
         assert url.endswith("/rates/A/rsd/")
 
 
-@allure.epic("Services")
-@allure.feature("NBP Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("NBP rates")
 @allure.story("_pln_leg — date-then-latest walk")
 class TestPlnLeg:
     def test_pln_self_is_identity(self):
@@ -104,8 +104,8 @@ class TestPlnLeg:
         assert _pln_leg(_MON, "ZZZ") is None
 
 
-@allure.epic("Services")
-@allure.feature("NBP Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("NBP rates")
 @allure.story("resolve_from_nbp — bridge through PLN")
 class TestResolveFromNbp:
     @patch("dinary.adapters.nbp.save_db_rate")

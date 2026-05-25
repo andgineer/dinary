@@ -2,8 +2,9 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 import { useSwipeRow } from "../src/composables/useSwipeRow.js";
 
 beforeEach(async () => {
-  await allure.epic("Composables");
-  await allure.feature("useSwipeRow");
+  await allure.epic("Infrastructure");
+  await allure.feature("Frontend");
+  await allure.story("useSwipeRow");
 });
 
 function mockEl() {

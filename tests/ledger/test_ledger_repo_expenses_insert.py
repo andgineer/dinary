@@ -23,8 +23,9 @@ from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
 )
 
 
-@allure.epic("Ledger repo")
-@allure.feature("Insert expense (client_expense_id)")
+@allure.epic("Expenses")
+@allure.feature("DB layer")
+@allure.story("Insert")
 class TestInsertExpense:
     def test_insert_then_duplicate(self, populated_catalog):
         con = storage.get_connection()

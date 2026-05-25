@@ -17,7 +17,7 @@ import dinary.background.classification.task as drain_mod
 from dinary.background.classification.receipt_classifier import ClassificationResult
 from conftest import NullStorage
 from dinary.adapters.llmbroker import LLMBroker
-from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
+from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ParserRequestError, ReceiptItem
 from dinary.background.classification.task import (
     _drain_all_pending,
     _process_job,
@@ -75,8 +75,9 @@ def _seed_drain_db(conn):
 # ---------------------------------------------------------------------------
 
 
-@allure.epic("Background Tasks")
-@allure.feature("Receipt drain — process job")
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
+@allure.story("Receipt drain")
 class TestProcessJobEdgeCases:
     def test_parsed_with_no_items_logs_warning_and_completes_job(
         self,
@@ -410,6 +411,47 @@ class TestProcessJobEdgeCases:
             f"expected purchase date 2026-01-10, got {exp_dt[0]}"
         )
 
+    def test_transient_error_calls_notify_new_receipt(self, drain_db):  # noqa: ARG002
+        """After releasing a job on transient error, notify_new_receipt is called.
+
+        This ensures the drain loop wakes up immediately for a retry instead
+        of waiting up to 300 s for the next timer cycle.
+        """
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('tr-r1', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+        finally:
+            conn.close()
+
+        job = ReceiptJobRow(
+            receipt_id=receipt_id,
+            url="https://x",
+            store_name_raw="",
+            store_pib_raw="",
+            invoice_number="",
+            parsed_at=None,
+            used_journal_fallback=False,
+            claim_token="tok",
+        )
+
+        with (
+            patch(
+                "dinary.background.classification.task.parse_receipt",
+                side_effect=ParserRequestError("timeout"),
+            ),
+            patch("dinary.background.classification.task.notify_new_receipt") as mock_notify,
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+
+        mock_notify.assert_called_once()
+
     def test_conf1_items_do_not_create_rules(self, drain_db):  # noqa: ARG002
         """Items penalised to conf=1 do not store a rule; the LLM is called again next pass."""
         parsed = ParsedReceipt(
@@ -501,8 +543,9 @@ class TestProcessJobEdgeCases:
 # ---------------------------------------------------------------------------
 
 
-@allure.epic("Background Tasks")
-@allure.feature("Receipt drain — sheet logging")
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
+@allure.story("Receipt drain")
 class TestReceiptSheetLogging:
     """Expenses created by the receipt drain must carry a UUID and be enqueued
     for sheet logging so the drain loop can append them to Google Sheets."""
@@ -689,8 +732,9 @@ def _seed_drain_db_with_tags(conn):
     conn.execute("INSERT INTO tags (id, name, is_active) VALUES (2, 'аня', 1)")
 
 
-@allure.epic("Background Tasks")
-@allure.feature("Receipt drain — per-item expenses")
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
+@allure.story("Receipt drain")
 class TestPerItemExpenses:
     def _setup_receipt(self, conn, client_receipt_id="pi-r1", created_at=None):
         _seed_drain_db(conn)
@@ -1126,8 +1170,9 @@ class TestPerItemExpenses:
 # ---------------------------------------------------------------------------
 
 
-@allure.epic("Background Tasks")
-@allure.feature("Receipt drain — main loop")
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
+@allure.story("Receipt drain")
 class TestDrainLoop:
     def test_wakeup_triggers_drain(self):
         """notify_new_receipt wakes the drain loop immediately."""

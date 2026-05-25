@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { postReceipt, getReceipt, deleteReceipt } from "../src/api/receipts.js";
 
 beforeEach(async () => {
-  await allure.epic("API");
-  await allure.feature("Receipts");
+  await allure.epic("Receipts");
+  await allure.feature("API client");
 });
 
 let originalFetch;

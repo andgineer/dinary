@@ -27,8 +27,9 @@ def _insert_expense(con, eid, cid, *, client_expense_id=None, days_ago=0, receip
         )
 
 
-@allure.epic("API")
-@allure.feature("Expenses — PATCH /api/expenses/{id}")
+@allure.epic("Expenses")
+@allure.feature("API")
+@allure.story("PATCH /api/expenses/{id}")
 class TestPatchExpense:
     def _seed_receipt_expense(self, con, expense_id=1, category_id=1):
         con.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
@@ -302,8 +303,9 @@ class TestPatchExpense:
         assert json.loads(rows[0][1]) == [1], "rule must carry the supplied tag_ids"
 
 
-@allure.epic("API")
-@allure.feature("Expenses — POST /api/expenses response")
+@allure.epic("Expenses")
+@allure.feature("API")
+@allure.story("POST /api/expenses")
 class TestPostExpenseResponse:
     def test_response_includes_frequent_categories(self, client, db):  # noqa: ARG002
         resp = client.post(

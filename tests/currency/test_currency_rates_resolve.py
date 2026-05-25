@@ -36,8 +36,8 @@ from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
 )
 
 
-@allure.epic("Services")
-@allure.feature("NBS Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — working day, direct hit")
 class TestResolveWorkingDayHit:
     """rate_date is a working day, API returns a rate for it."""
@@ -60,8 +60,8 @@ class TestResolveWorkingDayHit:
         fetch_nbs.assert_called_once_with(_MON, _SOURCE)
 
 
-@allure.epic("Services")
-@allure.feature("NBS Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — working day, DB hit")
 class TestResolveWorkingDayCacheHit:
     """rate_date is a working day, rate already in DB."""
@@ -84,8 +84,8 @@ class TestResolveWorkingDayCacheHit:
         save_db.assert_not_called()
 
 
-@allure.epic("Services")
-@allure.feature("NBS Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — working day, pre-publication (before 08:00)")
 class TestResolveWorkingDayPrePublication:
     """rate_date is a working day but API has no rate yet (before 08:00).
@@ -111,8 +111,8 @@ class TestResolveWorkingDayPrePublication:
         save_db.assert_not_called()
 
 
-@allure.epic("Services")
-@allure.feature("NBS Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — weekend")
 class TestResolveWeekend:
     """rate_date is Saturday or Sunday — walks back to Friday."""
@@ -158,8 +158,8 @@ class TestResolveWeekend:
         save_db.assert_called_once_with(_CON, _SAT, _SOURCE, _TARGET, _RATE)
 
 
-@allure.epic("Services")
-@allure.feature("NBS Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — weekend, stale walkback")
 class TestResolveWeekendStaleWalkback:
     """Weekend, Friday has no rate — walks back to Thursday.
@@ -190,8 +190,8 @@ class TestResolveWeekendStaleWalkback:
         save_db.assert_not_called()
 
 
-@allure.epic("Services")
-@allure.feature("NBS Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — weekend, Saturday already in DB")
 class TestResolveWeekendSaturdayCached:
     """Saturday itself has a DB rate — return it, no alias save needed."""
@@ -203,8 +203,8 @@ class TestResolveWeekendSaturdayCached:
         save_db.assert_not_called()
 
 
-@allure.epic("Services")
-@allure.feature("NBS Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — holiday")
 class TestResolveHoliday:
     """rate_date is a weekday holiday — walks back to previous working day."""
@@ -224,8 +224,8 @@ class TestResolveHoliday:
         ]
 
 
-@allure.epic("Services")
-@allure.feature("NBS Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — no rate found")
 class TestResolveNoRateFound:
     """No rate found within 10 days."""

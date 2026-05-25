@@ -3,8 +3,9 @@ import { mount } from "@vue/test-utils";
 import ReceiptCascadeCard from "../src/components/ReceiptCascadeCard.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("ReceiptCascadeCard");
+  await allure.epic("Receipts");
+  await allure.feature("Frontend");
+  await allure.story("ReceiptCascadeCard");
 });
 
 const CASCADE = {

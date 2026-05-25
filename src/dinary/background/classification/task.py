@@ -148,6 +148,7 @@ async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
             exc,
         )
         await asyncio.to_thread(_release, job.receipt_id, job.claim_token)
+        notify_new_receipt()
     except ParserParseError as exc:
         logger.error(
             "Permanent parse error for receipt_id=%s — poisoning: %s",

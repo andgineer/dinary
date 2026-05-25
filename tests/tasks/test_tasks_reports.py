@@ -15,8 +15,8 @@ import pytest
 import tasks.reports.report_tasks
 
 
-@allure.epic("Deploy")
-@allure.feature("report-* --remote: fetch JSON, render locally")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
 class TestRunReportModuleRemote:
     """End-to-end architectural contract for ``inv report-<mod> --remote``:
 

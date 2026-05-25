@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { listIncomes, createIncome, updateIncome, deleteIncome } from "../src/api/income.js";
 
 beforeEach(async () => {
-  await allure.epic("API");
-  await allure.feature("Income");
+  await allure.epic("Income");
+  await allure.feature("API client");
 });
 
 let originalFetch;

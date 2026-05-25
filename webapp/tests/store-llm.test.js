@@ -4,8 +4,9 @@ import { useLlmStore } from "../src/stores/llm.js";
 import * as llmApi from "../src/api/adminLlm.js";
 
 beforeEach(async () => {
-  await allure.epic("Stores");
-  await allure.feature("LLM store");
+  await allure.epic("Infrastructure");
+  await allure.feature("LLM providers");
+  await allure.story("LLM store");
 });
 
 function mockOnLine(value) {

@@ -45,8 +45,8 @@ def _column_names(con: sqlite3.Connection, table: str) -> set[str]:
     return {r[1] for r in rows}
 
 
-@allure.epic("Migrations")
-@allure.feature("Initial schema")
+@allure.epic("Infrastructure")
+@allure.feature("Migrations")
 class TestInitialSchema:
     def test_creates_expected_catalog_tables(self, fresh_db):
         con = _connect(fresh_db)
@@ -179,8 +179,8 @@ class TestInitialSchema:
         assert row[0] == "1"
 
 
-@allure.epic("Migrations")
-@allure.feature("init_db integration")
+@allure.epic("Infrastructure")
+@allure.feature("Migrations")
 class TestInitDbIntegration:
     def test_init_db_creates_file_and_connects(self, tmp_path, monkeypatch):
         monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
@@ -198,8 +198,8 @@ class TestInitDbIntegration:
         assert version == 1
 
 
-@allure.epic("Migrations")
-@allure.feature("accounting_currency anchor")
+@allure.epic("Infrastructure")
+@allure.feature("Migrations")
 class TestAccountingCurrencyAnchor:
     """``init_db`` pins ``settings.accounting_currency`` into
     ``app_metadata`` on first run and refuses to start on later

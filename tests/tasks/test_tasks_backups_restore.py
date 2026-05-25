@@ -28,8 +28,9 @@ from tasks.backups.backup_snapshots import (
 )
 
 
-@allure.epic("Deploy")
-@allure.feature("restore-cloud-backup: inventory + snapshot picker")
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Cloud restore")
 class TestRestoreFromYadiskHelpers:
     """``restore-cloud-backup`` is split into three helpers so the
     destructive file-replacement path can be read separately from the
@@ -120,8 +121,9 @@ class TestRestoreFromYadiskHelpers:
         assert pick_snapshot([], "latest") is None
 
 
-@allure.epic("Deploy")
-@allure.feature("restore-cloud-backup: task")
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Cloud restore")
 @pytest.mark.skipif(
     sys.platform == "win32",
     reason=(
@@ -409,8 +411,9 @@ class TestRestoreFromYadiskTask:
         assert calls.index("ensure") < calls.index("list")
 
 
-@allure.epic("Deploy")
-@allure.feature("restore-cloud-backup: replica resync")
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Cloud restore")
 class TestRestoreFromYadiskResync:
     """Verify that the post-restore resync is triggered on VM1 (litestream active)
     and silently skipped on a developer laptop (litestream inactive).

@@ -22,8 +22,8 @@ from dinary.db.expenses import ExpensePayload, insert_expense
 from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 
 
-@allure.epic("API")
-@allure.feature("Admin catalog — patch")
+@allure.epic("Catalog")
+@allure.feature("Admin API")
 class TestAdminPatch:
     def test_patch_rename_and_deactivate_in_one_call(self, client):
         create = client.post(

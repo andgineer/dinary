@@ -25,8 +25,8 @@ from _sheet_mapping_helpers import (  # noqa: F401  (autouse + helpers)
 )
 
 
-@allure.epic("SheetMapping")
-@allure.feature("reload_now modifiedTime ordering")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet mapping")
 class TestReloadNowOrdering:
     def test_cache_updated_when_modified_time_stable(self, monkeypatch):
         monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "SSID")
@@ -110,8 +110,8 @@ class TestReloadNowOrdering:
         assert sheet_mapping._cache_state() == "2026-04-20T10:00:00Z"
 
 
-@allure.epic("SheetMapping")
-@allure.feature("ensure_fresh skips when modifiedTime unchanged")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet mapping")
 class TestEnsureFresh:
     def test_ensure_fresh_is_noop_when_cache_matches_drive(
         self,

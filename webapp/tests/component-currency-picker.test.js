@@ -6,8 +6,9 @@ import { useCurrencyStore } from "../src/stores/currency.js";
 import * as currenciesApi from "../src/api/currencies.js";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("CurrencyPicker");
+  await allure.epic("Currencies");
+  await allure.feature("Frontend");
+  await allure.story("CurrencyPicker");
 });
 
 let pinia;

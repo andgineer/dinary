@@ -5,8 +5,9 @@ import InlineCreateEvent from "../src/components/InlineCreateEvent.vue";
 import { useCatalogStore } from "../src/stores/catalog.js";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("InlineCreateEvent");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("InlineCreateEvent");
 });
 
 function mountEvent(pinia) {

@@ -30,8 +30,9 @@ _FAKE_PUBKEY = (
 )
 
 
-@allure.epic("Deploy")
-@allure.feature("litestream-setup: /etc/litestream.yml permissions")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Replica setup")
 class TestLitestreamSetupPermissions:
     """Regression for a sudo-scope bug in ``inv setup-replica``:
     a naive ``sudo chown root:root ... && chmod 644 ...`` escalates
@@ -143,8 +144,9 @@ class TestLitestreamSetupPermissions:
         assert tasks.devtools.constants.REMOTE_LITESTREAM_CONFIG_PATH in perm_call
 
 
-@allure.epic("Deploy")
-@allure.feature("setup-replica: replica apt + litestream dir builders")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Replica setup")
 class TestSetupReplicaScripts:
     """``inv setup-replica`` wires several pure-shell builders
     together; two of them (swap, ssh-hardening) are pinned in their
@@ -249,8 +251,9 @@ class TestSetupReplicaScripts:
         assert f"ls -ld {tasks.devtools.constants.REPLICA_LITESTREAM_DIR}" in script
 
 
-@allure.epic("Deploy")
-@allure.feature("setup-replica: bootstrap orchestration")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Replica setup")
 class TestSetupReplicaTask:
     """The ``setup-replica`` task is a linear composition of:
 
@@ -539,8 +542,9 @@ class TestSetupReplicaTask:
         assert host_script in _spy.ssh_calls
 
 
-@allure.epic("Deploy")
-@allure.feature("setup-replica: setup-reset-trust task")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Replica setup")
 class TestReplicaResetTrustTask:
     """``inv setup-reset-trust`` is the operator's explicit
     statement that a VM (VM1 or VM2) was legitimately re-provisioned
@@ -620,8 +624,9 @@ class TestReplicaResetTrustTask:
         assert "systemctl start litestream" not in joined
 
 
-@allure.epic("Deploy")
-@allure.feature("setup-replica: setup-resync task")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Replica setup")
 class TestSetupResyncTask:
     """``inv setup-resync`` resets the replica WAL position after a
     primary DB restore or txid mismatch.  Litestream runs on VM1
@@ -701,8 +706,9 @@ class TestSetupResyncTask:
         assert stop_idx < start_idx, "start must come after stop on VM1"
 
 
-@allure.epic("Deploy")
-@allure.feature("restore-replica: resync")
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Restore utils")
 class TestRestoreReplicaResync:
     """restore-replica auto-resyncs when litestream is active (VM1 context)
     and skips resync on a developer laptop or when --no-resync is passed.

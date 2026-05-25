@@ -85,8 +85,8 @@ def _patched_seed(year=2026):
         return seed_from_sheet(year=year)
 
 
-@allure.epic("Seed catalog")
-@allure.feature("bootstrap_catalog (runtime taxonomy only)")
+@allure.epic("Catalog")
+@allure.feature("Seed")
 class TestBootstrapCatalog:
     def test_bootstrap_creates_hardcoded_taxonomy_without_sheets(self):
         """``bootstrap_catalog`` populates groups/cats/tags/events from hardcoded
@@ -113,8 +113,8 @@ class TestBootstrapCatalog:
         assert first == second
 
 
-@allure.epic("Seed catalog")
-@allure.feature("seed_from_sheet (3D)")
+@allure.epic("Catalog")
+@allure.feature("Seed")
 class TestSeedFromSheet:
     def test_creates_groups(self):
         _patched_seed()
@@ -222,8 +222,8 @@ class TestSeedFromSheet:
             assert ev.name in names
 
 
-@allure.epic("Seed catalog")
-@allure.feature("rebuild_config_from_sheets")
+@allure.epic("Catalog")
+@allure.feature("Seed")
 class TestRebuildConfigFromSheets:
     def test_bumps_catalog_version_on_first_rebuild(self):
         """First rebuild on a freshly-migrated DB bumps catalog_version

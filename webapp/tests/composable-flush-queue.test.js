@@ -7,8 +7,9 @@ import * as expensesApi from "../src/api/expenses.js";
 import * as catalogApi from "../src/api/catalog.js";
 
 beforeEach(async () => {
-  await allure.epic("Composables");
-  await allure.feature("flushQueue");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("flushQueue");
 });
 
 async function resetQueueDb() {

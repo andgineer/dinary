@@ -18,8 +18,9 @@ from tasks.backups.backup_snapshots import (
 )
 
 
-@allure.epic("Deploy")
-@allure.feature("backup-cloud-setup: retention (GFS policy)")
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Cloud setup")
 class TestBackupRetentionScript:
     """GFS retention policy: 7 daily / 4 weekly / 12 monthly / all yearly.
 

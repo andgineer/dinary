@@ -4,8 +4,9 @@ import { useFrequentCategoriesStore } from "../src/stores/frequentCategories.js"
 import { useCatalogStore } from "../src/stores/catalog.js";
 
 beforeEach(async () => {
-  await allure.epic("Composables");
-  await allure.feature("frequentCategories");
+  await allure.epic("Catalog");
+  await allure.feature("Frontend");
+  await allure.story("frequentCategories");
 });
 
 const MS_24H = 24 * 60 * 60 * 1000;

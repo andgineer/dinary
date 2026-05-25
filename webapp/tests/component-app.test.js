@@ -7,8 +7,9 @@ import * as flushReceiptQueueModule from "../src/composables/flushReceiptQueue.j
 import { _resetForTest } from "../src/stores/queue.js";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("App");
+  await allure.epic("Infrastructure");
+  await allure.feature("Frontend");
+  await allure.story("App");
 });
 
 async function resetQueueDb() {

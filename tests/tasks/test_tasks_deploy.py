@@ -20,8 +20,8 @@ from tasks.deploy import (  # noqa: E402
 )
 
 
-@allure.epic("Deploy")
-@allure.feature("deploy task: --ref required")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
 class TestDeployRefRequired:
     def test_exits_when_ref_is_missing(self, capsys):
 
@@ -31,8 +31,9 @@ class TestDeployRefRequired:
         assert "--ref is required" in capsys.readouterr().err
 
 
-@allure.epic("Deploy")
-@allure.feature("Migration downgrade detection: _migrations_to_rollback")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Migrations check")
 class TestMigrationsToRollback:
     def test_no_rollback_when_server_at_target(self):
         applied = ["0001_initial_schema", "0002_exchange_rates"]
@@ -65,8 +66,9 @@ class TestMigrationsToRollback:
         assert _migrations_to_rollback([], "0002_exchange_rates") == []
 
 
-@allure.epic("Deploy")
-@allure.feature("Target migration head from git ls-tree")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Migrations check")
 class TestTargetMigrationHead:
     def _ls_tree_output(self, names):
         return "\n".join(f"src/dinary/db/migrations/{n}" for n in names)
@@ -109,8 +111,9 @@ class TestTargetMigrationHead:
         assert "v0.3.1" in args
 
 
-@allure.epic("Deploy")
-@allure.feature("Server applied migrations via SSH sqlite3 query")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Migrations check")
 class TestServerAppliedMigrations:
     def test_parses_newline_separated_ids(self, monkeypatch):
         monkeypatch.setattr(

@@ -7,8 +7,9 @@ import * as expensesApi from "../src/api/expenses.js";
 import * as receiptsApi from "../src/api/receipts.js";
 
 beforeEach(async () => {
-  await allure.epic("Composables");
-  await allure.feature("useExpenseDeleteFlow");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("useExpenseDeleteFlow");
 });
 
 vi.mock("../src/composables/useOnline.js", () => ({

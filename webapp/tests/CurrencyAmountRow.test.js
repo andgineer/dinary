@@ -3,8 +3,9 @@ import { mount } from "@vue/test-utils";
 import CurrencyAmountRow from "../src/components/CurrencyAmountRow.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("CurrencyAmountRow");
+  await allure.epic("Currencies");
+  await allure.feature("Frontend");
+  await allure.story("CurrencyAmountRow");
 });
 
 vi.mock("../src/components/CurrencyPicker.vue", () => ({

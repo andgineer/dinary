@@ -25,8 +25,8 @@ from dinary.sheets.sheets import (
 from _sheets_helpers import HEADER, SAMPLE_SHEET
 
 
-@allure.epic("Google Sheets")
-@allure.feature("Read Categories")
+@allure.epic("Sheets Sync")
+@allure.feature("Google Sheets API")
 class TestFindCategoryRow:
     def test_finds_row(self):
 
@@ -49,8 +49,8 @@ class TestFindCategoryRow:
         assert row is None
 
 
-@allure.epic("Google Sheets")
-@allure.feature("Month Creation")
+@allure.epic("Sheets Sync")
+@allure.feature("Google Sheets API")
 class TestFindMonthRange:
     def test_finds_contiguous_range(self):
 
@@ -67,8 +67,8 @@ class TestFindMonthRange:
         assert find_month_range(SAMPLE_SHEET, 12) is None
 
 
-@allure.epic("Google Sheets")
-@allure.feature("Year-aware matching (multi-year sheet)")
+@allure.epic("Sheets Sync")
+@allure.feature("Google Sheets API")
 class TestYearAwareMatching:
     """The optional logging spreadsheet keeps every year in one tab.
 
@@ -179,8 +179,8 @@ class TestYearAwareMatching:
         ws.batch_get.assert_not_called()
 
 
-@allure.epic("Google Sheets")
-@allure.feature("Helpers")
+@allure.epic("Sheets Sync")
+@allure.feature("Google Sheets API")
 class TestHelpers:
     def test_fmt_amount_integer(self):
 

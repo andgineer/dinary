@@ -42,8 +42,9 @@ def _seed_doubtful_rule(con, item_name="hleb", confidence=3):
     )
 
 
-@allure.epic("API")
-@allure.feature("Review Page UX — confirm_rules_bulk")
+@allure.epic("Review & Rules")
+@allure.feature("API")
+@allure.story("Review page")
 class TestConfirmRulesBulk:
     def test_sets_confidence_to_4_on_rule(self, db):  # noqa: ARG002
         con = storage.get_connection()
@@ -124,8 +125,9 @@ class TestConfirmRulesBulk:
         assert resp.json()["confirmed"] == 1
 
 
-@allure.epic("API")
-@allure.feature("Review Page UX — doubtful_only feed filter")
+@allure.epic("Review & Rules")
+@allure.feature("API")
+@allure.story("Review page")
 class TestRulesFeedDoubtfulOnly:
     def _seed_both(self, con):
         con.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
@@ -220,8 +222,9 @@ class TestRulesFeedDoubtfulOnly:
         assert 11 not in ids
 
 
-@allure.epic("API")
-@allure.feature("Review Page UX — frequent_categories includes receipt expenses")
+@allure.epic("Review & Rules")
+@allure.feature("API")
+@allure.story("Review page")
 class TestFrequentCategoriesManualOnly:
     def test_receipt_backed_expenses_excluded(self, db):  # noqa: ARG002
         con = storage.get_connection()

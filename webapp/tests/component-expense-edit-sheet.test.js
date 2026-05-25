@@ -19,8 +19,9 @@ import * as receiptsApi from "../src/api/receipts.js";
 import * as reviewApi from "../src/api/review.js";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("ExpenseEditSheet");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("ExpenseEditSheet");
 });
 
 const TELEPORT_STUB = { template: "<div><slot /></div>" };

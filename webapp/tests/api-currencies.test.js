@@ -6,8 +6,8 @@ import {
 } from "../src/api/currencies.js";
 
 beforeEach(async () => {
-  await allure.epic("API");
-  await allure.feature("Currencies");
+  await allure.epic("Currencies");
+  await allure.feature("API client");
 });
 
 beforeEach(() => {

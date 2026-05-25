@@ -16,8 +16,8 @@ import tasks
 import tasks.imports.import_tasks
 
 
-@allure.epic("Deploy")
-@allure.feature("import-report-2d-3d: local / remote transport")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
 class TestImportReport2d3dTransport:
     """CLI surface of ``inv import-report-2d-3d`` mirrors ``inv report-*``:
 

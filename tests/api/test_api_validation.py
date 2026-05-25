@@ -13,8 +13,9 @@ from dinary.db.expenses import lookup_existing_expense
 from _api_helpers import _mock_get_rate, db  # noqa: F401  (autouse + helper)
 
 
-@allure.epic("API")
-@allure.feature("Expenses (3D) — validation 422")
+@allure.epic("Expenses")
+@allure.feature("API")
+@allure.story("Validation")
 class TestPostExpenseValidation:
     def test_unknown_category_returns_422(self, client):
         resp = client.post(
@@ -95,8 +96,9 @@ class TestPostExpenseValidation:
         assert lookup_existing_expense("e_leak") is not None
 
 
-@allure.epic("API")
-@allure.feature("Expenses (3D) — reseed / inactive carve-outs")
+@allure.epic("Expenses")
+@allure.feature("API")
+@allure.story("Validation")
 class TestPostExpenseInactiveCarveout:
     @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
     def test_reseed_deactivation_allows_idempotent_replay_but_rejects_new_posts(

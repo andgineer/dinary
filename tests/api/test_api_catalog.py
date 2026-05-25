@@ -60,8 +60,8 @@ def db(tmp_path, monkeypatch, blank_db):
         con.close()
 
 
-@allure.epic("API")
-@allure.feature("Catalog (3D) — snapshot + ETag")
+@allure.epic("Catalog")
+@allure.feature("API")
 class TestCatalogGet:
     def test_returns_shape(self, client):
         resp = client.get("/api/catalog")
@@ -123,8 +123,8 @@ class TestCatalogGet:
         assert resp.content == b""
 
 
-@allure.epic("API")
-@allure.feature("Catalog (3D) — removable flag")
+@allure.epic("Catalog")
+@allure.feature("API")
 class TestCatalogRemovableFlag:
     """``removable`` must be ``true`` exactly when a DELETE on the row
     would hard-delete (i.e. the row has no expense / mapping / auto_tags
@@ -206,8 +206,8 @@ class TestCatalogRemovableFlag:
         assert tags[1] is True
 
 
-@allure.epic("API")
-@allure.feature("Catalog (3D) — If-None-Match parsing")
+@allure.epic("Catalog")
+@allure.feature("API")
 class TestIfNoneMatchUnit:
     """Direct unit coverage for the list/wildcard parser. The
     integration tests above exercise it end-to-end, but the parser is
@@ -244,8 +244,8 @@ class TestIfNoneMatchUnit:
         assert _if_none_match_matches(header, 'W/"catalog-v2"') is True
 
 
-@allure.epic("API")
-@allure.feature("Catalog (3D) — frequent_categories")
+@allure.epic("Catalog")
+@allure.feature("API")
 class TestFrequentCategories:
     """frequent_categories counts only manually-entered expenses (receipt_id IS NULL)
     from the past 3 months, ordered by count descending, capped at 5."""

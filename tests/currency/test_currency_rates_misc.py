@@ -38,8 +38,8 @@ from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
 )
 
 
-@allure.epic("Services")
-@allure.feature("Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("Rate resolution")
 class TestExchangeRate:
     @patch("dinary.adapters.rate_helpers.httpx.get")
     def test_get_rate_fetches_and_stores(self, mock_get, tmp_path):
@@ -91,8 +91,8 @@ class TestExchangeRate:
             con.close()
 
 
-@allure.epic("Services")
-@allure.feature("Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("Rate resolution")
 @allure.story("Failure caching — DOS protection")
 class TestFailureCaching:
     """HTTP failures MUST be cached for the full TTL so a down upstream is not
@@ -121,8 +121,8 @@ class TestFailureCaching:
         assert mock_json.call_count == first_call_count
 
 
-@allure.epic("Services")
-@allure.feature("Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("Rate resolution")
 @allure.story("get_rate — NBS → NBP fallback chain")
 class TestGetRateFallbackChain:
     """The full multi-source resolution policy: NBS first (direct
@@ -222,8 +222,8 @@ class TestGetRateFallbackChain:
             get_rate(con, _MON, "BAM", "EUR")
 
 
-@allure.epic("Services")
-@allure.feature("Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("Rate resolution")
 @allure.story("get_rate — offline mode")
 class TestGetRateOffline:
     """offline=True returns DB rate without HTTP calls; falls back to

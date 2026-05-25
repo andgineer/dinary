@@ -62,8 +62,9 @@ def _make_event(
     )
 
 
-@allure.epic("Services")
-@allure.feature("SqliteLLMBrokerStorage")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("LLM storage")
 class TestLoadProviders:
     def test_returns_enabled_providers_sorted_by_priority(self, fresh_db):
         conn = storage.get_connection()
@@ -184,8 +185,9 @@ class TestLoadProviders:
         assert isinstance(providers, list)
 
 
-@allure.epic("Services")
-@allure.feature("SqliteLLMBrokerStorage")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("LLM storage")
 class TestOnCallLogged:
     def test_inserts_row_into_llmbroker_call_log(self, fresh_db):
         conn = storage.get_connection()
@@ -263,8 +265,9 @@ class TestOnCallLogged:
         assert row[0] is None
 
 
-@allure.epic("Services")
-@allure.feature("SqliteLLMBrokerStorage")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("LLM storage")
 class TestOnRateLimited:
     def test_updates_rate_limited_until_on_provider(self, fresh_db):
         conn = storage.get_connection()
@@ -292,8 +295,9 @@ class TestOnRateLimited:
         assert row[0] is not None
 
 
-@allure.epic("Services")
-@allure.feature("SqliteLLMBrokerStorage")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("LLM storage")
 class TestLabelFromBaseUrl:
     def test_groq(self):
         assert _label_from_base_url("https://api.groq.com/openai/v1") == "Groq"

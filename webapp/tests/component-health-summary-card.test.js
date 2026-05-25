@@ -3,8 +3,9 @@ import { mount } from "@vue/test-utils";
 import HealthSummaryCard from "../src/components/HealthSummaryCard.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("HealthSummaryCard");
+  await allure.epic("Infrastructure");
+  await allure.feature("Frontend");
+  await allure.story("HealthSummaryCard");
 });
 
 function mountCard(health) {

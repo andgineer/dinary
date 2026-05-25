@@ -56,8 +56,8 @@ def seeded_db(tmp_path, monkeypatch):
     return db_path
 
 
-@allure.epic("CLI tools")
-@allure.feature("inv sql — rich renderer")
+@allure.epic("Infrastructure")
+@allure.feature("CLI tools")
 class TestRenderRich:
     def test_header_and_rows(self):
         """The rich renderer emits both the column header and each row's
@@ -87,8 +87,8 @@ class TestRenderRich:
         assert "no result set" in buf.getvalue()
 
 
-@allure.epic("CLI tools")
-@allure.feature("inv sql — csv renderer")
+@allure.epic("Infrastructure")
+@allure.feature("CLI tools")
 class TestRenderCsv:
     def test_header_plus_rows_with_nulls(self):
         """CSV output has a header row and ``None`` serialises to an
@@ -107,8 +107,8 @@ class TestRenderCsv:
         assert lines[2] == "2,"
 
 
-@allure.epic("CLI tools")
-@allure.feature("inv sql — json envelope")
+@allure.epic("Infrastructure")
+@allure.feature("CLI tools")
 class TestRenderJson:
     def test_envelope_shape(self):
         """The JSON envelope is the SSH wire format for ``inv sql
@@ -159,8 +159,8 @@ class TestRenderJson:
         assert all(isinstance(r, tuple) for r in rows)
 
 
-@allure.epic("CLI tools")
-@allure.feature("inv sql — read-only contract")
+@allure.epic("Infrastructure")
+@allure.feature("CLI tools")
 class TestReadOnlySafety:
     def test_select_returns_rows(self, seeded_db):
         """End-to-end happy path: ``_execute`` opens the seeded DB and
@@ -197,8 +197,8 @@ class TestReadOnlySafety:
         assert rows == [("X",)]
 
 
-@allure.epic("CLI tools")
-@allure.feature("inv sql — argparse")
+@allure.epic("Infrastructure")
+@allure.feature("CLI tools")
 class TestWriteFlag:
     def test_main_without_write_refuses_update(self, capsys, seeded_db):
         """End-to-end CLI: running ``--query "UPDATE ..."`` without
@@ -229,8 +229,8 @@ class TestWriteFlag:
         assert "xxx" in capsys.readouterr().out
 
 
-@allure.epic("CLI tools")
-@allure.feature("inv sql — argparse")
+@allure.epic("Infrastructure")
+@allure.feature("CLI tools")
 class TestArgparse:
     def test_requires_query_or_file(self, capsys):
         """``inv sql`` with neither ``--query`` nor ``--file`` must

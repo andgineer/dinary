@@ -53,7 +53,7 @@ def _seeded_con(tmp_path, blank_db):
 
 
 @allure.epic("Reports")
-@allure.feature("income — aggregate_income")
+@allure.feature("Income")
 class TestAggregate:
     def test_rolls_up_per_year(self, _seeded_con):
         rows = income_report.aggregate_income(_seeded_con)
@@ -83,7 +83,7 @@ class TestAggregate:
 
 
 @allure.epic("Reports")
-@allure.feature("income — render_csv")
+@allure.feature("Income")
 class TestRenderCsv:
     def test_header_and_rows(self, _seeded_con):
         rows = income_report.aggregate_income(_seeded_con)
@@ -103,7 +103,7 @@ class TestRenderCsv:
 
 
 @allure.epic("Reports")
-@allure.feature("income — render_rich")
+@allure.feature("Income")
 class TestRenderRich:
     def test_renders_rows_and_total(self, _seeded_con):
         rows = income_report.aggregate_income(_seeded_con)
@@ -122,7 +122,7 @@ class TestRenderRich:
 
 
 @allure.epic("Reports")
-@allure.feature("income — run()")
+@allure.feature("Income")
 class TestRun:
     def test_missing_db_returns_nonzero(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(storage, "DB_PATH", tmp_path / "absent.db")
@@ -142,7 +142,7 @@ class TestRun:
 
 
 @allure.epic("Reports")
-@allure.feature("income — render_json / rows_from_json (remote transport)")
+@allure.feature("Income")
 class TestRenderJson:
     """The remote-execution path ships raw rows as JSON (``inv report-income
     --remote`` runs the query on the server, the client renders locally).
@@ -196,7 +196,7 @@ class TestRenderJson:
 
 
 @allure.epic("Reports")
-@allure.feature("income — CLI")
+@allure.feature("Income")
 class TestCli:
     def test_json_flag_emits_json(self, _seeded_con, capsys):
         rc = income_report.main(["--json"])

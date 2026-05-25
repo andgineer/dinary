@@ -7,8 +7,9 @@ import { useCatalogStore } from "../src/stores/catalog.js";
 import * as reviewApi from "../src/api/review.js";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("ReviewView");
+  await allure.epic("Review & Rules");
+  await allure.feature("Frontend");
+  await allure.story("ReviewView");
 });
 
 vi.mock("../src/api/review.js", async (importOriginal) => {

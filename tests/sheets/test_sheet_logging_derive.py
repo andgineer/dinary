@@ -26,8 +26,8 @@ from _sheet_logging_helpers import (  # noqa: F401  (autouse + helper)
 )
 
 
-@allure.epic("SheetLogging")
-@allure.feature("_derive_app_currency_amount_for_sheet")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
 class TestDeriveRsdForSheet:
     """Column B on the Sheets mirror is RSD-denominated (the sheet's
     native "original" currency post-Apr-2022). DB rows are stored in

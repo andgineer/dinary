@@ -3,8 +3,9 @@ import { mount } from "@vue/test-utils";
 import TagPicker from "../src/components/TagPicker.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("TagPicker");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("TagPicker");
 });
 
 const TAGS = [

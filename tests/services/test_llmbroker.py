@@ -68,8 +68,9 @@ def _429_response(retry_after: int | None = None) -> MagicMock:
     return resp
 
 
-@allure.epic("Services")
-@allure.feature("LLMBroker")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("LLM broker")
 class TestLLMBrokerChat:
     def test_success_returns_content(self):
         async def run():
@@ -367,8 +368,9 @@ class TestLLMBrokerChat:
         asyncio.run(run())
 
 
-@allure.epic("Services")
-@allure.feature("LLMBroker")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("LLM broker")
 class TestLLMBrokerChatNoWait:
     def test_returns_none_when_no_providers(self):
         async def run():

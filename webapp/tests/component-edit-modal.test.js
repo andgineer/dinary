@@ -5,8 +5,9 @@ import EditModal from "../src/modals/EditModal.vue";
 import { useCatalogStore } from "../src/stores/catalog.js";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("EditModal");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("EditModal");
 });
 
 // Catalog snapshot used to seed the store. EditModal reads

@@ -3,8 +3,9 @@ import { mount } from "@vue/test-utils";
 import CatalogSelectField from "../src/components/CatalogSelectField.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("CatalogSelectField");
+  await allure.epic("Catalog");
+  await allure.feature("Frontend");
+  await allure.story("CatalogSelectField");
 });
 
 const ACTIVE = [

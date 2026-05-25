@@ -31,8 +31,8 @@ def db(tmp_path, monkeypatch, blank_db):
     # FastAPI lifespan and calls ``storage.init_db``.
 
 
-@allure.epic("API")
-@allure.feature("Currencies — saved list (CRUD)")
+@allure.epic("Currencies")
+@allure.feature("API")
 class TestCurrenciesCrud:
     def test_seeded_with_default_app_currency(self, client):
         resp = client.get("/api/currencies")

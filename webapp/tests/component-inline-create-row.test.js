@@ -3,8 +3,9 @@ import { mount } from "@vue/test-utils";
 import InlineCreateRow from "../src/components/InlineCreateRow.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("InlineCreateRow");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("InlineCreateRow");
 });
 
 describe("InlineCreateRow", () => {

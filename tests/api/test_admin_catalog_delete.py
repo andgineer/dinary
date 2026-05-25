@@ -28,8 +28,8 @@ from dinary.db.expenses import ExpensePayload, insert_expense
 from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 
 
-@allure.epic("API")
-@allure.feature("Admin catalog — delete")
+@allure.epic("Catalog")
+@allure.feature("Admin API")
 class TestAdminDelete:
     def test_delete_unused_tag_is_hard(self, client):
         add = client.post("/api/catalog/tags", json={"name": "drop-me"})

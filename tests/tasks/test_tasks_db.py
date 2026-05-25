@@ -16,8 +16,8 @@ import tasks
 import tasks.db
 
 
-@allure.epic("Deploy")
-@allure.feature("verify-db: integrity_check + foreign_key_check gate")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
 class TestVerifyDbLocal:
     """``inv verify-db`` runs SQLite's two ship-blocker pragmas against
     ``data/dinary.db`` (local) or a snapshot of the prod DB (remote).
@@ -108,8 +108,8 @@ class TestVerifyDbLocal:
         assert "No local DB" in capsys.readouterr().err
 
 
-@allure.epic("Deploy")
-@allure.feature("verify-db --remote command shape")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
 class TestVerifyDbRemote:
     """``inv verify-db --remote`` takes a ``sqlite3 .backup`` of the
     live prod DB into ``/tmp``, then runs

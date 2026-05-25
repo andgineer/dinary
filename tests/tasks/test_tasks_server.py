@@ -19,8 +19,8 @@ from tasks.healthcheck import (
 )
 
 
-@allure.epic("Deploy")
-@allure.feature("healthcheck: sheet logging status display")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
 class TestHealthcheckSheetLog:
     def test_logged_to_sheet(self, capsys):
         _healthcheck_sheet_log({"sheet": "3889|"})
@@ -58,8 +58,8 @@ class TestHealthcheckSheetLog:
         assert "no expenses" in capsys.readouterr().out
 
 
-@allure.epic("Deploy")
-@allure.feature("healthcheck: last expense info display")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
 class TestHealthcheckLastExpenseInfo:
     def test_shows_whole_amount_currency_category(self, capsys):
         _healthcheck_last_expense_info(
@@ -90,8 +90,8 @@ class TestHealthcheckLastExpenseInfo:
         assert capsys.readouterr().out == ""
 
 
-@allure.epic("Deploy")
-@allure.feature("healthcheck: _healthcheck_run_queries local DB execution")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
 class TestHealthcheckRunQueriesLocal:
     @pytest.fixture
     def _cwd(self, tmp_path, monkeypatch):

@@ -33,8 +33,8 @@ from _sheet_logging_helpers import (  # noqa: F401  (autouse + fixtures)
 )
 
 
-@allure.epic("SheetLogging")
-@allure.feature("Idempotency marker (last-key-only)")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
 class TestIdempotencyMarker:
     """When ``append_expense_atomic`` returns False (marker already
     present on the row), the drain must count it as ``ALREADY_LOGGED``
@@ -75,8 +75,8 @@ class TestIdempotencyMarker:
             con.close()
 
 
-@allure.epic("SheetLogging")
-@allure.feature("sheet logging disabled")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
 class TestSheetLoggingDisabled:
     """When ``DINARY_SHEET_LOGGING_SPREADSHEET`` is empty, the drain
     is a no-op that returns a bare ``{"disabled": True}``."""
@@ -87,8 +87,8 @@ class TestSheetLoggingDisabled:
         assert result == {"disabled": True}
 
 
-@allure.epic("SheetLogging")
-@allure.feature("Circuit breaker")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
 class TestCircuitBreaker:
     """Module-level backoff state means a transient failure stalls the
     next drain attempt with ``{backoff_active: True}`` instead of
@@ -100,8 +100,8 @@ class TestCircuitBreaker:
         assert result == {"backoff_active": True}
 
 
-@allure.epic("SheetLogging")
-@allure.feature("claim_logging_job (lock-conflict handling)")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
 class TestClaimLoggingJobLockConflict:
     """A ``sqlite3.OperationalError`` raised by SQLite's write-lock
     timeout when two workers race on the same row surfaces as a clean
@@ -135,8 +135,8 @@ class TestClaimLoggingJobLockConflict:
             holder.close()
 
 
-@allure.epic("SheetLogging")
-@allure.feature("drain_pending rate-limit")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
 class TestDrainRateLimit:
     """Rate-limiting and inter-row sleep on ``drain_pending``. The
     single-DB refactor dropped the TTL + year-window code paths, so the

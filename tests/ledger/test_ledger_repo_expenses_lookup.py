@@ -21,8 +21,9 @@ from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
 )
 
 
-@allure.epic("Ledger repo")
-@allure.feature("lookup_existing_expense")
+@allure.epic("Expenses")
+@allure.feature("DB layer")
+@allure.story("Lookup")
 class TestLookupExistingExpense:
     def test_found(self, populated_catalog):
         con = storage.get_connection()
@@ -54,8 +55,9 @@ class TestLookupExistingExpense:
         assert lookup_existing_expense("missing") is None
 
 
-@allure.epic("Ledger repo")
-@allure.feature("get_expense_by_id")
+@allure.epic("Expenses")
+@allure.feature("DB layer")
+@allure.story("Lookup")
 class TestGetExpenseById:
     def test_roundtrip(self, populated_catalog):
         con = storage.get_connection()

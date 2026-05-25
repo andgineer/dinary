@@ -23,8 +23,8 @@ from dinary.background.sheet_logging.sheets_write import ensure_category_row
 from _sheets_helpers import HEADER, SAMPLE_SHEET, _make_worksheet
 
 
-@allure.epic("Google Sheets")
-@allure.feature("Row Insertion")
+@allure.epic("Sheets Sync")
+@allure.feature("Google Sheets API")
 class TestEnsureCategoryRow:
     def test_existing_row_returned_as_is(self):
 
@@ -132,8 +132,8 @@ class TestEnsureCategoryRow:
         assert "IF" in by_col["C"]
 
 
-@allure.epic("Google Sheets")
-@allure.feature("Row Insertion (legacy compat)")
+@allure.epic("Sheets Sync")
+@allure.feature("Google Sheets API")
 class TestEnsureCategoryRowLegacySheet:
     """ensure_category_row must work against existing sheets with
     legacy-style copied month blocks (many categories per month,
@@ -211,8 +211,8 @@ class TestEnsureCategoryRowLegacySheet:
         assert row == 2
 
 
-@allure.epic("Google Sheets")
-@allure.feature("Row Insertion (multi-year)")
+@allure.epic("Sheets Sync")
+@allure.feature("Google Sheets API")
 class TestEnsureCategoryRowMultiYear:
     """``ensure_category_row`` must respect ``years_by_row`` so that a
     write for a different year does not smear onto an existing

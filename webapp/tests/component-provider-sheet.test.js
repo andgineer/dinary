@@ -5,8 +5,9 @@ import ProviderSheet from "../src/components/ProviderSheet.vue";
 import { useLlmStore } from "../src/stores/llm.js";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("ProviderSheet");
+  await allure.epic("Infrastructure");
+  await allure.feature("LLM providers");
+  await allure.story("ProviderSheet");
 });
 
 const PROVIDER = {

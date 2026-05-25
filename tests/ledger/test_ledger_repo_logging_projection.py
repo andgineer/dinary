@@ -33,8 +33,8 @@ from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
 )
 
 
-@allure.epic("Ledger repo")
-@allure.feature("Logging projection (sheet_mapping)")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
 class TestLoggingProjection:
     @pytest.fixture
     def logging_setup(self, fresh_db):

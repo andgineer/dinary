@@ -19,8 +19,9 @@ import pytest
 import tasks.backups.backups_yandex
 
 
-@allure.epic("Deploy")
-@allure.feature("backup-cloud-setup: yandex rclone bootstrap")
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Cloud setup")
 class TestEnsureYandexRcloneConfigured:
     """The interactive Yandex bootstrap replaces the previous "run
     ``rclone config`` manually on VM2" step. The contract is:
@@ -218,8 +219,9 @@ class TestEnsureYandexRcloneConfigured:
         assert excinfo.value.code == 5
 
 
-@allure.epic("Deploy")
-@allure.feature("setup-yadisk: local yandex rclone bootstrap")
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Cloud setup")
 class TestEnsureLocalYandexRcloneConfigured:
     """Local-machine counterpart of :class:`TestEnsureYandexRcloneConfigured`.
 

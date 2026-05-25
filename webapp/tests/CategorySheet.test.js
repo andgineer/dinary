@@ -6,8 +6,9 @@ import CategorySheet from "../src/components/CategorySheet.vue";
 import { useCatalogStore } from "../src/stores/catalog.js";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("CategorySheet");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("CategorySheet");
 });
 
 const TELEPORT_STUB = { props: ["to"], template: "<div><slot /></div>" };

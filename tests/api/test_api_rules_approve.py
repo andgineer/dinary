@@ -51,8 +51,8 @@ def _seed(con, *, rule_category_id=1, expense_confidence=3):
     con.execute("UPDATE receipt_items SET expense_id = 2 WHERE id = 2")
 
 
-@allure.epic("API")
-@allure.feature("Rule approval by rule ID")
+@allure.epic("Review & Rules")
+@allure.feature("API")
 class TestApproveRuleCategory:
     def test_approve_rule_updates_rule_to_confidence_4(self, client, db):  # noqa: ARG002
         con = storage.get_connection()

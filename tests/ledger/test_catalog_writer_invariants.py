@@ -38,8 +38,8 @@ from dinary.db.expenses import ExpensePayload, insert_expense
 from _catalog_writer_helpers import _DT, _seed_minimal, fresh_db  # noqa: F401
 
 
-@allure.epic("CatalogWriter")
-@allure.feature("Version bump invariants")
+@allure.epic("Catalog")
+@allure.feature("DB writer")
 class TestVersionBump:
     def test_add_group_bumps_version(self, fresh_db):
         con = storage.get_connection()
@@ -92,8 +92,8 @@ class TestVersionBump:
         assert v1 == v0 + 1
 
 
-@allure.epic("CatalogWriter")
-@allure.feature("Reactivate preserves optional columns")
+@allure.epic("Catalog")
+@allure.feature("DB writer")
 class TestReactivatePreserves:
     def test_add_category_reactivate_preserves_sheet_columns(self, fresh_db):
         con = storage.get_connection()
@@ -151,8 +151,8 @@ class TestReactivatePreserves:
         assert bool(row[3]) is True
 
 
-@allure.epic("CatalogWriter")
-@allure.feature("Integrity rules")
+@allure.epic("Catalog")
+@allure.feature("DB writer")
 class TestIntegrityRules:
     def test_soft_retire_referenced_category_is_allowed(self, fresh_db):
         """``set_category_active(False)`` on a referenced category is

@@ -4,8 +4,9 @@ import { mount } from "@vue/test-utils";
 import HeaderSegmented from "../src/components/HeaderSegmented.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("HeaderSegmented");
+  await allure.epic("Infrastructure");
+  await allure.feature("Frontend");
+  await allure.story("HeaderSegmented");
 });
 
 function mountSeg(tab = "add", doubtfulCount = 0) {

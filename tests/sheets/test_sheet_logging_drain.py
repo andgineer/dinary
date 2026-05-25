@@ -30,8 +30,9 @@ from _sheet_logging_helpers import (  # noqa: F401  (autouse + fixtures)
 )
 
 
-@allure.epic("SheetLogging")
-@allure.feature("drain_pending")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
+@allure.story("Drain pending")
 class TestDrainPending:
     @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
     @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
@@ -77,8 +78,9 @@ class TestDrainPending:
             con.close()
 
 
-@allure.epic("SheetLogging")
-@allure.feature("drain_pending (poison path)")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
+@allure.story("Drain pending")
 class TestDrainPendingPoisonsUnresolvedCategory:
     """If an expense's ``category_id`` does not resolve to any
     ``categories`` row (neither by mapping nor by fallback name), the
@@ -141,8 +143,9 @@ class TestDrainPendingPoisonsUnresolvedCategory:
         assert count == 1
 
 
-@allure.epic("SheetLogging")
-@allure.feature("drain_pending (null-uuid poison path)")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
+@allure.story("Drain pending")
 class TestDrainPendingPoisonsNullClientExpenseId:
     """A queue row whose underlying expense has
     ``client_expense_id = NULL`` must be poisoned rather than
@@ -232,8 +235,9 @@ class TestDrainPendingPoisonsNullClientExpenseId:
         assert "client_expense_id" in (reason or "")
 
 
-@allure.epic("SheetLogging")
-@allure.feature("drain_pending (category fallback)")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
+@allure.story("Drain pending")
 class TestDrainPendingCategoryFallback:
     """When ``sheet_mapping`` has no matching row for the expense's
     category, the worker must fall back to the category name as the
@@ -279,8 +283,9 @@ class TestDrainPendingCategoryFallback:
         assert ecr_call_args[0][4] == ""
 
 
-@allure.epic("SheetLogging")
-@allure.feature("drain_pending (counter accounting)")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
+@allure.story("Drain pending")
 class TestDrainPendingCounters:
     """``drain_pending`` must split clean appends, real failures, and
     post-append recovery into three distinct counters so an operator

@@ -20,8 +20,9 @@ from dinary.db.expenses import get_expense_tags
 from _api_helpers import _mock_get_rate, db  # noqa: F401  (autouse + helper)
 
 
-@allure.epic("API")
-@allure.feature("Expenses (3D)")
+@allure.epic("Expenses")
+@allure.feature("API")
+@allure.story("POST /api/expenses")
 class TestPostExpenseHappyPath:
     @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
     def test_create_expense(self, _mock_convert_fn, client):
@@ -264,8 +265,9 @@ class TestPostExpenseHappyPath:
         assert row[2] == "RSD"
 
 
-@allure.epic("API")
-@allure.feature("Expenses (3D) — sheet-logging enqueue")
+@allure.epic("Expenses")
+@allure.feature("API")
+@allure.story("POST /api/expenses")
 class TestPostExpenseSheetLogging:
     @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
     def test_disabled_sheet_logging_does_not_enqueue_jobs(
@@ -346,8 +348,9 @@ def _insert_expense_direct(con, eid, cid, *, receipt_id=None, days_ago=0):
     )
 
 
-@allure.epic("API")
-@allure.feature("Expenses (3D) — default_group_id / default_category_ids in response")
+@allure.epic("Expenses")
+@allure.feature("API")
+@allure.story("POST /api/expenses")
 class TestExpenseDefaults:
     """POST /api/expenses returns usage-based defaults so the PWA can
     pre-select the most-used group and category on next form open."""

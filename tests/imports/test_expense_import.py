@@ -123,8 +123,8 @@ def _mock_prefetch_rates(_year, _layout, *, con=None):
     return {m: one_to_one for m in range(1, 13)}
 
 
-@allure.epic("Import")
-@allure.feature("Bootstrap (3D)")
+@allure.epic("Expenses")
+@allure.feature("Import")
 class TestImportYear:
     @patch(
         "tasks.imports.expense_import._prefetch_monthly_rates",

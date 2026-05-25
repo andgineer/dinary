@@ -15,8 +15,9 @@ import tasks  # noqa: F401 — loads tasks/__init__.py which imports tasks.dev
 _dev = sys.modules["tasks.devtools.dev"]
 
 
-@allure.epic("Deploy")
-@allure.feature("build-static: version resolution from git")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Build static")
 class TestBuildVersion:
     def test_returns_tag_with_v_prefix_stripped(self, monkeypatch):
         def fake_check_output(args, **_kwargs):
@@ -64,8 +65,9 @@ class _FakeContext:
 _build_static_fn = _dev.build_static.body  # unwrap @task to call directly
 
 
-@allure.epic("Deploy")
-@allure.feature("build-static: Vue PWA build pipeline")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Build static")
 class TestBuildStatic:
     @pytest.fixture
     def fake_repo(self, tmp_path, monkeypatch):
@@ -148,8 +150,8 @@ class TestBuildStatic:
             _build_static_fn(ctx)
 
 
-@allure.epic("Deploy")
-@allure.feature("inv dev: ensures _static/ exists before serving")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
 class TestEnsureStaticBuilt:
     def test_short_circuits_when_index_exists(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

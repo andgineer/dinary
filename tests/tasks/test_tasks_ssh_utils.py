@@ -17,8 +17,9 @@ import tasks.ssh_utils
 from tasks.ssh_utils import remote_snapshot_cmd, systemd_quote
 
 
-@allure.epic("Deploy")
-@allure.feature("systemd EnvironmentFile quoting")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("SSH utils")
 class TestSystemdQuote:
     def test_bare_alphanumeric_unquoted(self):
         assert systemd_quote("abc123") == "abc123"
@@ -53,8 +54,9 @@ class TestSystemdQuote:
         assert "https://docs.google.com/spreadsheets/d/abc?usp=sharing" in result
 
 
-@allure.epic("Deploy")
-@allure.feature("Remote report snapshot wrapper")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("SSH utils")
 class TestRemoteSnapshotCmd:
     """``inv report-income --remote`` / ``inv report-expenses --remote``
     / ``inv import-report-2d-3d --remote`` cannot safely open the
@@ -191,8 +193,9 @@ class TestRemoteSnapshotCmd:
         assert cmd.startswith("set -e; ")
 
 
-@allure.epic("Deploy")
-@allure.feature("SSH bytes-capture (UTF-8 chunk-boundary safety)")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("SSH utils")
 class TestSshCaptureBytes:
     """Remote ``inv report-*`` runs must preserve UTF-8 across SSH
     chunk boundaries. Decoding each read_proc_stdout chunk

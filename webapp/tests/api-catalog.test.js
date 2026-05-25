@@ -17,8 +17,8 @@ import {
 } from "../src/api/catalog.js";
 
 beforeEach(async () => {
-  await allure.epic("API");
-  await allure.feature("Catalog");
+  await allure.epic("Catalog");
+  await allure.feature("API client");
 });
 
 let originalFetch;

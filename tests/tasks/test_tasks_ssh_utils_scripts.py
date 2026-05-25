@@ -18,8 +18,9 @@ import tasks.devtools.env
 import tasks.ssh_utils
 
 
-@allure.epic("Deploy")
-@allure.feature("Litestream install script: arch-to-asset mapping")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Replica setup")
 class TestLitestreamInstallScript:
     """``inv setup-replica`` downloads a Litestream ``.deb`` whose
     filename suffix depends on the remote VM's CPU. Oracle Free Tier
@@ -113,8 +114,9 @@ class TestLitestreamInstallScript:
         assert f"litestream-{tasks.devtools.constants.LITESTREAM_VERSION}" not in script
 
 
-@allure.epic("Deploy")
-@allure.feature("setup-swap: persistent swapfile provisioner")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Server setup")
 class TestSetupSwapScript:
     """``inv setup-server --swap-size-gb N`` is the only mechanism that provisions swap
     on the Oracle Free Tier VMs, which ship with zero swap and
@@ -198,8 +200,9 @@ class TestSetupSwapScript:
         assert "$FSTAB_LINE" in script
 
 
-@allure.epic("Deploy")
-@allure.feature("ssh-tailscale-only: rebind sshd to tailnet ingress")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Server setup")
 class TestSshTailscaleOnlyScript:
     """``inv setup-server --tailscale`` closes the public TCP/22 attack
     surface by rebinding sshd to the Tailscale IPv4 + loopback. A
@@ -318,8 +321,9 @@ class TestSshTailscaleOnlyScript:
         assert "$DROPIN" in script
 
 
-@allure.epic("Deploy")
-@allure.feature("SSH hardening script (X11 off, PermitRootLogin no, root/opc key wipe)")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Server setup")
 class TestHardenSshdScript:
     """Pins the cross-VM sshd hardening block. Regressions here would
     silently re-expose the dormant root/opc cloud-init seed key or
@@ -373,8 +377,9 @@ class TestHardenSshdScript:
         assert "<<'DINARY_SSH_HARDEN_EOF'" in script
 
 
-@allure.epic("Deploy")
-@allure.feature("fail2ban install script (jail.local + sshd jail)")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Server setup")
 class TestInstallFail2banScript:
     """Pins the shape of the fail2ban install + jail.local payload.
     Losing any of these knobs would either disable the sshd jail
@@ -426,8 +431,9 @@ class TestInstallFail2banScript:
         assert "<<'DINARY_F2B_EOF'" in script
 
 
-@allure.epic("Deploy")
-@allure.feature("data/ permissions tightening (chmod 700 + db* 600)")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Server setup")
 class TestDataDirPermissionsScript:
     """Re-applied on every ``inv deploy`` and ``inv setup-server``.
     SQLite recreates ``-wal`` / ``-shm`` with the umask default on
@@ -453,8 +459,9 @@ class TestDataDirPermissionsScript:
         assert "-maxdepth 1" in script
 
 
-@allure.epic("Deploy")
-@allure.feature("VM1→VM2 SSH trust (keygen, authorized_keys, known_hosts)")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Server setup")
 class TestReplicaTrustScripts:
     """Litestream on VM1 replicates to VM2 by SFTP as ``ubuntu``. The
     three builders below wire that trust chain: generate the VM1
@@ -591,8 +598,9 @@ class TestReplicaTrustScripts:
         assert "rm -rf /" not in reset.replace("'replica.example;rm -rf /'", "")
 
 
-@allure.epic("Deploy")
-@allure.feature("dinary.service bind host per tunnel type")
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("Server setup")
 class TestDinaryServiceBindHost:
     """``bind_host()`` determines the ``--host`` uvicorn receives.
 

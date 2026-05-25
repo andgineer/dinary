@@ -4,8 +4,9 @@ import { createPinia, setActivePinia } from "pinia";
 import ExpenseRow from "../src/components/ExpenseRow.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("ExpenseRow");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("ExpenseRow");
 });
 
 const BASE = {

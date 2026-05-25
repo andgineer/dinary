@@ -27,8 +27,8 @@ from dinary.sheets import sheet_mapping
 from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 
 
-@allure.epic("API")
-@allure.feature("Admin catalog — catalog_version end-to-end")
+@allure.epic("Catalog")
+@allure.feature("Admin API")
 class TestCatalogVersionE2E:
     def test_add_bumps_catalog_version_visible_in_get_catalog(self, client):
         v0 = client.get("/api/catalog").json()["catalog_version"]
@@ -40,8 +40,8 @@ class TestCatalogVersionE2E:
         assert snap_resp.headers["ETag"] == f'W/"catalog-v{v0 + 1}"'
 
 
-@allure.epic("API")
-@allure.feature("Admin catalog — reload-map")
+@allure.epic("Catalog")
+@allure.feature("Admin API")
 class TestReloadMap:
     def test_reload_503_when_spreadsheet_unset(self, client, monkeypatch):
         monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "")

@@ -29,8 +29,8 @@ def _belgrade_dt(hour: int, *, weekday: int = 0) -> datetime:
     return datetime(d.year, d.month, d.day, hour, 0, tzinfo=_BELGRADE)
 
 
-@allure.epic("Background Tasks")
-@allure.feature("Rate Prefetch")
+@allure.epic("Currencies")
+@allure.feature("Background tasks")
 @allure.story("_seconds_until_prefetch_hour")
 class TestSecondsUntilPrefetchHour:
     """Calculates sleep duration until next prefetch window."""
@@ -56,8 +56,8 @@ class TestSecondsUntilPrefetchHour:
             assert secs >= _RETRY_INTERVAL_SEC
 
 
-@allure.epic("Background Tasks")
-@allure.feature("Rate Prefetch")
+@allure.epic("Currencies")
+@allure.feature("Background tasks")
 @allure.story("Before publication hour")
 class TestBeforePublicationHour:
     """Before 08:00 Belgrade time — should sleep until prefetch hour, not fetch."""
@@ -96,8 +96,8 @@ class TestBeforePublicationHour:
             mock_sleep.assert_awaited_with(7200)
 
 
-@allure.epic("Background Tasks")
-@allure.feature("Rate Prefetch")
+@allure.epic("Currencies")
+@allure.feature("Background tasks")
 @allure.story("Working day — fetches rate")
 class TestWorkingDayFetch:
     """Working day after 08:00, rate not cached — should call get_rate."""
@@ -147,8 +147,8 @@ class TestWorkingDayFetch:
             )
 
 
-@allure.epic("Background Tasks")
-@allure.feature("Rate Prefetch")
+@allure.epic("Currencies")
+@allure.feature("Background tasks")
 @allure.story("Weekend — fetches rate (walkback)")
 class TestWeekendFetch:
     """Weekend after 08:00, rate not cached — should call get_rate."""
@@ -197,8 +197,8 @@ class TestWeekendFetch:
             )
 
 
-@allure.epic("Background Tasks")
-@allure.feature("Rate Prefetch")
+@allure.epic("Currencies")
+@allure.feature("Background tasks")
 @allure.story("Already cached — sleeps until tomorrow")
 class TestAlreadyCached:
     """Rate already in cache — should sleep until tomorrow prefetch hour."""
@@ -242,8 +242,8 @@ class TestAlreadyCached:
             mock_sleep.assert_awaited_with(80000)
 
 
-@allure.epic("Background Tasks")
-@allure.feature("Rate Prefetch")
+@allure.epic("Currencies")
+@allure.feature("Background tasks")
 @allure.story("Fetch error — retries")
 class TestFetchError:
     """get_rate raises — should log and retry after interval."""
@@ -283,8 +283,8 @@ class TestFetchError:
             mock_sleep.assert_awaited_with(_RETRY_INTERVAL_SEC)
 
 
-@allure.epic("Background Tasks")
-@allure.feature("Rate Prefetch")
+@allure.epic("Currencies")
+@allure.feature("Background tasks")
 @allure.story("Stale fallback — retries instead of sleeping until tomorrow")
 class TestStaleFallback:
     """get_rate returns a rate but does not write it to DB for today (e.g.

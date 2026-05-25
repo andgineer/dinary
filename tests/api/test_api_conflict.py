@@ -10,8 +10,8 @@ import allure
 from _api_helpers import _mock_get_rate, db  # noqa: F401  (autouse + helper)
 
 
-@allure.epic("API")
-@allure.feature("Expenses (3D) — conflict 409")
+@allure.epic("Expenses")
+@allure.feature("API")
 class TestPostExpenseConflict:
     @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
     def test_conflict_on_modified_amount(self, _mock_convert_fn, client):

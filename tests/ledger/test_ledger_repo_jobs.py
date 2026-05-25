@@ -24,8 +24,8 @@ from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
 )
 
 
-@allure.epic("Ledger repo")
-@allure.feature("sheet_logging_jobs queue")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet logging")
 class TestLoggingQueue:
     def _insert_one_expense(self) -> int:
         con = storage.get_connection()

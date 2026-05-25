@@ -26,8 +26,9 @@ dbs:
 """
 
 
-@allure.epic("Deploy")
-@allure.feature("restore-utils: litestream_active")
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Restore utils")
 class TestLitestreamActive:
     def test_returns_true_when_service_running(self, monkeypatch):
         """returncode 0 from systemctl is-active means litestream is running."""
@@ -55,8 +56,9 @@ class TestLitestreamActive:
         assert captured["args"] == ["systemctl", "is-active", "--quiet", "litestream"]
 
 
-@allure.epic("Deploy")
-@allure.feature("restore-utils: _parse_vm2_ssh_target")
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Restore utils")
 class TestParseVm2SshTarget:
     def test_extracts_user_at_host(self, tmp_path):
         """Happy path: returns ``user@host`` stripping the ``:22`` port."""
@@ -86,8 +88,9 @@ class TestParseVm2SshTarget:
             ru._parse_vm2_ssh_target(cfg)
 
 
-@allure.epic("Deploy")
-@allure.feature("restore-utils: local_replica_resync")
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Restore utils")
 class TestLocalReplicaResync:
     @pytest.fixture
     def _config(self, tmp_path, monkeypatch):

@@ -18,8 +18,8 @@ from _report_2d_3d_helpers import (  # noqa: F401  (autouse + helper)
 )
 
 
-@allure.epic("Report")
-@allure.feature("Row resolution")
+@allure.epic("Reports")
+@allure.feature("2D/3D aggregation")
 class TestResolveRowTo3d:
     def test_mapping_resolution_kind(self, blank_db):
         _seed_catalog(blank_db)
@@ -168,8 +168,8 @@ class TestResolveRowTo3d:
             con.close()
 
 
-@allure.epic("Report")
-@allure.feature("Post-import fix simulation")
+@allure.epic("Reports")
+@allure.feature("2D/3D aggregation")
 class TestPostImportFixViaResolve:
     def test_comment_keyed_fix_overrides_mapping(self, blank_db):
         _seed_catalog(blank_db)

@@ -27,8 +27,8 @@ from _report_2d_3d_helpers import (  # noqa: F401  (autouse + helper)
 )
 
 
-@allure.epic("Report")
-@allure.feature("Summary aggregation")
+@allure.epic("Reports")
+@allure.feature("2D/3D aggregation")
 class TestBuildSummary:
     def test_groups_by_3d_and_2d(self):
         details = [
@@ -103,8 +103,8 @@ class TestBuildSummary:
         assert build_summary([]) == []
 
 
-@allure.epic("Report")
-@allure.feature("Detail collection")
+@allure.epic("Reports")
+@allure.feature("2D/3D aggregation")
 class TestCollectDetailRows:
     def test_collects_resolved_rows_for_year(self, monkeypatch, blank_db):
         _seed_catalog(blank_db)

@@ -4,8 +4,9 @@ import { defineComponent } from "vue";
 import { useKeyboardVisible } from "../src/composables/useKeyboardVisible.js";
 
 beforeEach(async () => {
-  await allure.epic("Composables");
-  await allure.feature("useKeyboardVisible");
+  await allure.epic("Infrastructure");
+  await allure.feature("Frontend");
+  await allure.story("useKeyboardVisible");
 });
 
 function makeViewport(height, innerHeight = 800) {

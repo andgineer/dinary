@@ -106,8 +106,8 @@ def _hleb_result(cat_id=1, conf=3) -> ClassificationResult:
     )
 
 
-@allure.epic("Services")
-@allure.feature("Receipt classification drain")
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
 class TestClassifyAndPersist:
     @pytest.fixture(autouse=True)
     def _no_fx_conversion(self, monkeypatch):

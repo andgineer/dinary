@@ -9,8 +9,9 @@ import { useCatalogStore } from "../src/stores/catalog.js";
 import { useToastStore } from "../src/stores/toast.js";
 
 beforeEach(async () => {
-  await allure.epic("Stores");
-  await allure.feature("Review store");
+  await allure.epic("Review & Rules");
+  await allure.feature("Frontend");
+  await allure.story("Review store");
 });
 
 function mockOnLine(value) {

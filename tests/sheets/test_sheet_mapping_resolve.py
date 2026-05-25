@@ -30,8 +30,8 @@ from _sheet_mapping_helpers import (  # noqa: F401  (autouse + helpers)
 )
 
 
-@allure.epic("SheetMapping")
-@allure.feature("resolve_projection")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet mapping")
 class TestResolveProjection:
     def test_first_non_star_wins_per_column_independently(self):
         """Column A sets Расходы; column B sets Конверт; the resolver
@@ -118,8 +118,8 @@ class TestResolveProjection:
         assert result == ("еда", "")
 
 
-@allure.epic("SheetMapping")
-@allure.feature("_atomic_swap")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet mapping")
 class TestAtomicSwap:
     def test_swap_replaces_sheet_mapping(self):
         cats, events, tags = _catalog()
@@ -207,8 +207,8 @@ class TestAtomicSwap:
         assert new_tags == [(1, 3)]
 
 
-@allure.epic("SheetMapping")
-@allure.feature("_load_catalog (inactive-tolerant)")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet mapping")
 class TestLoadCatalog:
     """``_load_catalog`` must include inactive categories / events /
     tags. ``is_active = FALSE`` is a "hide from the ручной пикер"
@@ -267,8 +267,8 @@ class TestLoadCatalog:
         assert rows[0].tag_ids == (3,)
 
 
-@allure.epic("SheetMapping")
-@allure.feature("event auto_tags helpers")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet mapping")
 class TestEventAutoTags:
     def test_resolve_returns_active_tag_ids(self):
         con = storage.get_connection()

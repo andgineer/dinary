@@ -19,8 +19,8 @@ from _sheet_mapping_helpers import (  # noqa: F401  (autouse + helpers)
 )
 
 
-@allure.epic("SheetMapping")
-@allure.feature("parse_rows")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet mapping")
 class TestParseRows:
     def test_happy_path(self):
         cats, events, tags = _catalog()
@@ -191,8 +191,8 @@ class TestParseRows:
         assert "did you mean" not in str(excinfo.value)
 
 
-@allure.epic("SheetMapping")
-@allure.feature("_default_template_rows")
+@allure.epic("Sheets Sync")
+@allure.feature("Sheet mapping")
 class TestDefaultTemplateRows:
     """Pin the minimal-template contract.
 

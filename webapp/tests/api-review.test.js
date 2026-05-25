@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { getReviewFeed, getReviewCounts, confirmAllRules } from "../src/api/review.js";
 
 beforeEach(async () => {
-  await allure.epic("API");
-  await allure.feature("Review");
+  await allure.epic("Review & Rules");
+  await allure.feature("API client");
 });
 
 let originalFetch;

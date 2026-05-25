@@ -25,8 +25,8 @@ from dinary.db.expenses import ExpensePayload, insert_expense
 from _catalog_writer_helpers import _DT, _seed_minimal, fresh_db  # noqa: F401
 
 
-@allure.epic("CatalogWriter")
-@allure.feature("Atomic PATCH")
+@allure.epic("Catalog")
+@allure.feature("DB writer")
 class TestAtomicPatch:
     def test_edit_category_empty_string_clears_sheet_columns(self, fresh_db):
         """Empty-string sentinel on PATCH clears ``sheet_name`` /
@@ -141,8 +141,8 @@ class TestAtomicPatch:
         assert row[1].isoformat() == "2026-12-31"
 
 
-@allure.epic("CatalogWriter")
-@allure.feature("Tag usage guard")
+@allure.epic("Catalog")
+@allure.feature("DB writer")
 class TestTagUsage:
     def test_edit_event_accepts_inactive_tag_in_auto_tags(self, fresh_db):
         """Deactivating a tag must not block writes that reference it

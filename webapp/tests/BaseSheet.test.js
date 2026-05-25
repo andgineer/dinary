@@ -3,8 +3,9 @@ import { mount } from "@vue/test-utils";
 import BaseSheet from "../src/components/BaseSheet.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("BaseSheet");
+  await allure.epic("Infrastructure");
+  await allure.feature("Frontend");
+  await allure.story("BaseSheet");
 });
 
 const TELEPORT_STUB = { props: ["to"], template: "<div><slot /></div>" };

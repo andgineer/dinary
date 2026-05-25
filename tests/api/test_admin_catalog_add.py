@@ -16,8 +16,8 @@ import allure
 from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 
 
-@allure.epic("API")
-@allure.feature("Admin catalog — add")
+@allure.epic("Catalog")
+@allure.feature("Admin API")
 class TestAdminAdd:
     def test_add_tag_returns_snapshot(self, client):
         resp = client.post("/api/catalog/tags", json={"name": "t1"})
@@ -84,8 +84,8 @@ class TestAdminAdd:
         assert resp.status_code == 422
 
 
-@allure.epic("API")
-@allure.feature("Admin catalog — add status")
+@allure.epic("Catalog")
+@allure.feature("Admin API")
 class TestAddStatus:
     def test_add_returns_created_on_new_name(self, client):
         resp = client.post("/api/catalog/tags", json={"name": "fresh"})

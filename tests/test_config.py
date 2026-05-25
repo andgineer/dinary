@@ -15,8 +15,8 @@ from dinary import config
 from tasks.imports import expense_import
 
 
-@allure.epic("Config")
-@allure.feature("Deprecated env vars")
+@allure.epic("Infrastructure")
+@allure.feature("Config")
 class TestDeprecatedEnvWarnings:
     @pytest.mark.parametrize(
         ("old_name", "new_name"),
@@ -84,8 +84,8 @@ def _reset_import_sources_cache():
     config._import_sources_cache = None
 
 
-@allure.epic("Config")
-@allure.feature("Import sources file")
+@allure.epic("Infrastructure")
+@allure.feature("Config")
 @allure.story("read_import_sources contract")
 class TestReadImportSources:
     """Contract tests for the file-backed import-sources loader.
@@ -256,8 +256,8 @@ class TestReadImportSources:
         assert config.get_import_source(1999) is None
 
 
-@allure.epic("Config")
-@allure.feature("Import sources file")
+@allure.epic("Infrastructure")
+@allure.feature("Config")
 @allure.story("ImportSourceRow dataclass shape")
 class TestImportSourceRow:
     def test_is_frozen_dataclass(self):
@@ -274,8 +274,8 @@ class TestImportSourceRow:
         assert row.income_layout_key == ""
 
 
-@allure.epic("Config")
-@allure.feature("Import sources file")
+@allure.epic("Infrastructure")
+@allure.feature("Config")
 @allure.story("Fail-loud entry points when file missing")
 class TestFailLoudWhenSourcesMissing:
     """The import entry points must raise an actionable error when the

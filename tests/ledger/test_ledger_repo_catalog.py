@@ -29,8 +29,8 @@ from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
 )
 
 
-@allure.epic("Ledger repo")
-@allure.feature("Connection lifecycle")
+@allure.epic("Catalog")
+@allure.feature("DB layer")
 class TestConnectionLifecycle:
     def test_init_creates_file(self, tmp_path):
         assert not storage.DB_PATH.exists()
@@ -78,8 +78,8 @@ class TestConnectionLifecycle:
         assert row == ("g42",)
 
 
-@allure.epic("Ledger repo")
-@allure.feature("Catalog version")
+@allure.epic("Catalog")
+@allure.feature("DB layer")
 class TestCatalogVersion:
     def test_initial_version_is_one(self, fresh_db):
         con = storage.get_connection()
@@ -106,8 +106,8 @@ class TestCatalogVersion:
             con.close()
 
 
-@allure.epic("Ledger repo")
-@allure.feature("List categories (is_active)")
+@allure.epic("Catalog")
+@allure.feature("DB layer")
 class TestListCategories:
     def test_filters_inactive_rows(self, fresh_db):
         con = storage.get_connection()
@@ -155,8 +155,8 @@ class TestListCategories:
         ]
 
 
-@allure.epic("Ledger repo")
-@allure.feature("Sheet mapping (3D)")
+@allure.epic("Catalog")
+@allure.feature("DB layer")
 class TestSheetMapping:
     def test_year_specific_overrides_default(self, populated_catalog):
         con = storage.get_connection()
@@ -186,8 +186,8 @@ class TestSheetMapping:
             con.close()
 
 
-@allure.epic("Ledger repo")
-@allure.feature("get_category_name")
+@allure.epic("Catalog")
+@allure.feature("DB layer")
 class TestGetCategoryName:
     def test_existing(self, fresh_db):
         con = storage.get_connection()

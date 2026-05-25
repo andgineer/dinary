@@ -15,8 +15,9 @@ from dinary.background.classification.receipt_classifier import (
 _CATEGORIES = {1: "Еда: еда", 2: "Жильё: хозтовары", 3: "Красота и ЗОЖ: гигиена"}
 
 
-@allure.epic("Services")
-@allure.feature("LLM Client")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("LLM client")
 class TestBuildUserMessage:
     def test_contains_store_name(self):
         msg = _build_user_message(["hleb"], "Lidl", _CATEGORIES, {})
@@ -42,8 +43,9 @@ class TestBuildUserMessage:
         assert "Tags:" not in msg
 
 
-@allure.epic("Services")
-@allure.feature("LLM Client")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("LLM client")
 class TestParseResponse:
     def test_valid_response(self):
         raw = json.dumps(
@@ -118,8 +120,9 @@ class TestParseResponse:
         assert results[0].tag_ids == []
 
 
-@allure.epic("Services")
-@allure.feature("LLM Client — adapter functions")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("LLM client")
 class TestClassifyReceiptAdapter:
     def _make_broker(self, raw_content: str) -> LLMBroker:
         broker = MagicMock(spec=LLMBroker)
@@ -160,8 +163,9 @@ class TestClassifyReceiptAdapter:
         assert all(r.confidence_level == 1 for r in results)
 
 
-@allure.epic("Services")
-@allure.feature("LLM Client — adapter functions")
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("LLM client")
 class TestGetChainNameAdapter:
     def test_returns_first_non_empty_line(self):
         broker = MagicMock(spec=LLMBroker)

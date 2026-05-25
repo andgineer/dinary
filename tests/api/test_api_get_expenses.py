@@ -27,8 +27,9 @@ def _post_expense(client, *, expense_id="e1", amount=250.0, currency="RSD"):
     assert resp.status_code == 200, resp.text
 
 
-@allure.epic("API")
-@allure.feature("Expenses — GET list")
+@allure.epic("Expenses")
+@allure.feature("API")
+@allure.story("GET /api/expenses")
 class TestGetExpensesList:
     def test_returns_amount_original_and_currency(self, client, db):  # noqa: ARG002
         _post_expense(client, amount=250.0, currency="RSD")

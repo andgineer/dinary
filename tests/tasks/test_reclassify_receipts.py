@@ -76,8 +76,8 @@ def _seed(conn):
     return int(r1), int(r2)
 
 
-@allure.epic("Tasks")
-@allure.feature("reclassify-receipts")
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
 class TestRequeuReceipts:
     def test_resets_classification_and_queues_job(self, db):  # noqa: ARG002
         conn = storage.get_connection()

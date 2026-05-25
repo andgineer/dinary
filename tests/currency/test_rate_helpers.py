@@ -38,8 +38,8 @@ def _resp(status: int, body: dict | None = None) -> MagicMock:
     return r
 
 
-@allure.epic("Services")
-@allure.feature("Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("Rate resolution")
 @allure.story("_get_json_with_retry — HTTP fetch with retry")
 class TestGetJsonWithRetry:
     @patch("dinary.adapters.rate_helpers.httpx.get")
@@ -76,8 +76,8 @@ class TestGetJsonWithRetry:
         mock_get.assert_called_once_with(_URL, timeout=10, params={"base": "EUR"})
 
 
-@allure.epic("Services")
-@allure.feature("Exchange Rate")
+@allure.epic("Currencies")
+@allure.feature("Rate resolution")
 @allure.story("_get_json_or_none — HTTP errors as None")
 class TestGetJsonOrNone:
     @patch("dinary.adapters.rate_helpers.httpx.get")

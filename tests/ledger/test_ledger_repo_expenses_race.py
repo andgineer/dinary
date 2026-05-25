@@ -25,8 +25,9 @@ from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
 )
 
 
-@allure.epic("Ledger repo")
-@allure.feature("insert_expense race-recovery branch")
+@allure.epic("Expenses")
+@allure.feature("DB layer")
+@allure.story("Race recovery")
 class TestInsertExpenseRaceRecovery:
     """Exercise the ``_RACE_EXCS`` branch inside ``insert_expense``.
 
@@ -166,8 +167,9 @@ class TestInsertExpenseRaceRecovery:
         assert result == "conflict"
 
 
-@allure.epic("Ledger repo")
-@allure.feature("Race-recovery exception classification")
+@allure.epic("Expenses")
+@allure.feature("DB layer")
+@allure.story("Race recovery")
 class TestIsUniqueViolationOfClientExpenseId:
     """Pin the classifier behind ``insert_expense``'s race recovery.
 

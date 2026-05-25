@@ -4,8 +4,9 @@ import { createPinia, setActivePinia } from "pinia";
 import ProviderCard from "../src/components/ProviderCard.vue";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("ProviderCard");
+  await allure.epic("Infrastructure");
+  await allure.feature("LLM providers");
+  await allure.story("ProviderCard");
 });
 
 const BASE_PROVIDER = {

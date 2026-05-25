@@ -2,8 +2,9 @@ import { beforeEach, describe, it, expect } from "vitest";
 import { isFiscalReceiptUrl, parseReceiptUrl } from "../src/composables/receipt.js";
 
 beforeEach(async () => {
-  await allure.epic("Composables");
-  await allure.feature("Receipt URL parsing");
+  await allure.epic("Receipts");
+  await allure.feature("Frontend");
+  await allure.story("Receipt URL parsing");
 });
 
 describe("isFiscalReceiptUrl", () => {

@@ -9,8 +9,9 @@ import {
 } from "../src/stores/receiptQueue.js";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("QueueModal");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("QueueModal");
 });
 
 async function resetQueueDb() {

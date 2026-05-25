@@ -69,7 +69,7 @@ def _seeded_con(tmp_path, blank_db):
 
 
 @allure.epic("Reports")
-@allure.feature("expenses — parse_month")
+@allure.feature("Expenses")
 class TestParseMonth:
     def test_accepts_yyyy_mm(self):
         assert expenses_report.parse_month("2026-06") == (2026, 6)
@@ -88,7 +88,7 @@ class TestParseMonth:
 
 
 @allure.epic("Reports")
-@allure.feature("expenses — _build_filter")
+@allure.feature("Expenses")
 class TestBuildFilter:
     """Pin the SQL + params produced by each flag combination.
 
@@ -119,7 +119,7 @@ class TestBuildFilter:
 
 
 @allure.epic("Reports")
-@allure.feature("expenses — aggregate_expenses")
+@allure.feature("Expenses")
 class TestAggregate:
     def test_no_filter_returns_all_coords(self, _seeded_con):
         rows = expenses_report.aggregate_expenses(_seeded_con)
@@ -155,7 +155,7 @@ class TestAggregate:
 
 
 @allure.epic("Reports")
-@allure.feature("expenses — render_csv")
+@allure.feature("Expenses")
 class TestRenderCsv:
     def test_header_and_row_shape(self, _seeded_con):
         rows = expenses_report.aggregate_expenses(_seeded_con)
@@ -175,7 +175,7 @@ class TestRenderCsv:
 
 
 @allure.epic("Reports")
-@allure.feature("expenses — render_rich")
+@allure.feature("Expenses")
 class TestRenderRich:
     """Smoke tests for the rich renderer.
 
@@ -215,7 +215,7 @@ class TestRenderRich:
 
 
 @allure.epic("Reports")
-@allure.feature("expenses — run()")
+@allure.feature("Expenses")
 class TestRun:
     def test_missing_db_returns_nonzero(self, tmp_path, monkeypatch, capsys):
         # Point DB_PATH at a path that does NOT exist. run() must
@@ -238,7 +238,7 @@ class TestRun:
 
 
 @allure.epic("Reports")
-@allure.feature("expenses — main() CLI")
+@allure.feature("Expenses")
 class TestMainCli:
     def test_year_and_month_are_mutex(self, _seeded_con):
         with pytest.raises(SystemExit):
@@ -246,7 +246,7 @@ class TestMainCli:
 
 
 @allure.epic("Reports")
-@allure.feature("expenses — render_json / rows_from_json (remote transport)")
+@allure.feature("Expenses")
 class TestRenderJson:
     """Wire-format tests for the ``--json`` mode used by ``inv
     report-expenses --remote``: the remote process runs the query and
@@ -317,7 +317,7 @@ class TestRenderJson:
 
 
 @allure.epic("Reports")
-@allure.feature("expenses — CLI --json")
+@allure.feature("Expenses")
 class TestCliJson:
     def test_json_flag_emits_json(self, _seeded_con, capsys):
         rc = expenses_report.main(["--json"])

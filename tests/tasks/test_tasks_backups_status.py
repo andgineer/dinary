@@ -24,8 +24,9 @@ from tasks.backups.backup_snapshots import (
 )
 
 
-@allure.epic("Deploy")
-@allure.feature("backup-cloud-status: freshness check")
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Cloud status")
 class TestBackupStatusHelpers:
     """Pure helpers behind ``inv backup-cloud-status``. The task itself is a
     thin wrapper over :func:`_replica_list_snapshots` (I/O) and
@@ -158,8 +159,9 @@ class TestBackupStatusHelpers:
         assert BACKUP_RCLONE_PATH in line
 
 
-@allure.epic("Deploy")
-@allure.feature("backup-cloud-status: task")
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Cloud status")
 class TestBackupStatusTask:
     """End-to-end tests for the ``inv backup-cloud-status`` task: mocks the
     two I/O seams (``_replica_list_snapshots`` and ``_dt.now``) and

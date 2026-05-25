@@ -7,8 +7,9 @@ import {
 } from "../src/api/adminLlm.js";
 
 beforeEach(async () => {
-  await allure.epic("API");
-  await allure.feature("Admin LLM providers");
+  await allure.epic("Infrastructure");
+  await allure.feature("LLM providers");
+  await allure.story("API client");
 });
 
 let originalFetch;

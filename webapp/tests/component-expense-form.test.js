@@ -8,8 +8,9 @@ import { useCurrencyStore } from "../src/stores/currency.js";
 import * as flushQueueModule from "../src/composables/flushQueue.js";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("ExpenseForm");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("ExpenseForm");
 });
 
 const SAMPLE = {

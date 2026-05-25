@@ -6,8 +6,9 @@ import {
 } from "../src/composables/addResult.js";
 
 beforeEach(async () => {
-  await allure.epic("Composables");
-  await allure.feature("addResult");
+  await allure.epic("Expenses");
+  await allure.feature("Frontend");
+  await allure.story("addResult");
 });
 
 describe("addResultMessage", () => {

@@ -6,8 +6,9 @@ import { useCatalogStore } from "../src/stores/catalog.js";
 import { useReviewStore } from "../src/stores/review.js";
 
 beforeEach(async () => {
-  await allure.epic("Components");
-  await allure.feature("CorrectionSheet");
+  await allure.epic("Receipts");
+  await allure.feature("Frontend");
+  await allure.story("CorrectionSheet");
 });
 
 const CATALOG = {
