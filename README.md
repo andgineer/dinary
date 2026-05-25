@@ -55,10 +55,10 @@
 | src/dinary/db/receipts.py                                      |       86 |        4 |     95% |110-112, 210 |
 | src/dinary/db/sql\_loader.py                                   |       31 |        0 |    100% |           |
 | src/dinary/db/storage.py                                       |      123 |        8 |     93% |143-144, 254-257, 265-271 |
-| src/dinary/main.py                                             |       86 |        8 |     91% |43-45, 117, 123, 129, 139, 149 |
+| src/dinary/main.py                                             |       87 |        8 |     91% |43-45, 118, 124, 130, 140, 150 |
 | src/dinary/sheets/sheet\_mapping.py                            |      244 |       50 |     80% |239, 311-313, 340-341, 348-354, 401, 404-416, 430-431, 441-459, 536-543, 571-617, 645, 656-661 |
 | src/dinary/sheets/sheets.py                                    |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
-| **TOTAL**                                                      | **4018** |  **490** | **88%** |           |
+| **TOTAL**                                                      | **4019** |  **490** | **88%** |           |
 
 
 ## Setup coverage badge
