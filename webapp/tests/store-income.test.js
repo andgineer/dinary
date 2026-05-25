@@ -4,6 +4,11 @@ import { useIncomeStore } from "../src/stores/income.js";
 import * as incomeApi from "../src/api/income.js";
 import { useToastStore } from "../src/stores/toast.js";
 
+beforeEach(async () => {
+  await allure.epic("Stores");
+  await allure.feature("Income store");
+});
+
 beforeEach(() => {
   localStorage.clear();
   setActivePinia(createPinia());

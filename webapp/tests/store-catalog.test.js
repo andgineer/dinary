@@ -3,6 +3,11 @@ import { setActivePinia, createPinia } from "pinia";
 import { useCatalogStore } from "../src/stores/catalog.js";
 import * as catalogApi from "../src/api/catalog.js";
 
+beforeEach(async () => {
+  await allure.epic("Stores");
+  await allure.feature("Catalog store");
+});
+
 const SAMPLE = {
   catalog_version: 1,
   category_groups: [

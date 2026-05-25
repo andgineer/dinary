@@ -2,6 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useToastStore } from "../src/stores/toast.js";
 
+beforeEach(async () => {
+  await allure.epic("Stores");
+  await allure.feature("Toast store");
+});
+
 beforeEach(() => {
   setActivePinia(createPinia());
   vi.useFakeTimers();

@@ -3,6 +3,11 @@ import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import ProviderCard from "../src/components/ProviderCard.vue";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("ProviderCard");
+});
+
 const BASE_PROVIDER = {
   id: 1,
   priority: 1,

@@ -6,6 +6,11 @@ import {
   getStatus,
 } from "../src/api/adminLlm.js";
 
+beforeEach(async () => {
+  await allure.epic("API");
+  await allure.feature("Admin LLM providers");
+});
+
 let originalFetch;
 
 function okJson(body = {}) {

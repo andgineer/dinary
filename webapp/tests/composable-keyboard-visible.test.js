@@ -3,6 +3,11 @@ import { mount } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { useKeyboardVisible } from "../src/composables/useKeyboardVisible.js";
 
+beforeEach(async () => {
+  await allure.epic("Composables");
+  await allure.feature("useKeyboardVisible");
+});
+
 function makeViewport(height, innerHeight = 800) {
   const listeners = {};
   Object.defineProperty(window, "innerHeight", { value: innerHeight, configurable: true });

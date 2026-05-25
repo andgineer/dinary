@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount } from "@vue/test-utils";
 import ManageList from "../src/components/ManageList.vue";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("ManageList");
+});
+
 const ACTIVE = [
   { id: 10, name: "food", removable: true },
   { id: 11, name: "trips", removable: false },

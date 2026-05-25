@@ -7,6 +7,11 @@ import { useQueueStore, _resetForTest as resetQueueStore } from "../src/stores/q
 import { useCurrencyStore } from "../src/stores/currency.js";
 import * as flushQueueModule from "../src/composables/flushQueue.js";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("ExpenseForm");
+});
+
 const SAMPLE = {
   catalog_version: 1,
   category_groups: [

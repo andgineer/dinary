@@ -1,6 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import ScopeSelector from "../src/components/ScopeSelector.vue";
+
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("ScopeSelector");
+});
 
 const OPTIONS = [
   { value: "single", label: "Only this" },

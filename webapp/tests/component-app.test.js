@@ -6,6 +6,11 @@ import * as catalogApi from "../src/api/catalog.js";
 import * as flushReceiptQueueModule from "../src/composables/flushReceiptQueue.js";
 import { _resetForTest } from "../src/stores/queue.js";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("App");
+});
+
 async function resetQueueDb() {
   await _resetForTest();
   await new Promise((resolve) => {

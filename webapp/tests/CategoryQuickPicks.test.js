@@ -1,6 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import CategoryQuickPicks from "../src/components/CategoryQuickPicks.vue";
+
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("CategoryQuickPicks");
+});
 
 const CATS = [
   { id: 1, name: "groceries" },

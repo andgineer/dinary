@@ -1,6 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import HealthSummaryCard from "../src/components/HealthSummaryCard.vue";
+
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("HealthSummaryCard");
+});
 
 function mountCard(health) {
   return mount(HealthSummaryCard, { props: { health } });

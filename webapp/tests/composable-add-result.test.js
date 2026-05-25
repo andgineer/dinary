@@ -1,9 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import {
   addResultMessage,
   TAG_NAME_DISALLOWED_RE,
   validateTagName,
 } from "../src/composables/addResult.js";
+
+beforeEach(async () => {
+  await allure.epic("Composables");
+  await allure.feature("addResult");
+});
 
 describe("addResultMessage", () => {
   it("returns the right wording for each kind/status", () => {

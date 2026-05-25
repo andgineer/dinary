@@ -3,6 +3,11 @@ import { setActivePinia, createPinia } from "pinia";
 import { useLlmStore } from "../src/stores/llm.js";
 import * as llmApi from "../src/api/adminLlm.js";
 
+beforeEach(async () => {
+  await allure.epic("Stores");
+  await allure.feature("LLM store");
+});
+
 function mockOnLine(value) {
   const ownBefore = Object.getOwnPropertyDescriptor(navigator, "onLine");
   Object.defineProperty(navigator, "onLine", { configurable: true, get: () => value });

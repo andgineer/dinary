@@ -5,6 +5,11 @@ import ExpenseEditSheet from "../src/components/ExpenseEditSheet.vue";
 import { useCatalogStore } from "../src/stores/catalog.js";
 import { useReviewStore } from "../src/stores/review.js";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("ExpenseEditSheet");
+});
+
 const TELEPORT_STUB = { props: ["to"], template: "<div><slot /></div>" };
 
 const CATALOG = {

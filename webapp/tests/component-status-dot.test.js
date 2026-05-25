@@ -1,6 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import StatusDot from "../src/components/StatusDot.vue";
+
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("StatusDot");
+});
 
 const KINDS = ["ok", "rate_limited", "off", "error"];
 

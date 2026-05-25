@@ -16,6 +16,11 @@ import {
   adminDeleteGroup,
 } from "../src/api/catalog.js";
 
+beforeEach(async () => {
+  await allure.epic("API");
+  await allure.feature("Catalog");
+});
+
 let originalFetch;
 
 function okResponse(body = {}) {

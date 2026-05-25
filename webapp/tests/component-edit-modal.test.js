@@ -4,6 +4,11 @@ import { setActivePinia, createPinia } from "pinia";
 import EditModal from "../src/modals/EditModal.vue";
 import { useCatalogStore } from "../src/stores/catalog.js";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("EditModal");
+});
+
 // Catalog snapshot used to seed the store. EditModal reads
 // catalog.tags / catalog.groups for the dependent fields.
 function snapshot() {

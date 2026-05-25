@@ -8,6 +8,11 @@ import * as receiptsApi from "../src/api/receipts.js";
 import { useCatalogStore } from "../src/stores/catalog.js";
 import { useToastStore } from "../src/stores/toast.js";
 
+beforeEach(async () => {
+  await allure.epic("Stores");
+  await allure.feature("Review store");
+});
+
 function mockOnLine(value) {
   const ownBefore = Object.getOwnPropertyDescriptor(navigator, "onLine");
   Object.defineProperty(navigator, "onLine", { configurable: true, get: () => value });

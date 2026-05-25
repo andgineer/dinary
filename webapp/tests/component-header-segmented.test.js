@@ -1,7 +1,12 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { beforeEach, describe, it, expect, afterEach } from "vitest";
 import { nextTick } from "vue";
 import { mount } from "@vue/test-utils";
 import HeaderSegmented from "../src/components/HeaderSegmented.vue";
+
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("HeaderSegmented");
+});
 
 function mountSeg(tab = "add", doubtfulCount = 0) {
   return mount(HeaderSegmented, { props: { tab, doubtfulCount } });

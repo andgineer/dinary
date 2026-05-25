@@ -13,6 +13,11 @@ import { useLlmStore } from "../src/stores/llm.js";
 import { useReviewStore } from "../src/stores/review.js";
 import * as receiptsApi from "../src/api/receipts.js";
 
+beforeEach(async () => {
+  await allure.epic("Composables");
+  await allure.feature("flushReceiptQueue");
+});
+
 async function resetDb() {
   await resetReceiptQueueStore();
   await new Promise((resolve) => {

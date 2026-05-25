@@ -4,6 +4,11 @@ import { createPinia, setActivePinia } from "pinia";
 import ProviderSheet from "../src/components/ProviderSheet.vue";
 import { useLlmStore } from "../src/stores/llm.js";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("ProviderSheet");
+});
+
 const PROVIDER = {
   id: 5,
   label: "Groq",

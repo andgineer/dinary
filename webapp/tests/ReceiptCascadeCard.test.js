@@ -1,6 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import ReceiptCascadeCard from "../src/components/ReceiptCascadeCard.vue";
+
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("ReceiptCascadeCard");
+});
 
 const CASCADE = {
   merchant: "Maxi",

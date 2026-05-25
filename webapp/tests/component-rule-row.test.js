@@ -5,6 +5,11 @@ import RuleRow from "../src/components/RuleRow.vue";
 import { useCatalogStore } from "../src/stores/catalog.js";
 import { useFrequentCategoriesStore } from "../src/stores/frequentCategories.js";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("RuleRow");
+});
+
 const CATALOG = {
   catalog_version: 1,
   category_groups: [

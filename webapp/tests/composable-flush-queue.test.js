@@ -6,6 +6,11 @@ import { useCatalogStore } from "../src/stores/catalog.js";
 import * as expensesApi from "../src/api/expenses.js";
 import * as catalogApi from "../src/api/catalog.js";
 
+beforeEach(async () => {
+  await allure.epic("Composables");
+  await allure.feature("flushQueue");
+});
+
 async function resetQueueDb() {
   await resetQueueStore();
   await new Promise((resolve) => {

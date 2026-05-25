@@ -3,6 +3,11 @@ import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import ExpenseRow from "../src/components/ExpenseRow.vue";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("ExpenseRow");
+});
+
 const BASE = {
   id: 1,
   date: "2026-05-18",

@@ -4,6 +4,11 @@ import { useCatalogManage } from "../src/composables/catalogManage.js";
 import { useCatalogStore } from "../src/stores/catalog.js";
 import { useToastStore } from "../src/stores/toast.js";
 
+beforeEach(async () => {
+  await allure.epic("Composables");
+  await allure.feature("useCatalogManage");
+});
+
 beforeEach(() => {
   setActivePinia(createPinia());
 });

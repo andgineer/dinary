@@ -5,6 +5,11 @@ import CorrectionSheet from "../src/components/CorrectionSheet.vue";
 import { useCatalogStore } from "../src/stores/catalog.js";
 import { useReviewStore } from "../src/stores/review.js";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("CorrectionSheet");
+});
+
 const CATALOG = {
   catalog_version: 1,
   category_groups: [

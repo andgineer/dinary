@@ -18,6 +18,11 @@ import * as expensesApi from "../src/api/expenses.js";
 import * as receiptsApi from "../src/api/receipts.js";
 import * as reviewApi from "../src/api/review.js";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("ExpenseEditSheet");
+});
+
 const TELEPORT_STUB = { template: "<div><slot /></div>" };
 
 function seedCatalog() {

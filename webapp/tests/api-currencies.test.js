@@ -5,6 +5,11 @@ import {
   deleteCurrency,
 } from "../src/api/currencies.js";
 
+beforeEach(async () => {
+  await allure.epic("API");
+  await allure.feature("Currencies");
+});
+
 beforeEach(() => {
   globalThis.fetch = vi.fn();
 });

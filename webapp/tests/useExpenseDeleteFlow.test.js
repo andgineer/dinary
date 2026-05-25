@@ -6,6 +6,11 @@ import { useReviewStore } from "../src/stores/review.js";
 import * as expensesApi from "../src/api/expenses.js";
 import * as receiptsApi from "../src/api/receipts.js";
 
+beforeEach(async () => {
+  await allure.epic("Composables");
+  await allure.feature("useExpenseDeleteFlow");
+});
+
 vi.mock("../src/composables/useOnline.js", () => ({
   useOnline: () => ({ isOnline: ref(true) }),
 }));

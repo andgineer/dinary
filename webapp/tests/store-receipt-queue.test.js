@@ -5,6 +5,11 @@ import {
   _resetForTest,
 } from "../src/stores/receiptQueue.js";
 
+beforeEach(async () => {
+  await allure.epic("Stores");
+  await allure.feature("Receipt queue store");
+});
+
 async function resetDb() {
   await _resetForTest();
   await new Promise((resolve) => {

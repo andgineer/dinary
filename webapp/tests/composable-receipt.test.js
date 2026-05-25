@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { isFiscalReceiptUrl, parseReceiptUrl } from "../src/composables/receipt.js";
+
+beforeEach(async () => {
+  await allure.epic("Composables");
+  await allure.feature("Receipt URL parsing");
+});
 
 describe("isFiscalReceiptUrl", () => {
   it("recognizes the suf.purs.gov.rs host", () => {

@@ -1,6 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import InlineCreateRow from "../src/components/InlineCreateRow.vue";
+
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("InlineCreateRow");
+});
 
 describe("InlineCreateRow", () => {
   it("renders an input with the given placeholder", () => {

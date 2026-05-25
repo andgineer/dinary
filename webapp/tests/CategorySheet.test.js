@@ -5,6 +5,11 @@ import { createPinia, setActivePinia } from "pinia";
 import CategorySheet from "../src/components/CategorySheet.vue";
 import { useCatalogStore } from "../src/stores/catalog.js";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("CategorySheet");
+});
+
 const TELEPORT_STUB = { props: ["to"], template: "<div><slot /></div>" };
 
 const CATALOG = {

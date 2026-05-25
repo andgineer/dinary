@@ -1,6 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import CatalogSelectField from "../src/components/CatalogSelectField.vue";
+
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("CatalogSelectField");
+});
 
 const ACTIVE = [
   { id: 1, name: "alpha" },

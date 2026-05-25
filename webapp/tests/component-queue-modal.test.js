@@ -8,6 +8,11 @@ import {
   _resetForTest as resetReceiptQueueStore,
 } from "../src/stores/receiptQueue.js";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("QueueModal");
+});
+
 async function resetQueueDb() {
   await _resetForTest();
   await resetReceiptQueueStore();

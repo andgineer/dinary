@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { apiRequest } from "../src/api/_request.js";
 
+beforeEach(async () => {
+  await allure.epic("API");
+  await allure.feature("HTTP request");
+});
+
 let originalFetch;
 
 beforeEach(() => {

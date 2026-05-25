@@ -4,6 +4,11 @@ import { createPinia, setActivePinia } from "pinia";
 import InlineCreateEvent from "../src/components/InlineCreateEvent.vue";
 import { useCatalogStore } from "../src/stores/catalog.js";
 
+beforeEach(async () => {
+  await allure.epic("Components");
+  await allure.feature("InlineCreateEvent");
+});
+
 function mountEvent(pinia) {
   return mount(InlineCreateEvent, { global: { plugins: [pinia] } });
 }

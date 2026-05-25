@@ -1,7 +1,12 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { beforeEach, describe, it, expect, afterEach, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { useOnline } from "../src/composables/useOnline.js";
+
+beforeEach(async () => {
+  await allure.epic("Composables");
+  await allure.feature("useOnline");
+});
 
 function mockOnLine(value) {
   const ownBefore = Object.getOwnPropertyDescriptor(navigator, "onLine");
