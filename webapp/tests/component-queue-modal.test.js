@@ -80,14 +80,27 @@ describe("QueueModal", () => {
     expect(wrapper.text()).toContain("2026-05-04");
   });
 
-  it("renders receipt queue items alongside expense items", async () => {
+  it("renders receipt queue items with parsed amount and date", async () => {
+    function buildVlPayload(amountUnits, ms) {
+      const buf = new Uint8Array(64);
+      const view = new DataView(buf.buffer);
+      view.setBigUint64(25, BigInt(amountUnits), true);
+      view.setUint32(33, Math.floor(ms / 0x100000000), false);
+      view.setUint32(37, ms % 0x100000000, false);
+      let bin = "";
+      for (const b of buf) bin += String.fromCharCode(b);
+      return btoa(bin);
+    }
+    const ms = Date.UTC(2026, 0, 15, 12, 0, 0);
+    const vl = buildVlPayload(1234500, ms);
     const receiptQueue = useReceiptQueueStore();
-    await receiptQueue.enqueue("https://suf.purs.gov.rs/v/?vl=TESTRECEIPT");
+    await receiptQueue.enqueue(`https://suf.purs.gov.rs/v/?vl=${vl}`);
     const wrapper = mount(QueueModal, { props: { open: true } });
     await flushPromises();
     expect(wrapper.findAll('[data-testid="queue-item"]')).toHaveLength(1);
     expect(wrapper.text()).toContain("QR receipt");
-    expect(wrapper.text()).toContain("suf.purs.gov.rs");
+    expect(wrapper.text()).toContain("123.45");
+    expect(wrapper.text()).toContain("2026-01-15");
   });
 
   it("emits 'close' when the header × is clicked", async () => {

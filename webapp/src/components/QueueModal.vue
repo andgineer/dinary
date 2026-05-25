@@ -4,6 +4,7 @@ import { Copy, RefreshCw, X } from "lucide-vue-next";
 import { useQueueStore } from "../stores/queue.js";
 import { useReceiptQueueStore } from "../stores/receiptQueue.js";
 import { useToastStore } from "../stores/toast.js";
+import { parseReceiptUrl } from "../composables/receipt.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -70,6 +71,14 @@ async function copyToClipboard() {
   }
 }
 
+function parseReceiptDisplay(url) {
+  try {
+    return parseReceiptUrl(url);
+  } catch {
+    return null;
+  }
+}
+
 function reloadApp() {
   // Updates land via the Workbox SW (registerType 'autoUpdate' +
   // skipWaiting + clientsClaim — see vite.config.js Step 4 audit), but
@@ -126,8 +135,13 @@ function close() {
           class="queue-item"
           data-testid="queue-item"
         >
-          <span class="qi-receipt-label">QR receipt</span>
-          <div class="qi-meta qi-receipt-url">{{ it.url }}</div>
+          <template v-for="parsed in [parseReceiptDisplay(it.url)]" :key="it.id">
+            <span class="qi-receipt-label">QR receipt</span>
+            <template v-if="parsed">
+              — <span class="qi-amount">{{ parsed.amount.toFixed(2) }} RSD</span>
+              <div class="qi-meta">{{ parsed.date }}</div>
+            </template>
+          </template>
         </div>
         <button
           v-if="queue.items.length > 0"
@@ -203,10 +217,6 @@ function close() {
 .qi-receipt-label {
   font-weight: 700;
   color: var(--accent);
-}
-
-.qi-receipt-url {
-  word-break: break-all;
 }
 
 .version-info {

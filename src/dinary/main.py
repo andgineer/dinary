@@ -60,6 +60,7 @@ def _setup_logging() -> None:
         format=fmt,
         stream=sys.stdout,
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 @asynccontextmanager
