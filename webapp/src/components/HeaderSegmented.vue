@@ -102,14 +102,14 @@ defineEmits(["update:tab"]);
 .seg-add {
   width: 56px;
   height: 38px;
-  background: rgba(91, 141, 239, 0.12);
-  color: var(--accent);
+  background: rgba(249, 115, 22, 0.12);
+  color: var(--expense);
 }
 
 .seg-add.active {
-  background: var(--accent);
+  background: var(--expense);
   color: #fff;
-  box-shadow: 0 4px 12px rgba(91, 141, 239, 0.4);
+  box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4);
 }
 
 .seg-income {

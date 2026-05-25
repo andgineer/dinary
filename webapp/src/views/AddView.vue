@@ -64,7 +64,7 @@ function onScanError(err) {
 
 <template>
   <QrScanner ref="scanner" @scan="onScan" @error="onScanError" />
-  <KeyboardSaveBar v-if="keyboardVisible" :bottom="keyboardBottom" @save="saveExpense" />
+  <KeyboardSaveBar v-if="keyboardVisible" :bottom="keyboardBottom" accent-color="var(--expense)" @save="saveExpense" />
 
   <ExpenseForm ref="expenseForm" />
 
@@ -127,7 +127,7 @@ function onScanError(err) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--danger, #e94560);
+  background: var(--expense);
   border-radius: 12px;
   border: none;
   color: #fff;
@@ -150,7 +150,7 @@ function onScanError(err) {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  background: var(--accent);
+  background: var(--expense);
   border-radius: 12px;
   border: none;
   color: #fff;

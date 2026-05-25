@@ -228,7 +228,7 @@ Form on top, empty-state card: 44×44 green circle with `TrendingUp` icon,
 
 - **Validate on save**: amount must parse as `Number > 0`. Toast
   `Enter a valid amount` on failure (existing toast store).
-- **Default currency**: `useCurrencyStore().preferredCode`.
+- **Default currency**: `useCurrencyStore().defaultCode`.
 - **Default month**: current YYYY-MM (`new Date().toISOString().slice(0,7)`).
 - **Submit flow**:
   1. Parse `year` and `month` (int) from the month picker value.
@@ -351,9 +351,10 @@ export const useIncomeStore = defineStore("income", () => {
 
 ```ts
 {
-  year:   number,   // e.g. 2026
-  month:  number,   // 1–12
-  amount: number,   // always in accounting_currency (EUR)
+  year:     number,   // e.g. 2026
+  month:    number,   // 1–12
+  amount:   number,   // always in accounting_currency (EUR)
+  currency: string,   // always settings.accounting_currency (e.g. "EUR")
 }
 ```
 
@@ -424,7 +425,7 @@ month per year.
 |-----|---------|-------|
 | A | First day of the income's month (`YYYY-MM-DD`, `USER_ENTERED`) | Underlying date serial retains the year; same as expense col A |
 | B | App-currency amount (RSD) | If `accounting_currency == app_currency` use `income.amount` verbatim; otherwise convert at NBS rate for the first day of that month |
-| C | EUR formula `=IF(E{r}="","",B{r}/E{r})` | Sheet-side approximation |
+| C | EUR formula `=IF(D{r}="","",B{r}/D{r})` | Sheet-side approximation |
 | D | Manual EUR↔RSD rate (set-if-missing) | Same as expense col H |
 | E | Month number 1–12 (literal) | Fast month scan |
 | F | Idempotency marker — `"{year}-{month}"` string | Before each write check col F; if already equal skip the write |

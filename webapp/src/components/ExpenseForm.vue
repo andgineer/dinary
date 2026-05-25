@@ -471,7 +471,7 @@ defineExpose({ save, reset });
   display: inline-flex;
   align-items: center;
   padding: 0.3rem 0.6rem;
-  background: var(--accent);
+  background: var(--expense);
   color: #fff;
   border: none;
   border-radius: 8px;
@@ -646,7 +646,7 @@ defineExpose({ save, reset });
 }
 
 .event-chip.is-selected {
-  background: var(--accent);
+  background: var(--expense);
   color: #fff;
 }
 

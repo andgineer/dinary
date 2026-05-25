@@ -48,8 +48,8 @@ const emit = defineEmits(["select"]);
 }
 
 .pick-pill.is-selected {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--expense);
+  border-color: var(--expense);
   color: #fff;
 }
 </style>
