@@ -7,6 +7,7 @@ import IconBtn from "./IconBtn.vue";
 
 const props = defineProps({
   modelValue: { type: String, default: "" },
+  accentColor: { type: String, default: "var(--accent)" },
 });
 const emit = defineEmits(["update:modelValue", "close"]);
 
@@ -209,8 +210,8 @@ watch(
 }
 
 .currency-chip-selected {
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: v-bind(accentColor);
+  background: v-bind(accentColor);
   color: #fff;
 }
 

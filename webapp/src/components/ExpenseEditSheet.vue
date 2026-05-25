@@ -502,7 +502,7 @@ function _formatDate(iso) {
   flex: 1;
   padding: 0.5rem 1rem;
   font-size: 0.9rem;
-  background: var(--expense);
+  background: #60a5fa;
   color: #fff;
 }
 

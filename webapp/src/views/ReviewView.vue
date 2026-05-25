@@ -280,10 +280,10 @@ onBeforeUnmount(() => {
 
 .confirm-all-btn {
   padding: 0.5rem 1.5rem;
-  background: rgba(34, 197, 94, 0.15);
-  border: 1px solid rgba(34, 197, 94, 0.3);
+  background: rgba(96, 165, 250, 0.15);
+  border: 1px solid rgba(96, 165, 250, 0.3);
   border-radius: 999px;
-  color: var(--success);
+  color: #60a5fa;
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
@@ -291,6 +291,6 @@ onBeforeUnmount(() => {
 }
 
 .confirm-all-btn:hover {
-  background: rgba(34, 197, 94, 0.25);
+  background: rgba(96, 165, 250, 0.25);
 }
 </style>

@@ -80,7 +80,7 @@ defineExpose({ save });
           {{ selectedCurrency || "EUR" }}
         </button>
         <div v-if="currencyPickerOpen" class="currency-picker-wrap">
-          <CurrencyPicker v-model="selectedCurrency" @close="currencyPickerOpen = false" />
+          <CurrencyPicker v-model="selectedCurrency" accent-color="var(--success)" @close="currencyPickerOpen = false" />
         </div>
       </div>
 

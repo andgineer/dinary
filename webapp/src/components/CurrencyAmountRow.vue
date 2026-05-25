@@ -27,6 +27,7 @@ const pickerOpen = ref(false);
       <div v-if="pickerOpen" class="currency-picker-wrap">
         <CurrencyPicker
           :model-value="currency"
+          accent-color="#60a5fa"
           @update:model-value="emit('update:currency', $event)"
           @close="pickerOpen = false"
         />
@@ -63,7 +64,7 @@ const pickerOpen = ref(false);
   display: inline-flex;
   align-items: center;
   padding: 0.3rem 0.6rem;
-  background: var(--accent);
+  background: #60a5fa;
   color: #fff;
   border: none;
   border-radius: 8px;
