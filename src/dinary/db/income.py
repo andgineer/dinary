@@ -2,16 +2,35 @@
 
 import dataclasses
 import sqlite3
+from datetime import date
 from decimal import Decimal
 
-from dinary.db.sql_loader import fetchall_as, load_sql
+from dinary.db.sql_loader import fetchall_as, fetchone_as, load_sql
 
 
 @dataclasses.dataclass(slots=True)
 class IncomeRow:
+    id: int
     year: int
     month: int
+    income_date: date
     amount: Decimal
+    amount_original: Decimal
+    currency_original: str
+    comment: str | None
+
+
+@dataclasses.dataclass(slots=True)
+class IncomeData:
+    """Fields for a new or updated income record (excludes DB-assigned id)."""
+
+    year: int
+    month: int
+    income_date: date
+    amount: float
+    amount_original: float
+    currency_original: str
+    comment: str | None = None
 
 
 def _enqueue_logging(con: sqlite3.Connection, year: int, month: int) -> None:
@@ -26,46 +45,111 @@ def _enqueue_logging(con: sqlite3.Connection, year: int, month: int) -> None:
 
 def insert_income(
     con: sqlite3.Connection,
-    year: int,
-    month: int,
-    amount: float,
+    data: IncomeData,
     *,
     enqueue_logging: bool = True,
-) -> None:
-    """Insert a new income row. Raises sqlite3.IntegrityError on duplicate (year, month)."""
-    con.execute(load_sql("insert_income.sql"), [year, month, amount])
+) -> IncomeRow:
+    """Insert a new income row and return it."""
+    row = fetchone_as(
+        IncomeRow,
+        con,
+        load_sql("insert_income.sql"),
+        [
+            data.year,
+            data.month,
+            data.income_date,
+            data.amount,
+            data.amount_original,
+            data.currency_original,
+            data.comment,
+        ],
+    )
     if enqueue_logging:
-        _enqueue_logging(con, year, month)
+        _enqueue_logging(con, data.year, data.month)
+    return row  # type: ignore[return-value]
 
 
 def update_income(
     con: sqlite3.Connection,
-    year: int,
-    month: int,
-    amount: float,
+    income_id: int,
+    data: IncomeData,
     *,
     enqueue_logging: bool = True,
 ) -> IncomeRow:
-    """Update income amount. Returns updated row. Raises ValueError if not found."""
+    """Update income row by id. Returns updated row. Raises ValueError if not found."""
+    old = con.execute("SELECT year, month FROM income WHERE id=?", [income_id]).fetchone()
+    if old is None:
+        raise ValueError(f"Income {income_id} not found")
+    old_year, old_month = int(old[0]), int(old[1])
     result = con.execute(
-        "UPDATE income SET amount = ? WHERE year = ? AND month = ? RETURNING year, month, amount",
-        [amount, year, month],
+        "UPDATE income"
+        " SET year=?, month=?, amount=?, amount_original=?, currency_original=?,"
+        " income_date=?, comment=?"
+        " WHERE id=?"
+        " RETURNING id, year, month, income_date, amount,"
+        " amount_original, currency_original, comment",
+        [
+            data.year,
+            data.month,
+            data.amount,
+            data.amount_original,
+            data.currency_original,
+            data.income_date,
+            data.comment,
+            income_id,
+        ],
     ).fetchone()
     if result is None:
-        raise ValueError(f"Income ({year}, {month}) not found")
+        raise ValueError(f"Income {income_id} not found")
+    row = IncomeRow(
+        id=int(result[0]),
+        year=int(result[1]),
+        month=int(result[2]),
+        income_date=result[3],
+        amount=Decimal(str(result[4])),
+        amount_original=Decimal(str(result[5])),
+        currency_original=result[6],
+        comment=result[7],
+    )
     if enqueue_logging:
-        _enqueue_logging(con, year, month)
-    return IncomeRow(year=int(result[0]), month=int(result[1]), amount=Decimal(str(result[2])))
+        _enqueue_logging(con, row.year, row.month)
+        if (old_year, old_month) != (row.year, row.month):
+            remaining = con.execute(
+                "SELECT COUNT(*) FROM income WHERE year=? AND month=?",
+                [old_year, old_month],
+            ).fetchone()[0]
+            if remaining > 0:
+                _enqueue_logging(con, old_year, old_month)
+            else:
+                con.execute(
+                    "DELETE FROM income_logging_jobs WHERE year=? AND month=?",
+                    [old_year, old_month],
+                )
+    return row
 
 
-def delete_income(con: sqlite3.Connection, year: int, month: int) -> None:
-    """Delete an income row. Raises ValueError if not found."""
-    rows = con.execute(
-        "DELETE FROM income WHERE year = ? AND month = ? RETURNING year",
+def delete_income(con: sqlite3.Connection, income_id: int) -> None:
+    """Delete an income row by id. Raises ValueError if not found.
+
+    Also deletes the corresponding logging job when the last income for that
+    month is removed (no FK cascade since year/month is no longer a unique key).
+    """
+    result = con.execute(
+        "DELETE FROM income WHERE id = ? RETURNING year, month",
+        [income_id],
+    ).fetchone()
+    if result is None:
+        raise ValueError(f"Income {income_id} not found")
+    year, month = int(result[0]), int(result[1])
+    remaining = con.execute(
+        "SELECT COUNT(*) FROM income WHERE year = ? AND month = ?",
         [year, month],
-    ).fetchall()
-    if not rows:
-        raise ValueError(f"Income ({year}, {month}) not found")
+    ).fetchone()[0]
+    if remaining == 0:
+        con.execute(
+            "DELETE FROM income_logging_jobs WHERE year = ? AND month = ?",
+            [year, month],
+        )
 
 
 def list_incomes(
@@ -81,16 +165,30 @@ def list_incomes(
     return rows, has_more
 
 
-def get_income_by_year_month(
+def get_income_by_id(
+    con: sqlite3.Connection,
+    income_id: int,
+) -> IncomeRow | None:
+    """Return the income row for the given id, or None."""
+    return fetchone_as(
+        IncomeRow,
+        con,
+        "SELECT id, year, month, income_date, amount, amount_original, currency_original, comment"
+        " FROM income WHERE id = ?",
+        [income_id],
+    )
+
+
+def get_income_total_for_month(
     con: sqlite3.Connection,
     year: int,
     month: int,
-) -> IncomeRow | None:
-    """Return the income row for the given year/month, or None."""
+) -> Decimal | None:
+    """Return the sum of all income amounts for the given year/month, or None if no records."""
     row = con.execute(
-        "SELECT year, month, amount FROM income WHERE year = ? AND month = ?",
+        "SELECT SUM(amount) FROM income WHERE year = ? AND month = ?",
         [year, month],
     ).fetchone()
-    if row is None:
+    if row[0] is None:
         return None
-    return IncomeRow(year=int(row[0]), month=int(row[1]), amount=Decimal(str(row[2])))
+    return Decimal(str(row[0]))

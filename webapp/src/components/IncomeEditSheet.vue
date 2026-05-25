@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch } from "vue";
-import { Trash2, Calendar } from "lucide-vue-next";
+import { Trash2 } from "lucide-vue-next";
 import BaseSheet from "./BaseSheet.vue";
 import ConfirmDeleteSheet from "./ConfirmDeleteSheet.vue";
 import CurrencyPicker from "./CurrencyPicker.vue";
@@ -20,6 +20,9 @@ const currencyStore = useCurrencyStore();
 
 const amount = ref("");
 const selectedCurrency = ref("");
+const monthValue = ref("");
+const dateValue = ref("");
+const comment = ref("");
 const currencyPickerOpen = ref(false);
 const submitting = ref(false);
 const confirmingDelete = ref(false);
@@ -33,16 +36,24 @@ watch(
       confirmingDelete.value = false;
       return;
     }
-    amount.value = props.income?.amount != null ? String(props.income.amount) : "";
-    selectedCurrency.value = props.income?.currency || currencyStore.defaultCode || "EUR";
+    amount.value = props.income?.amount_original != null ? String(props.income.amount_original) : "";
+    selectedCurrency.value = props.income?.currency_original || currencyStore.defaultCode || "EUR";
+    const y = props.income?.year;
+    const m = props.income?.month;
+    monthValue.value = y && m ? `${y}-${String(m).padStart(2, "0")}` : "";
+    dateValue.value = props.income?.income_date ?? "";
+    comment.value = props.income?.comment ?? "";
     submitting.value = false;
   },
   { immediate: true },
 );
 
 function monthLabel(income) {
-  if (!income) return "";
-  return new Date(income.year, income.month - 1, 1).toLocaleString("en", { month: "long", year: "numeric" });
+  if (!income?.year || !income?.month) return "";
+  return new Date(income.year, income.month - 1, 1).toLocaleString("en", {
+    month: "long",
+    year: "numeric",
+  });
 }
 
 async function save() {
@@ -52,11 +63,16 @@ async function save() {
     toast.show("Enter a valid amount", "error");
     return;
   }
+  const [yearStr, monthStr] = monthValue.value.split("-");
   submitting.value = true;
   try {
-    await incomeStore.patch(props.income.year, props.income.month, {
+    await incomeStore.patch(props.income.id, {
+      year: parseInt(yearStr, 10),
+      month: parseInt(monthStr, 10),
       amount_original: parsed,
       currency_original: selectedCurrency.value,
+      income_date: dateValue.value,
+      comment: comment.value || null,
     });
     emit("close");
   } catch {
@@ -70,7 +86,7 @@ async function confirmDelete() {
   if (deleting.value || !props.income) return;
   deleting.value = true;
   try {
-    await incomeStore.remove(props.income.year, props.income.month);
+    await incomeStore.remove(props.income.id);
     confirmingDelete.value = false;
     emit("close");
   } catch {
@@ -119,11 +135,27 @@ async function confirmDelete() {
         aria-label="Amount"
       />
 
-      <div class="month-display">
-        <Calendar :size="14" class="date-icon" aria-hidden="true" />
-        <span class="month-label">{{ monthLabel(income) }}</span>
+    </div>
+
+    <div class="date-row">
+      <div class="date-col">
+        <span class="field-label">For month</span>
+        <input v-model="monthValue" type="month" class="date-input" aria-label="Accounting month" />
+      </div>
+      <div class="date-col">
+        <span class="field-label">Received date</span>
+        <input v-model="dateValue" type="date" class="date-input" aria-label="Received date" />
       </div>
     </div>
+
+    <input
+      v-model="comment"
+      type="text"
+      placeholder="Comment (optional)"
+      autocomplete="off"
+      class="comment-input"
+      aria-label="Comment"
+    />
 
     <template #footer>
       <button
@@ -179,7 +211,7 @@ async function confirmDelete() {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 1.25rem;
+  margin-bottom: 0.75rem;
   position: relative;
 }
 
@@ -241,22 +273,67 @@ async function confirmDelete() {
   border-bottom-color: var(--success);
 }
 
-.month-display {
+.date-row {
   display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
+  gap: 12px;
+  margin-top: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
-.date-icon {
+.date-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.field-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
-.month-label {
-  font-size: 0.8rem;
+.date-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--text);
+  font-size: 0.82rem;
+  padding: 0.2rem 0;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.date-input:focus {
+  outline: none;
+  border-bottom-color: var(--success);
+}
+
+.comment-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--text);
+  font-size: 0.85rem;
+  padding: 0.25rem 0;
+  margin-bottom: 1rem;
+  box-sizing: border-box;
+}
+
+.comment-input::placeholder {
   color: var(--muted);
-  font-family: var(--font-num);
-  white-space: nowrap;
+}
+
+.comment-input:focus {
+  outline: none;
+  border-bottom-color: var(--success);
 }
 
 .btn-delete {

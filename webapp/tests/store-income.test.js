@@ -13,8 +13,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const ITEM_A = { year: 2026, month: 5, amount: 540, currency: "EUR" };
-const ITEM_B = { year: 2026, month: 4, amount: 400, currency: "EUR" };
+const ITEM_A = { id: 1, year: 2026, month: 5, income_date: "2026-05-15", amount: 540, currency: "EUR", amount_original: 540, currency_original: "EUR", comment: null };
+const ITEM_B = { id: 2, year: 2026, month: 4, income_date: "2026-04-10", amount: 400, currency: "EUR", amount_original: 400, currency_original: "EUR", comment: null };
 
 describe("income store: loadNextPage()", () => {
   it("appends items and advances page", async () => {
@@ -26,7 +26,7 @@ describe("income store: loadNextPage()", () => {
     expect(store.hasMore).toBe(false);
   });
 
-  it("deduplicates by year-month key across pages", async () => {
+  it("deduplicates by id across pages", async () => {
     vi.spyOn(incomeApi, "listIncomes")
       .mockResolvedValueOnce({ items: [ITEM_A], has_more: true })
       .mockResolvedValueOnce({ items: [ITEM_A, ITEM_B], has_more: false });
@@ -52,21 +52,12 @@ describe("income store: add()", () => {
     const store = useIncomeStore();
     store.items = [ITEM_B];
     store.page = 1;
-    await store.add({ year: 2026, month: 5, amount_original: 540, currency_original: "EUR" });
+    await store.add({ income_date: "2026-05-15", amount_original: 540, currency_original: "EUR" });
     expect(store.items).toEqual([ITEM_A]);
     expect(store.page).toBe(1);
   });
 
-  it("shows 409 toast and rethrows on duplicate month", async () => {
-    const err = Object.assign(new Error("conflict"), { status: 409 });
-    vi.spyOn(incomeApi, "createIncome").mockRejectedValueOnce(err);
-    const store = useIncomeStore();
-    const toast = useToastStore();
-    await expect(store.add({ year: 2026, month: 5, amount_original: 540, currency_original: "EUR" })).rejects.toThrow();
-    expect(toast.message).toContain("already exists");
-  });
-
-  it("shows generic error toast on non-409 failure", async () => {
+  it("shows error toast and rethrows on failure", async () => {
     vi.spyOn(incomeApi, "createIncome").mockRejectedValueOnce(new Error("network error"));
     const store = useIncomeStore();
     const toast = useToastStore();
@@ -80,7 +71,7 @@ describe("income store: patch()", () => {
     vi.spyOn(incomeApi, "updateIncome").mockResolvedValueOnce({ ...ITEM_A, amount: 600 });
     vi.spyOn(incomeApi, "listIncomes").mockResolvedValueOnce({ items: [{ ...ITEM_A, amount: 600 }], has_more: false });
     const store = useIncomeStore();
-    await store.patch(2026, 5, { amount_original: 600, currency_original: "EUR" });
+    await store.patch(1, { amount_original: 600, currency_original: "EUR" });
     expect(store.items[0].amount).toBe(600);
   });
 });
@@ -91,7 +82,7 @@ describe("income store: remove()", () => {
     vi.spyOn(incomeApi, "listIncomes").mockResolvedValueOnce({ items: [], has_more: false });
     const store = useIncomeStore();
     store.items = [ITEM_A];
-    await store.remove(2026, 5);
+    await store.remove(1);
     expect(store.items).toEqual([]);
   });
 });

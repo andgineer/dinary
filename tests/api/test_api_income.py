@@ -25,6 +25,7 @@ class TestIncomeApi:
                 json={
                     "year": 2026,
                     "month": 5,
+                    "income_date": "2026-05-15",
                     "amount_original": 540.0,
                     "currency_original": "EUR",
                 },
@@ -33,28 +34,71 @@ class TestIncomeApi:
         data = resp.json()
         assert data["year"] == 2026
         assert data["month"] == 5
+        assert data["income_date"] == "2026-05-15"
         assert data["amount"] > 0
+        assert "id" in data
 
     def test_post_passthrough_accounting_currency(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
         resp = client.post(
             "/api/incomes",
-            json={"year": 2026, "month": 6, "amount_original": 540.0, "currency_original": "EUR"},
+            json={
+                "year": 2026,
+                "month": 6,
+                "income_date": "2026-06-01",
+                "amount_original": 540.0,
+                "currency_original": "EUR",
+            },
         )
         assert resp.status_code == 201, resp.text
         assert resp.json()["amount"] == pytest.approx(540.0)
 
-    def test_post_duplicate_409(self, client, monkeypatch):
+    def test_post_with_comment(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        payload = {"year": 2026, "month": 5, "amount_original": 540.0, "currency_original": "EUR"}
+        resp = client.post(
+            "/api/incomes",
+            json={
+                "year": 2026,
+                "month": 5,
+                "income_date": "2026-05-15",
+                "amount_original": 540.0,
+                "currency_original": "EUR",
+                "comment": "salary",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["comment"] == "salary"
+
+    def test_post_multiple_same_month_allowed(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        payload = {
+            "year": 2026,
+            "month": 5,
+            "income_date": "2026-05-15",
+            "amount_original": 540.0,
+            "currency_original": "EUR",
+        }
         assert client.post("/api/incomes", json=payload).status_code == 201
-        assert client.post("/api/incomes", json=payload).status_code == 409
+        payload2 = {
+            "year": 2026,
+            "month": 5,
+            "income_date": "2026-05-20",
+            "amount_original": 300.0,
+            "currency_original": "EUR",
+        }
+        assert client.post("/api/incomes", json=payload2).status_code == 201
 
     def test_get_returns_items(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
         client.post(
             "/api/incomes",
-            json={"year": 2026, "month": 5, "amount_original": 540.0, "currency_original": "EUR"},
+            json={
+                "year": 2026,
+                "month": 5,
+                "income_date": "2026-05-15",
+                "amount_original": 540.0,
+                "currency_original": "EUR",
+            },
         )
         resp = client.get("/api/incomes?page=1&page_size=20")
         assert resp.status_code == 200, resp.text
@@ -65,41 +109,59 @@ class TestIncomeApi:
 
     def test_patch_updates_amount(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        client.post(
+        created = client.post(
             "/api/incomes",
-            json={"year": 2026, "month": 5, "amount_original": 540.0, "currency_original": "EUR"},
-        )
+            json={
+                "year": 2026,
+                "month": 5,
+                "income_date": "2026-05-15",
+                "amount_original": 540.0,
+                "currency_original": "EUR",
+            },
+        ).json()
         resp = client.patch(
-            "/api/incomes/2026/5",
+            f"/api/incomes/{created['id']}",
             json={"amount_original": 600.0, "currency_original": "EUR"},
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["amount"] == pytest.approx(600.0)
 
+    def test_patch_updates_comment(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        created = client.post(
+            "/api/incomes",
+            json={
+                "year": 2026,
+                "month": 5,
+                "income_date": "2026-05-15",
+                "amount_original": 540.0,
+                "currency_original": "EUR",
+            },
+        ).json()
+        resp = client.patch(f"/api/incomes/{created['id']}", json={"comment": "bonus"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["comment"] == "bonus"
+
     def test_patch_404_if_missing(self, client):
         resp = client.patch(
-            "/api/incomes/2026/5",
-            json={"amount_original": 600.0, "currency_original": "EUR"},
+            "/api/incomes/9999", json={"amount_original": 600.0, "currency_original": "EUR"}
         )
         assert resp.status_code == 404
 
     def test_delete_removes_income(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        client.post(
+        created = client.post(
             "/api/incomes",
-            json={"year": 2026, "month": 5, "amount_original": 540.0, "currency_original": "EUR"},
-        )
-        assert client.delete("/api/incomes/2026/5").status_code == 204
+            json={
+                "year": 2026,
+                "month": 5,
+                "income_date": "2026-05-15",
+                "amount_original": 540.0,
+                "currency_original": "EUR",
+            },
+        ).json()
+        assert client.delete(f"/api/incomes/{created['id']}").status_code == 204
         assert len(client.get("/api/incomes?page=1&page_size=20").json()["items"]) == 0
 
     def test_delete_404_if_missing(self, client):
-        assert client.delete("/api/incomes/2026/5").status_code == 404
-
-    def test_patch_currency_only_returns_422(self, client, monkeypatch):
-        monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        client.post(
-            "/api/incomes",
-            json={"year": 2026, "month": 5, "amount_original": 540.0, "currency_original": "EUR"},
-        )
-        resp = client.patch("/api/incomes/2026/5", json={"currency_original": "RSD"})
-        assert resp.status_code == 422
+        assert client.delete("/api/incomes/9999").status_code == 404

@@ -27,7 +27,7 @@ from dinary.background.sheet_logging.sheet_logging import (
 )
 from dinary.config import settings
 from dinary.db import storage
-from dinary.db.income import IncomeRow, get_income_by_year_month
+from dinary.db.income import get_income_total_for_month
 from dinary.db.storage import best_effort_rollback
 from dinary.sheets.sheets import fetch_row_years
 
@@ -168,15 +168,15 @@ def _get_rate_str(con: sqlite3.Connection, for_date: date) -> str | None:
         return None
 
 
-def _derive_app_amount(income: IncomeRow, rate_str: str | None) -> float:
+def _derive_app_amount(total: Decimal, rate_str: str | None) -> float:
     accounting = settings.accounting_currency.upper()
     app = settings.app_currency.upper()
     if accounting == app:
-        return float(income.amount)
+        return float(total)
     if rate_str is not None:
         rate = Decimal(rate_str)
-        return float((income.amount * rate).quantize(Decimal("0.01")))
-    return float(income.amount)
+        return float((total * rate).quantize(Decimal("0.01")))
+    return float(total)
 
 
 def _write_row_to_worksheet(
@@ -235,14 +235,14 @@ def _drain_one(year: int, month: int, *, spreadsheet_id: str) -> str:
 
     try:
         with storage.connection() as con:
-            income = get_income_by_year_month(con, year, month)
-            if income is None:
-                logger.warning("Income job (%d, %d) has no income row; clearing", year, month)
+            total = get_income_total_for_month(con, year, month)
+            if total is None:
+                logger.warning("Income job (%d, %d) has no income rows; clearing", year, month)
                 _clear_income_job(con, year, month)
                 return "orphan"
             rate_str = _get_rate_str(con, date(year, month, 1))
 
-        app_amount = _derive_app_amount(income, rate_str)
+        app_amount = _derive_app_amount(total, rate_str)
         marker = f"{year}-{month}"
         ss = get_sheet(spreadsheet_id)
         ws = _get_or_create_income_worksheet(ss)

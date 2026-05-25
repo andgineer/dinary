@@ -35,28 +35,35 @@ describe("income API URLs", () => {
   });
 
   it("createIncome POSTs to /api/incomes with body", async () => {
-    globalThis.fetch = vi.fn(async () => ({ ...okJson({ year: 2026, month: 5, amount: 540 }), status: 201 }));
-    await createIncome({ year: 2026, month: 5, amount_original: 540, currency_original: "EUR" });
+    globalThis.fetch = vi.fn(async () => ({ ...okJson({ id: 1, year: 2026, month: 5, amount: 540 }), status: 201 }));
+    await createIncome({ year: 2026, month: 5, income_date: "2026-05-15", amount_original: 540, currency_original: "EUR", comment: null });
     const [url, opts] = globalThis.fetch.mock.calls[0];
     expect(url).toBe("/api/incomes");
     expect(opts.method).toBe("POST");
-    expect(JSON.parse(opts.body)).toEqual({ year: 2026, month: 5, amount_original: 540, currency_original: "EUR" });
+    expect(JSON.parse(opts.body)).toEqual({
+      year: 2026,
+      month: 5,
+      income_date: "2026-05-15",
+      amount_original: 540,
+      currency_original: "EUR",
+      comment: null,
+    });
   });
 
-  it("updateIncome PATCHes /api/incomes/{year}/{month} with body", async () => {
-    globalThis.fetch = vi.fn(async () => okJson({ year: 2026, month: 5, amount: 600 }));
-    await updateIncome(2026, 5, { amount_original: 600, currency_original: "EUR" });
+  it("updateIncome PATCHes /api/incomes/{id} with body", async () => {
+    globalThis.fetch = vi.fn(async () => okJson({ id: 1, year: 2026, month: 5, amount: 600 }));
+    await updateIncome(1, { amount_original: 600, currency_original: "EUR" });
     const [url, opts] = globalThis.fetch.mock.calls[0];
-    expect(url).toBe("/api/incomes/2026/5");
+    expect(url).toBe("/api/incomes/1");
     expect(opts.method).toBe("PATCH");
     expect(JSON.parse(opts.body)).toEqual({ amount_original: 600, currency_original: "EUR" });
   });
 
-  it("deleteIncome DELETEs /api/incomes/{year}/{month}", async () => {
+  it("deleteIncome DELETEs /api/incomes/{id}", async () => {
     globalThis.fetch = vi.fn(async () => ({ ok: true, status: 204, headers: { get: () => null } }));
-    await deleteIncome(2026, 5);
+    await deleteIncome(1);
     const [url, opts] = globalThis.fetch.mock.calls[0];
-    expect(url).toBe("/api/incomes/2026/5");
+    expect(url).toBe("/api/incomes/1");
     expect(opts.method).toBe("DELETE");
   });
 });

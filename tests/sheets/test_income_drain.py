@@ -10,7 +10,7 @@ from dinary.background.sheet_logging import income_sheet_logging
 from dinary.background.sheet_logging.income_sheet_logging import drain_income_pending
 from dinary.config import settings
 from dinary.db import storage
-from dinary.db.income import insert_income
+from dinary.db.income import IncomeData, insert_income
 
 
 @pytest.fixture(autouse=True)
@@ -21,8 +21,21 @@ def _setup(tmp_path, monkeypatch, blank_db):
     monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "test-ss-id")
     monkeypatch.setattr(settings, "accounting_currency", "EUR")
     monkeypatch.setattr(settings, "app_currency", "EUR")
+    from datetime import date
+
     con = storage.get_connection()
-    insert_income(con, 2026, 5, 540.0, enqueue_logging=True)
+    insert_income(
+        con,
+        IncomeData(
+            year=2026,
+            month=5,
+            income_date=date(2026, 5, 15),
+            amount=540.0,
+            amount_original=540.0,
+            currency_original="EUR",
+        ),
+        enqueue_logging=True,
+    )
     con.close()
     income_sheet_logging._reset_backoff()
 

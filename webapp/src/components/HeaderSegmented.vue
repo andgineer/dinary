@@ -110,7 +110,7 @@ onBeforeUnmount(() => {
           :data-testid="`menu-${item.id}`"
           @click="selectRareTab(item.id)"
         >
-          <component :is="item.icon" :size="16" aria-hidden="true" />
+          <component :is="item.icon" :size="22" aria-hidden="true" />
           {{ item.label }}
         </button>
       </div>
@@ -194,13 +194,13 @@ onBeforeUnmount(() => {
 /* Dropdown */
 .overflow-menu {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 8px);
   right: 0;
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.2);
-  min-width: 148px;
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), 0 3px 8px rgba(0, 0, 0, 0.25);
+  min-width: 200px;
   overflow: hidden;
   z-index: 20;
 }
@@ -208,17 +208,22 @@ onBeforeUnmount(() => {
 .overflow-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.75rem;
   width: 100%;
-  padding: 0.55rem 0.85rem;
+  min-height: 52px;
+  padding: 0.85rem 1.1rem;
   background: transparent;
   border: none;
   border-radius: 0;
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: 1rem;
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
   text-align: left;
+}
+
+.overflow-item + .overflow-item {
+  border-top: 1px solid var(--border);
 }
 
 .overflow-item:hover {
@@ -229,7 +234,7 @@ onBeforeUnmount(() => {
 .overflow-item.active {
   background: var(--surface-2);
   color: var(--text);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .seg-badge {

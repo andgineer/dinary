@@ -3,6 +3,7 @@
 import io
 import json
 import shutil
+from datetime import date
 from decimal import Decimal
 
 import allure
@@ -28,13 +29,15 @@ def _seed_income(con) -> None:
     """
     for month in range(1, 13):
         con.execute(
-            "INSERT INTO income (year, month, amount) VALUES (?, ?, ?)",
-            [2024, month, Decimal("100.00")],
+            "INSERT INTO income (year, month, income_date, amount, amount_original, currency_original)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            [2024, month, date(2024, month, 5), Decimal("100.00"), Decimal("100.00"), "EUR"],
         )
     for month in (1, 2, 3):
         con.execute(
-            "INSERT INTO income (year, month, amount) VALUES (?, ?, ?)",
-            [2025, month, Decimal("600.00")],
+            "INSERT INTO income (year, month, income_date, amount, amount_original, currency_original)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            [2025, month, date(2025, month, 5), Decimal("600.00"), Decimal("600.00"), "EUR"],
         )
 
 

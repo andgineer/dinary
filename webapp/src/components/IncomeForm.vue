@@ -1,6 +1,5 @@
 <script setup>
 import { ref, onMounted } from "vue";
-import { Calendar } from "lucide-vue-next";
 import CurrencyPicker from "./CurrencyPicker.vue";
 import { useCurrencyStore } from "../stores/currency.js";
 import { useIncomeStore } from "../stores/income.js";
@@ -17,13 +16,20 @@ const props = defineProps({
 });
 const emit = defineEmits(["saved"]);
 
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function currentMonth() {
-  return new Date().toISOString().slice(0, 7);
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
 const amount = ref("");
 const selectedCurrency = ref("");
 const monthValue = ref(currentMonth());
+const dateValue = ref(today());
+const comment = ref("");
 const currencyPickerOpen = ref(false);
 const submitting = ref(false);
 
@@ -44,17 +50,24 @@ async function save() {
     toast.show("Enter a valid amount", "error");
     return;
   }
-  const [yearStr, monthStr] = monthValue.value.split("-");
-  const year = parseInt(yearStr, 10);
-  const month = parseInt(monthStr, 10);
-  const code = selectedCurrency.value || currency.preferredCode || "EUR";
+  const code = selectedCurrency.value || currency.defaultCode || "EUR";
 
+  const [yearStr, monthStr] = monthValue.value.split("-");
   submitting.value = true;
   try {
-    await incomeStore.add({ year, month, amount_original: parsed, currency_original: code });
+    await incomeStore.add({
+      year: parseInt(yearStr, 10),
+      month: parseInt(monthStr, 10),
+      income_date: dateValue.value,
+      amount_original: parsed,
+      currency_original: code,
+      comment: comment.value || null,
+    });
     currency.setLastUsed(code);
     amount.value = "";
+    comment.value = "";
     monthValue.value = currentMonth();
+    dateValue.value = today();
     emit("saved");
   } catch {
     // errors handled by store
@@ -94,11 +107,27 @@ defineExpose({ save });
         aria-label="Amount"
       />
 
-      <div class="date-field">
-        <Calendar :size="14" class="date-icon" aria-hidden="true" />
-        <input v-model="monthValue" type="month" class="month-input" aria-label="Month" />
+    </div>
+
+    <div class="date-row">
+      <div class="date-col">
+        <span class="field-label">For month</span>
+        <input v-model="monthValue" type="month" class="date-input" aria-label="Accounting month" />
+      </div>
+      <div class="date-col">
+        <span class="field-label">Received date</span>
+        <input v-model="dateValue" type="date" class="date-input" aria-label="Received date" />
       </div>
     </div>
+
+    <input
+      v-model="comment"
+      type="text"
+      placeholder="Comment (optional)"
+      autocomplete="off"
+      class="comment-input"
+      aria-label="Comment"
+    />
   </div>
 </template>
 
@@ -169,30 +198,64 @@ defineExpose({ save });
   border-bottom-color: var(--success);
 }
 
-.date-field {
+.date-row {
   display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
+  gap: 12px;
+  margin-top: 0.6rem;
 }
 
-.date-icon {
+.date-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.field-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
-.month-input {
-  width: auto;
+.date-input {
+  width: 100%;
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--border);
   border-radius: 0;
-  color: var(--muted);
-  font-size: 0.8rem;
+  color: var(--text);
+  font-size: 0.82rem;
   padding: 0.2rem 0;
   min-width: 0;
+  box-sizing: border-box;
 }
 
-.month-input:focus {
+.date-input:focus {
+  outline: none;
+  border-bottom-color: var(--success);
+}
+
+.comment-input {
+  margin-top: 0.6rem;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--text);
+  font-size: 0.85rem;
+  padding: 0.25rem 0;
+  box-sizing: border-box;
+}
+
+.comment-input::placeholder {
+  color: var(--muted);
+}
+
+.comment-input:focus {
   outline: none;
   border-bottom-color: var(--success);
 }

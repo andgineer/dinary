@@ -4,7 +4,7 @@ import { createIncome, deleteIncome, listIncomes, updateIncome } from "../api/in
 import { useStaleCache } from "../composables/useStaleCache.js";
 import { useToastStore } from "./toast.js";
 
-const CACHE_KEY = "dinary:income:v1";
+const CACHE_KEY = "dinary:income:v2";
 const DIRTY_KEY = "dinary:income:dirty";
 const FETCHED_KEY = "dinary:income:fetchedAt";
 
@@ -38,8 +38,8 @@ export const useIncomeStore = defineStore("income", () => {
     try {
       const nextPage = page.value + 1;
       const data = await listIncomes({ page: nextPage, pageSize: 20 });
-      const existingKeys = new Set(items.value.map((i) => `${i.year}-${i.month}`));
-      const incoming = (data.items ?? []).filter((i) => !existingKeys.has(`${i.year}-${i.month}`));
+      const existingIds = new Set(items.value.map((i) => i.id));
+      const incoming = (data.items ?? []).filter((i) => !existingIds.has(i.id));
       items.value = [...items.value, ...incoming];
       hasMore.value = data.has_more ?? false;
       page.value = nextPage;
@@ -62,19 +62,15 @@ export const useIncomeStore = defineStore("income", () => {
       reset();
       await loadNextPage();
     } catch (err) {
-      if (err?.status === 409) {
-        toast.show("Income for this month already exists", "error");
-      } else {
-        toast.show(err?.message || "Failed to save income", "error");
-      }
+      toast.show(err?.message || "Failed to save income", "error");
       throw err;
     }
   }
 
-  async function patch(year, month, payload) {
+  async function patch(id, payload) {
     const toast = useToastStore();
     try {
-      await updateIncome(year, month, payload);
+      await updateIncome(id, payload);
       reset();
       await loadNextPage();
     } catch (err) {
@@ -83,10 +79,10 @@ export const useIncomeStore = defineStore("income", () => {
     }
   }
 
-  async function remove(year, month) {
+  async function remove(id) {
     const toast = useToastStore();
     try {
-      await deleteIncome(year, month);
+      await deleteIncome(id);
       reset();
       await loadNextPage();
     } catch (err) {

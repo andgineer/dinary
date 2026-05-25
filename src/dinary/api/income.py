@@ -1,5 +1,5 @@
 """Income API: GET /api/incomes, POST /api/incomes,
-PATCH /api/incomes/{year}/{month}, DELETE /api/incomes/{year}/{month}"""
+PATCH /api/incomes/{id}, DELETE /api/incomes/{id}"""
 
 import sqlite3
 
@@ -42,24 +42,22 @@ def create_income(
     return resp
 
 
-@router.patch("/api/incomes/{year}/{month}", response_model=IncomeResponse)
+@router.patch("/api/incomes/{income_id}", response_model=IncomeResponse)
 def patch_income(
-    year: int,
-    month: int,
+    income_id: int,
     req: IncomeUpdateRequest,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> IncomeResponse:
-    resp = update_income_sync(year, month, req, con)
+    resp = update_income_sync(income_id, req, con)
     if settings.sheet_logging_enabled:
         notify_new_work()
     return resp
 
 
-@router.delete("/api/incomes/{year}/{month}", status_code=204)
+@router.delete("/api/incomes/{income_id}", status_code=204)
 def delete_income(
-    year: int,
-    month: int,
+    income_id: int,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> Response:
-    delete_income_sync(year, month, con)
+    delete_income_sync(income_id, con)
     return Response(status_code=204)

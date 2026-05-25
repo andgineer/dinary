@@ -4,20 +4,20 @@ export function listIncomes({ page = 1, pageSize = 20 } = {}) {
   return apiRequest(`/api/incomes?page=${page}&page_size=${pageSize}`);
 }
 
-export function createIncome({ year, month, amount_original, currency_original }) {
+export function createIncome({ year, month, income_date, amount_original, currency_original, comment }) {
   return apiRequest("/api/incomes", {
     method: "POST",
-    body: { year, month, amount_original, currency_original },
+    body: { year, month, income_date, amount_original, currency_original, comment },
   });
 }
 
-export function updateIncome(year, month, { amount_original, currency_original }) {
-  return apiRequest(`/api/incomes/${year}/${month}`, {
+export function updateIncome(id, { year, month, amount_original, currency_original, income_date, comment }) {
+  return apiRequest(`/api/incomes/${id}`, {
     method: "PATCH",
-    body: { amount_original, currency_original },
+    body: { year, month, amount_original, currency_original, income_date, comment },
   });
 }
 
-export function deleteIncome(year, month) {
-  return apiRequest(`/api/incomes/${year}/${month}`, { method: "DELETE" });
+export function deleteIncome(id) {
+  return apiRequest(`/api/incomes/${id}`, { method: "DELETE" });
 }

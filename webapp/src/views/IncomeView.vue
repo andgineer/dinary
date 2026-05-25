@@ -119,7 +119,7 @@ onBeforeUnmount(() => {
         </div>
         <IncomeRow
           v-for="income in yearItems"
-          :key="`${income.year}-${income.month}`"
+          :key="income.id"
           :income="income"
           @tap="openEdit(income)"
         />

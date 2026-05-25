@@ -24,21 +24,29 @@ const { sliderEl, isOpen, isCommit, onPointerDown, onPointerMove, endDrag, shoul
     onPrimary: () => onEditTap(),
   });
 
-const rowKey = () => `${props.income.year}-${props.income.month}`;
-
 watch(isOpen, (val) => {
-  if (val) incomeStore.setOpenRow(rowKey());
+  if (val) incomeStore.setOpenRow(props.income.id);
 });
 
 watch(
   () => incomeStore.openRowId,
   (id) => {
-    if (isOpen.value && id !== rowKey()) close();
+    if (isOpen.value && id !== props.income.id) close();
   },
 );
 
 function monthLabel(year, month) {
-  return new Date(year, month - 1, 1).toLocaleString("en", { month: "long" }) + " " + year;
+  if (!year || !month) return "";
+  return new Date(year, month - 1, 1).toLocaleString("en", { month: "long", year: "numeric" });
+}
+
+function dateLabel(income_date) {
+  if (!income_date) return "";
+  const [y, m, d] = income_date.split("-");
+  return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleString("en", {
+    day: "numeric",
+    month: "short",
+  });
 }
 
 function onRowClick() {
@@ -85,14 +93,15 @@ function onEditClick(e) {
       @click="onRowClick"
     >
       <div class="row-top">
-        <span class="row-month">{{ monthLabel(income.year, income.month) }}</span>
+        <span class="row-date">{{ monthLabel(income.year, income.month) }}</span>
         <span class="row-amount">
           <span class="row-amount-num">+{{ income.amount.toFixed(2) }}</span>
           <span class="row-amount-cur"> {{ income.currency }}</span>
         </span>
       </div>
       <div class="row-bottom">
-        <span class="row-key">{{ income.year }}-{{ String(income.month).padStart(2, "0") }}</span>
+        <span v-if="income.comment" class="row-secondary">{{ dateLabel(income.income_date) }} · {{ income.comment }}</span>
+        <span v-else class="row-secondary">{{ dateLabel(income.income_date) }} · {{ income.currency_original }} {{ income.amount_original?.toFixed(2) }}</span>
       </div>
     </div>
   </div>
@@ -163,7 +172,7 @@ function onEditClick(e) {
   margin-bottom: 3px;
 }
 
-.row-month {
+.row-date {
   font-size: 0.9375rem;
   font-weight: 600;
   color: var(--text);
@@ -189,9 +198,13 @@ function onEditClick(e) {
   align-items: center;
 }
 
-.row-key {
-  font-family: var(--font-num);
+.row-secondary {
   font-size: 0.72rem;
   color: var(--muted);
+  font-family: var(--font-num);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 </style>
