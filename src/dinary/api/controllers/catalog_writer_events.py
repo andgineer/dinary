@@ -26,10 +26,8 @@ from dinary.sheets.sheet_mapping import decode_auto_tags_value
 # ---------------------------------------------------------------------------
 
 #: Characters rejected inside tag names. Tag names flow through the
-#: ``map`` tab's comma/whitespace-separated tags cell and through
-#: ``events.auto_tags`` (a JSON array of bare names), so whitespace
-#: would split a single tag into two lookups and a comma would do
-#: the same; both look like honest typos but silently route expenses
+#: ``map`` tab's comma/whitespace-separated tags cell, so whitespace
+#: and commas look like honest typos but silently route expenses
 #: into the wrong envelope. Reject them at write time.
 _DISALLOWED_TAG_NAME_RE = re.compile(r"[,\s]")
 
@@ -43,37 +41,23 @@ def _validate_tag_name(name: str) -> None:
         )
 
 
-def _require_known_tag_names(
+def _require_known_tag_ids(
     con: sqlite3.Connection,
-    names: list[str] | tuple[str, ...],
+    tag_ids: list[int] | tuple[int, ...],
 ) -> None:
-    """422 if any name is not present in the ``tags`` table at all.
-
-    ``events.auto_tags`` is a denormalised name array (keeping a
-    ``tag_id`` array would require a second catalog table just for
-    events). We validate at write time that every name resolves to
-    a ``tags`` row so typos don't silently route to the "unknown tag"
-    drop path in ``resolve_event_auto_tag_ids``. The ``is_active``
-    flag is deliberately not checked — it means "hide from the
-    ручной пикер", and events must keep auto-attaching tags that the
-    operator has retired from the picker (e.g. the "отпуск" tag is
-    only set automatically when a vacation event is picked, so it is
-    hidden from the manual picker while still being a valid auto-tag
-    name).
-    """
-    unique = sorted({str(n) for n in names})
+    unique = sorted({int(t) for t in tag_ids})
     if not unique:
         return
     placeholders = ",".join(["?"] * len(unique))
     rows = con.execute(
-        f"SELECT name FROM tags WHERE name IN ({placeholders})",  # noqa: S608
+        f"SELECT id FROM tags WHERE id IN ({placeholders})",  # noqa: S608
         unique,
     ).fetchall()
-    found = {str(r[0]) for r in rows}
-    missing = [n for n in unique if n not in found]
+    found = {int(r[0]) for r in rows}
+    missing = [t for t in unique if t not in found]
     if missing:
         raise CatalogWriteError(
-            f"auto_tags references unknown tag name(s) {missing}; create the tag first",
+            f"auto_tags references unknown tag id(s) {missing}; create the tag first",
             http_status=422,
         )
 
@@ -109,14 +93,7 @@ def _event_mapping_reference_count(con: sqlite3.Connection, event_id: int) -> in
     return int(row[0]) if row else 0
 
 
-def _events_auto_tags_reference_count(con: sqlite3.Connection, tag_name: str) -> int:
-    """Count events whose ``auto_tags`` JSON array contains ``tag_name``.
-
-    SQLite does not enforce JSON-array semantics, so we load + decode
-    every non-empty ``auto_tags`` payload and check membership in
-    Python. The table is small (one row per historical year plus a
-    handful of explicit events) so scanning is cheap.
-    """
+def _events_auto_tags_reference_count(con: sqlite3.Connection, tag_id: int) -> int:
     rows = con.execute(
         "SELECT id, auto_tags FROM events"
         " WHERE auto_tags IS NOT NULL AND auto_tags != '' AND auto_tags != '[]'",
@@ -124,30 +101,13 @@ def _events_auto_tags_reference_count(con: sqlite3.Connection, tag_name: str) ->
     count = 0
     for event_id, raw in rows:
         decoded = decode_auto_tags_value(raw, context=f"event_id={int(event_id)}")
-        if tag_name in decoded:
+        if tag_id in decoded:
             count += 1
     return count
 
 
 def _tag_mapping_reference_count(con: sqlite3.Connection, tag_id: int) -> int:
-    """Mapping-table reference count for a tag.
-
-    Includes ``sheet_mapping_tags`` + ``import_mapping_tags`` (both FK
-    into ``tags``) **and** ``events.auto_tags`` — which is denormalised
-    JSON of tag *names*, not ids, so SQLite's FK engine won't catch it.
-    Counting the name reference here means hard-delete refuses while
-    any event still lists the tag, keeping the runtime auto-attach
-    contract ("event carrying this tag in ``auto_tags`` unions it
-    into every attached expense") well-defined.
-    """
-    tag_name_row = con.execute(
-        "SELECT name FROM tags WHERE id = ?",
-        [tag_id],
-    ).fetchone()
-    tag_name = str(tag_name_row[0]) if tag_name_row else None
-    auto_tag_refs = 0
-    if tag_name is not None:
-        auto_tag_refs = _events_auto_tags_reference_count(con, tag_name)
+    auto_tag_refs = _events_auto_tags_reference_count(con, tag_id)
     row = con.execute(
         "SELECT "
         " (SELECT COUNT(*) FROM sheet_mapping_tags WHERE tag_id = ?) "
@@ -163,15 +123,9 @@ def _tag_mapping_reference_count(con: sqlite3.Connection, tag_id: int) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _encode_auto_tags(auto_tags: list[str] | tuple[str, ...] | None) -> str:
-    """Encode an ``auto_tags`` list for storage on ``events.auto_tags``.
-
-    ``None`` means "caller did not supply a value" and is the empty
-    array on INSERT. Caller-supplied empty list is also stored as
-    ``'[]'`` (explicit "no auto-tags").
-    """
-    names = list(auto_tags) if auto_tags is not None else []
-    return json.dumps(names, ensure_ascii=False)
+def _encode_auto_tags(auto_tags: list[int] | tuple[int, ...] | None) -> str:
+    ids = list(dict.fromkeys(auto_tags)) if auto_tags is not None else []
+    return json.dumps(ids)
 
 
 def add_event(
@@ -181,7 +135,7 @@ def add_event(
     date_from: date,
     date_to: date,
     auto_attach_enabled: bool = False,
-    auto_tags: list[str] | tuple[str, ...] | None = None,
+    auto_tags: list[int] | None = None,
 ) -> AddResult:
     """Create a new event, or reactivate-in-place if the name exists.
 
@@ -189,7 +143,7 @@ def add_event(
     ``auto_attach_enabled`` / ``auto_tags`` on the existing row are
     left untouched. To change those, use ``edit_event``.
 
-    Input validation (``date_from <= date_to``, ``auto_tags`` names
+    Input validation (``date_from <= date_to``, ``auto_tags`` ids
     resolve to an existing ``tags`` row — active or inactive) runs
     regardless of whether we insert or reactivate. The reactivate
     path discards the caller's values, but the API contract is
@@ -208,7 +162,7 @@ def add_event(
     con.execute("BEGIN IMMEDIATE")
     try:
         before = hash_state(con)
-        _require_known_tag_names(con, auto_tags or ())
+        _require_known_tag_ids(con, auto_tags or [])
         existing = con.execute(
             "SELECT id, is_active FROM events WHERE name = ?",
             [name],
@@ -254,7 +208,7 @@ def _validate_event_edit(
     event_id: int,
     name: str | None,
     dates: tuple[date | None, date | None],
-    auto_tags,
+    auto_tags: list[int] | None,
 ) -> None:
     row = con.execute(
         "SELECT id, date_from, date_to FROM events WHERE id = ?",
@@ -280,7 +234,7 @@ def _validate_event_edit(
                 f"event name {name!r} already in use by id={int(conflict[0])}",
             )
     if auto_tags is not None:
-        _require_known_tag_names(con, auto_tags)
+        _require_known_tag_ids(con, auto_tags)
 
 
 def edit_event(
@@ -291,7 +245,7 @@ def edit_event(
     date_from: date | None = None,
     date_to: date | None = None,
     auto_attach_enabled: bool | None = None,
-    auto_tags: list[str] | tuple[str, ...] | None = None,
+    auto_tags: list[int] | None = None,
     is_active: bool | None = None,
 ) -> None:
     """Atomic PATCH for ``events``.
@@ -397,26 +351,15 @@ def edit_tag(
     *before* any UPDATE so a failed validation never leaves the row
     half-edited. ``is_active=False`` always succeeds on a known row
     (soft-retire); see ``edit_category`` docstring for the rationale.
-
-    Rename cascade into ``events.auto_tags``: the auto-tag column is
-    a denormalised JSON array of tag *names*, not ids. A rename that
-    leaves ``events.auto_tags`` untouched would silently break the
-    auto-attach contract (the event would reference a name that no
-    longer exists in the ``tags`` table). We rewrite every event row
-    whose ``auto_tags`` mentions the old name so the invariant
-    "every name in ``auto_tags`` resolves to a known tag row
-    (active or inactive)" is preserved atomically inside this same
-    transaction.
     """
     if name is not None:
         _validate_tag_name(name)
     con.execute("BEGIN IMMEDIATE")
     try:
         before = hash_state(con)
-        row = con.execute("SELECT id, name FROM tags WHERE id = ?", [tag_id]).fetchone()
+        row = con.execute("SELECT id FROM tags WHERE id = ?", [tag_id]).fetchone()
         if row is None:
             raise CatalogNotFoundError(f"tag id={tag_id} not found")
-        old_name = str(row[1])
         if name is not None:
             conflict = con.execute(
                 "SELECT id FROM tags WHERE name = ? AND id != ?",
@@ -426,10 +369,7 @@ def edit_tag(
                 raise CatalogConflictError(
                     f"tag name {name!r} already in use by id={int(conflict[0])}",
                 )
-        if name is not None:
             con.execute("UPDATE tags SET name = ? WHERE id = ?", [name, tag_id])
-            if name != old_name:
-                _rename_tag_in_events_auto_tags(con, old_name=old_name, new_name=name)
         if is_active is not None:
             con.execute(
                 "UPDATE tags SET is_active = ? WHERE id = ?",
@@ -439,39 +379,6 @@ def edit_tag(
     except Exception:
         storage.best_effort_rollback(con, context="catalog_writer.edit_tag")
         raise
-
-
-def _rename_tag_in_events_auto_tags(
-    con: sqlite3.Connection,
-    *,
-    old_name: str,
-    new_name: str,
-) -> None:
-    """Rewrite every ``events.auto_tags`` payload that references ``old_name``.
-
-    Called from ``edit_tag`` when the ``tags.name`` column changes.
-    Preserves array order (so authoring order semantics from
-    ``resolve_event_auto_tag_ids`` stay intact) and idempotently
-    dedups ``new_name`` if it already happened to be in the same
-    array. Empty / malformed payloads are left alone.
-    """
-    rows = con.execute(
-        "SELECT id, auto_tags FROM events"
-        " WHERE auto_tags IS NOT NULL AND auto_tags != '' AND auto_tags != '[]'",
-    ).fetchall()
-    for event_id, raw in rows:
-        decoded = decode_auto_tags_value(raw, context=f"event_id={int(event_id)}")
-        if old_name not in decoded:
-            continue
-        renamed: list[str] = []
-        for value in decoded:
-            candidate = new_name if value == old_name else value
-            if candidate not in renamed:
-                renamed.append(candidate)
-        con.execute(
-            "UPDATE events SET auto_tags = ? WHERE id = ?",
-            [json.dumps(renamed, ensure_ascii=False), int(event_id)],
-        )
 
 
 def set_tag_active(

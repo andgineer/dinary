@@ -270,12 +270,10 @@ class TestLoadCatalog:
 @allure.epic("Sheets Sync")
 @allure.feature("Sheet mapping")
 class TestEventAutoTags:
-    def test_resolve_returns_active_tag_ids(self):
+    def test_resolve_returns_stored_tag_ids(self):
         con = storage.get_connection()
         try:
-            con.execute(
-                "UPDATE events SET auto_tags = '[\"путешествия\"]' WHERE id = 1",
-            )
+            con.execute("UPDATE events SET auto_tags = '[3]' WHERE id = 1")
             ids = sheet_mapping.resolve_event_auto_tag_ids(con, 1)
         finally:
             con.close()
@@ -296,31 +294,20 @@ class TestEventAutoTags:
         finally:
             con.close()
 
-    def test_unknown_tag_names_are_dropped(self):
+    def test_unknown_tag_ids_are_returned(self):
         con = storage.get_connection()
         try:
-            con.execute(
-                'UPDATE events SET auto_tags = \'["путешествия", "missing"]\' WHERE id = 1',
-            )
+            con.execute("UPDATE events SET auto_tags = '[3, 9999]' WHERE id = 1")
             ids = sheet_mapping.resolve_event_auto_tag_ids(con, 1)
         finally:
             con.close()
-        assert ids == [3]
+        assert ids == [3, 9999]
 
-    def test_inactive_tag_name_still_resolves(self):
-        """``tags.is_active = FALSE`` means "hide from the ручной
-        пикер", not "retire from event-driven auto-attach". An event
-        whose ``auto_tags`` names an inactive tag must still get that
-        tag attached on expense write — otherwise hiding a
-        vacation-only tag like "отпуск" silently breaks the
-        event-based auto-attach pipeline (the direct complaint behind
-        this regression test)."""
+    def test_inactive_tag_id_still_resolves(self):
         con = storage.get_connection()
         try:
             con.execute("UPDATE tags SET is_active = FALSE WHERE id = 3")
-            con.execute(
-                "UPDATE events SET auto_tags = '[\"путешествия\"]' WHERE id = 1",
-            )
+            con.execute("UPDATE events SET auto_tags = '[3]' WHERE id = 1")
             ids = sheet_mapping.resolve_event_auto_tag_ids(con, 1)
         finally:
             con.close()

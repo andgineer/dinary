@@ -93,18 +93,9 @@ class TestAdminPatch:
             for c in snap["categories"]
         )
 
-    def test_patch_rename_tag_cascades_into_events_auto_tags(self, client):
-        """Renaming a tag via PATCH must rewrite every ``events.auto_tags``
-        entry that references the old name.
-
-        ``auto_tags`` stores tag *names* (not ids) so the JSON value is
-        stable across seed rebuilds that renumber ids, but that means a
-        plain ``UPDATE tags SET name = ?`` would silently break the
-        auto-attach pipeline: the next ``resolve_event_auto_tag_ids``
-        call would log an "unknown tag name" WARN and drop the tag
-        from every new expense created under that event. The cascade
-        keeps auto-attach behaviour identical across the rename.
-        """
+    def test_patch_rename_tag_leaves_events_auto_tags_unchanged(self, client):
+        """Renaming a tag must NOT change events.auto_tags: stored IDs are stable
+        across renames so no cascade rewrite is needed."""
         tag = client.post("/api/catalog/tags", json={"name": "oldname"})
         tid = tag.json()["new_id"]
         ev = client.post(
@@ -113,7 +104,7 @@ class TestAdminPatch:
                 "name": "evt-with-tag",
                 "date_from": "2026-01-01",
                 "date_to": "2026-12-31",
-                "auto_tags": ["oldname"],
+                "auto_tags": [tid],
             },
         )
         eid = ev.json()["new_id"]
@@ -132,8 +123,7 @@ class TestAdminPatch:
             con.close()
         assert row is not None
         raw = row[0] or ""
-        assert "newname" in raw
-        assert "oldname" not in raw
+        assert str(tid) in raw
 
     def test_patch_reactivates_soft_deleted_tag(self, client):
         add = client.post("/api/catalog/tags", json={"name": "retired"})

@@ -1111,7 +1111,7 @@ class TestPerItemExpenses:
             conn.execute(
                 "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
                 " VALUES (1, 'Dog Year', '2026-01-01', '2026-12-31', 1, 1, ?)",
-                [json.dumps(["собака"])],
+                [json.dumps([1])],
             )
             conn.execute(
                 "INSERT INTO receipts (client_receipt_id, url, created_at)"

@@ -42,7 +42,7 @@ class EventItem(BaseModel):
     date_from: str
     date_to: str
     auto_attach_enabled: bool
-    auto_tags: list[str]
+    auto_tags: list[int]
     is_active: bool
     removable: bool
 
@@ -97,7 +97,7 @@ class EventAddBody(BaseModel):
     date_from: date
     date_to: date
     auto_attach_enabled: bool = False
-    auto_tags: list[str] | None = None
+    auto_tags: list[int] | None = None
 
 
 class EventPatchBody(BaseModel):
@@ -105,7 +105,7 @@ class EventPatchBody(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
     auto_attach_enabled: bool | None = None
-    auto_tags: list[str] | None = None
+    auto_tags: list[int] | None = None
     is_active: bool | None = None
 
 
@@ -182,21 +182,14 @@ def _sum_counts_by_id(
 
 
 def _auto_tag_refs_by_tag_id(con: sqlite3.Connection) -> Counter[int]:
-    name_refs: Counter[str] = Counter()
+    id_refs: Counter[int] = Counter()
     rows = con.execute(
         "SELECT auto_tags FROM events"
         " WHERE auto_tags IS NOT NULL AND auto_tags != '' AND auto_tags != '[]'",
     ).fetchall()
     for (raw,) in rows:
-        for name in decode_auto_tags_value(raw, context="catalog auto_tags scan"):
-            name_refs[name] += 1
-    if not name_refs:
-        return Counter()
-    id_refs: Counter[int] = Counter()
-    for tag_id, tag_name in con.execute("SELECT id, name FROM tags").fetchall():
-        hits = name_refs.get(str(tag_name), 0)
-        if hits:
-            id_refs[int(tag_id)] = hits
+        for tag_id in decode_auto_tags_value(raw, context="catalog auto_tags scan"):
+            id_refs[tag_id] += 1
     return id_refs
 
 

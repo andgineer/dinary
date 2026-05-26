@@ -56,7 +56,8 @@ class TestAdminAdd:
         assert any(e["name"] == "trip-2026" for e in events)
 
     def test_add_event_with_auto_tags(self, client):
-        client.post("/api/catalog/tags", json={"name": "путешествия"})
+        tag = client.post("/api/catalog/tags", json={"name": "путешествия"})
+        tid = tag.json()["new_id"]
         resp = client.post(
             "/api/catalog/events",
             json={
@@ -64,12 +65,12 @@ class TestAdminAdd:
                 "date_from": "2026-07-01",
                 "date_to": "2026-07-15",
                 "auto_attach_enabled": True,
-                "auto_tags": ["путешествия"],
+                "auto_tags": [tid],
             },
         )
         assert resp.status_code == 200, resp.text
         ev = next(e for e in resp.json()["events"] if e["name"] == "отпуск-Доломиты")
-        assert ev["auto_tags"] == ["путешествия"]
+        assert ev["auto_tags"] == [tid]
         assert ev["auto_attach_enabled"] is True
 
     def test_add_event_rejects_bad_range(self, client):

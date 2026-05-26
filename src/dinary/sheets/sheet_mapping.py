@@ -630,12 +630,12 @@ def ensure_default_map_tab() -> None:
 # ---------------------------------------------------------------------------
 
 
-def decode_auto_tags_value(raw: object, *, context: str = "") -> list[str]:
-    """Decode a raw ``events.auto_tags`` JSON value into a list of names.
+def decode_auto_tags_value(raw: object, *, context: str = "") -> list[int]:
+    """Decode a raw ``events.auto_tags`` JSON value into a list of integer tag IDs.
 
     Single canonical implementation shared by every code path that
     reads ``events.auto_tags`` (``api/catalog``, ``catalog_writer``,
-    ``sheet_mapping.load_event_auto_tag_names``). Blank / NULL /
+    ``sheet_mapping.load_event_auto_tag_ids``). Blank / NULL /
     malformed payloads degrade to ``[]`` so a partially migrated DB
     cannot wedge the read path; a WARN is logged once per bad value
     with the caller-supplied ``context`` string so operators can trace
@@ -659,14 +659,24 @@ def decode_auto_tags_value(raw: object, *, context: str = "") -> list[str]:
             raw,
         )
         return []
-    return [str(name) for name in parsed]
+    ids: list[int] = []
+    for elem in parsed:
+        try:
+            ids.append(int(elem))
+        except (ValueError, TypeError):
+            logger.warning(
+                "events.auto_tags%s contains non-integer element %r; skipping",
+                f" for {context}" if context else "",
+                elem,
+            )
+    return ids
 
 
-def load_event_auto_tag_names(
+def load_event_auto_tag_ids(
     con: sqlite3.Connection,
     event_id: int,
-) -> list[str]:
-    """Return the JSON-decoded ``events.auto_tags`` list for ``event_id``.
+) -> list[int]:
+    """Return the JSON-decoded ``events.auto_tags`` integer id list for ``event_id``.
 
     Empty list when the event has no auto-tags, the column is blank, or
     the event does not exist.
@@ -684,32 +694,5 @@ def resolve_event_auto_tag_ids(
     con: sqlite3.Connection,
     event_id: int,
 ) -> list[int]:
-    """Return catalog ids for the event's ``auto_tags`` names.
-
-    The returned ids preserve the authoring order from
-    ``events.auto_tags`` (dedup by first occurrence). Tag rows are
-    matched by name regardless of their ``is_active`` flag —
-    ``tags.is_active = FALSE`` means "hide from the ручной пикер" and
-    must not break event-driven auto-attach. Only names that are
-    absent from the ``tags`` table entirely (hard-deleted or typo)
-    are logged at WARN and dropped; we never block an expense write
-    because the operator hid a tag from the picker.
-    """
-    names = load_event_auto_tag_names(con, event_id)
-    if not names:
-        return []
-    ordered_unique: list[str] = list(dict.fromkeys(names))
-    placeholders = ",".join(["?"] * len(ordered_unique))
-    rows = con.execute(
-        f"SELECT id, name FROM tags WHERE name IN ({placeholders})",  # noqa: S608
-        ordered_unique,
-    ).fetchall()
-    found = {str(r[1]): int(r[0]) for r in rows}
-    missing = [n for n in ordered_unique if n not in found]
-    if missing:
-        logger.warning(
-            "events.auto_tags for event_id=%d references unknown tag names %r; dropping",
-            event_id,
-            missing,
-        )
-    return [found[name] for name in ordered_unique if name in found]
+    """Return the stored integer tag ids for the event's ``auto_tags`` column."""
+    return load_event_auto_tag_ids(con, event_id)

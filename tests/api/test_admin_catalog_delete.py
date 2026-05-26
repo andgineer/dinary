@@ -195,14 +195,11 @@ class TestAdminDelete:
         assert any(t["id"] == tid and t["is_active"] is False for t in data["tags"])
 
     def test_delete_tag_referenced_only_by_events_auto_tags_is_soft(self, client):
-        """``events.auto_tags`` (a JSON array of tag names) also counts
+        """``events.auto_tags`` (a JSON integer array of tag IDs) also counts
         as a mapping-side reference for the hard-vs-soft decision.
-        Without this guard, deleting a tag that is only named by an
+        Without this guard, deleting a tag that is only referenced by an
         event's ``auto_tags`` would remove the ``tags`` row but leave
-        an orphan name pointer in the event; subsequent
-        ``resolve_event_auto_tag_ids`` calls would silently drop it
-        (logging a WARN), which is a data-loss footgun operators
-        can't recover from via the admin UI.
+        an orphan ID in the event.
         """
         tag = client.post("/api/catalog/tags", json={"name": "auto-only"})
         tid = tag.json()["new_id"]
@@ -212,22 +209,16 @@ class TestAdminDelete:
                 "name": "trip-with-auto-tag",
                 "date_from": "2026-01-01",
                 "date_to": "2026-12-31",
-                "auto_tags": ["auto-only"],
+                "auto_tags": [tid],
             },
         )
         eid = ev.json()["new_id"]
         resp = client.delete(f"/api/catalog/tags/{tid}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
-        # Only events.auto_tags references the tag — not sheet_mapping_tags,
-        # not import_mapping_tags, not expense_tags — yet the writer must
-        # still soft-delete to preserve the auto_tags name pointer.
         assert data["delete_status"] == "soft"
         assert data["usage_count"] == 0
         assert any(t["id"] == tid and t["is_active"] is False for t in data["tags"])
-        # auto_tags name list on the event is unchanged: the tag row is
-        # retired (is_active=FALSE) but still reachable by id, and the
-        # name reference in events.auto_tags stays intact.
         con = storage.get_connection()
         try:
             row = con.execute(
@@ -237,7 +228,7 @@ class TestAdminDelete:
         finally:
             con.close()
         assert row is not None
-        assert "auto-only" in (row[0] or "")
+        assert str(tid) in (row[0] or "")
 
     def test_delete_event_referenced_by_sheet_mapping_is_soft(self, client):
         ev = client.post(

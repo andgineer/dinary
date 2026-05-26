@@ -146,15 +146,8 @@ class TestAtomicPatch:
 class TestTagUsage:
     def test_edit_event_accepts_inactive_tag_in_auto_tags(self, fresh_db):
         """Deactivating a tag must not block writes that reference it
-        via event ``auto_tags``. The operator hides the tag from the
-        ручной пикер via the Управлять list; the tag still exists in
-        the ``tags`` table, so events and the map tab must keep
-        resolving it by name.
-
-        This pins the failure mode where hiding "отпуск" (a tag set
-        only by vacation events, never manually) would trip 422 in
-        ``_require_known_tag_names`` on every subsequent event-edit
-        that still named it.
+        via event ``auto_tags``. ``is_active=FALSE`` means "hide from the
+        ручной пикер"; the ID is still valid for auto-attach.
         """
         con = storage.get_connection()
         try:
@@ -165,17 +158,13 @@ class TestTagUsage:
                 " (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
                 " VALUES (1, 'trip', '2026-01-01', '2026-12-31', TRUE, TRUE, '[]')",
             )
-            edit_event(con, 1, auto_tags=["отпуск"])
+            edit_event(con, 1, auto_tags=[1])
             stored = con.execute("SELECT auto_tags FROM events WHERE id = 1").fetchone()
         finally:
             con.close()
-        assert stored[0] == '["отпуск"]'
+        assert stored[0] == "[1]"
 
-    def test_edit_event_still_rejects_unknown_tag_name(self, fresh_db):
-        """The ``is_active`` gate was lifted, but the absent-from-table
-        gate stays: a typo or a hard-deleted tag name still 422s so
-        ``resolve_event_auto_tag_ids`` never silently drops at runtime.
-        """
+    def test_edit_event_still_rejects_unknown_tag_id(self, fresh_db):
         con = storage.get_connection()
         try:
             _seed_minimal(con)
@@ -184,8 +173,8 @@ class TestTagUsage:
                 " (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
                 " VALUES (1, 'trip', '2026-01-01', '2026-12-31', TRUE, TRUE, '[]')",
             )
-            with pytest.raises(CatalogWriteError, match="unknown tag name"):
-                edit_event(con, 1, auto_tags=["ghost_tag"])
+            with pytest.raises(CatalogWriteError, match="unknown tag"):
+                edit_event(con, 1, auto_tags=[9999])
         finally:
             con.close()
 

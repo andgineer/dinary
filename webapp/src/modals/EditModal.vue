@@ -42,16 +42,6 @@ const titles = {
 };
 const title = computed(() => titles[props.kind] || "Edit");
 
-function tagIdsFromNames(names) {
-  if (!Array.isArray(names) || names.length === 0) return [];
-  const byName = new Map(allActiveTags.value.map((t) => [t.name, Number(t.id)]));
-  // Names not currently in the active tags list are dropped silently;
-  // the server can still receive a re-mapped list of names on submit.
-  return names
-    .map((n) => byName.get(n))
-    .filter((id) => typeof id === "number");
-}
-
 function resetFromItem() {
   const item = props.item || {};
   name.value = item.name ?? "";
@@ -62,7 +52,7 @@ function resetFromItem() {
   dateFrom.value = item.date_from ?? "";
   dateTo.value = item.date_to ?? "";
   autoAttachEnabled.value = !!item.auto_attach_enabled;
-  tagIds.value = tagIdsFromNames(item.auto_tags);
+  tagIds.value = (item.auto_tags ?? []).map(Number);
   error.value = "";
   submitting.value = false;
 }
@@ -105,14 +95,11 @@ function buildPatchBody() {
     if (autoAttachEnabled.value !== !!item.auto_attach_enabled) {
       body.auto_attach_enabled = autoAttachEnabled.value;
     }
-    const selected = new Set(tagIds.value.map(Number));
-    const newAutoTags = allActiveTags.value
-      .filter((t) => selected.has(Number(t.id)))
-      .map((t) => t.name);
-    const currentAutoTags = Array.isArray(item.auto_tags) ? item.auto_tags.slice() : [];
+    const currentAutoTags = (item.auto_tags ?? []).map(Number);
+    const newAutoTags = tagIds.value.map(Number);
     const sameTags =
       currentAutoTags.length === newAutoTags.length &&
-      currentAutoTags.every((n) => newAutoTags.includes(n));
+      new Set(newAutoTags).size === new Set([...currentAutoTags, ...newAutoTags]).size;
     if (!sameTags) body.auto_tags = newAutoTags;
   }
 

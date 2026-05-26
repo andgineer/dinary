@@ -121,7 +121,7 @@ class TestPostExpenseHappyPath:
         try:
             con.execute(
                 "UPDATE events SET auto_tags = ? WHERE id = 1",
-                ['["собака"]'],
+                ["[1]"],
             )
         finally:
             con.close()

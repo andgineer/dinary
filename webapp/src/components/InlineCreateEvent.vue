@@ -39,10 +39,7 @@ function handleSave() {
     error.value = err;
     return;
   }
-  const selected = new Set(tagIds.value.map(Number));
-  const autoTags = allActiveTags.value
-    .filter((t) => selected.has(Number(t.id)))
-    .map((t) => t.name);
+  const autoTags = tagIds.value.map(Number);
   error.value = "";
   emit("save", {
     name: name.value.trim(),

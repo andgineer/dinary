@@ -42,3 +42,18 @@ CREATE TABLE income_logging_jobs (
     PRIMARY KEY (year, month),
     CHECK (status IN ('pending', 'in_progress', 'poisoned'))
 );
+
+-- Convert events.auto_tags from JSON name arrays to JSON id arrays.
+-- Requires SQLite >= 3.38.0 (2022-02-22) for json_each and json_group_array.
+-- Names with no matching tags row are dropped (same as the runtime drop path).
+-- WARNING: rollback after this migration is not safe — the old app code would
+-- query WHERE name IN ([3]) and silently drop every auto-tag.
+UPDATE events
+SET auto_tags = (
+    SELECT json_group_array(DISTINCT t.id)
+    FROM json_each(events.auto_tags) AS je
+    JOIN tags t ON t.name = je.value
+)
+WHERE auto_tags IS NOT NULL
+  AND auto_tags != ''
+  AND auto_tags != '[]';

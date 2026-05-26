@@ -185,17 +185,13 @@ class TestCatalogRemovableFlag:
         assert events[1] is False
 
     def test_tag_non_removable_if_in_any_event_auto_tags(self, client):
-        # Add a tag, then list it in an event's ``auto_tags`` JSON
-        # payload. The FK engine won't see the name->name link, but
-        # the snapshot builder scans auto_tags and must mark the tag
-        # as non-removable.
         con = storage.get_connection()
         try:
             con.execute(
                 "INSERT INTO tags (id, name, is_active) VALUES (99, 'vacation', TRUE)",
             )
             con.execute(
-                "UPDATE events SET auto_tags = '[\"vacation\"]' WHERE id = 1",
+                "UPDATE events SET auto_tags = '[99]' WHERE id = 1",
             )
         finally:
             con.close()
