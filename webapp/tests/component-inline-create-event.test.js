@@ -95,7 +95,7 @@ describe("InlineCreateEvent", () => {
     const emits = wrapper.emitted("save");
     expect(emits).toBeTruthy();
     if (checkboxes.length > 0) {
-      expect(emits[0][0].auto_tags).toContain("vacation");
+      expect(emits[0][0].auto_tags).toContain(1);
     }
   });
 });

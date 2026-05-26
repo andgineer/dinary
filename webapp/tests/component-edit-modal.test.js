@@ -242,7 +242,7 @@ describe("EditModal — event", () => {
     const [, , body] = spy.mock.calls[0];
     expect(body.date_to).toBe("2026-05-12");
     expect(body.auto_attach_enabled).toBe(true);
-    expect(body.auto_tags).toEqual(["biz"]);
+    expect(body.auto_tags).toEqual([300]);
     expect(body.date_from).toBeUndefined();
     expect(body.name).toBeUndefined();
   });
