@@ -57,3 +57,33 @@ SET auto_tags = (
 WHERE auto_tags IS NOT NULL
   AND auto_tags != ''
   AND auto_tags != '[]';
+
+-- Rebuild tags and events with AUTOINCREMENT so deleted IDs are never reused.
+-- Data (including IDs) is preserved; only the PK generation rule changes.
+-- FK child tables (sheet_mapping_tags, import_mapping_tags, expense_tags,
+-- sheet_mapping, import_mapping) reference these tables by name and are
+-- unaffected: the table names are restored by the RENAME and all IDs stay the same.
+-- No PRAGMA foreign_keys = OFF needed: SQLite does not check FK constraints on
+-- DROP TABLE, so the rebuild succeeds with FK enforcement on throughout.
+
+CREATE TABLE tags_new (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    name      TEXT UNIQUE NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT 1
+);
+INSERT INTO tags_new SELECT * FROM tags;
+DROP TABLE tags;
+ALTER TABLE tags_new RENAME TO tags;
+
+CREATE TABLE events_new (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                TEXT UNIQUE NOT NULL,
+    date_from           DATE NOT NULL,
+    date_to             DATE NOT NULL,
+    auto_attach_enabled BOOLEAN NOT NULL DEFAULT 0,
+    is_active           BOOLEAN NOT NULL DEFAULT 1,
+    auto_tags           TEXT NOT NULL DEFAULT '[]'
+);
+INSERT INTO events_new SELECT * FROM events;
+DROP TABLE events;
+ALTER TABLE events_new RENAME TO events;

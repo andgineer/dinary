@@ -9,7 +9,7 @@ import re
 import sqlite3
 from datetime import date
 
-from dinary.api.controllers.catalog_writer import commit_with_bump, hash_state, next_id
+from dinary.api.controllers.catalog_writer import commit_with_bump, hash_state
 from dinary.api.controllers.catalog_writer_errors import (
     AddResult,
     AddStatus,
@@ -182,20 +182,18 @@ def add_event(
             )
             status: AddStatus = "reactivated" if bumped else "noop"
             return AddResult(id=eid, status=status)
-        eid = next_id(con, "events")
-        con.execute(
+        eid = con.execute(
             "INSERT INTO events"
-            " (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
-            " VALUES (?, ?, ?, ?, ?, TRUE, ?)",
+            " (name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
+            " VALUES (?, ?, ?, ?, TRUE, ?) RETURNING id",
             [
-                eid,
                 name,
                 date_from,
                 date_to,
                 auto_attach_enabled,
                 _encode_auto_tags(auto_tags),
             ],
-        )
+        ).fetchone()[0]
         commit_with_bump(con, before, context=f"add_event(name={name!r})")
         return AddResult(id=eid, status="created")
     except Exception:
@@ -326,11 +324,10 @@ def add_tag(con: sqlite3.Connection, *, name: str) -> AddResult:
             )
             status: AddStatus = "reactivated" if bumped else "noop"
             return AddResult(id=tid, status=status)
-        tid = next_id(con, "tags")
-        con.execute(
-            "INSERT INTO tags (id, name, is_active) VALUES (?, ?, TRUE)",
-            [tid, name],
-        )
+        tid = con.execute(
+            "INSERT INTO tags (name, is_active) VALUES (?, TRUE) RETURNING id",
+            [name],
+        ).fetchone()[0]
         commit_with_bump(con, before, context=f"add_tag(name={name!r})")
         return AddResult(id=tid, status="created")
     except Exception:
