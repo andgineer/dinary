@@ -187,7 +187,7 @@ def built_static_dir() -> Path:
 
 
 @pytest.fixture
-def client():
+def client(db):  # noqa: ARG001
     """FastAPI TestClient that surfaces server-side exceptions as HTTP 500.
 
     The default ``TestClient`` re-raises unhandled exceptions straight into
@@ -200,10 +200,11 @@ def client():
     ``_get_json_or_none`` is stubbed so the ``rate_prefetch_task`` background
     task started by the lifespan never reaches kurs.resenje.org.
 
-    ``migrate_db`` is stubbed to a no-op so the lifespan's ``init_db()``
-    call never attempts DDL against the current developer DB — tests that
-    depend on a specific DB state use the ``db`` / ``_api_helpers.db``
-    fixtures which always point at a freshly-migrated temp path.
+    ``db`` dependency guarantees ``storage.DB_PATH`` is redirected to a
+    freshly-migrated temp path before the lifespan runs ``init_db()``, so
+    the lifespan never touches the developer DB or creates a schema-less
+    blank file on CI.  ``migrate_db`` is still stubbed because the temp DB
+    already carries the full schema from ``blank_db``.
     """
     with (
         unittest.mock.patch.object(rate_helpers, "_get_json_or_none", return_value=None),
