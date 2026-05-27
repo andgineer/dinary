@@ -229,6 +229,87 @@ class TestRequeuReceipts:
         finally:
             conn.close()
 
+    def test_requeue_resets_retry_backoff_on_existing_job(self, db):  # noqa: ARG002
+        """requeue_receipts clears retry_count and retry_after on an already-queued job."""
+        conn = storage.get_connection()
+        try:
+            r1, _ = _seed(conn)
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs"
+                " (receipt_id, retry_count, retry_after)"
+                " VALUES (?, 95, datetime('now', '+15 minutes'))",
+                [r1],
+            )
+            conn.execute("BEGIN IMMEDIATE")
+            requeue_receipts(conn, [r1])
+            conn.execute("COMMIT")
+
+            row = conn.execute(
+                "SELECT status, retry_count, retry_after"
+                " FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [r1],
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert row is not None
+        assert row[0] == "pending"
+        assert row[1] == 0, f"retry_count must be reset to 0, got {row[1]}"
+        assert row[2] is None, f"retry_after must be cleared, got {row[2]}"
+
+    def test_requeue_resets_poisoned_job(self, db):  # noqa: ARG002
+        """requeue_receipts sets status back to 'pending' for a poisoned job."""
+        conn = storage.get_connection()
+        try:
+            r1, _ = _seed(conn)
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, status)"
+                " VALUES (?, 'poisoned')",
+                [r1],
+            )
+            conn.execute("BEGIN IMMEDIATE")
+            requeue_receipts(conn, [r1])
+            conn.execute("COMMIT")
+
+            row = conn.execute(
+                "SELECT status, retry_count, retry_after"
+                " FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [r1],
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert row is not None
+        assert row[0] == "pending"
+        assert row[1] == 0
+        assert row[2] is None
+
+    def test_requeue_resets_in_progress_job(self, db):  # noqa: ARG002
+        """requeue_receipts sets status back to 'pending' for an in_progress job."""
+        conn = storage.get_connection()
+        try:
+            r1, _ = _seed(conn)
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs"
+                " (receipt_id, status, claim_token, claimed_at)"
+                " VALUES (?, 'in_progress', 'tok', datetime('now'))",
+                [r1],
+            )
+            conn.execute("BEGIN IMMEDIATE")
+            requeue_receipts(conn, [r1])
+            conn.execute("COMMIT")
+
+            row = conn.execute(
+                "SELECT status, retry_count FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [r1],
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert row is not None
+        assert row[0] == "pending"
+        assert row[1] == 0
+
     def test_empty_ids_is_noop(self, db):  # noqa: ARG002
         conn = storage.get_connection()
         try:

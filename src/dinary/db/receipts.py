@@ -19,6 +19,7 @@ class ReceiptJobRow:
     parsed_at: str | None
     used_journal_fallback: bool
     claim_token: str
+    retry_count: int = 0
 
 
 @dataclass(slots=True)
@@ -71,11 +72,15 @@ def claim_next_job(conn: sqlite3.Connection, stale_minutes: int = 10) -> Receipt
         row = conn.execute(
             f"""
             SELECT r.id, r.url, r.store_name_raw, r.store_pib_raw,
-                   r.invoice_number, r.parsed_at, r.used_journal_fallback
+                   r.invoice_number, r.parsed_at, r.used_journal_fallback, j.retry_count,
+                   j.status
               FROM receipt_classification_jobs j
               JOIN receipts r ON r.id = j.receipt_id
-             WHERE j.status = 'pending'
-                OR (j.status = 'in_progress' AND j.claimed_at < {stale_cutoff})
+             WHERE (
+                     (j.status = 'pending'
+                      AND (j.retry_after IS NULL OR j.retry_after <= datetime('now')))
+                  OR (j.status = 'in_progress' AND j.claimed_at < {stale_cutoff})
+                   )
              ORDER BY r.created_at
              LIMIT 1
             """,  # noqa: S608
@@ -87,13 +92,16 @@ def claim_next_job(conn: sqlite3.Connection, stale_minutes: int = 10) -> Receipt
         receipt_id = int(row[0])
         token = str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
+        # Stale reclaims count as a retry so crash-looping jobs back off like explicit failures.
+        was_stale = str(row[8]) == "in_progress"
+        retry_count = int(row[7]) + (1 if was_stale else 0)
         conn.execute(
             """
             UPDATE receipt_classification_jobs
-               SET status = 'in_progress', claim_token = ?, claimed_at = ?
+               SET status = 'in_progress', claim_token = ?, claimed_at = ?, retry_count = ?
              WHERE receipt_id = ?
             """,
-            [token, now, receipt_id],
+            [token, now, retry_count, receipt_id],
         )
         result = ReceiptJobRow(
             receipt_id=receipt_id,
@@ -104,6 +112,7 @@ def claim_next_job(conn: sqlite3.Connection, stale_minutes: int = 10) -> Receipt
             parsed_at=str(row[5]) if row[5] else None,
             used_journal_fallback=bool(row[6]),
             claim_token=token,
+            retry_count=retry_count,
         )
         conn.execute("COMMIT")
         return result
@@ -217,7 +226,13 @@ def poison_job(conn: sqlite3.Connection, receipt_id: int, error: str) -> None:
     )
 
 
-def release_job(conn: sqlite3.Connection, receipt_id: int, claim_token: str) -> None:
+def release_job(
+    conn: sqlite3.Connection,
+    receipt_id: int,
+    claim_token: str,
+    retry_count: int,
+    retry_after: str | None,
+) -> None:
     """Release a claimed job back to 'pending' for retry.
 
     Matches on claim_token so a stale release from a previous attempt cannot
@@ -226,10 +241,11 @@ def release_job(conn: sqlite3.Connection, receipt_id: int, claim_token: str) -> 
     conn.execute(
         """
         UPDATE receipt_classification_jobs
-           SET status = 'pending', claim_token = NULL, claimed_at = NULL
+           SET status = 'pending', claim_token = NULL, claimed_at = NULL,
+               retry_count = ?, retry_after = ?
          WHERE receipt_id = ? AND claim_token = ?
         """,
-        [receipt_id, claim_token],
+        [retry_count, retry_after, receipt_id, claim_token],
     )
 
 
@@ -290,17 +306,42 @@ def requeue_receipts(
         f"""
         INSERT INTO receipt_classification_jobs (receipt_id)
              SELECT id FROM receipts WHERE id IN ({placeholders})
-        ON CONFLICT(receipt_id) DO NOTHING
+        ON CONFLICT(receipt_id) DO UPDATE
+               SET status = 'pending', retry_count = 0, retry_after = NULL
         """,  # noqa: S608
         receipt_ids,
     )
 
 
+def classification_job_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    """Return per-state counts for receipt_classification_jobs."""
+    row = conn.execute(
+        """
+        SELECT
+            SUM(CASE WHEN status = 'pending'
+                          AND (retry_after IS NULL OR retry_after <= datetime('now'))
+                     THEN 1 ELSE 0 END),
+            SUM(CASE WHEN status = 'pending' AND retry_after > datetime('now')
+                     THEN 1 ELSE 0 END),
+            SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN status = 'poisoned' THEN 1 ELSE 0 END)
+          FROM receipt_classification_jobs
+        """,
+    ).fetchone()
+    return {
+        "pending": int(row[0] or 0),
+        "sleeping": int(row[1] or 0),
+        "in_progress": int(row[2] or 0),
+        "poisoned": int(row[3] or 0),
+    }
+
+
 def count_pending_classification_jobs(conn: sqlite3.Connection) -> int:
-    """Return the number of jobs with status 'pending' or 'in_progress'."""
+    """Return the number of jobs that are active or immediately claimable."""
     return conn.execute(
         "SELECT COUNT(*) FROM receipt_classification_jobs"
-        " WHERE status IN ('pending', 'in_progress')",
+        " WHERE (status = 'pending' AND (retry_after IS NULL OR retry_after <= datetime('now')))"
+        "    OR status = 'in_progress'",
     ).fetchone()[0]
 
 

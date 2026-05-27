@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import time
 import unittest.mock
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import allure
@@ -27,7 +28,13 @@ from dinary.background.classification.task import (
 )
 from dinary.config import settings
 from dinary.db import db_migrations, storage
-from dinary.db.receipts import ReceiptJobRow
+from dinary.db.receipts import (
+    ReceiptJobRow,
+    claim_next_job,
+    classification_job_counts,
+    count_pending_classification_jobs,
+    release_job,
+)
 
 
 def _run(coro):
@@ -411,12 +418,8 @@ class TestProcessJobEdgeCases:
             f"expected purchase date 2026-01-10, got {exp_dt[0]}"
         )
 
-    def test_transient_error_calls_notify_new_receipt(self, drain_db):  # noqa: ARG002
-        """After releasing a job on transient error, notify_new_receipt is called.
-
-        This ensures the drain loop wakes up immediately for a retry instead
-        of waiting up to 300 s for the next timer cycle.
-        """
+    def test_transient_error_first_fail_retries_immediately(self, drain_db):  # noqa: ARG002
+        """First transient failure (retry_count=0) calls notify_new_receipt for immediate retry."""
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -427,19 +430,11 @@ class TestProcessJobEdgeCases:
             conn.execute(
                 "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
             )
+            job = claim_next_job(conn)
         finally:
             conn.close()
 
-        job = ReceiptJobRow(
-            receipt_id=receipt_id,
-            url="https://x",
-            store_name_raw="",
-            store_pib_raw="",
-            invoice_number="",
-            parsed_at=None,
-            used_journal_fallback=False,
-            claim_token="tok",
-        )
+        assert job is not None
 
         with (
             patch(
@@ -447,10 +442,135 @@ class TestProcessJobEdgeCases:
                 side_effect=ParserRequestError("timeout"),
             ),
             patch("dinary.background.classification.task.notify_new_receipt") as mock_notify,
+            patch("dinary.background.classification.task._schedule_wakeup") as mock_wakeup,
         ):
             asyncio.run(_process_job(job, _make_broker()))
 
         mock_notify.assert_called_once()
+        mock_wakeup.assert_not_called()
+
+        conn = storage.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT retry_count, retry_after FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert row is not None
+        assert row[0] == 1
+        assert row[1] is None  # no retry_after for immediate retry
+
+    def test_transient_error_second_fail_schedules_delayed_wakeup(self, drain_db):  # noqa: ARG002
+        """Second transient failure (retry_count=1) schedules a 3-second delayed wakeup."""
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('tr-r2', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, retry_count) VALUES (?, 1)",
+                [receipt_id],
+            )
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert job is not None
+        assert job.retry_count == 1
+
+        with (
+            patch(
+                "dinary.background.classification.task.parse_receipt",
+                side_effect=ParserRequestError("timeout"),
+            ),
+            patch("dinary.background.classification.task.notify_new_receipt") as mock_notify,
+            patch("dinary.background.classification.task._schedule_wakeup") as mock_wakeup,
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+
+        mock_notify.assert_not_called()
+        mock_wakeup.assert_called_once_with(3)
+
+        conn = storage.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT retry_count, retry_after FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert row is not None
+        assert row[0] == 2
+        assert row[1] is not None
+        assert "T" not in str(row[1]), f"retry_after must use SQLite datetime format, got: {row[1]}"
+        assert "+00:00" not in str(row[1]), f"retry_after must not include tz suffix, got: {row[1]}"
+
+    def test_transient_error_fourth_fail_uses_15_minute_delay(self, drain_db):  # noqa: ARG002
+        """From the fourth failure onward (retry_count=3+) the delay is capped at 900 seconds."""
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('tr-r3', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, retry_count) VALUES (?, 5)",
+                [receipt_id],
+            )
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert job is not None
+        assert job.retry_count == 5
+
+        with (
+            patch(
+                "dinary.background.classification.task.parse_receipt",
+                side_effect=ParserRequestError("timeout"),
+            ),
+            patch("dinary.background.classification.task._schedule_wakeup") as mock_wakeup,
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+
+        mock_wakeup.assert_called_once_with(900)
+
+    def test_transient_error_after_one_day_uses_daily_delay(self, drain_db):  # noqa: ARG002
+        """After ~1 day of retries (retry_count >= 100) the delay switches to 86400 seconds."""
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('tr-daily', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, retry_count) VALUES (?, 100)",
+                [receipt_id],
+            )
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert job is not None
+        assert job.retry_count == 100
+
+        with (
+            patch(
+                "dinary.background.classification.task.parse_receipt",
+                side_effect=ParserRequestError("timeout"),
+            ),
+            patch("dinary.background.classification.task._schedule_wakeup") as mock_wakeup,
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+
+        mock_wakeup.assert_called_once_with(86400)
 
     def test_conf1_items_do_not_create_rules(self, drain_db):  # noqa: ARG002
         """Items penalised to conf=1 do not store a rule; the LLM is called again next pass."""
@@ -536,6 +656,284 @@ class TestProcessJobEdgeCases:
 
         assert exp_count == 0, "conf=1 items must not generate expenses"
         assert rule is None, "conf=1 items must not store a rule (plan step 9: confidence 2-4 only)"
+
+
+# ---------------------------------------------------------------------------
+# Retry backoff DB-level tests
+# ---------------------------------------------------------------------------
+
+
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
+@allure.story("Receipt drain")
+class TestRetryBackoff:
+    def test_claim_skips_job_with_future_retry_after(self, drain_db):  # noqa: ARG002
+        """claim_next_job returns None when the only pending job has a future retry_after."""
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('rb-r1', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, retry_after)"
+                " VALUES (?, datetime('now', '+1 hour'))",
+                [receipt_id],
+            )
+            result = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert result is None, "job with future retry_after must not be claimed"
+
+    def test_claim_picks_up_job_once_retry_after_passes(self, drain_db):  # noqa: ARG002
+        """claim_next_job returns a job whose retry_after (in production format) is in the past."""
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('rb-r2', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, retry_count) VALUES (?, 2)",
+                [receipt_id],
+            )
+            job = claim_next_job(conn)
+            assert job is not None
+            past = (datetime.now(UTC) - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
+            release_job(conn, receipt_id, job.claim_token, 2, past)
+            result = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert result is not None, "job with past retry_after must be claimable"
+        assert result.retry_count == 2
+
+    def test_release_job_stores_retry_fields(self, drain_db):  # noqa: ARG002
+        """release_job persists retry_count and retry_after to the DB."""
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('rb-r3', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+            job = claim_next_job(conn)
+            assert job is not None
+
+            retry_after = "2099-01-01 00:00:00"
+            release_job(conn, receipt_id, job.claim_token, 3, retry_after)
+
+            row = conn.execute(
+                "SELECT status, retry_count, retry_after FROM receipt_classification_jobs"
+                " WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+            next_job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert row[0] == "pending"
+        assert row[1] == 3
+        assert str(row[2]).startswith("2099-01-01")
+        assert next_job is None, "future-dated retry_after must prevent claim"
+
+    def test_stale_in_progress_job_claimed_despite_future_retry_after(self, drain_db):  # noqa: ARG002
+        """Stale in_progress jobs bypass retry_after so a crashed worker doesn't block recovery."""
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('rb-r4', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs"
+                " (receipt_id, status, claim_token, claimed_at, retry_after)"
+                " VALUES (?, 'in_progress', 'old-tok',"
+                "         datetime('now', '-20 minutes'),"
+                "         datetime('now', '+1 hour'))",
+                [receipt_id],
+            )
+            result = claim_next_job(conn, stale_minutes=10)
+        finally:
+            conn.close()
+
+        assert result is not None, (
+            "stale in_progress job must be reclaimed regardless of retry_after"
+        )
+
+    def test_stale_claim_increments_retry_count(self, drain_db):  # noqa: ARG002
+        """Re-claiming a stale in_progress job increments retry_count so crash loops back off."""
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('stale-rc', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs"
+                " (receipt_id, status, claim_token, claimed_at, retry_count)"
+                " VALUES (?, 'in_progress', 'old-tok', datetime('now', '-20 minutes'), 3)",
+                [receipt_id],
+            )
+            result = claim_next_job(conn, stale_minutes=10)
+            db_row = conn.execute(
+                "SELECT retry_count FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert result is not None
+        assert result.retry_count == 4, (
+            f"stale reclaim must increment retry_count from 3 to 4, got {result.retry_count}"
+        )
+        assert db_row[0] == 4, f"retry_count must be persisted in DB as 4, got {db_row[0]}"
+
+    def test_count_pending_excludes_sleeping_jobs(self, drain_db):  # noqa: ARG002
+        """count_pending_classification_jobs does not count jobs with a future retry_after."""
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('cnt-1', 'https://x')"
+            )
+            r1 = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, retry_after)"
+                " VALUES (?, datetime('now', '+1 hour'))",
+                [r1],
+            )
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('cnt-2', 'https://x')"
+            )
+            r2 = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute("INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [r2])
+            count = count_pending_classification_jobs(conn)
+        finally:
+            conn.close()
+
+        assert count == 1, f"sleeping jobs must not be counted as pending, got {count}"
+
+    def test_transient_error_release_failure_does_not_poison(self, drain_db):  # noqa: ARG002
+        """If _release raises, the job is not poisoned; stale timeout handles recovery."""
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('tr-rel-fail', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert job is not None
+
+        with (
+            patch(
+                "dinary.background.classification.task.parse_receipt",
+                side_effect=ParserRequestError("timeout"),
+            ),
+            patch(
+                "dinary.background.classification.task._release",
+                side_effect=sqlite3.OperationalError("database is locked"),
+            ),
+            patch("dinary.background.classification.task._poison") as mock_poison,
+            patch("dinary.background.classification.task.notify_new_receipt") as mock_notify,
+            patch("dinary.background.classification.task._schedule_wakeup") as mock_wakeup,
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+
+        mock_poison.assert_not_called()
+        mock_notify.assert_not_called()
+        mock_wakeup.assert_not_called()
+
+    def test_transient_error_third_fail_uses_60s_delay(self, drain_db):  # noqa: ARG002
+        """Third transient failure (retry_count=2) schedules a 60-second delayed wakeup."""
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('tr-r60', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, retry_count) VALUES (?, 2)",
+                [receipt_id],
+            )
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert job is not None
+        assert job.retry_count == 2
+
+        with (
+            patch(
+                "dinary.background.classification.task.parse_receipt",
+                side_effect=ParserRequestError("timeout"),
+            ),
+            patch("dinary.background.classification.task._schedule_wakeup") as mock_wakeup,
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+
+        mock_wakeup.assert_called_once_with(60)
+
+    def test_classification_job_counts_all_states(self, drain_db):  # noqa: ARG002
+        """classification_job_counts returns correct counts for all four buckets."""
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('cjc-1', 'https://x')"
+            )
+            r_pending = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [r_pending]
+            )
+
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('cjc-2', 'https://x')"
+            )
+            r_sleeping = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, retry_after)"
+                " VALUES (?, datetime('now', '+1 hour'))",
+                [r_sleeping],
+            )
+
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('cjc-3', 'https://x')"
+            )
+            r_inprogress = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, status, claim_token, claimed_at)"
+                " VALUES (?, 'in_progress', 'tok', datetime('now'))",
+                [r_inprogress],
+            )
+
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('cjc-4', 'https://x')"
+            )
+            r_poisoned = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, status)"
+                " VALUES (?, 'poisoned')",
+                [r_poisoned],
+            )
+
+            counts = classification_job_counts(conn)
+        finally:
+            conn.close()
+
+        assert counts["pending"] == 1
+        assert counts["sleeping"] == 1
+        assert counts["in_progress"] == 1
+        assert counts["poisoned"] == 1
 
 
 # ---------------------------------------------------------------------------

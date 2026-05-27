@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { Copy, RefreshCw, X } from "lucide-vue-next";
+import { apiRequest } from "../api/_request.js";
 import { useQueueStore } from "../stores/queue.js";
 import { useReceiptQueueStore } from "../stores/receiptQueue.js";
 import { useToastStore } from "../stores/toast.js";
@@ -25,9 +26,7 @@ async function refreshServerVersion() {
   versionCheckFailed.value = false;
   if (!navigator.onLine) return;
   try {
-    const resp = await fetch("/api/version");
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const body = await resp.json();
+    const body = await apiRequest("/api/version");
     if (body && typeof body.version === "string") {
       serverVersion.value = body.version;
     }

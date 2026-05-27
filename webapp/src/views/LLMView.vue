@@ -57,6 +57,21 @@ onBeforeUnmount(() => {
   <div class="llm-view" data-testid="llm-view">
     <HealthSummaryCard :health="llmStore.health" @add="openAdd" />
 
+    <div
+      v-if="llmStore.classification && (llmStore.classification.pending > 0 || llmStore.classification.in_progress > 0 || llmStore.classification.sleeping > 0 || llmStore.classification.poisoned > 0)"
+      class="queue-section"
+    >
+      <div class="pool-header">
+        <span class="pool-label">RECEIPT QUEUE</span>
+      </div>
+      <div class="queue-chips">
+        <span v-if="llmStore.classification.pending > 0" class="queue-chip queue-chip--ready">{{ llmStore.classification.pending }} ready</span>
+        <span v-if="llmStore.classification.in_progress > 0" class="queue-chip queue-chip--processing">{{ llmStore.classification.in_progress }} processing</span>
+        <span v-if="llmStore.classification.sleeping > 0" class="queue-chip queue-chip--sleeping">{{ llmStore.classification.sleeping }} sleeping</span>
+        <span v-if="llmStore.classification.poisoned > 0" class="queue-chip queue-chip--failed">{{ llmStore.classification.poisoned }} failed</span>
+      </div>
+    </div>
+
     <div class="pool-header">
       <span class="pool-label">PROVIDER POOL</span>
       <span class="pool-sort">priority</span>
@@ -133,4 +148,24 @@ onBeforeUnmount(() => {
   padding: 1.5rem 0;
   text-align: center;
 }
+
+.queue-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0 0.25rem 0.75rem;
+}
+
+.queue-chip {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+
+.queue-chip--ready { color: var(--accent); }
+.queue-chip--processing { color: var(--text); }
+.queue-chip--sleeping { color: var(--muted); }
+.queue-chip--failed { color: var(--error); }
 </style>

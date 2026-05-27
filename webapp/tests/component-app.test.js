@@ -6,6 +6,14 @@ import * as catalogApi from "../src/api/catalog.js";
 import * as flushReceiptQueueModule from "../src/composables/flushReceiptQueue.js";
 import { _resetForTest } from "../src/stores/queue.js";
 
+vi.mock("../src/api/review.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getReviewCounts: vi.fn(async () => ({ doubtful_count: 0, pending_receipts: 0 })),
+  };
+});
+
 beforeEach(async () => {
   await allure.epic("Infrastructure");
   await allure.feature("Frontend");
@@ -21,11 +29,11 @@ async function resetQueueDb() {
   });
 }
 
-let originalFetch;
+let _origFetch;
 
 beforeEach(async () => {
   await resetQueueDb();
-  originalFetch = globalThis.fetch;
+  _origFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(async () => ({
     ok: true,
     status: 200,
@@ -41,7 +49,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  globalThis.fetch = originalFetch;
+  globalThis.fetch = _origFetch;
   vi.restoreAllMocks();
   await resetQueueDb();
 });

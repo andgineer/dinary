@@ -9,6 +9,8 @@ import sqlite3
 
 import allure
 import pytest
+from yoyo import read_migrations
+from yoyo.migrations import MigrationList
 
 from dinary.config import settings
 from dinary.db import db_migrations, storage
@@ -177,6 +179,57 @@ class TestInitialSchema:
             con.close()
         assert row is not None
         assert row[0] == "1"
+
+
+@allure.epic("Infrastructure")
+@allure.feature("Migrations")
+class TestMigration0005FKSafety:
+    """0005 rebuilds tags/events with AUTOINCREMENT; must not fail when child rows exist."""
+
+    def test_migration_0005_succeeds_with_expense_tags_rows(self, tmp_path):
+        """DROP TABLE tags must not raise FK constraint when expense_tags references it."""
+        db_path = tmp_path / "fk_upgrade.db"
+        all_migrations = read_migrations(str(db_migrations._migrations_dir()))
+        pre0005 = MigrationList([m for m in all_migrations if not m.id.startswith("0005")], [])
+
+        with db_migrations._backend_for(db_path) as backend, backend.lock():
+            backend.apply_migrations(backend.to_apply(pre0005))
+
+        con = sqlite3.connect(str(db_path), isolation_level=None)
+        con.execute("PRAGMA foreign_keys=ON")
+        try:
+            con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'food', 1)")
+            con.execute(
+                "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled, is_active)"
+                " VALUES (1, 'Trip', '2026-01-01', '2026-12-31', 0, 1)"
+            )
+            con.execute("INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'Food', 1)")
+            con.execute("INSERT INTO categories (id, name, group_id) VALUES (1, 'Groceries', 1)")
+            con.execute(
+                "INSERT INTO expenses (client_expense_id, datetime, amount, amount_original,"
+                " currency_original, category_id, event_id)"
+                " VALUES ('e1', '2026-06-01 12:00:00', 100, 100, 'RSD', 1, 1)"
+            )
+            exp_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+            con.execute("INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, 1)", [exp_id])
+        finally:
+            con.close()
+
+        only_0005 = MigrationList([m for m in all_migrations if m.id.startswith("0005")], [])
+        with db_migrations._backend_for(db_path) as backend, backend.lock():
+            backend.apply_migrations(backend.to_apply(only_0005))
+
+        con = sqlite3.connect(str(db_path), isolation_level=None)
+        con.execute("PRAGMA foreign_keys=ON")
+        try:
+            assert con.execute("SELECT name FROM tags WHERE id = 1").fetchone() == ("food",)
+            assert con.execute("SELECT name FROM events WHERE id = 1").fetchone() == ("Trip",)
+            assert (
+                con.execute("SELECT tag_id FROM expense_tags WHERE tag_id = 1").fetchone()
+                is not None
+            ), "expense_tags FK reference must survive the migration"
+        finally:
+            con.close()
 
 
 @allure.epic("Infrastructure")

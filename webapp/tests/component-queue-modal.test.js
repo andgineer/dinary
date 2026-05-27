@@ -8,6 +8,10 @@ import {
   _resetForTest as resetReceiptQueueStore,
 } from "../src/stores/receiptQueue.js";
 
+vi.mock("../src/api/_request.js", () => ({
+  apiRequest: vi.fn(async () => ({ version: "test" })),
+}));
+
 beforeEach(async () => {
   await allure.epic("Expenses");
   await allure.feature("Frontend");
@@ -31,21 +35,12 @@ async function resetQueueDb() {
   ]);
 }
 
-let originalFetch;
-
 beforeEach(async () => {
   setActivePinia(createPinia());
   await resetQueueDb();
-  originalFetch = globalThis.fetch;
-  globalThis.fetch = vi.fn(async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ version: "test" }),
-  }));
 });
 
 afterEach(async () => {
-  globalThis.fetch = originalFetch;
   await resetQueueDb();
 });
 

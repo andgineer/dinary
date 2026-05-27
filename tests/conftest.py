@@ -199,8 +199,16 @@ def client():
 
     ``_get_json_or_none`` is stubbed so the ``rate_prefetch_task`` background
     task started by the lifespan never reaches kurs.resenje.org.
+
+    ``migrate_db`` is stubbed to a no-op so the lifespan's ``init_db()``
+    call never attempts DDL against the current developer DB — tests that
+    depend on a specific DB state use the ``db`` / ``_api_helpers.db``
+    fixtures which always point at a freshly-migrated temp path.
     """
-    with unittest.mock.patch.object(rate_helpers, "_get_json_or_none", return_value=None):
+    with (
+        unittest.mock.patch.object(rate_helpers, "_get_json_or_none", return_value=None),
+        unittest.mock.patch.object(db_migrations, "migrate_db"),
+    ):
         app = create_app()
         with TestClient(app, raise_server_exceptions=False) as c:
             yield c

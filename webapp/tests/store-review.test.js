@@ -174,7 +174,7 @@ describe("review store: correct()", () => {
   });
 
   it("does not decrement doubtfulCount when correcting a certain item", async () => {
-    vi.spyOn(reviewApi, "approveRule").mockResolvedValueOnce({ updated_expenses_count: 1 });
+    vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({ updated_expenses_count: 1 });
 
     seedCatalog();
     const store = useReviewStore();
@@ -546,6 +546,10 @@ describe("review store: patchExpense()", () => {
 });
 
 describe("review store: confirmAll()", () => {
+  beforeEach(() => {
+    vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValue({ items: [], has_more: false });
+  });
+
   it("removes confirmed items from items list", async () => {
     vi.spyOn(reviewApi, "confirmAllRules").mockResolvedValueOnce({ confirmed: 2 });
     const store = useReviewStore();

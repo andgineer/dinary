@@ -16,6 +16,7 @@ vi.mock("../src/api/review.js", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
+    getReviewFeed: vi.fn(async () => ({ items: [], doubtful_count: 0, has_more: false, pending_receipts: 0 })),
     getExpensesFeed: vi.fn(async () => ({ items: [], has_more: false, total: 0 })),
   };
 });
@@ -178,7 +179,7 @@ describe("ReviewView", () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const review = useReviewStore(pinia);
-    vi.spyOn(review, "loadNextPage").mockImplementation(
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(
       () => new Promise(() => {}),
     );
     review.loading = true;

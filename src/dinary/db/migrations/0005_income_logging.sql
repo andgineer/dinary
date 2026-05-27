@@ -58,24 +58,48 @@ WHERE auto_tags IS NOT NULL
   AND auto_tags != ''
   AND auto_tags != '[]';
 
--- Rebuild tags and events with AUTOINCREMENT so deleted IDs are never reused.
--- Data (including IDs) is preserved; only the PK generation rule changes.
--- FK child tables (sheet_mapping_tags, import_mapping_tags, expense_tags,
--- sheet_mapping, import_mapping) reference these tables by name and are
--- unaffected: the table names are restored by the RENAME and all IDs stay the same.
--- No PRAGMA foreign_keys = OFF needed: SQLite does not check FK constraints on
--- DROP TABLE, so the rebuild succeeds with FK enforcement on throughout.
+-- Rebuild tags with AUTOINCREMENT so deleted IDs are never reused.
+-- SQLite 3.26+ enforces FK constraints on DROP TABLE when child rows exist, so
+-- we stage all three child tables in TEMP tables, clear them, drop-and-rebuild
+-- tags, then restore.  All steps are inside yoyo's surrounding transaction, so
+-- any failure rolls back everything including the TEMP table writes.
+CREATE TEMP TABLE _tmp_tags AS SELECT * FROM tags;
+CREATE TEMP TABLE _tmp_expense_tags AS SELECT * FROM expense_tags;
+CREATE TEMP TABLE _tmp_sheet_mapping_tags AS SELECT * FROM sheet_mapping_tags;
+CREATE TEMP TABLE _tmp_import_mapping_tags AS SELECT * FROM import_mapping_tags;
 
-CREATE TABLE tags_new (
+DELETE FROM import_mapping_tags;
+DELETE FROM sheet_mapping_tags;
+DELETE FROM expense_tags;
+
+DROP TABLE tags;
+
+CREATE TABLE tags (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     name      TEXT UNIQUE NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT 1
 );
-INSERT INTO tags_new SELECT * FROM tags;
-DROP TABLE tags;
-ALTER TABLE tags_new RENAME TO tags;
+INSERT INTO tags SELECT * FROM _tmp_tags;
 
-CREATE TABLE events_new (
+INSERT INTO expense_tags SELECT * FROM _tmp_expense_tags;
+INSERT INTO sheet_mapping_tags SELECT * FROM _tmp_sheet_mapping_tags;
+INSERT INTO import_mapping_tags SELECT * FROM _tmp_import_mapping_tags;
+
+-- Rebuild events with AUTOINCREMENT.  Child tables (expenses, sheet_mapping,
+-- import_mapping) reference events via nullable event_id; NULL them out, drop
+-- and rebuild events, then restore the original values.
+CREATE TEMP TABLE _tmp_events AS SELECT * FROM events;
+CREATE TEMP TABLE _tmp_import_event AS SELECT id, event_id FROM import_mapping WHERE event_id IS NOT NULL;
+CREATE TEMP TABLE _tmp_sheet_event AS SELECT row_order, event_id FROM sheet_mapping WHERE event_id IS NOT NULL;
+CREATE TEMP TABLE _tmp_expense_event AS SELECT id, event_id FROM expenses WHERE event_id IS NOT NULL;
+
+UPDATE import_mapping SET event_id = NULL WHERE event_id IS NOT NULL;
+UPDATE sheet_mapping SET event_id = NULL WHERE event_id IS NOT NULL;
+UPDATE expenses SET event_id = NULL WHERE event_id IS NOT NULL;
+
+DROP TABLE events;
+
+CREATE TABLE events (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     name                TEXT UNIQUE NOT NULL,
     date_from           DATE NOT NULL,
@@ -84,6 +108,18 @@ CREATE TABLE events_new (
     is_active           BOOLEAN NOT NULL DEFAULT 1,
     auto_tags           TEXT NOT NULL DEFAULT '[]'
 );
-INSERT INTO events_new SELECT * FROM events;
-DROP TABLE events;
-ALTER TABLE events_new RENAME TO events;
+INSERT INTO events SELECT * FROM _tmp_events;
+
+UPDATE import_mapping SET event_id = (
+    SELECT event_id FROM _tmp_import_event WHERE _tmp_import_event.id = import_mapping.id
+) WHERE id IN (SELECT id FROM _tmp_import_event);
+UPDATE sheet_mapping SET event_id = (
+    SELECT event_id FROM _tmp_sheet_event WHERE _tmp_sheet_event.row_order = sheet_mapping.row_order
+) WHERE row_order IN (SELECT row_order FROM _tmp_sheet_event);
+UPDATE expenses SET event_id = (
+    SELECT event_id FROM _tmp_expense_event WHERE _tmp_expense_event.id = expenses.id
+) WHERE id IN (SELECT id FROM _tmp_expense_event);
+
+-- Add retry backoff columns to receipt_classification_jobs.
+ALTER TABLE receipt_classification_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE receipt_classification_jobs ADD COLUMN retry_after TIMESTAMP;

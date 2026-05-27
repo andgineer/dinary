@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from dinary.db.receipts import count_pending_classification_jobs
+from dinary.db.receipts import classification_job_counts
 from dinary.db.storage import transaction
 
 
@@ -184,9 +184,10 @@ def llm_status(con: sqlite3.Connection) -> dict[str, Any]:
         "total": total,
         "strategy": "failover" if total >= 2 else None,
     }
-    pending_receipts = count_pending_classification_jobs(con)
+    classification = classification_job_counts(con)
     return {
         "health": health,
         "providers": provider_list,
-        "pending_receipts": int(pending_receipts),
+        "pending_receipts": classification["pending"] + classification["in_progress"],
+        "classification": classification,
     }

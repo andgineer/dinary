@@ -26,6 +26,13 @@ beforeEach(async () => {
   setActivePinia(createPinia());
   resetFlush();
   await resetQueueDb();
+  vi.spyOn(catalogApi, "fetchCatalog").mockResolvedValue({
+    catalog_version: -1,
+    category_groups: [],
+    categories: [],
+    events: [],
+    tags: [],
+  });
 });
 
 afterEach(async () => {

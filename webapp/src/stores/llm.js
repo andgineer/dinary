@@ -17,6 +17,7 @@ export const useLlmStore = defineStore("llm", () => {
   const cached = readCache();
   const providers = ref(cached?.providers ?? []);
   const health = ref(cached?.health ?? null);
+  const classification = ref(cached?.classification ?? null);
   const loading = ref(false);
 
   async function loadIfNeeded() {
@@ -29,8 +30,14 @@ export const useLlmStore = defineStore("llm", () => {
       const status = await llmApi.getStatus();
       providers.value = status.providers ?? [];
       health.value = status.health ?? null;
-      writeCache({ providers: providers.value, health: health.value });
-      if ((status.pending_receipts ?? 0) === 0) {
+      classification.value = status.classification ?? null;
+      writeCache({ providers: providers.value, health: health.value, classification: classification.value });
+      const c = classification.value;
+      const hasActivity = (status.pending_receipts ?? 0) > 0
+        || (c?.sleeping ?? 0) > 0
+        || (c?.in_progress ?? 0) > 0
+        || (c?.poisoned ?? 0) > 0;
+      if (!hasActivity) {
         stampFresh();
       } else {
         bumpFetchTime();
@@ -99,6 +106,7 @@ export const useLlmStore = defineStore("llm", () => {
   return {
     providers,
     health,
+    classification,
     loading,
     dirtyFlag,
     lastFetchedAt,

@@ -7,7 +7,7 @@ import asyncio
 import contextlib
 import logging
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -47,6 +47,24 @@ from dinary.db.receipts import (
 
 logger = logging.getLogger(__name__)
 
+_FIFTEEN_MINUTES = 900
+_ONE_DAY = 86400
+_DAILY_THRESHOLD = 100  # retry_count at which 15-min phase ends (~1 day elapsed)
+
+
+def _retry_delay(retry_count: int) -> int:
+    # No ceiling: the schedule tops out at one day but never stops retrying (by design).
+    if retry_count == 0:
+        return 0
+    if retry_count == 1:
+        return 3
+    if retry_count == 2:
+        return 60
+    if retry_count < _DAILY_THRESHOLD:
+        return _FIFTEEN_MINUTES
+    return _ONE_DAY
+
+
 _wakeup_event: asyncio.Event | None = None
 _wakeup_loop: asyncio.AbstractEventLoop | None = None
 
@@ -78,6 +96,19 @@ def notify_new_receipt() -> None:
         return
     try:
         loop.call_soon_threadsafe(ev.set)
+    except RuntimeError:
+        return
+
+
+def _schedule_wakeup(delay_sec: float) -> None:
+    """Schedule the drain loop to wake after delay_sec seconds."""
+    # Multiple concurrent failures each register a timer; asyncio.Event.set() is idempotent.
+    ev = _wakeup_event
+    loop = _wakeup_loop
+    if ev is None or loop is None or loop.is_closed():
+        return
+    try:
+        loop.call_soon_threadsafe(loop.call_later, delay_sec, ev.set)
     except RuntimeError:
         return
 
@@ -115,11 +146,19 @@ def _claim_all_pending() -> list[ReceiptJobRow]:
 
 async def _drain_all_pending(broker: LLMBroker) -> None:
     jobs = await asyncio.to_thread(_claim_all_pending)
-    if jobs:
-        await asyncio.gather(
-            *[_process_job(job, broker) for job in jobs],
-            return_exceptions=True,
-        )
+    if not jobs:
+        return
+    results = await asyncio.gather(
+        *[_process_job(job, broker) for job in jobs],
+        return_exceptions=True,
+    )
+    for job, result in zip(jobs, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.error(
+                "Unhandled exception in _process_job for receipt_id=%s",
+                job.receipt_id,
+                exc_info=result,
+            )
 
 
 async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
@@ -141,14 +180,41 @@ async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
         await _classify_and_persist(broker, job, items, store_id, chain_id)
         logger.info("Receipt drain: completed receipt_id=%s", job.receipt_id)
 
-    except (ParserRequestError, OSError, RateMissingError) as exc:
+    except (ParserRequestError, httpx.HTTPError, ConnectionError, RateMissingError) as exc:
+        # RateMissingError is transient: retries until exchange rates are populated.
+        # delay uses the pre-increment count: retry_count=0 → delay=0 → one free immediate retry.
+        delay = _retry_delay(job.retry_count)
+        new_retry_count = job.retry_count + 1
+        retry_after = (
+            None
+            if delay == 0
+            else (datetime.now(UTC) + timedelta(seconds=delay)).strftime("%Y-%m-%d %H:%M:%S")
+        )
         logger.warning(
-            "Transient error for receipt_id=%s (%s) — releasing for retry",
+            "Transient error for receipt_id=%s (%s) — releasing for retry in %ds (attempt %d)",
             job.receipt_id,
             exc,
+            delay,
+            new_retry_count,
         )
-        await asyncio.to_thread(_release, job.receipt_id, job.claim_token)
-        notify_new_receipt()
+        try:
+            await asyncio.to_thread(
+                _release,
+                job.receipt_id,
+                job.claim_token,
+                new_retry_count,
+                retry_after,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to release receipt_id=%s — stale timeout will recover",
+                job.receipt_id,
+            )
+            return
+        if delay == 0:
+            notify_new_receipt()
+        else:
+            _schedule_wakeup(delay)
     except ParserParseError as exc:
         logger.error(
             "Permanent parse error for receipt_id=%s — poisoning: %s",
@@ -161,9 +227,14 @@ async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
         await asyncio.to_thread(_poison, job.receipt_id, str(exc))
 
 
-def _release(receipt_id: int, claim_token: str) -> None:
+def _release(
+    receipt_id: int,
+    claim_token: str,
+    retry_count: int,
+    retry_after: str | None,
+) -> None:
     with storage.connection() as conn:
-        release_job(conn, receipt_id, claim_token)
+        release_job(conn, receipt_id, claim_token, retry_count, retry_after)
 
 
 def _poison(receipt_id: int, error: str) -> None:
@@ -200,6 +271,7 @@ def _with_parsed_data(job: ReceiptJobRow, parsed: ParsedReceipt) -> ReceiptJobRo
         parsed_at=datetime.now(UTC).isoformat(),
         used_journal_fallback=parsed.used_journal_fallback,
         claim_token=job.claim_token,
+        retry_count=job.retry_count,
     )
 
 
@@ -235,17 +307,9 @@ async def _ensure_store(job: ReceiptJobRow, broker: LLMBroker) -> tuple[int, int
     if result is not None:
         return result
 
-    try:
-        store_id, chain_id = await resolve_store(broker, job.store_pib_raw, job.store_name_raw)
-        await asyncio.to_thread(_save_store_to_receipt, job.receipt_id, store_id)
-        return store_id, chain_id
-    except (httpx.HTTPError, OSError):
-        logger.warning(
-            "Store resolution failed for receipt_id=%s",
-            job.receipt_id,
-            exc_info=True,
-        )
-        return None
+    store_id, chain_id = await resolve_store(broker, job.store_pib_raw, job.store_name_raw)
+    await asyncio.to_thread(_save_store_to_receipt, job.receipt_id, store_id)
+    return store_id, chain_id
 
 
 def _run_rules_pass(

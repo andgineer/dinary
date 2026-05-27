@@ -1,3 +1,6 @@
+ALTER TABLE receipt_classification_jobs DROP COLUMN retry_after;
+ALTER TABLE receipt_classification_jobs DROP COLUMN retry_count;
+
 DROP TABLE IF EXISTS income_logging_jobs;
 
 CREATE TABLE income_old (
