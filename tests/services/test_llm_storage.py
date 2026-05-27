@@ -176,7 +176,7 @@ class TestLoadProviders:
         assert providers[0].rate_limited_until is not None
         assert providers[0].rate_limited_until > datetime.now(UTC)
 
-    def test_example_toml_is_valid(self):
+    def test_example_toml_is_valid(self, fresh_db):  # noqa: ARG002
         example = Path(__file__).resolve().parents[2] / ".deploy.example" / "llm_providers.toml"
         assert example.exists(), "missing .deploy.example/llm_providers.toml"
         providers = asyncio.run(SqliteLLMBrokerStorage(providers_toml=example).load_providers())

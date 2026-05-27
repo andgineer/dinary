@@ -18,7 +18,7 @@ import allure
 
 @allure.epic("Infrastructure")
 @allure.feature("App startup")
-def test_health(client):
+def test_health(client, db):  # noqa: ARG001
     resp = client.get("/api/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"

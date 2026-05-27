@@ -6,6 +6,8 @@ from unittest.mock import Mock, patch
 import allure
 import pytest
 
+from dinary.adapters.llm_storage import SqliteLLMBrokerStorage
+from dinary.adapters.llmbroker import ProviderConfig
 from dinary.config import settings
 from dinary.main import _lifespan, create_app
 from dinary.db import storage
@@ -15,15 +17,21 @@ from dinary import __version__
 
 @pytest.fixture(autouse=True)
 def _lifespan_stubs(monkeypatch):
-    """Stub out the two lifespan side-effects that are irrelevant to drain-loop tests.
+    """Stub out lifespan side-effects irrelevant to drain-loop tests.
 
     ``init_db`` runs yoyo migrations on each test — ~300 ms of SQLite
     overhead that has nothing to do with the drain-loop contract.
+    ``load_providers`` queries ``llmbroker_providers``; with ``init_db``
+    suppressed the table may not exist (especially on CI).
     ``rate_prefetch_task`` opens a DB connection and may make network
     calls; it runs concurrently and adds noise to timing assertions.
-    Both are no-ops here so the tests stay fast and hermetic.
     """
     monkeypatch.setattr(storage, "init_db", lambda: None)
+
+    async def _empty_providers(self) -> list[ProviderConfig]:  # noqa: ARG001
+        return []
+
+    monkeypatch.setattr(SqliteLLMBrokerStorage, "load_providers", _empty_providers)
 
     async def _noop_rate_prefetch():
         await asyncio.sleep(9999)
