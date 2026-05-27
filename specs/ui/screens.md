@@ -1,53 +1,69 @@
 # Screen Anatomy
 
-The three top-level screens, their layout, and how they hand off to each other.
+The four top-level views, their layout, and how the segmented + overflow nav binds them together.
 
 ## Navigation
 
-A single **header-segmented control** in `App.vue` switches between the three views. There is no bottom tab bar.
+A single **header segmented control** in `App.vue` switches between the four views. There is no bottom tab bar.
 
 ```
-┌──────────────────────────────────────────────────────┐
-│ Dinary v0.7  [⚠ queued]      [+] [☰ ●5] [▦]         │ sticky header
-├──────────────────────────────────────────────────────┤
-│                                                      │
-│              active view body                        │
-│                                                      │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ Dinary v0.10  [⚠ 2 queued]               [+ ] [☰●5] [···]  │ sticky header
+├──────────────────────────────────────────────────────────────┤
+│ Offline — expenses will be queued                            │ optional, sticky
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│              active view body                                │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-- **Add (Plus, primary)** — default landing tab. Larger and accent-tinted even when inactive so it always reads as the primary action.
-- **Review (ListChecks)** — warning badge in top-right when `doubtfulCount > 0`.
-- **LLM (Cpu)** — no badge.
+### Tab inventory (`HeaderSegmented.vue`)
 
-Left side of header carries the brand + version, the offline pill, and the queue badge (tappable → `QueueModal`).
+| Tab | Glyph | Size | Inactive look | Active look | Where it lives |
+|---|---|---|---|---|---|
+| **Add** | Plus | 56×38 | `--expense` text on 12 %-alpha orange fill | Solid `--expense` fill + 0 4 12 orange glow | Inline (primary) |
+| **Review** | ListChecks | 56×38 | sky-blue `#60a5fa` on 12 %-alpha blue fill | Solid `#60a5fa` fill + 0 4 12 sky-blue glow | Inline (primary). Warning-amber count badge bottom-right when `doubtfulCount > 0` |
+| **•••** (overflow) | MoreHorizontal | 36×30 | Muted, transparent | `--accent` fill when any rare tab is current | Inline. On tap, opens a 200-px-wide dropdown listing every entry in the `RARE_TABS` const |
+| **Income** | TrendingUp | n/a | n/a — lives inside the dropdown menu only | menu row gets `--surface-2` background + bold | Behind `•••` |
+| **LLM providers** | Cpu | n/a | same | same | Behind `•••` |
 
-Implementation: `App.vue` + `components/HeaderSegmented.vue`.
+**Rule for the future:** when a rarely-used tab is added, append it to `RARE_TABS` — the header layout stays the same. When a *frequently* used tab is added, see "When to add a new screen" below.
+
+### Header chrome
+
+- **Brand + version** (`Dinary v0.10`) on the left.
+- **Queue badge** (`N queued`, warning-yellow pill) appears next to the brand when `queue.items.length + receiptQueue.items.length > 0`. Tap → `QueueModal`.
+- **Offline notice strip** (warning-color text on warning-tinted bg, 1-px border) slides in under the header row when `!isOnline`. Copy adapts by view: `Offline — expenses will be queued` on Add, `Offline — incomes can't be added or edited` on Income, generic `Offline — changes not available` elsewhere.
 
 ## Add view
 
-The entry form. The most-used screen — defaults to opening here.
+The entry form. The most-used view — `tab` defaults to `'add'`.
 
 ```
 ┌──────────────────────────────────────┐
-│  [RSD]      0           📅 17.05    │ hero row
-│  ────────────              ───       │
+│  [RSD]   0          📅 17.05         │ hero row
+│  ────────             ───            │
 │                                      │
-│  [ Еда  Мясо  Перекус  Сладости ]    │ CategoryQuickPicks pills
+│ ┌──────────────────────────────────┐ │ category-card shell (12-px radius)
+│ │ [Еда][Мясо][Перекус][Сладости] … │ │ CategoryQuickPicks pills
+│ │ ──────────────────────────────── │ │ internal divider
+│ │ Мясо                          ›  │ │ category-pick-btn → CategorySheet
+│ └──────────────────────────────────┘ │
 │                                      │
-│  ┌─────────────────────── Мясо  › ┐  │ category-pick-btn
-│  └────────────────────────────────┘  │   (tap → CategorySheet)
+│  EVENT             [+] [⚙]           │
+│  ┌──────────────────────────────┐    │
+│  │ [trip-may] [poker-night] …   │    │ event-chips flow (selected = orange)
+│  └──────────────────────────────┘    │
 │                                      │
-│  [ — no event —             ▾  +⚙]  │ event
+│  TAGS              [+] [⚙]           │
+│  ┌──────────────────────────────┐    │
+│  │ [собака][Аня][Лариса] …      │    │ TagPicker (selected = --accent)
+│  └──────────────────────────────┘    │
 │                                      │
-│  #                            + ⚙    │ tags header row
-│  [ собака  Аня  Лариса  ... ]        │ full-width tag field
-│                                      │
-│  ┌────────────────────────────────┐  │
-│  │ Note                           │  │ comment textarea
-│  └────────────────────────────────┘  │
+│  [ Comment                       ]   │ single-line input
 ├──────────────────────────────────────┤
-│  [📷 QR]  [💾 Save              ]    │ sticky action bar
+│  [📷]  [💾 Save                 ]    │ sticky action bar, both orange
 └──────────────────────────────────────┘
 ```
 
@@ -55,55 +71,122 @@ Owned by `views/AddView.vue` + `components/ExpenseForm.vue`.
 
 ### Hero row
 
-- **Currency pill** — left, rectangular, accent fill, white text, mono `--font-num`. Tap opens `CurrencyPicker` in a popover.
-- **Amount input** — center, right-aligned, large (32px, `--font-num`, weight 500), no border except a bottom-line underline that turns accent on focus.
-- **Date** — right, compact (12.5px, muted), same bottom-line treatment with a leading cal glyph.
+- **Currency pill** — left, rectangular, `--expense` fill, white text, mono. Tap opens `CurrencyPicker` in a popover (orange accent).
+- **Amount input** — center, right-aligned, 2-rem mono weight 500, transparent with a bottom-line underline that turns `--accent` on focus.
+- **Date** — right, compact `<input type="date">` (12.5 px, muted), bottom-line treatment with a leading `Calendar` glyph.
 
-This compresses three fields into one line because each is self-explanatory by content and position.
+Three fields compressed into one line because each is self-explanatory by content and position.
 
-### Category selection
+### Category card (replaces the v0.7 group→category dropdowns)
 
-The group → category dropdown hierarchy is replaced by two components stacked vertically:
+`category-card` is a single 12-px-radius shell with `--field` background and `1.5px solid --border`. Two horizontal rows separated by a 1-px divider:
 
-1. **`CategoryQuickPicks`** — wrap-flow of frequently-used category pills. Tap selects without opening any sheet.
-2. **Category pick button** (`category-pick-btn`) — full-width tappable button showing the current category name (or "Select category…" placeholder). Tap opens `CategorySheet`. Styled with an accent border when a category is set, neutral border otherwise. `ChevronRight` icon right-aligned. `min-height: 48px`, `border-radius: 10px`.
+1. **`CategoryQuickPicks`** — wrap-flow of frequently-used pills. Tap selects without opening any sheet. Selected pill fills `--expense`.
+2. **`category-pick-btn`** — 46-px-min-height row, the current category name (or `"Select category…"` placeholder, muted) + right-aligned `ChevronRight` muted. Click / Enter / Space opens `CategorySheet`.
 
-The group field is still tracked internally (for the group → category hierarchy logic) and pre-filled when a category is chosen, but no separate group selector is shown to the user.
+The group is still tracked internally (for the group→category hierarchy logic) and pre-filled when a category is chosen, but no separate group selector is shown to the user.
 
-### Event / Tags / Comment
+### Event chips
 
-Standard sections, each with `+` and ⚙ (cog) icons on the right side of the section header. `+` opens an `InlineCreateRow` (or `InlineCreateEvent` for events). ⚙ opens the manage list (eye / eye-off rows).
+- Header row: `Event` label (muted uppercase) + `IconBtn` plus (accent) + `IconBtn` cog/x (muted).
+- Body: `event-chips` container (8-px-radius `--field` panel) with pill-shaped chips on `--surface` background. Selected chip fills `--expense`. Empty state: italic "no active events" text.
+- Plus opens an `InlineCreateEvent`. Cog opens a `ManageList` of active + inactive events. Both can be open simultaneously.
+
+### Tags
+
+- Same header pattern: `Tags` label + plus + cog.
+- Body: `TagPicker` chips. Selected chip fills `--accent`.
+
+### Comment
+
+A single-line `<input type="text">` (not a textarea) on `--field` background. Focus outlines with 2-px `--accent`.
 
 ### Save flow
 
 Two ways to save:
 
-1. **Bottom action bar Save** — always visible at the bottom.
-2. **KeyboardSaveBar** — appears just above the on-screen keyboard while it's open, so the user doesn't have to manually dismiss the keyboard or mistake its close button for Save.
+1. **Bottom action bar Save** — always visible at the bottom, orange.
+2. **`KeyboardSaveBar`** — appears just above the soft keyboard while it's open, also orange (`accentColor="var(--expense)"`).
 
-After save, the form resets but keeps the user's default group/category and currency selection.
+After save: the form resets but keeps the default group/category and currency. A toast confirms the saved amount.
 
-## Review view
+## Income view
 
-Two ordered sections in a single scroll container: **NEEDS REVIEW** (classification rules awaiting confirmation, one per unique item-name) and **EXPENSES** (individual receipt lines, newest first).
-
-`GET /api/rules/feed?doubtful_only=true` returns rule items with `is_doubtful: bool`. The default `doubtful_only=true` means only rules with `confidence_level < 4` are returned. Certain items are filtered out of NEEDS REVIEW; individual expenses are loaded separately from `GET /api/expenses` (paginated).
+The income-tracking view. New since v0.8 — accessed via the `•••` overflow menu.
 
 ```
 ┌──────────────────────────────────────┐
-│  NEEDS REVIEW  [5]   by impact    ⟳ │ (only shown when doubtfulCount > 0)
+│ ┌──────────────────────────────────┐ │ IncomeForm card
+│ │ [EUR]   0           ───────────  │ │ hero row (green currency pill)
+│ │                                  │ │
+│ │ For month             Received   │ │
+│ │ ┌─────────┐         ┌─────────┐  │ │
+│ │ │ 2026-05 │         │ 17.05.26│  │ │
+│ │ └─────────┘         └─────────┘  │ │
+│ │ ┌────────────────────────────┐   │ │
+│ │ │ Comment (optional)         │   │ │
+│ │ └────────────────────────────┘   │ │
+│ └──────────────────────────────────┘ │
 │                                      │
-│  ⚠ ┃ Karamel čoko prot.čok.          │ doubtful row — c2 (warning) left-border
+│  INCOMES   [3]  4m ago           ⟳  │ green eyebrow + count + cache age + refresh
+│                                      │
+│  2026                  +4 100.00 EUR │ year header (year mono, total mono green)
+│  ┃ May 2026         +1 200.00 EUR    │ IncomeRow (green left border)
+│  ┃ 17 May · paycheck                 │
+│  ┃ April 2026       +1 200.00 EUR    │
+│  ┃ 03 Apr · RSD 145 000              │
+│  …                                   │
+│                                      │
+│  2025                 +14 000.00 EUR │
+│  …                                   │
+├──────────────────────────────────────┤
+│  [ Save                          ]   │ sticky bottom bar, green 14-px radius
+└──────────────────────────────────────┘
+```
+
+Owned by `views/IncomeView.vue`.
+
+### Section header
+
+- `INCOMES` label in `--success` (the only screen where green is used for an eyebrow).
+- Count badge next to the label (count of all incomes).
+- "Just now / Nm ago / Nh ago / Nd ago" muted-italic cache age.
+- Right-aligned refresh button (muted RefreshCw, disabled while loading or offline).
+
+### Year grouping
+
+Incomes are grouped by `year` and rendered with a small header row showing the year (mono uppercase muted) and the year's total (mono green, prefixed with `+`). Currency is taken from the first item in the group — multi-currency years currently show the first currency only (acceptable for v0.10).
+
+### `IncomeRow`
+
+4-px green left border. Top row: month label ("May 2026") + trailing `+amount currency` (green num, muted code). Bottom row: received-date + comment or original-amount fallback. Whole row tappable → opens `IncomeEditSheet`. Left-swipe reveals an `Edit` panel (green; muted `--surface-2` when offline).
+
+### Empty state
+
+When `items.length === 0` and not loading: dashed card with a 44-px green-tinted circle (`TrendingUp` icon), "No incomes yet" title + "Add your first income above" subtitle. No illustration.
+
+### Save flow
+
+Two ways to save:
+
+1. **Bottom action bar Save** — always visible, full-width, `--success` fill, 14-px radius, 0 4 14 green glow. Disables to `--surface-2` when offline.
+2. **`KeyboardSaveBar`** — appears above the soft keyboard, also green (`accentColor="var(--success)"`).
+
+## Review view
+
+Two ordered sections in a single scroll container: **NEEDS REVIEW** (one row per doubtful classification rule, by impact) and **EXPENSES** (individual receipt-line expenses, newest first).
+
+```
+┌──────────────────────────────────────┐
+│  NEEDS REVIEW  [5]   by impact    ⟳  │ only shown when doubtfulCount > 0
+│                                      │
+│  ⚠ ┃ Karamel čoko prot.čok.          │ doubtful — c2 (warning) left-border
 │    ┃                Lidl Beograd     │
-│    ┃ [✨✓ Сладости] [Еда] [Перекус] ✎ │ approve chip + alts + edit
+│    ┃ [✨✓ Сладости][Еда][Перекус] ✎  │ approve + alts + edit
 │                                      │
-│  ⚠ ┃ Mesnata slanina                 │ another doubtful — c2
-│    ┃              Maxi Vračar        │
-│    ┃ [✨✓ Мясо] [Еда] [Колбасы]    ✎  │
-│                                      │
-│  ⚠ ┃ Energy drink unknown            │ c1 — error left-border (lowest conf)
-│    ┃              7-Eleven           │
-│    ┃ [✨✓ Напитки] [Еда] [Снеки]   ✎  │
+│  ⚠ ┃ Energy drink unknown            │ c1 — error left-border (lowest)
+│    ┃                7-Eleven         │
+│    ┃ [✨✓ Напитки][Еда][Снеки]    ✎  │
 │                                      │
 │         [ Confirm all (5) ]          │ shown at end of doubtful list
 │                                      │
@@ -113,69 +196,64 @@ Two ordered sections in a single scroll container: **NEEDS REVIEW** (classificat
 │  │ Lidl Beograd · 17 May    RSD   │  │
 │  │ Еда › Сладости                 │  │
 │  └────────────────────────────────┘  │
-│  ┌────────────────────────────────┐  │
-│  │ Maxi Vračar              4 870 │  │ ExpenseRow (store fallback)
-│  │ 08.05                    RSD   │  │
-│  │ Еда › еда                      │  │
-│  └────────────────────────────────┘  │
 │  …more expenses…                     │
 │  [skeleton]                          │ infinite-scroll loading state
 └──────────────────────────────────────┘
 ```
 
+Owned by `views/ReviewView.vue`. Rows by `components/RuleRow.vue` and `components/ExpenseRow.vue`.
+
 ### Section headers
 
-- **NEEDS REVIEW** — only mounts when `doubtfulCount > 0`. Warning-colored label + amber count badge + "by impact" sort hint on the right, alongside the refresh `IconBtn`.
-- **EXPENSES** — always mounted below. Plain uppercase eyebrow.
+- **NEEDS REVIEW** — only mounts when `doubtfulCount > 0`. `--warning` label + amber count badge + "by impact" muted hint on the right + refresh `IconBtn`.
+- **EXPENSES** — always mounted below. Plain muted eyebrow, no badge, no refresh of its own.
 
-### RuleRow at a glance
+### `RuleRow` at a glance
 
-- **Confidence tier drives the left-border color** (4px solid):
+- **Confidence tier drives the left-border color** (4-px solid):
   - `c1` → `--error` (red) — lowest confidence
   - `c2` → `--warning` (amber)
-  - `c3` → muted amber (`rgba(245, 158, 11, 0.75)`)
+  - `c3` → muted amber `rgba(245, 158, 11, 0.75)`
   - Any out-of-range value is treated as `c2`.
-  Doubtful rows also paint a low-alpha amber wash over the slider background.
-- **Top row** — name (bold; 700 on doubtful, 600 on certain), store right-aligned and muted. If `name` is empty, name slot falls back to `store` and the trailing slot is dropped.
-- **Bottom row (doubtful)** — wrap-flow of, in order:
-  - Tag chips (if any tags attached to the rule)
-  - **Approve chip** for the suggested category (green-tinted, `Sparkles` icon prefix when the suggestion differs from current, then `Check` + category name) — tap = fast-path approve with that category, no sheet
-  - Up to **2 alternative chips** from `alternative_categories` — tap = fast-path approve with that alt
-  - **Frequent-category quick picks** for any categories the user uses often that aren't already in suggestion/alt chips — tap = fast-path approve
-  - Trailing **Edit pencil icon** — opens `ExpenseEditSheet` in rule-correction mode
-- **Bottom row (certain)** — `group › category` breadcrumb on the left, muted chevron on the right.
+  Doubtful rows also paint a low-alpha amber wash over the slider.
+- **Top row** — name (700 on doubtful, 600 on certain), store right-aligned muted. If `name` is empty, name slot falls back to `store` and the trailing slot is dropped.
+- **Bottom row (doubtful)** — wrap-flow:
+  1. Tag chips (if any)
+  2. **Approve chip** for the suggested category (green-tinted; `Sparkles` glyph when LLM suggestion differs from current; `Check` + name). Tap = fast-path approve.
+  3. Up to **2 alternative chips** from `alternative_categories`.
+  4. **Frequent-category quick picks** filtered to exclude any IDs already in suggestion/alts.
+  5. Trailing **Edit pencil** — opens `ExpenseEditSheet` in rule-correction mode.
+- **Bottom row (certain)** — `group › category` breadcrumb left, muted-2 chevron right.
 
 ### Approve flow (fast path)
 
-Tapping any approve/alt/freq chip emits `approve({ item, categoryId })`. For doubtful rows the store calls `approveRule(item.id, categoryId)` — `PATCH /api/rules/{rule_id}/category` — which sets the rule to `confidence_level=4, source='user_correction'` and propagates the new category to every expense linked to that rule in one transaction. The `item.id` in the feed is the `classification_rules.id`, so no expense-id lookup is needed and a deleted expense cannot cause a 404. On success the row is removed from NEEDS REVIEW.
-
-For certain rows edited via the sheet (not the fast-path chips), category changes go through `PATCH /api/expenses/{id}` with an explicit `scope` and optional `update_rule` flag.
+Tapping any approve / alt / freq chip emits `approve({ item, categoryId })`. The store calls `PATCH /api/rules/{rule_id}/category` which sets the rule to `confidence_level=4, source='user_correction'` and propagates the category to every linked expense in one transaction. On success the row leaves NEEDS REVIEW.
 
 ### Confirm all
 
-When the doubtful list has fully paginated (`!hasMore`) and at least one doubtful row remains, a green outlined **Confirm all (N)** button appears below the list. Tap confirms every visible doubtful rule in one batch (`POST /api/rules/confirm-all` with `rule_ids`), then refreshes the EXPENSES section to reflect the new classifications.
+When the doubtful list has fully paginated (`!hasMore`) and at least one doubtful row remains, a green outlined pill **Confirm all (N)** appears below the list. Tap → one batch call, then refresh EXPENSES to reflect the new classifications.
 
-### Delete receipt
+### `ExpenseEditSheet` flow
 
-When the user deletes a receipt (swipe-to-delete or edit sheet), the store calls `DELETE /api/receipts/{id}` then does a full feed reset — `reset()` + `loadNextPage()` + `loadExpensesNextPage()` — so stale rule rows from the deleted receipt disappear immediately rather than staying visible until the next manual refresh.
+Tapping any row, the Edit pencil, the Edit panel button (or releasing a long swipe on a certain row) opens the sheet:
 
-### Swipe-to-act
+- **Manual expense** (`receipt_id == null`): AMOUNT block visible at top. Footer Delete is ghost-danger (outline only).
+- **Receipt-backed expense**: no AMOUNT block; instead a small `FROM RECEIPT` pill next to the EDIT EXPENSE eyebrow. SCOPE radios appear at the bottom of the body (`Only this` / `Last month` / `This year` / `All history`, default `single`). "Also update rule" checkbox below SCOPE if the source has `has_rule`. Footer Delete reads "Delete receipt" with a danger-tint background fill.
 
-Both `RuleRow` and `ExpenseRow` support left swipe via `useSwipeRow`. See `patterns.md#swipe-to-act`. The reveal panel is **Edit + Approve** on doubtful rows (`168px` total) and **Edit** only on certain rows and expense rows (`92px` / `84px`).
+Save is sky-blue `#60a5fa`, disabled until a category is selected.
 
-### Correction sheet
+### Delete flows
 
-Tapping a row, the trailing Edit pencil, the Edit panel button, or releasing a long swipe on a certain row opens `ExpenseEditSheet`. When opened from a doubtful row, the sheet runs in rule-correction mode (scope hidden, treated as `all`). When opened from an `ExpenseRow`, the sheet may show the scope selector and "Update rule" checkbox depending on the source expense's `receipt_id` and `has_rule`.
+- Manual: tapping Delete pops a `ConfirmDeleteSheet` (`kind="expense"`), one-line context (`<amount currency>` mono on `<category>, <date>`), Cancel + Delete.
+- Receipt: tapping Delete receipt pops `ConfirmDeleteSheet` (`kind="receipt"`) with a `ReceiptCascadeCard` in the `detail` slot — lists every item from the receipt with mono amounts and a TOTAL footer. Destructive button reads `"Delete N items"` with the live count. After delete, the store does a full feed reset + reload so the rule rows tied to the receipt disappear immediately.
 
 ### Pagination
 
-Two independent `IntersectionObserver` sentinels — one for the rule feed, one for the expense feed — each `rootMargin: "120px"`. Skeleton rows show during fetch. See `patterns.md#infinite-scroll`.
+Two independent `IntersectionObserver` sentinels — one for the rule feed, one for the expense feed — each `rootMargin: "120 px"`. Skeleton rows show during fetch.
 
 ### Offline
 
-The whole view degrades gracefully: cached rules and expenses still render, refresh + writes are disabled with an info toast. See `patterns.md#offline-aware-actions`.
-
-Owned by `views/ReviewView.vue`. Rows by `components/RuleRow.vue` and `components/ExpenseRow.vue`.
+Reads still render from cache. Writes are blocked with an info toast. Refresh is disabled.
 
 ## LLM view
 
@@ -186,42 +264,59 @@ Provider pool management. Backend API: `/api/admin/llm-providers` + `/api/admin/
 │  ●  3 / 4 healthy                [+] │ HealthSummaryCard
 │  round-robin failover · last switch  │
 │                                      │
+│  RECEIPT QUEUE                       │ optional, only if classification job present
+│  [12 ready][3 processing][1 sleeping]│
+│  [2 failed]                          │
+│                                      │
 │  PROVIDER POOL          priority  ⟳  │
 │  ┌────────────────────────────────┐  │
 │  │ [1] ● Groq                     │  │ ProviderCard
 │  │     llama-3.3-70b-versatile    │  │
-│  │ ──────────────────  412 / 14k  │  │ usage bar + latency
-│  │                today      940ms│  │
-│  │  ───────────────────────────── │  │
-│  │              [↑][↓][⚡][⏻]      │  │ action row
+│  │ ───────────────  412 / 14 000  │  │ usage bar + numbers
+│  │              today        940ms│  │ latency chip
+│  │ ────────────── divider ──────  │  │
+│  │              [↑] [↓] [⏻]        │  │ action row
 │  └────────────────────────────────┘  │
 │  ┌────────────────────────────────┐  │
-│  │ [3] ● OpenRouter   [86s]       │  │ rate-limited countdown
+│  │ [3] ● OpenRouter   [86s]       │  │ rate-limited countdown pill
 │  │     nvidia/nemotron-3-…        │  │
-│  │ 12 calls today · no daily cap  │  │ (no bar — uncapped)
-│  │              [↑][↓][⚡][⏻]      │  │
+│  │ 12 calls today · no daily cap  │  │ no bar — uncapped
+│  │              [↑] [↓] [⏻]        │  │
 │  └────────────────────────────────┘  │
 └──────────────────────────────────────┘
 ```
 
-Owned by `views/LLMView.vue`. Refresh polled every 30s when online.
+Owned by `views/LLMView.vue`. Refresh polled every 30 s when online.
 
-### ProviderCard rules
+### Receipt queue strip (new)
 
-- **Status dot kinds** — see `patterns.md#status-dot`.
-- **Usage row** — bar + numbers when a daily limit is set; "N calls today · no daily cap" otherwise. Bar fills with `--accent` until > 80%, then `--warning`.
-- **Latency chip** — inline with the right-side label. Yellow if > 3000ms.
-- **Action row** — bottom-aligned, separated from the card body by a 1px `--border` line. Move-up / Move-down disabled at list extremes. Test = `Zap`. Power dims when disabled.
-- **Card body tappable** — opens `ProviderSheet` in edit mode. Actions in the bottom row use `@click.stop` so they don't bubble to the edit handler.
+Above the provider pool, when any of `pending`, `in_progress`, `sleeping`, `poisoned` is > 0, a `RECEIPT QUEUE` label sits above a row of chips:
+
+| Chip | Color |
+|---|---|
+| `N ready` | `--accent` text on transparent, accent border |
+| `N processing` | `--text` |
+| `N sleeping` | `--muted` |
+| `N failed` | `--error` |
+
+Each chip is a thin outlined pill. The strip is informational — no actions.
+
+### `ProviderCard` rules
+
+- **Status dot kinds** — see `patterns.md`.
+- **Usage row** — bar + numbers when a daily limit is set; "N calls today · no daily cap" otherwise. Bar fills `--accent` until > 80 %, then `--warning`.
+- **Latency chip** — inline with the right-side label. `--warning` if > 3000 ms.
+- **Action row** — bottom-aligned, separated from the card body by a 1-px `--border` line. Move-up / Move-down disabled at list extremes. Power dims when disabled. No standalone "test" button in v0.10.
+- **Card body tappable** — opens `ProviderSheet` in edit mode. Actions in the bottom row use `@click.stop` so they don't bubble.
 
 ### CRUD flow
 
-`HealthSummaryCard`'s `+` button → `ProviderSheet` in add mode. Tap any card body → edit mode. See `patterns.md#provider-sheet` for the form contract.
+`HealthSummaryCard`'s `+` opens `ProviderSheet` in add mode. Tapping a card body opens edit mode. See `patterns.md#provider-sheet-form`.
 
-## When to add a new screen
+## When to add a new view
 
-Adding a fourth tab to the segmented control is a major change — three icons already pushes the upper bound of what fits naturally on a phone. If the new screen is:
+Adding a fifth segment to the segmented control is a major change — two inline tabs is already a deliberate choice. If the new view is:
 
-- **Heavy, persistent, primary** — extend the segmented control to 4 icons and shrink Add slightly. Adjusts to ~48px wide each.
-- **Secondary or rare** — make it a sheet/modal launched from one of the existing screens.
-- **An admin / settings panel** — push it into Settings, not the main nav.
+- **Heavy, persistent, primary** — promote it inline next to Add + Review (and shrink them slightly). 3 × 56 px is the upper bound that still fits one-handed.
+- **Secondary or rare** — append to `RARE_TABS` in `HeaderSegmented.vue`. Nothing else changes. Pick a glyph the dropdown menu can render at 22 px and an obvious label.
+- **An admin / settings panel** — push it into the LLM view's pattern (a dedicated screen reachable from elsewhere) or into a sheet, not a top-level slot.
