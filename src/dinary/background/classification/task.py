@@ -38,7 +38,6 @@ from dinary.db.receipts import (
     ReceiptItemRow,
     ReceiptJobRow,
     claim_next_job,
-    complete_job,
     get_receipt_items,
     poison_job,
     release_job,
@@ -173,10 +172,7 @@ async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
         store_id = store_info[0] if store_info else None
         chain_id = store_info[1] if store_info else None
 
-        items, should_skip = await asyncio.to_thread(_check_and_complete_if_done, job.receipt_id)
-        if should_skip:
-            return
-
+        items = await asyncio.to_thread(_get_items, job.receipt_id)
         await _classify_and_persist(broker, job, items, store_id, chain_id)
         logger.info("Receipt drain: completed receipt_id=%s", job.receipt_id)
 
@@ -338,10 +334,15 @@ async def _run_llm_pass(
     llm_queue: list[tuple[int, str]],
     categories: dict[int, str],
     tags: dict[int, str],
-) -> tuple[dict[int, ClassificationResult], bool]:
-    """Call LLM for queued items; return (results keyed by item_id, used_fallback)."""
+) -> dict[int, ClassificationResult]:
+    """Call LLM for queued items; return results keyed by item_id.
+
+    Raises ConnectionError when the broker is completely unavailable so the
+    caller's transient-error handler retries the job instead of silently
+    completing it with zero expenses.
+    """
     if not llm_queue:
-        return {}, False
+        return {}
     normalized_names = [name for _, name in llm_queue]
     results, used_fallback = await classify_receipt(
         broker,
@@ -351,6 +352,11 @@ async def _run_llm_pass(
         tags,
         context_id=job.receipt_id,
     )
+    if used_fallback:
+        raise ConnectionError(
+            f"LLM broker unavailable for receipt_id={job.receipt_id}"
+            " — all providers returned None, releasing for retry",
+        )
     if len(results) != len(llm_queue):
         logger.warning(
             "LLM returned %d results for %d queued items for receipt_id=%s"
@@ -359,10 +365,7 @@ async def _run_llm_pass(
             len(llm_queue),
             job.receipt_id,
         )
-    return (
-        {item_id: result for (item_id, _), result in zip(llm_queue, results, strict=False)},
-        used_fallback,
-    )
+    return {item_id: result for (item_id, _), result in zip(llm_queue, results, strict=False)}
 
 
 def _compute_classifications(
@@ -387,17 +390,14 @@ def _compute_classifications(
     return result
 
 
-def _check_and_complete_if_done(receipt_id: int) -> tuple[list[ReceiptItemRow], bool]:
+def _get_items(receipt_id: int) -> list[ReceiptItemRow]:
     with storage.connection() as conn:
         items = get_receipt_items(conn, receipt_id)
         if not items:
-            logger.warning(
-                "Receipt drain: no items for receipt_id=%s — completing job",
-                receipt_id,
+            raise RuntimeError(
+                f"receipt_id={receipt_id}: no items after parsing — parse error",
             )
-            complete_job(conn, receipt_id)
-            return [], True
-        return items, False
+        return items
 
 
 async def _classify_and_persist(
@@ -412,8 +412,8 @@ async def _classify_and_persist(
         categories = load_categories(conn)
         tags = load_tags(conn)
 
-    llm_results, used_failover = await _run_llm_pass(broker, job, llm_queue, categories, tags)
-    total_penalty = (1 if job.used_journal_fallback else 0) + (1 if used_failover else 0)
+    llm_results = await _run_llm_pass(broker, job, llm_queue, categories, tags)
+    total_penalty = 1 if job.used_journal_fallback else 0
     classifications = _compute_classifications(items, rule_hits, llm_results, total_penalty)
 
     await asyncio.to_thread(

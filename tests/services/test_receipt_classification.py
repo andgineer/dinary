@@ -169,7 +169,7 @@ class TestClassifyAndPersist:
         assert exp[1] == 1
         assert exp[2] == 3
 
-    def test_level1_item_skipped_no_expense(self, conn):
+    def test_level1_item_poisons_job_not_silent_completion(self, conn):
         _seed_catalog(conn)
         receipt_id = _seed_receipt(conn)
         job = claim_next_job(conn)
@@ -183,7 +183,8 @@ class TestClassifyAndPersist:
                 )
             ]
         ):
-            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
+            with pytest.raises(RuntimeError, match="all unclassifiable"):
+                asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
         conn2 = storage.get_connection()
         try:
@@ -193,7 +194,7 @@ class TestClassifyAndPersist:
         finally:
             conn2.close()
 
-        assert exp_count == 0  # level-1 conf, no expense
+        assert exp_count == 0
 
     def test_complete_job_inside_transaction(self, conn):
         _seed_catalog(conn)
@@ -331,7 +332,7 @@ class TestClassifyAndPersist:
         assert exp is not None
         assert exp[0] == 3
 
-    def test_no_rule_created_for_conf1(self, conn):
+    def test_no_rule_created_for_conf1_and_job_poisoned(self, conn):
         _seed_catalog(conn)
         receipt_id = _seed_receipt(conn)
         conn.execute(
@@ -346,7 +347,8 @@ class TestClassifyAndPersist:
         with _classify_patch(
             [ClassificationResult(item_name_normalized="hleb", category_id=1, confidence_level=1)]
         ):
-            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
+            with pytest.raises(RuntimeError, match="all unclassifiable"):
+                asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
         conn2 = storage.get_connection()
         try:

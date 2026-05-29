@@ -202,6 +202,17 @@ def persist_classification_results(
                 norm = (norms or {}).get(item.id) or normalize_item_name(item.name_raw)
                 _write_single_item(conn, item, cat_id, conf, norm, ctx)
 
+            if items:
+                created = conn.execute(
+                    "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?",
+                    [job.receipt_id],
+                ).fetchone()[0]
+                if created == 0:
+                    raise RuntimeError(
+                        f"no expenses created for receipt_id={job.receipt_id}"
+                        f" ({len(items)} item(s) — all unclassifiable)",
+                    )
+
             trim_llm_call_log(conn)
             complete_job(conn, job.receipt_id)
             conn.execute("COMMIT")

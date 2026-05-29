@@ -3,7 +3,6 @@
 import asyncio
 import contextlib
 import json
-import logging
 import shutil
 import sqlite3
 import time
@@ -18,7 +17,14 @@ import dinary.background.classification.task as drain_mod
 from dinary.background.classification.receipt_classifier import ClassificationResult
 from conftest import NullStorage
 from dinary.adapters.llmbroker import LLMBroker
-from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ParserRequestError, ReceiptItem
+import httpx
+
+from dinary.adapters.serbian_receipt_parser import (
+    ParsedReceipt,
+    ParserParseError,
+    ParserRequestError,
+    ReceiptItem,
+)
 from dinary.background.classification.task import (
     _drain_all_pending,
     _process_job,
@@ -86,12 +92,8 @@ def _seed_drain_db(conn):
 @allure.feature("Background tasks")
 @allure.story("Receipt drain")
 class TestProcessJobEdgeCases:
-    def test_parsed_with_no_items_logs_warning_and_completes_job(
-        self,
-        drain_db,
-        caplog,  # noqa: ARG002
-    ):
-        """Drain logs a warning and removes the job when parsed but receipt_items is empty."""
+    def test_parsed_with_no_items_poisons_job(self, drain_db):  # noqa: ARG002
+        """A receipt whose parser returned no items is a parse error — job must be poisoned."""
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
@@ -116,14 +118,11 @@ class TestProcessJobEdgeCases:
             used_journal_fallback=False,
             claim_token="tok",
         )
-        with caplog.at_level(logging.WARNING, logger="dinary.background.classification.task"):
-            asyncio.run(_process_job(job, _make_broker()))
-
-        assert any("no items" in r.message.lower() for r in caplog.records)
+        asyncio.run(_process_job(job, _make_broker()))
 
         conn = storage.get_connection()
         try:
-            remaining = conn.execute(
+            job_row = conn.execute(
                 "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?",
                 [receipt_id],
             ).fetchone()
@@ -133,11 +132,14 @@ class TestProcessJobEdgeCases:
         finally:
             conn.close()
 
-        assert remaining is None, "job should be deleted after no-items completion"
         assert exp_count == 0
+        assert job_row is not None, "job must NOT be deleted — it must remain as an error record"
+        assert job_row[0] == "poisoned", (
+            f"empty-items receipt must poison the job, got {job_row[0]!r}"
+        )
 
-    def test_failover_penalty_reduces_confidence(self, drain_db):  # noqa: ARG002
-        """When the pool returns used_failover=True, expense confidence is reduced by 1."""
+    def test_broker_unavailable_releases_job_for_retry(self, drain_db):  # noqa: ARG002
+        """When the LLM broker returns None (used_fallback=True), job is released for retry."""
         parsed = ParsedReceipt(
             store_name="Lidl",
             store_pib="100",
@@ -175,19 +177,11 @@ class TestProcessJobEdgeCases:
             conn.execute(
                 "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
             )
+            job = claim_next_job(conn)
         finally:
             conn.close()
 
-        job = ReceiptJobRow(
-            receipt_id=receipt_id,
-            url="https://x",
-            store_name_raw="",
-            store_pib_raw="",
-            invoice_number="INV-1",
-            parsed_at=None,
-            used_journal_fallback=False,
-            claim_token="tok",
-        )
+        assert job is not None
 
         with (
             patch(
@@ -199,10 +193,10 @@ class TestProcessJobEdgeCases:
                 return_value=(
                     [
                         ClassificationResult(
-                            item_name_normalized="hleb", category_id=1, confidence_level=3
+                            item_name_normalized="hleb", category_id=None, confidence_level=1
                         )
                     ],
-                    True,  # used_failover=True → penalty −1 → final conf = 2
+                    True,  # used_fallback=True → broker unavailable → ConnectionError → retry
                 ),
             ),
         ):
@@ -210,14 +204,19 @@ class TestProcessJobEdgeCases:
 
         conn = storage.get_connection()
         try:
-            exp = conn.execute(
-                "SELECT confidence_level FROM expenses WHERE receipt_id = ?", [receipt_id]
+            row = conn.execute(
+                "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [receipt_id],
             ).fetchone()
+            exp_count = conn.execute(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()[0]
         finally:
             conn.close()
 
-        assert exp is not None
-        assert exp[0] == 2, f"expected conf=2 (3 - 1 failover penalty), got {exp[0]}"
+        assert exp_count == 0
+        assert row is not None, "job must NOT be completed — it must be retained for retry"
+        assert row[0] == "pending", f"job must be released as pending, got status={row[0]!r}"
 
     def test_expense_datetime_matches_receipt_created_at(self, drain_db):  # noqa: ARG002
         """Expenses use the receipt's created_at as their datetime, not classification time."""
@@ -572,8 +571,8 @@ class TestProcessJobEdgeCases:
 
         mock_wakeup.assert_called_once_with(86400)
 
-    def test_conf1_items_do_not_create_rules(self, drain_db):  # noqa: ARG002
-        """Items penalised to conf=1 do not store a rule; the LLM is called again next pass."""
+    def test_conf1_items_poison_job_to_prevent_silent_data_loss(self, drain_db):  # noqa: ARG002
+        """When journal penalty reduces all items to conf=1, job is poisoned — not silently dropped."""
         parsed = ParsedReceipt(
             store_name="Lidl",
             store_pib="100",
@@ -625,7 +624,7 @@ class TestProcessJobEdgeCases:
             claim_token="tok",
         )
 
-        # LLM returns cat=1 conf=2; journal penalty (−1) → final conf=1
+        # LLM returns cat=1 conf=2; journal penalty (−1) → final conf=1 → no expense
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
             patch(
@@ -651,11 +650,19 @@ class TestProcessJobEdgeCases:
                 "SELECT category_id, confidence_level FROM classification_rules"
                 " WHERE item_name_normalized = 'nepoznato'"
             ).fetchone()
+            job_row = conn.execute(
+                "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
         finally:
             conn.close()
 
         assert exp_count == 0, "conf=1 items must not generate expenses"
-        assert rule is None, "conf=1 items must not store a rule (plan step 9: confidence 2-4 only)"
+        assert rule is None, "conf=1 items must not store a classification rule"
+        assert job_row is not None, "job must remain in DB (not silently deleted)"
+        assert job_row[0] == "poisoned", (
+            f"job must be poisoned when all items are unclassifiable, got status={job_row[0]!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1763,3 +1770,295 @@ class TestDrainLoop:
             asyncio.run(_drain_all_pending(_make_broker()))
 
         assert len(completed) == 2, "2 of 3 jobs must complete despite one failure"
+
+
+# ---------------------------------------------------------------------------
+# Bullet-proof: no receipt may ever be silently lost
+# ---------------------------------------------------------------------------
+
+
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
+@allure.story("Receipt drain")
+class TestBulletProofNeverLoseReceipt:
+    """Every receipt must end up classified, poisoned, or retrying — never silently dropped.
+
+    Root cause of receipt id=8 (849 RSD, 2026-05-27): LLM responded OK (8s latency) but
+    returned confidence=1 for 'Raid Family teč/el.ap. 60 noći' (insect repellent).
+    The old code logged 'completed' and deleted the job row with zero expenses.
+    """
+
+    def test_llm_conf1_all_items_direct_poisons_job(self, drain_db):  # noqa: ARG002
+        """Exact bug scenario: LLM available, returns conf=1 → job poisoned, not silently dropped."""
+        parsed = ParsedReceipt(
+            store_name="",
+            store_pib="",
+            total_amount=849.0,
+            invoice_number="INV-CONF1",
+            items=[
+                ReceiptItem(
+                    name_raw="Raid Family tec/el.ap. 60 noci",
+                    unit_price=849.0,
+                    quantity=1.0,
+                    total_price=849.0,
+                    tax_label="E",
+                )
+            ],
+            items_total=849.0,
+            total_ok=True,
+            used_journal_fallback=False,
+        )
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('raid-r1', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert job is not None
+
+        with (
+            patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [
+                        ClassificationResult(
+                            item_name_normalized="raid family tec/el.ap. 60 noci",
+                            category_id=None,
+                            confidence_level=1,
+                        )
+                    ],
+                    False,  # LLM was available, just returned low confidence
+                ),
+            ),
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+
+        conn = storage.get_connection()
+        try:
+            exp_count = conn.execute(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()[0]
+            job_row = conn.execute(
+                "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert exp_count == 0, "conf=1 item must not create an expense"
+        assert job_row is not None, "job must NOT be silently deleted"
+        assert job_row[0] == "poisoned", (
+            f"job must be poisoned when LLM returns conf=1 for all items, got {job_row[0]!r}"
+        )
+
+    def test_parser_parse_error_poisons_job(self, drain_db):  # noqa: ARG002
+        """ParserParseError (permanent, e.g. unsupported receipt format) → job poisoned."""
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('pe-r1', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert job is not None
+
+        with patch(
+            "dinary.background.classification.task.parse_receipt",
+            side_effect=ParserParseError("unsupported receipt format"),
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+
+        conn = storage.get_connection()
+        try:
+            job_row = conn.execute(
+                "SELECT status, last_error FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert job_row is not None, "job must remain in DB as poisoned"
+        assert job_row[0] == "poisoned", (
+            f"permanent parse error must poison the job, got {job_row[0]!r}"
+        )
+        assert "unsupported" in (job_row[1] or ""), "last_error must capture the error message"
+
+    def test_httpx_error_releases_for_retry(self, drain_db):  # noqa: ARG002
+        """httpx.HTTPError during receipt fetching is transient → job released for retry."""
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('he-r1', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert job is not None
+
+        with (
+            patch(
+                "dinary.background.classification.task.parse_receipt",
+                side_effect=httpx.ConnectError("connection refused"),
+            ),
+            patch("dinary.background.classification.task.notify_new_receipt"),
+            patch("dinary.background.classification.task._schedule_wakeup"),
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+
+        conn = storage.get_connection()
+        try:
+            job_row = conn.execute(
+                "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert job_row is not None, "job must remain in DB for retry"
+        assert job_row[0] == "pending", (
+            f"httpx error must release job as pending, got {job_row[0]!r}"
+        )
+
+    def test_already_parsed_receipt_skips_parsing(self, drain_db):  # noqa: ARG002
+        """On retry of an already-parsed receipt, parse_receipt is not called again."""
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url, parsed_at)"
+                " VALUES ('pre-parsed-r1', 'https://x', '2026-05-01T10:00:00')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_items (receipt_id, name_raw, total_price, quantity, unit_price)"
+                " VALUES (?, 'hleb', 100.0, 1, 100.0)",
+                [receipt_id],
+            )
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert job is not None
+        assert job.parsed_at is not None, "job must carry parsed_at from the receipt row"
+
+        with (
+            patch("dinary.background.classification.task.parse_receipt") as mock_parse,
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [ClassificationResult("hleb", category_id=1, confidence_level=3)],
+                    False,
+                ),
+            ),
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+            mock_parse.assert_not_called()
+
+        conn = storage.get_connection()
+        try:
+            exp_count = conn.execute(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert exp_count == 1, "expense must be created from pre-existing receipt items"
+
+    def test_mixed_items_partial_classification_completes_normally(self, drain_db):  # noqa: ARG002
+        """2-item receipt: one conf=3 (classifiable) + one conf=1 → 1 expense, job completed.
+
+        Partial classification is correct behaviour: we create expenses for what the LLM
+        could classify and complete the job. No poison needed when at least one expense exists.
+        """
+        parsed = ParsedReceipt(
+            store_name="",
+            store_pib="",
+            total_amount=150.0,
+            invoice_number="INV-MIX",
+            items=[
+                ReceiptItem(
+                    name_raw="HLEB",
+                    unit_price=100.0,
+                    quantity=1.0,
+                    total_price=100.0,
+                    tax_label="E",
+                ),
+                ReceiptItem(
+                    name_raw="NEPOZNATO",
+                    unit_price=50.0,
+                    quantity=1.0,
+                    total_price=50.0,
+                    tax_label="E",
+                ),
+            ],
+            items_total=150.0,
+            total_ok=True,
+            used_journal_fallback=False,
+        )
+        conn = storage.get_connection()
+        try:
+            _seed_drain_db(conn)
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('mix-r1', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert job is not None
+
+        with (
+            patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                return_value=(
+                    [
+                        ClassificationResult("hleb", category_id=1, confidence_level=3),
+                        ClassificationResult("nepoznato", category_id=None, confidence_level=1),
+                    ],
+                    False,
+                ),
+            ),
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+
+        conn = storage.get_connection()
+        try:
+            exp_count = conn.execute(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()[0]
+            job_row = conn.execute(
+                "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert exp_count == 1, "only the classifiable item creates an expense"
+        assert job_row is None, (
+            "job must be completed (deleted) when at least one expense was created"
+        )
