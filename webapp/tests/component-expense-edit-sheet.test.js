@@ -16,7 +16,6 @@ import { useCatalogStore } from "../src/stores/catalog.js";
 import * as expenseCorrections from "../src/api/expenseCorrections.js";
 import * as expensesApi from "../src/api/expenses.js";
 import * as receiptsApi from "../src/api/receipts.js";
-import * as reviewApi from "../src/api/review.js";
 
 beforeEach(async () => {
   await allure.epic("Expenses");
@@ -275,17 +274,13 @@ describe("ExpenseEditSheet — delete flow (receipt-backed)", () => {
       total: { amount: 180, currency: "RSD" },
     });
     vi.spyOn(receiptsApi, "deleteReceipt").mockResolvedValueOnce(null);
-    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValueOnce({
-      items: [],
-      doubtful_count: 0,
-      has_more: false,
-      pending_receipts: 0,
-    });
-    vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValueOnce({ items: [], has_more: false });
     const pinia = createPinia();
     setActivePinia(pinia);
     seedCatalog();
     const reviewStore = useReviewStore();
+    vi.spyOn(reviewStore, "deleteReceipt").mockImplementation(async (id) => {
+      await receiptsApi.deleteReceipt(id);
+    });
     reviewStore.expenses = [
       { id: 10, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: 7, amount_original: 100, currency_original: "RSD" },
       { id: 11, category_id: 1, category_name: "еда", tags: [], event_id: null, receipt_id: 7, amount_original: 80, currency_original: "RSD" },
