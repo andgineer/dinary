@@ -4,7 +4,12 @@ import { createPinia } from "pinia";
 import App from "../src/App.vue";
 import * as catalogApi from "../src/api/catalog.js";
 import * as flushReceiptQueueModule from "../src/composables/flushReceiptQueue.js";
+import { _resetForTest as resetFlushReceiptQueue } from "../src/composables/flushReceiptQueue.js";
 import { _resetForTest } from "../src/stores/queue.js";
+import {
+  _resetForTest as resetReceiptQueueHandle,
+  useReceiptQueueStore,
+} from "../src/stores/receiptQueue.js";
 
 vi.mock("../src/api/review.js", async (importOriginal) => {
   const actual = await importOriginal();
@@ -27,6 +32,22 @@ async function resetQueueDb() {
     del.onsuccess = del.onerror = del.onblocked = () => resolve();
     setTimeout(resolve, 1000);
   });
+}
+
+async function resetReceiptDb() {
+  await resetReceiptQueueHandle();
+  await new Promise((resolve) => {
+    const del = indexedDB.deleteDatabase("dinary-receipts");
+    del.onsuccess = del.onerror = del.onblocked = () => resolve();
+    setTimeout(resolve, 200);
+  });
+}
+
+// fake-indexeddb uses setImmediate for each IDB task; one flushPromises() call schedules
+// its own setImmediate BEFORE those tasks are queued, so it resolves too early.
+// Drain multiple rounds to let the full IDB → promise chain complete.
+async function drainAsync(rounds = 20) {
+  for (let i = 0; i < rounds; i++) await flushPromises();
 }
 
 let _origFetch;
@@ -153,5 +174,98 @@ describe("App onScan — receipt flow", () => {
 
     expect(received).toHaveLength(0);
     window.removeEventListener("dinary:receipt-parsed", (e) => received.push(e));
+  });
+});
+
+describe("App flush triggers — receipt queue", () => {
+  beforeEach(async () => {
+    resetFlushReceiptQueue();
+    await resetReceiptDb();
+  });
+
+  afterEach(async () => {
+    await resetReceiptDb();
+  });
+
+  it("startup: mounts with queued receipt and is online → receipt delivered", async () => {
+    // happy-dom defaults navigator.onLine to false; force it true so init() flushes.
+    const onlineDesc = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(navigator),
+      "onLine",
+    );
+    Object.defineProperty(navigator, "onLine", { configurable: true, get: () => true });
+    try {
+      const pinia = createPinia();
+      const receiptStore = useReceiptQueueStore(pinia);
+      await receiptStore.enqueue("https://suf.purs.gov.rs/v/?vl=STARTUP1");
+
+      mount(App, { global: { plugins: [pinia] } });
+      await drainAsync();
+
+      expect(receiptStore.items).toHaveLength(0);
+    } finally {
+      if (onlineDesc) {
+        Object.defineProperty(Object.getPrototypeOf(navigator), "onLine", onlineDesc);
+      } else {
+        Object.defineProperty(navigator, "onLine", { configurable: true, get: () => false });
+      }
+    }
+  });
+
+  it("online event → queued receipt delivered on reconnect", async () => {
+    const onlineDesc = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(navigator),
+      "onLine",
+    );
+    Object.defineProperty(navigator, "onLine", { configurable: true, get: () => false });
+    try {
+      const pinia = createPinia();
+      mount(App, { global: { plugins: [pinia] } });
+      await drainAsync();
+
+      const receiptStore = useReceiptQueueStore(pinia);
+      await receiptStore.enqueue("https://suf.purs.gov.rs/v/?vl=ONLINE1");
+      expect(receiptStore.items).toHaveLength(1);
+
+      Object.defineProperty(navigator, "onLine", { configurable: true, get: () => true });
+      window.dispatchEvent(new Event("online"));
+      await drainAsync();
+
+      expect(receiptStore.items).toHaveLength(0);
+    } finally {
+      if (onlineDesc) {
+        Object.defineProperty(Object.getPrototypeOf(navigator), "onLine", onlineDesc);
+      } else {
+        Object.defineProperty(navigator, "onLine", { configurable: true, get: () => true });
+      }
+    }
+  });
+
+  it("real enqueue: scan with no enqueue spy → enqueue called with scanned URL", async () => {
+    const onlineDesc = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(navigator),
+      "onLine",
+    );
+    Object.defineProperty(navigator, "onLine", { configurable: true, get: () => false });
+    try {
+      const pinia = createPinia();
+      const wrapper = mount(App, { global: { plugins: [pinia] } });
+      await drainAsync();
+
+      const receiptStore = useReceiptQueueStore(pinia);
+      const enqueueSpy = vi.spyOn(receiptStore, "enqueue");
+
+      const scanner = wrapper.findComponent({ name: "QrScanner" });
+      await scanner.vm.$emit("scan", "https://suf.purs.gov.rs/v/?vl=REALENQUEUE");
+      await flushPromises();
+
+      expect(enqueueSpy).toHaveBeenCalledWith("https://suf.purs.gov.rs/v/?vl=REALENQUEUE");
+    } finally {
+      if (onlineDesc) {
+        Object.defineProperty(Object.getPrototypeOf(navigator), "onLine", onlineDesc);
+      } else {
+        Object.defineProperty(navigator, "onLine", { configurable: true, get: () => true });
+      }
+    }
   });
 });
