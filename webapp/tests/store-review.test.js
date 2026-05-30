@@ -284,7 +284,7 @@ describe("review store: receipts_queue clears dirty flag", () => {
     expect(localStorage.getItem("dinary:review:dirty")).toBeNull();
   });
 
-  it("clears dirtyFlag even when queue is non-empty", async () => {
+  it("re-marks dirtyFlag when queue is non-empty after load (pending)", async () => {
     vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
       items: [],
       doubtful_count: 0,
@@ -292,10 +292,33 @@ describe("review store: receipts_queue clears dirty flag", () => {
       receipts_queue: { pending: 2, in_progress: 0, sleeping: 0, poisoned: 0 },
     });
     const store = useReviewStore();
-    store.markDirty();
     await store.loadNextPage();
-    expect(store.dirtyFlag).toBe(false);
-    expect(localStorage.getItem("dinary:review:dirty")).toBeNull();
+    expect(store.dirtyFlag).toBe(true);
+    expect(localStorage.getItem("dinary:review:dirty")).toBe("1");
+  });
+
+  it("re-marks dirtyFlag when queue has in_progress items", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      receipts_queue: { pending: 0, in_progress: 1, sleeping: 0, poisoned: 0 },
+    });
+    const store = useReviewStore();
+    await store.loadNextPage();
+    expect(store.dirtyFlag).toBe(true);
+  });
+
+  it("re-marks dirtyFlag when queue has sleeping or poisoned items", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 1, poisoned: 1 },
+    });
+    const store = useReviewStore();
+    await store.loadNextPage();
+    expect(store.dirtyFlag).toBe(true);
   });
 
   it("clears dirtyFlag even when doubtful_count > 0", async () => {

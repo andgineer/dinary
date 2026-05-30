@@ -422,6 +422,39 @@ describe("App review probe — dirty review cache", () => {
     }
   });
 
+  it("visibilitychange: probes and syncs isOnline when navigator.onLine=true but isOnline.value=false", async () => {
+    localStorage.setItem("dinary:review:dirty", "1");
+    const origVisDesc = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    // Mount offline so isOnline.value = false
+    const pinia = createPinia();
+    const loadSpy = mountWithSpy(pinia, false);
+    await drainAsync();
+    loadSpy.mockClear();
+
+    // Navigator reconnects without firing the 'online' event (iOS behaviour)
+    Object.defineProperty(navigator, "onLine", { configurable: true, get: () => true });
+
+    let syntheticOnlineFired = false;
+    const onlineListener = () => { syntheticOnlineFired = true; };
+    window.addEventListener("online", onlineListener);
+    try {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await drainAsync();
+
+      expect(loadSpy).toHaveBeenCalled();
+      expect(syntheticOnlineFired).toBe(true);
+    } finally {
+      window.removeEventListener("online", onlineListener);
+      restoreOnline();
+      if (origVisDesc) {
+        Object.defineProperty(document, "visibilityState", origVisDesc);
+      } else {
+        delete document.visibilityState;
+      }
+    }
+  });
+
   it("online watcher: calls loadIfNeeded when coming online with dirty flag", async () => {
     localStorage.setItem("dinary:review:dirty", "1");
     const pinia = createPinia();

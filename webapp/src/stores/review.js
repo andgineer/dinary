@@ -90,6 +90,9 @@ export const useReviewStore = defineStore("review", () => {
       page.value = nextPage;
       stampFresh();
       _persistState();
+      if (q.pending > 0 || q.in_progress > 0 || q.sleeping > 0 || q.poisoned > 0) {
+        markDirty();
+      }
     } catch (err) {
       if (navigator.onLine) {
         const toast = useToastStore();

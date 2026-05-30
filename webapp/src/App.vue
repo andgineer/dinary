@@ -65,7 +65,8 @@ async function init() {
 }
 
 function handleVisibilityChange() {
-  if (document.visibilityState !== "visible" || !isOnline.value) return;
+  if (document.visibilityState !== "visible" || !navigator.onLine) return;
+  if (!isOnline.value) window.dispatchEvent(new Event("online"));
   if (reviewStore.dirtyFlag) void reviewStore.loadIfNeeded();
 }
 
