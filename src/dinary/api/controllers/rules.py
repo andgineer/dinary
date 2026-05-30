@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from dinary.db.receipts import count_pending_classification_jobs
+from dinary.db.receipts import classification_job_counts
 from dinary.db.storage import transaction
 
 
@@ -195,12 +195,5 @@ def build_rules_feed(
         "doubtful_count": d_total,
         "items": rows,
         "has_more": offset + page_size < effective_total,
-        "pending_receipts": count_pending_classification_jobs(con),
-    }
-
-
-def build_rules_counts(con: sqlite3.Connection) -> dict[str, Any]:
-    return {
-        "doubtful_count": count_doubtful(con),
-        "pending_receipts": count_pending_classification_jobs(con),
+        "receipts_queue": classification_job_counts(con),
     }

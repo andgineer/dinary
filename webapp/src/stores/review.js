@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { getReviewFeed, getReviewCounts, getExpensesFeed, confirmAllRules, approveRule } from "../api/review.js";
+import { getReviewFeed, getExpensesFeed, confirmAllRules, approveRule } from "../api/review.js";
 import { correctCategory, editExpense } from "../api/expenseCorrections.js";
 import { deleteExpense as apiDeleteExpense } from "../api/expenses.js";
 import { deleteReceipt as apiDeleteReceipt } from "../api/receipts.js";
@@ -14,7 +14,7 @@ const FETCHED_KEY = "dinary:review:fetchedAt";
 const EXPENSES_CACHE_KEY = "dinary:review:expenses:v1";
 
 export const useReviewStore = defineStore("review", () => {
-  const { dirtyFlag, lastFetchedAt, markDirty, stampFresh, bumpFetchTime, isStale, readCache, writeCache, clearCache } = useStaleCache({
+  const { dirtyFlag, lastFetchedAt, markDirty, stampFresh, isStale, readCache, writeCache, clearCache } = useStaleCache({
     dirtyKey: DIRTY_KEY,
     fetchedKey: FETCHED_KEY,
     dataKey: CACHE_KEY,
@@ -24,8 +24,10 @@ export const useReviewStore = defineStore("review", () => {
     if (!Array.isArray(c?.items) || c.items.length === 0) return null;
     return c;
   })();
+  const _emptyQueue = { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 };
   const items = ref(cached?.items ?? []);
   const doubtfulCount = ref(cached?.doubtfulCount ?? 0);
+  const receiptsQueue = ref(cached?.receiptsQueue ?? { ..._emptyQueue });
   const hasMore = ref(cached?.hasMore ?? true);
   const page = ref(cached?.page ?? 0);
   const loading = ref(false);
@@ -58,6 +60,7 @@ export const useReviewStore = defineStore("review", () => {
     writeCache({
       items: items.value,
       doubtfulCount: doubtfulCount.value,
+      receiptsQueue: receiptsQueue.value,
       hasMore: hasMore.value,
       page: page.value,
     });
@@ -67,19 +70,6 @@ export const useReviewStore = defineStore("review", () => {
     if (isStale()) {
       reset();
       await loadNextPage();
-    }
-  }
-
-  async function fetchCounts() {
-    try {
-      const data = await getReviewCounts();
-      doubtfulCount.value = data.doubtful_count ?? 0;
-      if ((data.pending_receipts ?? 0) === 0) {
-        dirtyFlag.value = false;
-        localStorage.removeItem(DIRTY_KEY);
-      }
-    } catch {
-      // best-effort: badge stays at 0 on failure
     }
   }
 
@@ -94,13 +84,11 @@ export const useReviewStore = defineStore("review", () => {
       const incoming = (data.items ?? []).filter((i) => !existingIds.has(i.id));
       items.value = [...items.value, ...incoming];
       doubtfulCount.value = data.doubtful_count ?? doubtfulCount.value;
+      const q = data.receipts_queue ?? { ..._emptyQueue };
+      receiptsQueue.value = q;
       hasMore.value = data.has_more ?? false;
       page.value = nextPage;
-      if ((data.pending_receipts ?? 0) === 0) {
-        stampFresh();
-      } else {
-        bumpFetchTime();
-      }
+      stampFresh();
       _persistState();
     } catch (err) {
       if (navigator.onLine) {
@@ -266,6 +254,7 @@ export const useReviewStore = defineStore("review", () => {
   function reset() {
     items.value = [];
     doubtfulCount.value = 0;
+    receiptsQueue.value = { ..._emptyQueue };
     hasMore.value = true;
     page.value = 0;
     loading.value = false;
@@ -280,6 +269,7 @@ export const useReviewStore = defineStore("review", () => {
   return {
     items,
     doubtfulCount,
+    receiptsQueue,
     hasMore,
     page,
     loading,
@@ -292,7 +282,6 @@ export const useReviewStore = defineStore("review", () => {
     expensesLoading,
     markDirty,
     loadIfNeeded,
-    fetchCounts,
     loadNextPage,
     correct,
     confirmAll,

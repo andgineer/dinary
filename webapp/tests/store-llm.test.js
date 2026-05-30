@@ -39,7 +39,6 @@ const SAMPLE_STATUS = {
     },
   ],
   meta: { llm_last_provider_idx: "0" },
-  pending_receipts: 0,
 };
 
 beforeEach(() => {
@@ -155,9 +154,9 @@ describe("llm store: loadIfNeeded()", () => {
   });
 });
 
-describe("llm store: refresh() clears dirty flag when pending_receipts is 0", () => {
-  it("clears dirtyFlag and localStorage when pending_receipts === 0", async () => {
-    vi.spyOn(llmApi, "getStatus").mockResolvedValue({ ...SAMPLE_STATUS, pending_receipts: 0 });
+describe("llm store: refresh() dirty flag and polling", () => {
+  it("clears dirtyFlag when no provider is rate-limited", async () => {
+    vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
     const store = useLlmStore();
     store.markDirty();
     await store.refresh();
@@ -165,12 +164,28 @@ describe("llm store: refresh() clears dirty flag when pending_receipts is 0", ()
     expect(localStorage.getItem("dinary:llm:dirty")).toBeNull();
   });
 
-  it("keeps dirtyFlag when pending_receipts > 0", async () => {
-    vi.spyOn(llmApi, "getStatus").mockResolvedValue({ ...SAMPLE_STATUS, pending_receipts: 3 });
+  it("keeps dirtyFlag when an enabled provider is rate-limited", async () => {
+    const rateLimited = {
+      ...SAMPLE_STATUS,
+      providers: [{ ...SAMPLE_STATUS.providers[0], rate_limited_until: "2026-05-30T12:00:00Z" }],
+    };
+    vi.spyOn(llmApi, "getStatus").mockResolvedValue(rateLimited);
     const store = useLlmStore();
     store.markDirty();
     await store.refresh();
     expect(store.dirtyFlag).toBe(true);
+  });
+
+  it("does not keep dirtyFlag when rate-limited provider is disabled", async () => {
+    const disabled = {
+      ...SAMPLE_STATUS,
+      providers: [{ ...SAMPLE_STATUS.providers[0], is_enabled: false, rate_limited_until: "2026-05-30T12:00:00Z" }],
+    };
+    vi.spyOn(llmApi, "getStatus").mockResolvedValue(disabled);
+    const store = useLlmStore();
+    store.markDirty();
+    await store.refresh();
+    expect(store.dirtyFlag).toBe(false);
   });
 
   it("sets lastFetchedAt after successful refresh", async () => {

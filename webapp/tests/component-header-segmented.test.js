@@ -9,8 +9,8 @@ beforeEach(async () => {
   await allure.story("HeaderSegmented");
 });
 
-function mountSeg(tab = "add", doubtfulCount = 0) {
-  return mount(HeaderSegmented, { props: { tab, doubtfulCount } });
+function mountSeg(tab = "add", showBadge = false) {
+  return mount(HeaderSegmented, { props: { tab, showBadge } });
 }
 
 describe("HeaderSegmented — primary buttons", () => {
@@ -42,14 +42,19 @@ describe("HeaderSegmented — primary buttons", () => {
 });
 
 describe("HeaderSegmented — badge", () => {
-  it("hides badge when doubtfulCount is 0", () => {
-    const w = mountSeg("add", 0);
+  it("hides badge when showBadge is false", () => {
+    const w = mountSeg("add", false);
     expect(w.find(".seg-badge").exists()).toBe(false);
   });
 
-  it("shows badge with count when doubtfulCount > 0", () => {
-    const w = mountSeg("add", 5);
-    expect(w.find(".seg-badge").text()).toBe("5");
+  it("shows badge with ! when showBadge is true", () => {
+    const w = mountSeg("add", true);
+    expect(w.find(".seg-badge").text()).toBe("!");
+  });
+
+  it("badge has aria-label 'review attention' when shown", () => {
+    const w = mountSeg("add", true);
+    expect(w.find(".seg-badge").attributes("aria-label")).toBe("review attention");
   });
 });
 
@@ -129,7 +134,7 @@ describe("HeaderSegmented — overflow menu", () => {
 
   it("outside pointerdown closes the menu", async () => {
     w = mount(HeaderSegmented, {
-      props: { tab: "add", doubtfulCount: 0 },
+      props: { tab: "add", showBadge: false },
       attachTo: document.body,
     });
     await w.find('[data-testid="seg-more"]').trigger("click");

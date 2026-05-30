@@ -216,7 +216,7 @@ describe("review store: loadIfNeeded()", () => {
       items: [{ id: 1, is_doubtful: false }],
       doubtful_count: 0,
       has_more: false,
-      pending_receipts: 0,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
     });
     const store = useReviewStore();
     store.markDirty();
@@ -230,7 +230,7 @@ describe("review store: loadIfNeeded()", () => {
       items: [],
       doubtful_count: 0,
       has_more: false,
-      pending_receipts: 0,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
     });
     const store = useReviewStore();
     expect(store.lastFetchedAt).toBeNull();
@@ -245,7 +245,7 @@ describe("review store: loadIfNeeded()", () => {
       items: [],
       doubtful_count: 0,
       has_more: false,
-      pending_receipts: 0,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
     });
     setActivePinia(createPinia());
     const store = useReviewStore();
@@ -259,7 +259,7 @@ describe("review store: loadIfNeeded()", () => {
       items: [],
       doubtful_count: 0,
       has_more: false,
-      pending_receipts: 0,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
     });
     setActivePinia(createPinia());
     const store = useReviewStore();
@@ -269,13 +269,13 @@ describe("review store: loadIfNeeded()", () => {
   });
 });
 
-describe("review store: pending_receipts clears dirty flag", () => {
-  it("clears dirtyFlag when loadNextPage returns pending_receipts=0", async () => {
+describe("review store: receipts_queue clears dirty flag", () => {
+  it("clears dirtyFlag when loadNextPage returns empty queue and doubtful_count=0", async () => {
     vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
       items: [],
       doubtful_count: 0,
       has_more: false,
-      pending_receipts: 0,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
     });
     const store = useReviewStore();
     store.markDirty();
@@ -284,17 +284,47 @@ describe("review store: pending_receipts clears dirty flag", () => {
     expect(localStorage.getItem("dinary:review:dirty")).toBeNull();
   });
 
-  it("keeps dirtyFlag when loadNextPage returns pending_receipts > 0", async () => {
+  it("clears dirtyFlag even when queue is non-empty", async () => {
     vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
       items: [],
       doubtful_count: 0,
       has_more: false,
-      pending_receipts: 2,
+      receipts_queue: { pending: 2, in_progress: 0, sleeping: 0, poisoned: 0 },
     });
     const store = useReviewStore();
     store.markDirty();
     await store.loadNextPage();
-    expect(store.dirtyFlag).toBe(true);
+    expect(store.dirtyFlag).toBe(false);
+    expect(localStorage.getItem("dinary:review:dirty")).toBeNull();
+  });
+
+  it("clears dirtyFlag even when doubtful_count > 0", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 3,
+      has_more: false,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
+    });
+    const store = useReviewStore();
+    store.markDirty();
+    await store.loadNextPage();
+    expect(store.dirtyFlag).toBe(false);
+    expect(localStorage.getItem("dinary:review:dirty")).toBeNull();
+  });
+
+  it("populates receiptsQueue from feed response", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      receipts_queue: { pending: 1, in_progress: 2, sleeping: 3, poisoned: 0 },
+    });
+    const store = useReviewStore();
+    await store.loadNextPage();
+    expect(store.receiptsQueue.pending).toBe(1);
+    expect(store.receiptsQueue.in_progress).toBe(2);
+    expect(store.receiptsQueue.sleeping).toBe(3);
+    expect(store.receiptsQueue.poisoned).toBe(0);
   });
 
   it("sets lastFetchedAt after successful loadNextPage", async () => {
@@ -302,7 +332,7 @@ describe("review store: pending_receipts clears dirty flag", () => {
       items: [],
       doubtful_count: 0,
       has_more: false,
-      pending_receipts: 0,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
     });
     const store = useReviewStore();
     const before = Date.now();
@@ -671,7 +701,7 @@ describe("review store: deleteReceipt()", () => {
       items: [],
       doubtful_count: 0,
       has_more: false,
-      pending_receipts: 0,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
     });
     vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValueOnce({ items: [], has_more: false });
     const store = useReviewStore();
@@ -688,7 +718,7 @@ describe("review store: deleteReceipt()", () => {
       items: [{ id: 99, is_doubtful: true }],
       doubtful_count: 1,
       has_more: false,
-      pending_receipts: 0,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
     });
     vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValueOnce({ items: [], has_more: false });
     const store = useReviewStore();
@@ -705,7 +735,7 @@ describe("review store: deleteReceipt()", () => {
       items: [],
       doubtful_count: 0,
       has_more: false,
-      pending_receipts: 0,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
     });
     const expSpy = vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValueOnce({
       items: [{ id: 10, receipt_id: 9 }],

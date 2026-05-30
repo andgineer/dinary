@@ -11,13 +11,6 @@ import {
   useReceiptQueueStore,
 } from "../src/stores/receiptQueue.js";
 
-vi.mock("../src/api/review.js", async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...actual,
-    getReviewCounts: vi.fn(async () => ({ doubtful_count: 0, pending_receipts: 0 })),
-  };
-});
 
 beforeEach(async () => {
   await allure.epic("Infrastructure");

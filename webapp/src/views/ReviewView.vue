@@ -99,6 +99,22 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="review-view" data-testid="review-view">
+    <div
+      v-if="reviewStore.receiptsQueue.pending > 0 || reviewStore.receiptsQueue.in_progress > 0 || reviewStore.receiptsQueue.sleeping > 0 || reviewStore.receiptsQueue.poisoned > 0"
+      class="queue-section"
+      data-testid="queue-section"
+    >
+      <div class="queue-header">
+        <span class="queue-label">RECEIPT QUEUE</span>
+      </div>
+      <div class="queue-chips">
+        <span v-if="reviewStore.receiptsQueue.pending > 0" class="queue-chip queue-chip--ready">{{ reviewStore.receiptsQueue.pending }} ready</span>
+        <span v-if="reviewStore.receiptsQueue.in_progress > 0" class="queue-chip queue-chip--processing">{{ reviewStore.receiptsQueue.in_progress }} processing</span>
+        <span v-if="reviewStore.receiptsQueue.sleeping > 0" class="queue-chip queue-chip--sleeping">{{ reviewStore.receiptsQueue.sleeping }} sleeping</span>
+        <span v-if="reviewStore.receiptsQueue.poisoned > 0" class="queue-chip queue-chip--failed">{{ reviewStore.receiptsQueue.poisoned }} failed</span>
+      </div>
+    </div>
+
     <div class="review-header">
       <div
         v-if="reviewStore.doubtfulCount > 0"
@@ -271,6 +287,44 @@ onBeforeUnmount(() => {
 .scroll-sentinel {
   height: 1px;
 }
+
+.queue-section {
+  margin-bottom: 0.5rem;
+}
+
+.queue-header {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0.25rem 0.4rem;
+}
+
+.queue-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.queue-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0 0.25rem 0.75rem;
+}
+
+.queue-chip {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+
+.queue-chip--ready { color: var(--accent); }
+.queue-chip--processing { color: var(--text); }
+.queue-chip--sleeping { color: var(--muted); }
+.queue-chip--failed { color: var(--error); }
 
 .confirm-all-wrap {
   padding: 0.75rem 0;

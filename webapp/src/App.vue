@@ -36,6 +36,15 @@ const queueModalOpen = ref(false);
 
 const queueCount = computed(() => queue.items.length + receiptQueue.items.length);
 const headerVersionLabel = computed(() => `v${APP_VERSION}`);
+const showReviewBadge = computed(() => {
+  const q = reviewStore.receiptsQueue;
+  return reviewStore.dirtyFlag
+    || reviewStore.doubtfulCount > 0
+    || q.pending > 0
+    || q.in_progress > 0
+    || q.sleeping > 0
+    || q.poisoned > 0;
+});
 
 watch(isOnline, (online) => {
   if (online) {
@@ -47,7 +56,6 @@ watch(isOnline, (online) => {
 async function init() {
   await queue.refresh();
   await receiptQueue.refresh();
-  void reviewStore.fetchCounts();
   if (isOnline.value) {
     if (queue.items.length > 0) void flushQueue();
     if (receiptQueue.items.length > 0) void flushReceiptQueue();
@@ -103,7 +111,7 @@ onBeforeUnmount(() => {
       </div>
       <HeaderSegmented
         v-model:tab="tab"
-        :doubtful-count="reviewStore.doubtfulCount"
+        :show-badge="showReviewBadge"
       />
     </div>
     <div v-if="!isOnline" class="offline-notice" role="status">{{ offlineMessage }}</div>

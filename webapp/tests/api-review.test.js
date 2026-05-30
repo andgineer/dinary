@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { getReviewFeed, getReviewCounts, confirmAllRules } from "../src/api/review.js";
+import { getReviewFeed, confirmAllRules } from "../src/api/review.js";
 
 beforeEach(async () => {
   await allure.epic("Review & Rules");
@@ -38,13 +38,6 @@ describe("review API URLs", () => {
     globalThis.fetch = vi.fn(async () => okJson({ items: [] }));
     await getReviewFeed();
     expect(globalThis.fetch.mock.calls[0][0]).toBe("/api/rules/feed?page=1&page_size=20&doubtful_only=true");
-  });
-
-  it("getReviewCounts GETs /api/rules/counts", async () => {
-    globalThis.fetch = vi.fn(async () => okJson({ doubtful_rules: 3 }));
-    await getReviewCounts();
-    expect(globalThis.fetch.mock.calls[0][0]).toBe("/api/rules/counts");
-    expect(globalThis.fetch.mock.calls[0][1].method).toBe("GET");
   });
 
   it("confirmAllRules POSTs to /api/rules/confirm-all with rule_ids", async () => {

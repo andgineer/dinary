@@ -69,8 +69,12 @@ class TestReviewFeed:
         data = resp.json()
         assert data["items"] == []
         assert data["doubtful_count"] == 0
-        assert "pending_receipts" in data
-        assert data["pending_receipts"] == 0
+        assert "receipts_queue" in data
+        q = data["receipts_queue"]
+        assert q["pending"] == 0
+        assert q["in_progress"] == 0
+        assert q["sleeping"] == 0
+        assert q["poisoned"] == 0
 
     def test_doubtful_item_in_block1(self, client, db):  # noqa: ARG002
         conn = storage.get_connection()
@@ -284,72 +288,6 @@ class TestReviewFeedCertainRules:
         assert len(doubtful) == 1
         assert doubtful[0]["total"] == 150.0
         assert doubtful[0]["confidence_level"] == 3
-
-
-@allure.epic("Receipts")
-@allure.feature("API")
-@allure.story("Receipt review")
-class TestReviewCounts:
-    def test_counts_empty(self, client, db):  # noqa: ARG002
-        resp = client.get("/api/rules/counts")
-        assert resp.status_code == 200
-        assert resp.json()["doubtful_count"] == 0
-
-    def test_counts_with_doubtful(self, client, db):  # noqa: ARG002
-        conn = storage.get_connection()
-        try:
-            _seed_review_data(conn)
-        finally:
-            conn.close()
-
-        resp = client.get("/api/rules/counts")
-        assert resp.json()["doubtful_count"] == 1
-
-    def test_counts_includes_pending_receipts_zero_when_empty(self, client, db):  # noqa: ARG002
-        resp = client.get("/api/rules/counts")
-        assert resp.status_code == 200
-        assert "pending_receipts" in resp.json()
-        assert resp.json()["pending_receipts"] == 0
-
-    def test_counts_pending_receipts_counts_pending_and_in_progress(
-        self,
-        client,
-        db,  # noqa: ARG002
-    ):
-        conn = storage.get_connection()
-        try:
-            conn.execute(
-                "INSERT INTO receipts (id, client_receipt_id, url) VALUES (10, 'rc1', 'https://x')"
-            )
-            conn.execute(
-                "INSERT INTO receipt_classification_jobs (receipt_id, status)"
-                " VALUES (10, 'pending')"
-            )
-        finally:
-            conn.close()
-
-        resp = client.get("/api/rules/counts")
-        assert resp.json()["pending_receipts"] == 1
-
-    def test_orphaned_rule_not_counted(self, client, db):  # noqa: ARG002
-        """A rule with no matching receipt_items must not inflate the badge count."""
-        conn = storage.get_connection()
-        try:
-            # Insert a rule with conf < 4 but NO receipt_items referencing it
-            conn.execute("INSERT OR IGNORE INTO shop_chains (id, name) VALUES (1, 'Lidl')")
-            conn.execute(
-                "INSERT INTO stores (id, name, chain_id, pib) VALUES (1, 'Lidl', 1, '100')"
-            )
-            conn.execute(
-                "INSERT INTO classification_rules"
-                " (chain_id, item_name_normalized, category_id, confidence_level, source)"
-                " VALUES (1, 'orphan-item', 1, 2, 'llm')"
-            )
-        finally:
-            conn.close()
-
-        resp = client.get("/api/rules/counts")
-        assert resp.json()["doubtful_count"] == 0
 
 
 @allure.epic("Receipts")

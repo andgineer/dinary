@@ -9,7 +9,7 @@ const RARE_TABS = [
 
 const props = defineProps({
   tab: { type: String, default: "add" },
-  doubtfulCount: { type: Number, default: 0 },
+  showBadge: { type: Boolean, default: false },
 });
 const emit = defineEmits(["update:tab"]);
 
@@ -74,10 +74,10 @@ onBeforeUnmount(() => {
     >
       <ListChecks :size="22" aria-hidden="true" />
       <span
-        v-if="doubtfulCount > 0"
+        v-if="showBadge"
         class="seg-badge"
-        :aria-label="`${doubtfulCount} items need review`"
-      >{{ doubtfulCount }}</span>
+        aria-label="review attention"
+      >!</span>
     </button>
 
     <div ref="overflowRef" class="seg-overflow">

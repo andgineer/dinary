@@ -16,7 +16,7 @@ vi.mock("../src/api/review.js", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    getReviewFeed: vi.fn(async () => ({ items: [], doubtful_count: 0, has_more: false, pending_receipts: 0 })),
+    getReviewFeed: vi.fn(async () => ({ items: [], doubtful_count: 0, has_more: false, receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 } })),
     getExpensesFeed: vi.fn(async () => ({ items: [], has_more: false, total: 0 })),
   };
 });
@@ -321,6 +321,34 @@ describe("ReviewView — on-mount calls", () => {
     const wrapper = mountView(pinia);
     await flushPromises();
     expect(wrapper.text()).not.toContain("RECENT EXPENSES");
+    wrapper.unmount();
+  });
+});
+
+describe("ReviewView — receipt queue chips", () => {
+  it("shows queue section when any bucket > 0", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(async () => {
+      review.receiptsQueue = { pending: 2, in_progress: 0, sleeping: 0, poisoned: 0 };
+    });
+    const wrapper = mountView(pinia);
+    await flushPromises();
+    expect(wrapper.find('[data-testid="queue-section"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("hides queue section when all buckets are zero", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(async () => {
+      review.receiptsQueue = { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 };
+    });
+    const wrapper = mountView(pinia);
+    await flushPromises();
+    expect(wrapper.find('[data-testid="queue-section"]').exists()).toBe(false);
     wrapper.unmount();
   });
 });

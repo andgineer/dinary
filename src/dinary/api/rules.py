@@ -7,7 +7,6 @@ from pydantic import BaseModel
 
 from dinary.api.controllers.rules import (
     approve_rule_category,
-    build_rules_counts,
     build_rules_feed,
     confirm_rules_bulk,
 )
@@ -24,11 +23,6 @@ def rules_feed(
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> dict:
     return build_rules_feed(con, page, page_size, doubtful_only=doubtful_only)
-
-
-@router.get("/api/rules/counts")
-def rules_counts(con: sqlite3.Connection = Depends(get_db)) -> dict:  # noqa: B008
-    return build_rules_counts(con)
 
 
 class ConfirmAllRequest(BaseModel):
