@@ -23,9 +23,9 @@
 | src/dinary/api/controllers/expense\_corrections.py             |       61 |        0 |    100% |           |
 | src/dinary/api/controllers/expenses.py                         |      176 |       16 |     91% |155, 245-246, 281-298, 345, 446-448 |
 | src/dinary/api/controllers/income.py                           |       62 |        2 |     97% |   141-142 |
-| src/dinary/api/controllers/llm.py                              |       77 |        8 |     90% |91-92, 94-95, 100-101, 103-104 |
+| src/dinary/api/controllers/llm.py                              |       75 |        8 |     89% |90-91, 93-94, 99-100, 102-103 |
 | src/dinary/api/controllers/qr\_parser.py                       |       23 |        0 |    100% |           |
-| src/dinary/api/controllers/rules.py                            |       56 |        2 |     96% |     40-41 |
+| src/dinary/api/controllers/rules.py                            |       54 |        2 |     96% |     40-41 |
 | src/dinary/api/currencies.py                                   |       34 |        0 |    100% |           |
 | src/dinary/api/expense\_corrections.py                         |        8 |        0 |    100% |           |
 | src/dinary/api/expenses.py                                     |       23 |        0 |    100% |           |
@@ -33,7 +33,7 @@
 | src/dinary/api/llm.py                                          |       20 |        0 |    100% |           |
 | src/dinary/api/qr.py                                           |       17 |        6 |     65% |     26-31 |
 | src/dinary/api/receipts.py                                     |       50 |        5 |     90% |     84-89 |
-| src/dinary/api/rules.py                                        |       21 |        0 |    100% |           |
+| src/dinary/api/rules.py                                        |       18 |        0 |    100% |           |
 | src/dinary/background/classification/item\_normalizer.py       |       13 |        0 |    100% |           |
 | src/dinary/background/classification/persist.py                |       92 |        1 |     99% |       155 |
 | src/dinary/background/classification/receipt\_classifier.py    |       51 |        0 |    100% |           |
@@ -58,7 +58,7 @@
 | src/dinary/main.py                                             |       87 |        8 |     91% |43-45, 118, 124, 130, 140, 150 |
 | src/dinary/sheets/sheet\_mapping.py                            |      240 |       52 |     78% |239, 311-313, 340-341, 348-354, 401, 404-416, 430-431, 441-459, 536-543, 571-617, 645, 656-661, 666-667 |
 | src/dinary/sheets/sheets.py                                    |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
-| **TOTAL**                                                      | **4025** |  **493** | **88%** |           |
+| **TOTAL**                                                      | **4018** |  **493** | **88%** |           |
 
 
 ## Setup coverage badge
