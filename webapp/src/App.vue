@@ -50,6 +50,7 @@ watch(isOnline, (online) => {
   if (online) {
     void flushQueue();
     void flushReceiptQueue();
+    if (reviewStore.dirtyFlag) void reviewStore.loadIfNeeded();
   }
 });
 
@@ -59,7 +60,13 @@ async function init() {
   if (isOnline.value) {
     if (queue.items.length > 0) void flushQueue();
     if (receiptQueue.items.length > 0) void flushReceiptQueue();
+    if (reviewStore.dirtyFlag) void reviewStore.loadIfNeeded();
   }
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState !== "visible" || !isOnline.value) return;
+  if (reviewStore.dirtyFlag) void reviewStore.loadIfNeeded();
 }
 
 let _retryTimerId = null;
@@ -82,10 +89,12 @@ function stopRetryTimer() {
 onMounted(() => {
   void init();
   startRetryTimer();
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 });
 
 onBeforeUnmount(() => {
   stopRetryTimer();
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
 });
 </script>
 

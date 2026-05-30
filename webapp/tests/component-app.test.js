@@ -10,6 +10,7 @@ import {
   _resetForTest as resetReceiptQueueHandle,
   useReceiptQueueStore,
 } from "../src/stores/receiptQueue.js";
+import { useReviewStore } from "../src/stores/review.js";
 
 
 beforeEach(async () => {
@@ -260,5 +261,177 @@ describe("App flush triggers — receipt queue", () => {
         Object.defineProperty(navigator, "onLine", { configurable: true, get: () => true });
       }
     }
+  });
+});
+
+describe("App review probe — dirty review cache", () => {
+  let wrapper = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    if (wrapper) {
+      wrapper.unmount();
+      wrapper = null;
+    }
+  });
+
+  function mountWithSpy(pinaInstance, online) {
+    if (online !== undefined) {
+      Object.defineProperty(navigator, "onLine", { configurable: true, get: () => online });
+    }
+    const reviewStore = useReviewStore(pinaInstance);
+    const loadSpy = vi.spyOn(reviewStore, "loadIfNeeded").mockResolvedValue();
+    wrapper = mount(App, { global: { plugins: [pinaInstance] } });
+    return loadSpy;
+  }
+
+  function restoreOnline() {
+    const origDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator), "onLine");
+    if (origDesc) {
+      Object.defineProperty(Object.getPrototypeOf(navigator), "onLine", origDesc);
+    } else {
+      Object.defineProperty(navigator, "onLine", { configurable: true, get: () => false });
+    }
+  }
+
+  it("init(): calls loadIfNeeded when online and dirty", async () => {
+    localStorage.setItem("dinary:review:dirty", "1");
+    const pinia = createPinia();
+    const loadSpy = mountWithSpy(pinia, true);
+    try {
+      await drainAsync();
+      expect(loadSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      restoreOnline();
+    }
+  });
+
+  it("init(): skips loadIfNeeded when dirty but offline", async () => {
+    localStorage.setItem("dinary:review:dirty", "1");
+    const pinia = createPinia();
+    const loadSpy = mountWithSpy(pinia, false);
+    await drainAsync();
+    expect(loadSpy).not.toHaveBeenCalled();
+  });
+
+  it("init(): skips loadIfNeeded when online but not dirty", async () => {
+    const pinia = createPinia();
+    const loadSpy = mountWithSpy(pinia, true);
+    try {
+      await drainAsync();
+      expect(loadSpy).not.toHaveBeenCalled();
+    } finally {
+      restoreOnline();
+    }
+  });
+
+  it("visibilitychange: calls loadIfNeeded when visible, online, and dirty", async () => {
+    localStorage.setItem("dinary:review:dirty", "1");
+    const origVisDesc = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    const pinia = createPinia();
+    const loadSpy = mountWithSpy(pinia, true);
+    try {
+      await drainAsync();
+      loadSpy.mockClear();
+
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await drainAsync();
+
+      expect(loadSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      restoreOnline();
+      if (origVisDesc) {
+        Object.defineProperty(document, "visibilityState", origVisDesc);
+      } else {
+        delete document.visibilityState;
+      }
+    }
+  });
+
+  it("visibilitychange: skips when document is hidden", async () => {
+    localStorage.setItem("dinary:review:dirty", "1");
+    const origVisDesc = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    const pinia = createPinia();
+    const loadSpy = mountWithSpy(pinia, true);
+    try {
+      await drainAsync();
+      loadSpy.mockClear();
+
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await drainAsync();
+
+      expect(loadSpy).not.toHaveBeenCalled();
+    } finally {
+      restoreOnline();
+      if (origVisDesc) {
+        Object.defineProperty(document, "visibilityState", origVisDesc);
+      } else {
+        delete document.visibilityState;
+      }
+    }
+  });
+
+  it("visibilitychange: skips when offline", async () => {
+    localStorage.setItem("dinary:review:dirty", "1");
+    const origVisDesc = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    const pinia = createPinia();
+    const loadSpy = mountWithSpy(pinia, false);
+    try {
+      await drainAsync();
+      loadSpy.mockClear();
+
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await drainAsync();
+
+      expect(loadSpy).not.toHaveBeenCalled();
+    } finally {
+      if (origVisDesc) {
+        Object.defineProperty(document, "visibilityState", origVisDesc);
+      } else {
+        delete document.visibilityState;
+      }
+    }
+  });
+
+  it("visibilitychange: skips when not dirty", async () => {
+    const origVisDesc = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    const pinia = createPinia();
+    const loadSpy = mountWithSpy(pinia, true);
+    try {
+      await drainAsync();
+      loadSpy.mockClear();
+
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await drainAsync();
+
+      expect(loadSpy).not.toHaveBeenCalled();
+    } finally {
+      restoreOnline();
+      if (origVisDesc) {
+        Object.defineProperty(document, "visibilityState", origVisDesc);
+      } else {
+        delete document.visibilityState;
+      }
+    }
+  });
+
+  it("online watcher: calls loadIfNeeded when coming online with dirty flag", async () => {
+    localStorage.setItem("dinary:review:dirty", "1");
+    const pinia = createPinia();
+    const loadSpy = mountWithSpy(pinia, false);
+    await drainAsync();
+    loadSpy.mockClear();
+
+    window.dispatchEvent(new Event("online"));
+    await drainAsync();
+
+    expect(loadSpy).toHaveBeenCalledTimes(1);
   });
 });
