@@ -148,6 +148,7 @@ def llm_status(con: sqlite3.Connection) -> dict[str, Any]:
                  ORDER BY id DESC LIMIT 1) AS last_error_detail
           FROM llmbroker_providers p
           LEFT JOIN llmbroker_call_log l ON l.provider_label = p.label
+               AND date(l.called_at) = date('now')
          GROUP BY p.id
          ORDER BY p.id
         """,

@@ -44,7 +44,8 @@ def _write_toml(path: Path, providers: list[dict], extras: dict | None = None) -
     lines = []
     if extras:
         for k, v in extras.items():
-            lines.append(f'{k} = "{v}"')
+            escaped = str(v).replace("\\", "/")
+            lines.append(f'{k} = "{escaped}"')
     for p in providers:
         lines.append("\n[[providers]]")
         for k, v in p.items():

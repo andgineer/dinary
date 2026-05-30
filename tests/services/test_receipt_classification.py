@@ -18,8 +18,18 @@ from dinary.background.classification.receipt_classifier import (
     ClassificationResult,
     ClassifyOutcome,
 )
-from dinary.background.classification.persist import RECEIPT_CURRENCY, RateMissingError
-from dinary.background.classification.task import _classify_and_persist
+from dinary.background.classification.item_normalizer import normalize_item_name
+from dinary.background.classification.persist import (
+    RECEIPT_CURRENCY,
+    RateMissingError,
+)
+from dinary.background.classification.task import (
+    _classify_and_persist,
+    _load_top_fallback_categories,
+    _run_llm_pass,
+    ClassificationExhaustedError,
+    InsufficientCategoriesError,
+)
 from dinary.config import settings
 from dinary.db import db_migrations, storage
 from dinary.db.receipts import (
@@ -203,7 +213,7 @@ class TestClassifyAndPersist:
         # → ClassificationExhaustedError → fallback
         with patch(
             "dinary.background.classification.task.classify_receipt",
-            side_effect=_exhausted_classify_side_effect(max_calls=3),
+            side_effect=_exhausted_classify_side_effect(),
         ):
             asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
@@ -423,6 +433,67 @@ class TestClassifyAndPersist:
         assert exp[1] == 120.0
         assert exp[2] == RECEIPT_CURRENCY
 
+    def test_fallback_preserves_item_name_normalized(self, conn):
+        """Fallback ClassificationResult carries the original item name, not the category label."""
+        _seed_catalog(conn)
+        receipt_id = _seed_receipt(conn)  # name_raw = "hleb"
+        job = claim_next_job(conn)
+        items = get_receipt_items(conn, receipt_id)
+        conn.close()
+
+        captured: list = []
+
+        def _cap_persist(job, items, classifications, rule_hits, llm_results, *args, **kwargs):
+            captured.extend(llm_results.values())
+
+        with (
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                side_effect=_exhausted_classify_side_effect(),
+            ),
+            patch(
+                "dinary.background.classification.task.persist_classification_results",
+                _cap_persist,
+            ),
+        ):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
+
+        assert len(captured) == 1
+        assert captured[0].item_name_normalized == normalize_item_name("hleb")
+
+    def test_fallback_alternative_category_ids_is_top_cats_tail(self, conn):
+        """Fallback alternative_category_ids equals top_cats[1:]; primary not repeated."""
+        _seed_catalog(conn)
+        receipt_id = _seed_receipt(conn)
+        job = claim_next_job(conn)
+        items = get_receipt_items(conn, receipt_id)
+        conn.close()
+
+        captured: list = []
+
+        def _cap_persist(job, items, classifications, rule_hits, llm_results, *args, **kwargs):
+            captured.extend(llm_results.values())
+
+        with (
+            patch(
+                "dinary.background.classification.task.classify_receipt",
+                side_effect=_exhausted_classify_side_effect(),
+            ),
+            patch(
+                "dinary.background.classification.task._load_top_fallback_categories",
+                return_value=[3, 1, 2, 4, 5],
+            ),
+            patch(
+                "dinary.background.classification.task.persist_classification_results",
+                _cap_persist,
+            ),
+        ):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
+
+        assert len(captured) == 1
+        assert captured[0].category_id == 3
+        assert captured[0].alternative_category_ids == [1, 2, 4, 5]
+
     def test_rate_missing_raises_and_no_expense(self, conn, monkeypatch):
         """When no rate is available RateMissingError is raised and no expense is stored."""
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
@@ -461,12 +532,10 @@ class TestClassifyAndPersist:
         assert exp_count == 0
 
 
-def _exhausted_classify_side_effect(max_calls: int):
+def _exhausted_classify_side_effect():
     """Return a side_effect that always returns execution_failed=True, simulating exhaustion."""
-    call_count = {"n": 0}
 
     async def _side_effect(*_args, **_kwargs):
-        call_count["n"] += 1
         storage_mock = MagicMock()
         storage_mock.on_quality_feedback = AsyncMock()
         execution = Execution(output="bad json", provider_label="P1", storage=storage_mock)
@@ -478,3 +547,179 @@ def _exhausted_classify_side_effect(max_calls: int):
         )
 
     return _side_effect
+
+
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
+class TestLoadTopFallbackCategories:
+    def test_raises_when_fewer_than_5_active_categories(self, conn):
+        conn.execute(
+            "INSERT INTO category_groups (id, name, sort_order, is_active) VALUES (1, 'G', 1, 1)"
+        )
+        conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'a', 1, 1)")
+        conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (2, 'b', 1, 1)")
+        conn.close()
+
+        with pytest.raises(InsufficientCategoriesError):
+            _load_top_fallback_categories(6)
+
+    def test_pads_with_active_categories_when_no_history(self, conn):
+        conn.execute(
+            "INSERT INTO category_groups (id, name, sort_order, is_active) VALUES (1, 'G', 1, 1)"
+        )
+        for i in range(1, 7):
+            conn.execute(
+                f"INSERT INTO categories (id, name, group_id, is_active) VALUES ({i}, 'c{i}', 1, 1)"
+            )
+        conn.close()
+
+        result = _load_top_fallback_categories(6)
+
+        assert result == [1, 2, 3, 4, 5, 6]
+
+    def test_returns_top_history_then_pads(self, conn):
+        conn.execute(
+            "INSERT INTO category_groups (id, name, sort_order, is_active) VALUES (1, 'G', 1, 1)"
+        )
+        for i in range(1, 8):
+            conn.execute(
+                f"INSERT INTO categories (id, name, group_id, is_active) VALUES ({i}, 'c{i}', 1, 1)"
+            )
+        conn.execute("INSERT INTO receipts (client_receipt_id, url) VALUES ('r1', 'https://x')")
+        rid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        for j in range(3):
+            conn.execute(
+                "INSERT INTO expenses (client_expense_id, datetime, amount, amount_original,"
+                " currency_original, category_id, receipt_id)"
+                " VALUES (?, datetime('now'), 100, 100, 'RSD', 5, ?)",
+                [f"e5-{j}", rid],
+            )
+        conn.execute(
+            "INSERT INTO expenses (client_expense_id, datetime, amount, amount_original,"
+            " currency_original, category_id, receipt_id)"
+            " VALUES ('e6', datetime('now'), 100, 100, 'RSD', 6, ?)",
+            [rid],
+        )
+        conn.close()
+
+        result = _load_top_fallback_categories(4)
+
+        assert result[0] == 5
+        assert result[1] == 6
+        assert len(result) == 4
+        assert 5 not in result[2:]
+        assert 6 not in result[2:]
+
+    def test_padding_excludes_categories_already_in_history(self, conn):
+        conn.execute(
+            "INSERT INTO category_groups (id, name, sort_order, is_active) VALUES (1, 'G', 1, 1)"
+        )
+        for i in range(1, 7):
+            conn.execute(
+                f"INSERT INTO categories (id, name, group_id, is_active) VALUES ({i}, 'c{i}', 1, 1)"
+            )
+        conn.execute("INSERT INTO receipts (client_receipt_id, url) VALUES ('r1', 'https://x')")
+        rid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        for cat_id in [3, 4, 5]:
+            conn.execute(
+                "INSERT INTO expenses (client_expense_id, datetime, amount, amount_original,"
+                " currency_original, category_id, receipt_id)"
+                " VALUES (?, datetime('now'), 100, 100, 'RSD', ?, ?)",
+                [f"e{cat_id}", cat_id, rid],
+            )
+        conn.close()
+
+        result = _load_top_fallback_categories(6)
+
+        assert len(result) == 6
+        assert len(set(result)) == 6, "no duplicates"
+        for cat_id in [1, 2, 3, 4, 5, 6]:
+            assert cat_id in result
+
+
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
+class TestRunLLMPass:
+    def test_single_provider_one_attempt_on_success(self):
+        """provider_count=1 → max_attempts=1; success on first attempt."""
+        from unittest.mock import MagicMock
+
+        broker = MagicMock(spec=LLMBroker)
+        broker.provider_count = 1
+        job = _make_job(receipt_id=1)
+        expected = ClassificationResult(
+            item_name_normalized="hleb", category_id=1, confidence_level=3
+        )
+        outcome = ClassifyOutcome(
+            results=[expected],
+            broker_unavailable=False,
+            execution_failed=False,
+            execution=_make_execution(),
+        )
+        with patch(
+            "dinary.background.classification.task.classify_receipt",
+            return_value=outcome,
+        ) as mock_classify:
+            result = asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
+        assert mock_classify.call_count == 1
+        assert result[1] == expected
+
+    def test_three_providers_all_fail_raises_exhausted_after_3_calls(self):
+        """provider_count=3 → max_attempts=3; all fail → ClassificationExhaustedError after 3 calls."""
+        broker = MagicMock(spec=LLMBroker)
+        broker.provider_count = 3
+        job = _make_job(receipt_id=1)
+        with patch(
+            "dinary.background.classification.task.classify_receipt",
+            side_effect=_exhausted_classify_side_effect(),
+        ) as mock_classify:
+            with pytest.raises(ClassificationExhaustedError):
+                asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
+        assert mock_classify.call_count == 3
+
+    def test_provider_count_above_3_caps_attempts_at_3(self):
+        """provider_count=5 → max_attempts capped at 3, not 5."""
+        broker = MagicMock(spec=LLMBroker)
+        broker.provider_count = 5
+        job = _make_job(receipt_id=1)
+        with patch(
+            "dinary.background.classification.task.classify_receipt",
+            side_effect=_exhausted_classify_side_effect(),
+        ) as mock_classify:
+            with pytest.raises(ClassificationExhaustedError):
+                asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
+        assert mock_classify.call_count == 3
+
+    def test_second_attempt_succeeds_after_first_fails(self):
+        """provider_count=2 → max_attempts=2; first fails, second succeeds."""
+        broker = MagicMock(spec=LLMBroker)
+        broker.provider_count = 2
+        job = _make_job(receipt_id=1)
+        expected = ClassificationResult(
+            item_name_normalized="hleb", category_id=1, confidence_level=3
+        )
+        call_count = {"n": 0}
+
+        async def _side_effect(*_args, **_kwargs):
+            call_count["n"] += 1
+            storage_mock = MagicMock()
+            storage_mock.on_quality_feedback = AsyncMock()
+            execution = Execution(output="ok", provider_label="P1", storage=storage_mock)
+            if call_count["n"] == 1:
+                return ClassifyOutcome(
+                    results=[], broker_unavailable=False, execution_failed=True, execution=execution
+                )
+            return ClassifyOutcome(
+                results=[expected],
+                broker_unavailable=False,
+                execution_failed=False,
+                execution=execution,
+            )
+
+        with patch(
+            "dinary.background.classification.task.classify_receipt",
+            side_effect=_side_effect,
+        ) as mock_classify:
+            result = asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
+        assert mock_classify.call_count == 2
+        assert result[1] == expected

@@ -238,7 +238,7 @@ class TomlLLMBrokerStorage:
         entry["execution_fail_count"] = entry.get("execution_fail_count", 0) + 1
         tmp = stats_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data), encoding="utf-8")
-        tmp.rename(stats_path)
+        tmp.replace(stats_path)
 
 
 def _label_from_base_url(base_url: str) -> str:
