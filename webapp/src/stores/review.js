@@ -7,6 +7,7 @@ import { deleteReceipt as apiDeleteReceipt } from "../api/receipts.js";
 import { useStaleCache } from "../composables/useStaleCache.js";
 import { useToastStore } from "./toast.js";
 import { useCatalogStore } from "./catalog.js";
+import { useLlmStore } from "./llm.js";
 
 const CACHE_KEY = "dinary:review:v1";
 const DIRTY_KEY = "dinary:review:dirty";
@@ -92,6 +93,7 @@ export const useReviewStore = defineStore("review", () => {
       _persistState();
       if (q.pending > 0 || q.in_progress > 0 || q.sleeping > 0 || q.poisoned > 0) {
         markDirty();
+        useLlmStore().markDirty();
       }
     } catch (err) {
       if (navigator.onLine) {

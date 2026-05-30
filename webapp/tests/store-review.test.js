@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useReviewStore } from "../src/stores/review.js";
+import { useLlmStore } from "../src/stores/llm.js";
 import * as expenseCorrections from "../src/api/expenseCorrections.js";
 import * as reviewApi from "../src/api/review.js";
 import * as expensesApi from "../src/api/expenses.js";
 import * as receiptsApi from "../src/api/receipts.js";
+import * as llmApi from "../src/api/adminLlm.js";
 import { useCatalogStore } from "../src/stores/catalog.js";
 import { useToastStore } from "../src/stores/toast.js";
 
@@ -319,6 +321,35 @@ describe("review store: receipts_queue clears dirty flag", () => {
     const store = useReviewStore();
     await store.loadNextPage();
     expect(store.dirtyFlag).toBe(true);
+  });
+
+  it("marks llm store dirty when receipt queue is non-empty", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      receipts_queue: { pending: 1, in_progress: 0, sleeping: 0, poisoned: 0 },
+    });
+    vi.spyOn(llmApi, "getStatus").mockResolvedValue({ providers: [], health: null });
+    const store = useReviewStore();
+    const llm = useLlmStore();
+    await store.loadNextPage();
+    expect(llm.dirtyFlag).toBe(true);
+    expect(localStorage.getItem("dinary:llm:dirty")).toBe("1");
+  });
+
+  it("does not mark llm store dirty when receipt queue is empty", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
+    });
+    vi.spyOn(llmApi, "getStatus").mockResolvedValue({ providers: [], health: null });
+    const store = useReviewStore();
+    const llm = useLlmStore();
+    await store.loadNextPage();
+    expect(llm.dirtyFlag).toBe(false);
   });
 
   it("clears dirtyFlag even when doubtful_count > 0", async () => {

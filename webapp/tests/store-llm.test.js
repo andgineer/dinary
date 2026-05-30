@@ -164,7 +164,7 @@ describe("llm store: refresh() dirty flag and polling", () => {
     expect(localStorage.getItem("dinary:llm:dirty")).toBeNull();
   });
 
-  it("keeps dirtyFlag when an enabled provider is rate-limited", async () => {
+  it("clears dirtyFlag even when an enabled provider is rate-limited", async () => {
     const rateLimited = {
       ...SAMPLE_STATUS,
       providers: [{ ...SAMPLE_STATUS.providers[0], rate_limited_until: "2026-05-30T12:00:00Z" }],
@@ -173,19 +173,8 @@ describe("llm store: refresh() dirty flag and polling", () => {
     const store = useLlmStore();
     store.markDirty();
     await store.refresh();
-    expect(store.dirtyFlag).toBe(true);
-  });
-
-  it("does not keep dirtyFlag when rate-limited provider is disabled", async () => {
-    const disabled = {
-      ...SAMPLE_STATUS,
-      providers: [{ ...SAMPLE_STATUS.providers[0], is_enabled: false, rate_limited_until: "2026-05-30T12:00:00Z" }],
-    };
-    vi.spyOn(llmApi, "getStatus").mockResolvedValue(disabled);
-    const store = useLlmStore();
-    store.markDirty();
-    await store.refresh();
     expect(store.dirtyFlag).toBe(false);
+    expect(localStorage.getItem("dinary:llm:dirty")).toBeNull();
   });
 
   it("sets lastFetchedAt after successful refresh", async () => {

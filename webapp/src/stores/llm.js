@@ -9,7 +9,7 @@ const DIRTY_KEY = "dinary:llm:dirty";
 const FETCHED_KEY = "dinary:llm:fetchedAt";
 
 export const useLlmStore = defineStore("llm", () => {
-  const { dirtyFlag, lastFetchedAt, markDirty, stampFresh, bumpFetchTime, isStale, readCache, writeCache } = useStaleCache({
+  const { dirtyFlag, lastFetchedAt, markDirty, stampFresh, isStale, readCache, writeCache } = useStaleCache({
     dirtyKey: DIRTY_KEY,
     fetchedKey: FETCHED_KEY,
     dataKey: CACHE_KEY,
@@ -30,12 +30,7 @@ export const useLlmStore = defineStore("llm", () => {
       providers.value = status.providers ?? [];
       health.value = status.health ?? null;
       writeCache({ providers: providers.value, health: health.value });
-      const hasActivity = providers.value.some(p => p.is_enabled && p.rate_limited_until !== null);
-      if (hasActivity) {
-        bumpFetchTime();
-      } else {
-        stampFresh();
-      }
+      stampFresh();
     } catch (err) {
       if (navigator.onLine) {
         useToastStore().show(err?.message || "Failed to load LLM providers", "error");
