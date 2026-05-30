@@ -17,16 +17,21 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from unittest.mock import AsyncMock, MagicMock
+
 from conftest import NullStorage
 from dinary.adapters import rate_helpers
-from dinary.adapters.llmbroker import LLMBroker
+from dinary.adapters.llmbroker import Execution, LLMBroker
 from dinary.adapters.serbian_receipt_parser import (
     ParsedReceipt,
     ParserParseError,
     ParserRequestError,
     ReceiptItem,
 )
-from dinary.background.classification.receipt_classifier import ClassificationResult
+from dinary.background.classification.receipt_classifier import (
+    ClassificationResult,
+    ClassifyOutcome,
+)
 from dinary.background.classification.task import _drain_all_pending
 from dinary.config import settings
 from dinary.db import db_migrations, storage
@@ -66,6 +71,26 @@ def _result(name: str, cat: int | None, conf: int) -> ClassificationResult:
     return ClassificationResult(item_name_normalized=name, category_id=cat, confidence_level=conf)
 
 
+def _make_classify_outcome(
+    results: list[ClassificationResult],
+    broker_unavailable: bool = False,
+) -> ClassifyOutcome:
+    storage_mock = MagicMock()
+    storage_mock.on_quality_feedback = AsyncMock()
+    execution = Execution(
+        output=None if broker_unavailable else "ok",
+        provider_label=None if broker_unavailable else "P1",
+        storage=storage_mock,
+    )
+    execution_failed = not broker_unavailable and any(r.category_id is None for r in results)
+    return ClassifyOutcome(
+        results=results,
+        broker_unavailable=broker_unavailable,
+        execution_failed=execution_failed,
+        execution=execution,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
@@ -87,10 +112,11 @@ def pipeline(db, monkeypatch):  # noqa: ARG001
                     "INSERT INTO category_groups (id, name, sort_order, is_active)"
                     " VALUES (1, 'Еда', 1, 1)"
                 )
-                conn.execute(
-                    "INSERT INTO categories (id, name, group_id, is_active)"
-                    " VALUES (1, 'продукты', 1, 1)"
-                )
+                for i in range(1, 7):
+                    conn.execute(
+                        "INSERT INTO categories (id, name, group_id, is_active)"
+                        f" VALUES ({i}, 'cat{i}', 1, 1)"
+                    )
             finally:
                 conn.close()
             yield client
@@ -149,7 +175,7 @@ class TestReceiptPipelineNeverLost:
             ),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=([_result("hleb", 1, 3)], False),
+                return_value=_make_classify_outcome([_result("hleb", 1, 3)]),
             ),
         ):
             asyncio.run(_drain_all_pending(_broker()))
@@ -159,12 +185,8 @@ class TestReceiptPipelineNeverLost:
             "job must be deleted after successful classification"
         )
 
-    def test_llm_conf1_all_items_poisons_job(self, pipeline):
-        """LLM available, returns conf=1 for all items → job poisoned, not silently dropped.
-
-        This is the exact scenario that lost the 849 RSD receipt (2026-05-27):
-        LLM responded OK in ~8 s but returned confidence=1 for 'Raid Family'.
-        """
+    def test_llm_all_none_exhausted_fallback_creates_expense(self, pipeline):
+        """LLM returns cat_id=None → exhaustion → fallback creates expense at top category."""
         receipt_id = _post(pipeline)
 
         with (
@@ -174,15 +196,15 @@ class TestReceiptPipelineNeverLost:
             ),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=([_result("raid family tec/el.ap.", None, 1)], False),
+                return_value=_make_classify_outcome([_result("raid family tec/el.ap.", None, 1)]),
             ),
         ):
             asyncio.run(_drain_all_pending(_broker()))
 
-        assert _expense_count(receipt_id) == 0
-        assert _job_status(receipt_id) == "poisoned", (
-            "conf=1 receipt must be poisoned, not silently deleted"
+        assert _expense_count(receipt_id) == 1, (
+            "fallback must create expense at top catalog category"
         )
+        assert _job_status(receipt_id) is None, "job must be completed after fallback"
 
     def test_empty_items_from_parser_poisons_job(self, pipeline):
         """Parser returns a receipt with no items → job poisoned (parse error, not silent drop)."""
@@ -242,7 +264,9 @@ class TestReceiptPipelineNeverLost:
             ),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=([_result("mleko", None, 1)], True),  # used_fallback=True
+                return_value=_make_classify_outcome(
+                    [_result("mleko", None, 1)], broker_unavailable=True
+                ),
             ),
         ):
             asyncio.run(_drain_all_pending(_broker()))
@@ -252,12 +276,8 @@ class TestReceiptPipelineNeverLost:
             "LLM broker unavailability must release the job for retry"
         )
 
-    def test_partial_classification_completes_normally(self, pipeline):
-        """2-item receipt: one conf=3, one conf=1 → 1 expense, job completed (no poison).
-
-        Partial classification is intentional: we persist what the LLM could classify
-        and do not block the receipt on items it couldn't.
-        """
+    def test_partial_classification_exhausts_to_fallback(self, pipeline):
+        """2-item receipt: one cat=None → execution_failed → exhaustion → fallback → 2 expenses."""
         receipt_id = _post(pipeline)
 
         with (
@@ -267,18 +287,17 @@ class TestReceiptPipelineNeverLost:
             ),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
-                    [_result("hleb", 1, 3), _result("nepoznato", None, 1)],
-                    False,
+                return_value=_make_classify_outcome(
+                    [_result("hleb", 1, 3), _result("nepoznato", None, 1)]
                 ),
             ),
         ):
             asyncio.run(_drain_all_pending(_broker()))
 
-        assert _expense_count(receipt_id) == 1, "only the classifiable item creates an expense"
-        assert _job_status(receipt_id) is None, (
-            "job must be completed when at least one item classified"
+        assert _expense_count(receipt_id) == 2, (
+            "fallback applies to all llm_queue items → 2 expenses"
         )
+        assert _job_status(receipt_id) is None, "job must be completed after fallback"
 
     def test_duplicate_post_returns_ok_no_extra_job(self, pipeline):
         """Second POST with same client_receipt_id returns 200 duplicate, no second job."""
@@ -314,7 +333,9 @@ class TestReceiptPipelineNeverLost:
             ),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=([_result("sir", None, 1)], True),  # broker unavailable
+                return_value=_make_classify_outcome(
+                    [_result("sir", None, 1)], broker_unavailable=True
+                ),
             ),
         ):
             asyncio.run(_drain_all_pending(_broker()))
@@ -336,7 +357,7 @@ class TestReceiptPipelineNeverLost:
             patch("dinary.background.classification.task.parse_receipt") as mock_parse,
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=([_result("sir", 1, 3)], False),
+                return_value=_make_classify_outcome([_result("sir", 1, 3)]),
             ),
         ):
             asyncio.run(_drain_all_pending(_broker()))
@@ -356,13 +377,12 @@ class TestReceiptPipelineNeverLost:
             ),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
+                return_value=_make_classify_outcome(
                     [
                         _result("a", 1, 4),
                         _result("b", 1, 3),
                         _result("c", 1, 3),
-                    ],
-                    False,
+                    ]
                 ),
             ),
         ):
@@ -372,17 +392,14 @@ class TestReceiptPipelineNeverLost:
         assert _job_status(receipt_id) is None
 
     def test_two_receipts_independent_outcomes(self, pipeline):
-        """Two concurrent receipts: one classifies (conf=3), one fails (conf=1) → independent.
-
-        Drain must not let one job's failure affect the other's outcome.
-        """
+        """Two concurrent receipts: one classifies (conf=3), one fallbacks → both complete."""
         rid1 = _post(pipeline, uid="two-r1")
         rid2 = _post(pipeline, uid="two-r2")
 
         def classify_side_effect(broker, normalized_names, *args, **kwargs):
             if normalized_names == ["hleb"]:
-                return ([_result("hleb", 1, 3)], False)
-            return ([_result("raid", None, 1)], False)
+                return _make_classify_outcome([_result("hleb", 1, 3)])
+            return _make_classify_outcome([_result("raid", None, 1)])
 
         with (
             patch(
@@ -401,10 +418,8 @@ class TestReceiptPipelineNeverLost:
 
         assert _expense_count(rid1) == 1, "first receipt (hleb, conf=3) must create an expense"
         assert _job_status(rid1) is None, "first receipt must be completed"
-        assert _expense_count(rid2) == 0, "second receipt (raid, conf=1) must create no expense"
-        assert _job_status(rid2) == "poisoned", (
-            "second receipt must be poisoned, not silently deleted"
-        )
+        assert _expense_count(rid2) == 1, "second receipt (raid, cat=None) → fallback → expense"
+        assert _job_status(rid2) is None, "second receipt must be completed after fallback"
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +433,7 @@ _PERSIST = "dinary.background.classification.persist.persist_classification_resu
 
 _HLEB = _item("HLEB", 100.0)
 _PARSED = _parsed(_HLEB)
-_GOOD = ([_result("hleb", 1, 3)], False)
+_GOOD = _make_classify_outcome([_result("hleb", 1, 3)])
 
 
 def _parsed_with_store(*items: ReceiptItem) -> ParsedReceipt:
@@ -488,21 +503,28 @@ _SCENARIOS: list[_Chaos] = [
         "classify.all_conf1",
         [
             (_PARSE, {"return_value": _PARSED}),
-            (_CLASSIFY, {"return_value": ([_result("hleb", None, 1)], False)}),
+            (_CLASSIFY, {"return_value": _make_classify_outcome([_result("hleb", None, 1)])}),
         ],
     ),
     _Chaos(
         "classify.broker_unavailable",
         [
             (_PARSE, {"return_value": _PARSED}),
-            (_CLASSIFY, {"return_value": ([_result("hleb", None, 1)], True)}),
+            (
+                _CLASSIFY,
+                {
+                    "return_value": _make_classify_outcome(
+                        [_result("hleb", None, 1)], broker_unavailable=True
+                    )
+                },
+            ),
         ],
     ),
     _Chaos(
         "classify.zero_results",
         [
             (_PARSE, {"return_value": _PARSED}),
-            (_CLASSIFY, {"return_value": ([], False)}),
+            (_CLASSIFY, {"return_value": _make_classify_outcome([])}),
         ],
     ),
     _Chaos(

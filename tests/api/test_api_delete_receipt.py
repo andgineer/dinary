@@ -124,7 +124,7 @@ class TestDeleteReceipt:
         con = storage.get_connection()
         try:
             con.execute(
-                "INSERT INTO llmbroker_call_log (context_id, status) VALUES (?, 'ok')",
+                "INSERT INTO llmbroker_call_log (execution_id, status) VALUES (?, 'ok')",
                 [str(rid)],
             )
         finally:

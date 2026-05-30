@@ -8,17 +8,15 @@ import allure
 import httpx
 
 from conftest import NullStorage
-from dinary.adapters.llmbroker import CallEvent, LLMBroker, ProviderConfig
+from dinary.adapters.llmbroker import CallEvent, Execution, LLMBroker, ProviderConfig
 
 
-def _make_provider(pid: int = 1, *, label: str = "P1", rate_limit_sec: int = 60) -> ProviderConfig:
+def _make_provider(*, label: str = "P1", rate_limit_sec: int = 60) -> ProviderConfig:
     return ProviderConfig(
-        id=pid,
         label=label,
         base_url="https://api.example.com/v1",
         api_key="key",
         model="model",
-        priority=pid - 1,
         rate_limit_sec=rate_limit_sec,
         rate_limited_until=None,
     )
@@ -37,12 +35,16 @@ class _TrackingStorage(_SeededStorage):
         super().__init__(providers)
         self.logged: list[CallEvent] = []
         self.rate_limited: list[tuple] = []
+        self.quality_feedback: list[tuple] = []
 
     async def on_call_logged(self, event: CallEvent) -> None:
         self.logged.append(event)
 
-    async def on_rate_limited(self, provider_id: object, until: datetime) -> None:
-        self.rate_limited.append((provider_id, until))
+    async def on_rate_limited(self, provider_label: str, until: datetime) -> None:
+        self.rate_limited.append((provider_label, until))
+
+    async def on_quality_feedback(self, provider_label: str, *, usable: bool) -> None:
+        self.quality_feedback.append((provider_label, usable))
 
 
 def _ok_response(content: str = "ok") -> MagicMock:
@@ -71,23 +73,37 @@ def _429_response(retry_after: int | None = None) -> MagicMock:
 @allure.epic("Receipts")
 @allure.feature("Pipeline")
 @allure.story("LLM broker")
-class TestLLMBrokerChat:
+class TestLLMBrokerExecute:
     def test_success_returns_content(self):
         async def run():
-            broker = LLMBroker(_SeededStorage([_make_provider(1)]))
+            broker = LLMBroker(_SeededStorage([_make_provider(label="P1")]))
             await broker.start()
             with patch(
                 "dinary.adapters.llmbroker.httpx.AsyncClient",
                 return_value=_http_ctx(_ok_response("result")),
             ):
-                result = await broker.chat([{"role": "user", "content": "hi"}])
+                execution = await broker.execute([{"role": "user", "content": "hi"}])
             await broker.stop()
-            return result
+            return execution.output
 
         assert asyncio.run(run()) == "result"
 
+    def test_success_execution_has_provider_label(self):
+        async def run():
+            broker = LLMBroker(_SeededStorage([_make_provider(label="Groq")]))
+            await broker.start()
+            with patch(
+                "dinary.adapters.llmbroker.httpx.AsyncClient",
+                return_value=_http_ctx(_ok_response("ok")),
+            ):
+                execution = await broker.execute([{"role": "user", "content": "hi"}])
+            await broker.stop()
+            return execution.provider_label
+
+        assert asyncio.run(run()) == "Groq"
+
     def test_429_no_wait_returns_none_and_provider_leaves_queue(self):
-        storage = _SeededStorage([_make_provider(1)])
+        storage = _SeededStorage([_make_provider(label="P1")])
 
         async def run():
             broker = LLMBroker(storage)
@@ -102,10 +118,10 @@ class TestLLMBrokerChat:
             ctx.__aenter__ = AsyncMock(return_value=client)
             ctx.__aexit__ = AsyncMock(return_value=False)
             with patch("dinary.adapters.llmbroker.httpx.AsyncClient", return_value=ctx):
-                result = await broker.chat([{"role": "user", "content": "hi"}], wait=False)
+                execution = await broker.execute([{"role": "user", "content": "hi"}], wait=False)
             queue_empty = broker._queue.empty()
             await broker.stop()
-            return result, queue_empty
+            return execution.output, queue_empty
 
         result, queue_empty = asyncio.run(run())
         assert result is None
@@ -127,23 +143,23 @@ class TestLLMBrokerChat:
         ctx.__aexit__ = AsyncMock(return_value=False)
 
         async def run():
-            broker = LLMBroker(_SeededStorage([_make_provider(1)]))
+            broker = LLMBroker(_SeededStorage([_make_provider(label="P1")]))
             await broker.start()
             with patch("dinary.adapters.llmbroker.httpx.AsyncClient", return_value=ctx):
-                t = asyncio.create_task(broker.chat([{"role": "user", "content": "hi"}]))
+                t = asyncio.create_task(broker.execute([{"role": "user", "content": "hi"}]))
                 await asyncio.sleep(0)
                 assert not t.done(), "should be waiting for cooldown"
                 # manually return provider to queue to simulate cooldown expiry
                 broker._queue.put_nowait(broker._providers[0])
-                result = await asyncio.wait_for(t, timeout=2.0)
+                execution = await asyncio.wait_for(t, timeout=2.0)
             await broker.stop()
-            return result
+            return execution.output
 
         assert asyncio.run(run()) == "retried"
 
     def test_failover_second_provider_answers_after_429(self):
-        p1 = _make_provider(1, label="P1")
-        p2 = _make_provider(2, label="P2")
+        p1 = _make_provider(label="P1")
+        p2 = _make_provider(label="P2")
         call_count = {"n": 0}
 
         def _side_effect(*_a, **_kw):
@@ -162,15 +178,14 @@ class TestLLMBrokerChat:
             broker = LLMBroker(_SeededStorage([p1, p2]))
             await broker.start()
             with patch("dinary.adapters.llmbroker.httpx.AsyncClient", return_value=ctx):
-                # wait=True: P1 → 429 → loops internally → P2 → "fallback"
-                result = await broker.chat([{"role": "user", "content": "hi"}])
+                execution = await broker.execute([{"role": "user", "content": "hi"}])
             await broker.stop()
-            return result
+            return execution.output
 
         assert asyncio.run(run()) == "fallback"
 
     def test_429_uses_retry_after_header(self):
-        storage = _TrackingStorage([_make_provider(1, rate_limit_sec=60)])
+        storage = _TrackingStorage([_make_provider(label="P1", rate_limit_sec=60)])
 
         async def run():
             broker = LLMBroker(storage)
@@ -185,8 +200,7 @@ class TestLLMBrokerChat:
             ctx.__aenter__ = AsyncMock(return_value=client)
             ctx.__aexit__ = AsyncMock(return_value=False)
             with patch("dinary.adapters.llmbroker.httpx.AsyncClient", return_value=ctx):
-                # wait=False: returns None immediately, logs the 429 event
-                await broker.chat([{"role": "user", "content": "hi"}], wait=False)
+                await broker.execute([{"role": "user", "content": "hi"}], wait=False)
             await broker.stop()
             return storage.logged
 
@@ -199,7 +213,7 @@ class TestLLMBrokerChat:
         assert 110 <= delta <= 130, f"Retry-After=120 should set until ~120s ahead, got {delta}"
 
     def test_429_without_retry_after_uses_rate_limit_sec(self):
-        storage = _TrackingStorage([_make_provider(1, rate_limit_sec=45)])
+        storage = _TrackingStorage([_make_provider(label="P1", rate_limit_sec=45)])
 
         async def run():
             broker = LLMBroker(storage)
@@ -214,8 +228,7 @@ class TestLLMBrokerChat:
             ctx.__aenter__ = AsyncMock(return_value=client)
             ctx.__aexit__ = AsyncMock(return_value=False)
             with patch("dinary.adapters.llmbroker.httpx.AsyncClient", return_value=ctx):
-                # wait=False: returns None immediately, logs the 429 event
-                await broker.chat([{"role": "user", "content": "hi"}], wait=False)
+                await broker.execute([{"role": "user", "content": "hi"}], wait=False)
             await broker.stop()
             return storage.logged
 
@@ -228,7 +241,7 @@ class TestLLMBrokerChat:
 
     def test_all_providers_cooling_waits_then_proceeds(self):
         async def run():
-            broker = LLMBroker(_SeededStorage([_make_provider(1)]))
+            broker = LLMBroker(_SeededStorage([_make_provider(label="P1")]))
             await broker.start()
             provider = broker._queue.get_nowait()  # simulate provider cooling / in-flight
 
@@ -236,18 +249,18 @@ class TestLLMBrokerChat:
                 "dinary.adapters.llmbroker.httpx.AsyncClient",
                 return_value=_http_ctx(_ok_response("waited")),
             ):
-                t = asyncio.create_task(broker.chat([{"role": "user", "content": "hi"}]))
+                t = asyncio.create_task(broker.execute([{"role": "user", "content": "hi"}]))
                 await asyncio.sleep(0)
                 assert not t.done(), "should be waiting while provider is unavailable"
                 broker._queue.put_nowait(provider)  # release
-                content = await asyncio.wait_for(t, timeout=2.0)
+                execution = await asyncio.wait_for(t, timeout=2.0)
             await broker.stop()
-            return content
+            return execution.output
 
         assert asyncio.run(run()) == "waited"
 
     def test_on_call_logged_called_for_every_attempt(self):
-        storage = _TrackingStorage([_make_provider(1), _make_provider(2, label="P2")])
+        storage = _TrackingStorage([_make_provider(label="P1"), _make_provider(label="P2")])
         call_count = {"n": 0}
 
         def _side_effect(*_a, **_kw):
@@ -266,8 +279,7 @@ class TestLLMBrokerChat:
             broker = LLMBroker(storage)
             await broker.start()
             with patch("dinary.adapters.llmbroker.httpx.AsyncClient", return_value=ctx):
-                # wait=True: P1 → 429 → loops → P2 → "ok", both logged in one call
-                await broker.chat([{"role": "user", "content": "hi"}])
+                await broker.execute([{"role": "user", "content": "hi"}])
             await broker.stop()
             return storage.logged, storage.rate_limited
 
@@ -277,8 +289,25 @@ class TestLLMBrokerChat:
         assert any(e.status == "ok" for e in logged)
         assert len(rate_limited) == 1, "on_rate_limited only called on 429"
 
+    def test_on_call_logged_uses_provider_label_not_id(self):
+        storage = _TrackingStorage([_make_provider(label="Groq")])
+
+        async def run():
+            broker = LLMBroker(storage)
+            await broker.start()
+            with patch(
+                "dinary.adapters.llmbroker.httpx.AsyncClient",
+                return_value=_http_ctx(_ok_response("ok")),
+            ):
+                await broker.execute([{"role": "user", "content": "hi"}])
+            await broker.stop()
+            return storage.logged
+
+        logged = asyncio.run(run())
+        assert logged[0].provider_label == "Groq"
+
     def test_error_detail_set_on_non_429_http_error(self):
-        storage = _TrackingStorage([_make_provider(1)])
+        storage = _TrackingStorage([_make_provider(label="P1")])
         body = '{"error": {"message": "Incorrect API key provided"}}'
 
         async def run():
@@ -298,7 +327,7 @@ class TestLLMBrokerChat:
             ctx.__aexit__ = AsyncMock(return_value=False)
             with patch("dinary.adapters.llmbroker.httpx.AsyncClient", return_value=ctx):
                 try:
-                    await broker.chat([{"role": "user", "content": "hi"}])
+                    await broker.execute([{"role": "user", "content": "hi"}])
                 except httpx.HTTPStatusError:
                     pass
             await broker.stop()
@@ -310,7 +339,7 @@ class TestLLMBrokerChat:
         assert logged[0].error_detail == body
 
     def test_error_detail_truncated_to_300_chars(self):
-        storage = _TrackingStorage([_make_provider(1)])
+        storage = _TrackingStorage([_make_provider(label="P1")])
         long_body = "x" * 500
 
         async def run():
@@ -330,7 +359,7 @@ class TestLLMBrokerChat:
             ctx.__aexit__ = AsyncMock(return_value=False)
             with patch("dinary.adapters.llmbroker.httpx.AsyncClient", return_value=ctx):
                 try:
-                    await broker.chat([{"role": "user", "content": "hi"}])
+                    await broker.execute([{"role": "user", "content": "hi"}])
                 except httpx.HTTPStatusError:
                     pass
             await broker.stop()
@@ -340,7 +369,7 @@ class TestLLMBrokerChat:
         assert logged[0].error_detail == "x" * 300
 
     def test_error_detail_none_on_success(self):
-        storage = _TrackingStorage([_make_provider(1)])
+        storage = _TrackingStorage([_make_provider(label="P1")])
 
         async def run():
             broker = LLMBroker(storage)
@@ -349,7 +378,7 @@ class TestLLMBrokerChat:
                 "dinary.adapters.llmbroker.httpx.AsyncClient",
                 return_value=_http_ctx(_ok_response("ok")),
             ):
-                await broker.chat([{"role": "user", "content": "hi"}])
+                await broker.execute([{"role": "user", "content": "hi"}])
             await broker.stop()
             return storage.logged
 
@@ -367,49 +396,81 @@ class TestLLMBrokerChat:
 
         asyncio.run(run())
 
+    def test_provider_count_returns_number_of_loaded_providers(self):
+        async def run():
+            broker = LLMBroker(
+                _SeededStorage([_make_provider(label="P1"), _make_provider(label="P2")])
+            )
+            await broker.start()
+            count = broker.provider_count
+            await broker.stop()
+            return count
+
+        assert asyncio.run(run()) == 2
+
+    def test_provider_count_zero_when_no_providers(self):
+        async def run():
+            broker = LLMBroker(NullStorage())
+            await broker.start()
+            count = broker.provider_count
+            await broker.stop()
+            return count
+
+        assert asyncio.run(run()) == 0
+
 
 @allure.epic("Receipts")
 @allure.feature("Pipeline")
 @allure.story("LLM broker")
-class TestLLMBrokerChatNoWait:
+class TestLLMBrokerExecuteNoWait:
     def test_returns_none_when_no_providers(self):
         async def run():
             broker = LLMBroker(NullStorage())
             await broker.start()
-            result = await broker.chat([{"role": "user", "content": "hi"}], wait=False)
+            execution = await broker.execute([{"role": "user", "content": "hi"}], wait=False)
             await broker.stop()
-            return result
+            return execution.output
+
+        assert asyncio.run(run()) is None
+
+    def test_provider_label_none_when_queue_empty(self):
+        async def run():
+            broker = LLMBroker(NullStorage())
+            await broker.start()
+            execution = await broker.execute([{"role": "user", "content": "hi"}], wait=False)
+            await broker.stop()
+            return execution.provider_label
 
         assert asyncio.run(run()) is None
 
     def test_returns_none_when_all_providers_unavailable(self):
         async def run():
-            broker = LLMBroker(_SeededStorage([_make_provider(1)]))
+            broker = LLMBroker(_SeededStorage([_make_provider(label="P1")]))
             await broker.start()
             broker._queue.get_nowait()  # drain — simulate provider in-flight or cooling
-            result = await broker.chat([{"role": "user", "content": "hi"}], wait=False)
+            execution = await broker.execute([{"role": "user", "content": "hi"}], wait=False)
             await broker.stop()
-            return result
+            return execution.output
 
         assert asyncio.run(run()) is None
 
     def test_returns_content_when_provider_available(self):
         async def run():
-            broker = LLMBroker(_SeededStorage([_make_provider(1)]))
+            broker = LLMBroker(_SeededStorage([_make_provider(label="P1")]))
             await broker.start()
             with patch(
                 "dinary.adapters.llmbroker.httpx.AsyncClient",
                 return_value=_http_ctx(_ok_response("chain")),
             ):
-                result = await broker.chat([{"role": "user", "content": "hi"}], wait=False)
+                execution = await broker.execute([{"role": "user", "content": "hi"}], wait=False)
             await broker.stop()
-            return result
+            return execution.output
 
         assert asyncio.run(run()) == "chain"
 
     def test_returns_none_on_network_error(self):
         async def run():
-            broker = LLMBroker(_SeededStorage([_make_provider(1)]))
+            broker = LLMBroker(_SeededStorage([_make_provider(label="P1")]))
             await broker.start()
             client = AsyncMock()
             client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
@@ -417,8 +478,45 @@ class TestLLMBrokerChatNoWait:
             ctx.__aenter__ = AsyncMock(return_value=client)
             ctx.__aexit__ = AsyncMock(return_value=False)
             with patch("dinary.adapters.llmbroker.httpx.AsyncClient", return_value=ctx):
-                result = await broker.chat([{"role": "user", "content": "hi"}], wait=False)
+                execution = await broker.execute([{"role": "user", "content": "hi"}], wait=False)
             await broker.stop()
-            return result
+            return execution.output
 
         assert asyncio.run(run()) is None
+
+
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("LLM broker")
+class TestExecutionMarkFailed:
+    def test_mark_failed_calls_on_quality_feedback(self):
+        storage = _TrackingStorage([_make_provider(label="P1")])
+
+        async def run():
+            broker = LLMBroker(storage)
+            await broker.start()
+            with patch(
+                "dinary.adapters.llmbroker.httpx.AsyncClient",
+                return_value=_http_ctx(_ok_response("ok")),
+            ):
+                execution = await broker.execute([{"role": "user", "content": "hi"}])
+            await broker.stop()
+            await execution.mark_failed()
+            return storage.quality_feedback
+
+        feedback = asyncio.run(run())
+        assert len(feedback) == 1
+        assert feedback[0] == ("P1", False)
+
+    def test_mark_failed_noop_when_provider_label_is_none(self):
+        storage = _TrackingStorage([])
+
+        async def run():
+            execution = Execution(output=None, provider_label=None, storage=storage)
+            await execution.mark_failed()
+            return storage.quality_feedback
+
+        feedback = asyncio.run(run())
+        assert feedback == [], (
+            "mark_failed on QueueEmpty Execution must not call on_quality_feedback"
+        )

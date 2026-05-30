@@ -19,20 +19,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class ProviderConfig:
-    id: Any
     label: str
     base_url: str
     api_key: str
     model: str
-    priority: int
     rate_limit_sec: int
     rate_limited_until: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
 class CallEvent:
-    provider_id: Any
-    context_id: Any | None
+    provider_label: str
+    execution_id: Any | None
     status: str
     latency_ms: int
     timestamp: datetime
@@ -43,7 +41,27 @@ class CallEvent:
 class BrokerStorage(Protocol):
     async def load_providers(self) -> list[ProviderConfig]: ...
     async def on_call_logged(self, event: CallEvent) -> None: ...
-    async def on_rate_limited(self, provider_id: Any, until: datetime) -> None: ...
+    async def on_rate_limited(self, provider_label: str, until: datetime) -> None: ...
+    async def on_quality_feedback(self, provider_label: str, *, usable: bool) -> None: ...
+
+
+class Execution:
+    """Result of a single broker call with a handle to report quality failure."""
+
+    def __init__(
+        self,
+        output: str | None,
+        provider_label: str | None,
+        storage: BrokerStorage,
+    ) -> None:
+        self.output = output
+        self.provider_label = provider_label
+        self._storage = storage
+
+    async def mark_failed(self) -> None:
+        if self.provider_label is None:
+            return
+        await self._storage.on_quality_feedback(self.provider_label, usable=False)
 
 
 class LLMBroker:
@@ -54,8 +72,8 @@ class LLMBroker:
     after the cooldown delay on 429/503.  At most one in-flight request per
     provider at any time, so the thundering-herd 429 storm cannot happen.
 
-    ``chat(wait=True)`` blocks until a provider is free.
-    ``chat(wait=False)`` returns None immediately if none is available.
+    ``execute(wait=True)`` blocks until a provider is free.
+    ``execute(wait=False)`` returns Execution(output=None) immediately if none is available.
     """
 
     def __init__(
@@ -67,7 +85,7 @@ class LLMBroker:
         self._storage = storage
         self._refresh_interval = refresh_interval
         self._queue: asyncio.Queue[ProviderConfig] = asyncio.Queue()
-        self._known_ids: set[Any] = set()
+        self._known_ids: set[str] = set()
         self._providers: list[ProviderConfig] = []  # snapshot for introspection / tests
         self._bg_refresh: asyncio.Task | None = None
 
@@ -88,44 +106,53 @@ class LLMBroker:
         now = datetime.now(UTC)
         loop = asyncio.get_running_loop()
         for p in providers:
-            if p.id not in self._known_ids:
-                self._known_ids.add(p.id)
+            if p.label not in self._known_ids:
+                self._known_ids.add(p.label)
                 if p.rate_limited_until and p.rate_limited_until > now:
                     delay = (p.rate_limited_until - now).total_seconds()
                     loop.call_later(max(0.0, delay), self._queue.put_nowait, p)
                 else:
                     self._queue.put_nowait(p)
 
+    @property
+    def provider_count(self) -> int:
+        return len(self._providers)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    async def chat(
+    async def execute(
         self,
         messages: list[dict],
         *,
         wait: bool = True,
-        context_id: Any | None = None,
-    ) -> str | None:
+        execution_id: Any | None = None,
+    ) -> "Execution":
         """Send a chat completion job to an available provider.
 
-        Returns the response content, or None on transient error (network / unavailable).
+        Returns an Execution whose output is the response string, or None on transient error.
         Raises on permanent HTTP errors (non-429/503).
         wait=True  — on 429/503 blocks until cooldown expires and retries; blocks if queue empty.
-        wait=False — returns None immediately if no provider is available or on 429/503.
+        wait=False — returns Execution(output=None) immediately if no provider is available
+                     or on 429/503.
         """
         while True:
             try:
                 provider = await self._queue.get() if wait else self._queue.get_nowait()
             except asyncio.QueueEmpty:
-                return None
+                return Execution(output=None, provider_label=None, storage=self._storage)
 
             t0 = time.monotonic()
             status, rate_limited_until, error_detail = "ok", None, None
             try:
                 content = await self._call_provider(provider, messages)
                 self._queue.put_nowait(provider)
-                return content
+                return Execution(
+                    output=content,
+                    provider_label=provider.label,
+                    storage=self._storage,
+                )
             except httpx.HTTPStatusError as exc:
                 code = exc.response.status_code
                 error_detail = exc.response.text[:300]
@@ -145,7 +172,11 @@ class LLMBroker:
                         delay,
                     )
                     if not wait:
-                        return None
+                        return Execution(
+                            output=None,
+                            provider_label=provider.label,
+                            storage=self._storage,
+                        )
                     # wait=True: loop — queue.get() blocks until cooldown or another provider
                 else:
                     self._queue.put_nowait(provider)
@@ -159,11 +190,15 @@ class LLMBroker:
                     provider.label,
                     type(exc).__name__,
                 )
-                return None
+                return Execution(
+                    output=None,
+                    provider_label=provider.label,
+                    storage=self._storage,
+                )
             finally:
                 await self._log_call(
-                    provider.id,
-                    context_id,
+                    provider.label,
+                    execution_id,
                     status,
                     int((time.monotonic() - t0) * 1000),
                     rate_limited_until=rate_limited_until,
@@ -197,8 +232,8 @@ class LLMBroker:
 
     async def _log_call(
         self,
-        provider_id: Any,
-        context_id: Any | None,
+        provider_label: str,
+        execution_id: Any | None,
         status: str,
         latency_ms: int,
         *,
@@ -206,8 +241,8 @@ class LLMBroker:
         error_detail: str | None = None,
     ) -> None:
         event = CallEvent(
-            provider_id=provider_id,
-            context_id=context_id,
+            provider_label=provider_label,
+            execution_id=execution_id,
             status=status,
             latency_ms=latency_ms,
             timestamp=datetime.now(UTC),
@@ -217,7 +252,7 @@ class LLMBroker:
         try:
             await self._storage.on_call_logged(event)
             if rate_limited_until is not None:
-                await self._storage.on_rate_limited(provider_id, rate_limited_until)
+                await self._storage.on_rate_limited(provider_label, rate_limited_until)
         except Exception:  # noqa: BLE001
             logger.exception("LLMBroker: storage call failed")
 

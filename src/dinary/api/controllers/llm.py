@@ -14,7 +14,6 @@ class ProviderIn(BaseModel):
     base_url: str
     api_key: str
     model: str
-    priority: int = 0
     is_enabled: bool = True
 
 
@@ -23,7 +22,6 @@ class ProviderPatch(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     model: str | None = None
-    priority: int | None = None
     is_enabled: bool | None = None
 
 
@@ -33,18 +31,17 @@ def _row_to_dict(row: tuple) -> dict[str, Any]:
         "label": row[1],
         "base_url": row[2],
         "model": row[3],
-        "priority": row[4],
-        "is_enabled": bool(row[5]),
-        "rate_limited_until": row[6],
-        "created_at": row[7],
+        "is_enabled": bool(row[4]),
+        "rate_limited_until": row[5],
+        "created_at": row[6],
     }
 
 
 def list_providers(con: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = con.execute(
-        "SELECT id, label, base_url, model, priority, is_enabled,"
+        "SELECT id, label, base_url, model, is_enabled,"
         "       rate_limited_until, created_at"
-        " FROM llmbroker_providers ORDER BY priority, id",
+        " FROM llmbroker_providers ORDER BY id",
     ).fetchall()
     return [_row_to_dict(r) for r in rows]
 
@@ -53,14 +50,13 @@ def add_provider(body: ProviderIn, con: sqlite3.Connection) -> dict[str, Any]:
     with transaction(con):
         con.execute(
             "INSERT INTO llmbroker_providers"
-            " (label, base_url, api_key, model, priority, is_enabled)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
+            " (label, base_url, api_key, model, is_enabled)"
+            " VALUES (?, ?, ?, ?, ?)",
             [
                 body.label,
                 body.base_url,
                 body.api_key,
                 body.model,
-                body.priority,
                 1 if body.is_enabled else 0,
             ],
         )
@@ -95,9 +91,6 @@ def update_provider(
     if body.model is not None:
         updates.append("model = ?")
         params.append(body.model)
-    if body.priority is not None:
-        updates.append("priority = ?")
-        params.append(body.priority)
     if body.is_enabled is not None:
         updates.append("is_enabled = ?")
         params.append(1 if body.is_enabled else 0)
@@ -142,20 +135,21 @@ def llm_status(con: sqlite3.Connection) -> dict[str, Any]:
     con.row_factory = sqlite3.Row
     rows = con.execute(
         """
-        SELECT p.id, p.label, p.base_url, p.model, p.priority,
+        SELECT p.id, p.label, p.base_url, p.model,
                p.is_enabled, p.rate_limited_until, p.created_at,
+               p.execution_fail_count,
                COUNT(l.id) AS used_today,
                SUM(CASE WHEN l.status = 'ok' THEN 1 ELSE 0 END) AS ok_calls,
                (SELECT status FROM llmbroker_call_log
-                 WHERE provider_id = p.id
+                 WHERE provider_label = p.label
                  ORDER BY id DESC LIMIT 1) AS last_status,
                (SELECT error_detail FROM llmbroker_call_log
-                 WHERE provider_id = p.id AND error_detail IS NOT NULL
+                 WHERE provider_label = p.label AND error_detail IS NOT NULL
                  ORDER BY id DESC LIMIT 1) AS last_error_detail
           FROM llmbroker_providers p
-          LEFT JOIN llmbroker_call_log l ON l.provider_id = p.id
+          LEFT JOIN llmbroker_call_log l ON l.provider_label = p.label
          GROUP BY p.id
-         ORDER BY p.priority, p.id
+         ORDER BY p.id
         """,
     ).fetchall()
     provider_list = [
@@ -164,10 +158,10 @@ def llm_status(con: sqlite3.Connection) -> dict[str, Any]:
             "label": str(r["label"]),
             "base_url": str(r["base_url"]),
             "model": str(r["model"]),
-            "priority": int(r["priority"]),
             "is_enabled": bool(r["is_enabled"]),
             "rate_limited_until": r["rate_limited_until"],
             "created_at": r["created_at"],
+            "execution_fail_count": int(r["execution_fail_count"] or 0),
             "used_today": int(r["used_today"] or 0),
             "ok_calls": int(r["ok_calls"] or 0),
             "last_status": r["last_status"],

@@ -1,6 +1,7 @@
 """Tests for SqliteLLMBrokerStorage: provider loading, seeding, call logging, rate limiting."""
 
 import asyncio
+import json
 import shutil
 import sqlite3
 import unittest.mock
@@ -10,7 +11,11 @@ from pathlib import Path
 import allure
 import pytest
 
-from dinary.adapters.llm_storage import SqliteLLMBrokerStorage, _label_from_base_url
+from dinary.adapters.llm_storage import (
+    SqliteLLMBrokerStorage,
+    TomlLLMBrokerStorage,
+    _label_from_base_url,
+)
 from dinary.adapters.llmbroker import CallEvent
 from dinary.db import db_migrations, storage
 
@@ -35,8 +40,11 @@ def fresh_db(tmp_path, monkeypatch):
     return dst
 
 
-def _write_toml(path: Path, providers: list[dict]) -> None:
+def _write_toml(path: Path, providers: list[dict], extras: dict | None = None) -> None:
     lines = []
+    if extras:
+        for k, v in extras.items():
+            lines.append(f'{k} = "{v}"')
     for p in providers:
         lines.append("\n[[providers]]")
         for k, v in p.items():
@@ -45,15 +53,15 @@ def _write_toml(path: Path, providers: list[dict]) -> None:
 
 
 def _make_event(
-    provider_id: int = 1,
+    provider_label: str = "P1",
     status: str = "ok",
     latency_ms: int = 100,
     rate_limited_until: datetime | None = None,
     error_detail: str | None = None,
 ) -> CallEvent:
     return CallEvent(
-        provider_id=provider_id,
-        context_id=None,
+        provider_label=provider_label,
+        execution_id=None,
         status=status,
         latency_ms=latency_ms,
         timestamp=datetime.now(UTC),
@@ -66,23 +74,23 @@ def _make_event(
 @allure.feature("Pipeline")
 @allure.story("LLM storage")
 class TestLoadProviders:
-    def test_returns_enabled_providers_sorted_by_priority(self, fresh_db):
+    def test_returns_enabled_providers_sorted_by_label(self, fresh_db):
         conn = storage.get_connection()
         try:
             conn.execute(
                 "INSERT INTO llmbroker_providers"
-                " (label, base_url, api_key, model, priority, is_enabled)"
-                " VALUES ('P2', 'https://b', 'k2', 'm', 1, 1)"
+                " (label, base_url, api_key, model, is_enabled)"
+                " VALUES ('P2', 'https://b', 'k2', 'm', 1)"
             )
             conn.execute(
                 "INSERT INTO llmbroker_providers"
-                " (label, base_url, api_key, model, priority, is_enabled)"
-                " VALUES ('P1', 'https://a', 'k1', 'm', 0, 1)"
+                " (label, base_url, api_key, model, is_enabled)"
+                " VALUES ('P1', 'https://a', 'k1', 'm', 1)"
             )
             conn.execute(
                 "INSERT INTO llmbroker_providers"
-                " (label, base_url, api_key, model, priority, is_enabled)"
-                " VALUES ('Disabled', 'https://c', 'k3', 'm', 2, 0)"
+                " (label, base_url, api_key, model, is_enabled)"
+                " VALUES ('Disabled', 'https://c', 'k3', 'm', 0)"
             )
         finally:
             conn.close()
@@ -141,8 +149,8 @@ class TestLoadProviders:
         conn = storage.get_connection()
         try:
             conn.execute(
-                "INSERT INTO llmbroker_providers (label, base_url, api_key, model, priority)"
-                " VALUES ('Existing', 'https://x', 'k', 'm', 0)"
+                "INSERT INTO llmbroker_providers (label, base_url, api_key, model)"
+                " VALUES ('Existing', 'https://x', 'k', 'm')"
             )
         finally:
             conn.close()
@@ -163,8 +171,8 @@ class TestLoadProviders:
         try:
             conn.execute(
                 "INSERT INTO llmbroker_providers"
-                " (label, base_url, api_key, model, priority, rate_limited_until)"
-                " VALUES ('P', 'https://a', 'k', 'm', 0, ?)",
+                " (label, base_url, api_key, model, rate_limited_until)"
+                " VALUES ('P', 'https://a', 'k', 'm', ?)",
                 [future],
             )
         finally:
@@ -180,8 +188,6 @@ class TestLoadProviders:
         example = Path(__file__).resolve().parents[2] / ".deploy.example" / "llm_providers.toml"
         assert example.exists(), "missing .deploy.example/llm_providers.toml"
         providers = asyncio.run(SqliteLLMBrokerStorage(providers_toml=example).load_providers())
-        # example has placeholder keys so no rows should be seeded (keys are placeholders)
-        # just check the TOML parses without error
         assert isinstance(providers, list)
 
 
@@ -193,43 +199,67 @@ class TestOnCallLogged:
         conn = storage.get_connection()
         try:
             conn.execute(
-                "INSERT INTO llmbroker_providers (label, base_url, api_key, model, priority)"
-                " VALUES ('P', 'https://a', 'k', 'm', 0)"
+                "INSERT INTO llmbroker_providers (label, base_url, api_key, model)"
+                " VALUES ('P', 'https://a', 'k', 'm')"
             )
-            provider_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         finally:
             conn.close()
 
-        event = _make_event(provider_id=provider_id, status="ok", latency_ms=250)
+        event = _make_event(provider_label="P", status="ok", latency_ms=250)
         asyncio.run(SqliteLLMBrokerStorage().on_call_logged(event))
 
         conn = storage.get_connection()
         try:
             row = conn.execute(
-                "SELECT provider_id, status, latency_ms FROM llmbroker_call_log"
+                "SELECT provider_label, status, latency_ms FROM llmbroker_call_log"
             ).fetchone()
         finally:
             conn.close()
 
         assert row is not None
-        assert row[0] == provider_id
+        assert row[0] == "P"
         assert row[1] == "ok"
         assert row[2] == 250
+
+    def test_writes_execution_id(self, fresh_db):
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO llmbroker_providers (label, base_url, api_key, model)"
+                " VALUES ('P', 'https://a', 'k', 'm')"
+            )
+        finally:
+            conn.close()
+
+        event = CallEvent(
+            provider_label="P",
+            execution_id="receipt-42",
+            status="ok",
+            latency_ms=100,
+            timestamp=datetime.now(UTC),
+        )
+        asyncio.run(SqliteLLMBrokerStorage().on_call_logged(event))
+
+        conn = storage.get_connection()
+        try:
+            row = conn.execute("SELECT execution_id FROM llmbroker_call_log").fetchone()
+        finally:
+            conn.close()
+
+        assert row is not None
+        assert row[0] == "receipt-42"
 
     def test_writes_error_detail_when_set(self, fresh_db):
         conn = storage.get_connection()
         try:
             conn.execute(
-                "INSERT INTO llmbroker_providers (label, base_url, api_key, model, priority)"
-                " VALUES ('P', 'https://a', 'k', 'm', 0)"
+                "INSERT INTO llmbroker_providers (label, base_url, api_key, model)"
+                " VALUES ('P', 'https://a', 'k', 'm')"
             )
-            provider_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         finally:
             conn.close()
 
-        event = _make_event(
-            provider_id=provider_id, status="error", error_detail="401 Unauthorized"
-        )
+        event = _make_event(provider_label="P", status="error", error_detail="401 Unauthorized")
         asyncio.run(SqliteLLMBrokerStorage().on_call_logged(event))
 
         conn = storage.get_connection()
@@ -245,14 +275,13 @@ class TestOnCallLogged:
         conn = storage.get_connection()
         try:
             conn.execute(
-                "INSERT INTO llmbroker_providers (label, base_url, api_key, model, priority)"
-                " VALUES ('P', 'https://a', 'k', 'm', 0)"
+                "INSERT INTO llmbroker_providers (label, base_url, api_key, model)"
+                " VALUES ('P', 'https://a', 'k', 'm')"
             )
-            provider_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         finally:
             conn.close()
 
-        event = _make_event(provider_id=provider_id, status="ok")
+        event = _make_event(provider_label="P", status="ok")
         asyncio.run(SqliteLLMBrokerStorage().on_call_logged(event))
 
         conn = storage.get_connection()
@@ -269,30 +298,116 @@ class TestOnCallLogged:
 @allure.feature("Pipeline")
 @allure.story("LLM storage")
 class TestOnRateLimited:
-    def test_updates_rate_limited_until_on_provider(self, fresh_db):
+    def test_updates_rate_limited_until_on_provider_by_label(self, fresh_db):
         conn = storage.get_connection()
         try:
             conn.execute(
-                "INSERT INTO llmbroker_providers (label, base_url, api_key, model, priority)"
-                " VALUES ('P', 'https://a', 'k', 'm', 0)"
+                "INSERT INTO llmbroker_providers (label, base_url, api_key, model)"
+                " VALUES ('Groq', 'https://a', 'k', 'm')"
             )
-            provider_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         finally:
             conn.close()
 
         until = datetime.now(UTC) + timedelta(minutes=5)
-        asyncio.run(SqliteLLMBrokerStorage().on_rate_limited(provider_id, until))
+        asyncio.run(SqliteLLMBrokerStorage().on_rate_limited("Groq", until))
 
         conn = storage.get_connection()
         try:
             row = conn.execute(
-                "SELECT rate_limited_until FROM llmbroker_providers WHERE id = ?", [provider_id]
+                "SELECT rate_limited_until FROM llmbroker_providers WHERE label = 'Groq'"
             ).fetchone()
         finally:
             conn.close()
 
         assert row is not None
         assert row[0] is not None
+
+
+@allure.epic("Receipts")
+@allure.feature("Pipeline")
+@allure.story("LLM storage")
+class TestOnQualityFeedback:
+    def test_sqlite_increments_execution_fail_count(self, fresh_db):
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO llmbroker_providers (label, base_url, api_key, model)"
+                " VALUES ('Groq', 'https://a', 'k', 'm')"
+            )
+        finally:
+            conn.close()
+
+        asyncio.run(SqliteLLMBrokerStorage().on_quality_feedback("Groq", usable=False))
+        asyncio.run(SqliteLLMBrokerStorage().on_quality_feedback("Groq", usable=False))
+
+        conn = storage.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT execution_fail_count FROM llmbroker_providers WHERE label = 'Groq'"
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert row is not None
+        assert row[0] == 2
+
+    def test_sqlite_usable_true_is_noop(self, fresh_db):
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO llmbroker_providers (label, base_url, api_key, model)"
+                " VALUES ('Groq', 'https://a', 'k', 'm')"
+            )
+        finally:
+            conn.close()
+
+        asyncio.run(SqliteLLMBrokerStorage().on_quality_feedback("Groq", usable=True))
+
+        conn = storage.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT execution_fail_count FROM llmbroker_providers WHERE label = 'Groq'"
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert row[0] == 0
+
+    def test_toml_writes_stats_json(self, tmp_path):
+        toml = tmp_path / "providers.toml"
+        _write_toml(
+            toml, [{"label": "Groq", "base_url": "https://x", "api_key": "k", "model": "m"}]
+        )
+        stats = tmp_path / "llmbroker_stats.json"
+
+        asyncio.run(
+            TomlLLMBrokerStorage(providers_toml=toml).on_quality_feedback("Groq", usable=False)
+        )
+        asyncio.run(
+            TomlLLMBrokerStorage(providers_toml=toml).on_quality_feedback("Groq", usable=False)
+        )
+
+        assert stats.exists()
+        data = json.loads(stats.read_text())
+        assert data["Groq"]["execution_fail_count"] == 2
+
+    def test_toml_stats_path_override(self, tmp_path):
+        custom_stats = tmp_path / "custom" / "stats.json"
+        custom_stats.parent.mkdir()
+        toml = tmp_path / "providers.toml"
+        _write_toml(
+            toml,
+            [{"label": "Groq", "base_url": "https://x", "api_key": "k", "model": "m"}],
+            extras={"stats_path": str(custom_stats)},
+        )
+
+        asyncio.run(
+            TomlLLMBrokerStorage(providers_toml=toml).on_quality_feedback("Groq", usable=False)
+        )
+
+        assert custom_stats.exists()
+        data = json.loads(custom_stats.read_text())
+        assert data["Groq"]["execution_fail_count"] == 1
 
 
 @allure.epic("Receipts")

@@ -1,3 +1,14 @@
+ALTER TABLE llmbroker_providers DROP COLUMN execution_fail_count;
+ALTER TABLE llmbroker_providers ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE llmbroker_call_log ADD COLUMN provider_id INTEGER;
+UPDATE llmbroker_call_log
+   SET provider_id = (
+       SELECT id FROM llmbroker_providers WHERE label = llmbroker_call_log.provider_label
+   );
+ALTER TABLE llmbroker_call_log DROP COLUMN provider_label;
+ALTER TABLE llmbroker_call_log RENAME COLUMN execution_id TO context_id;
+CREATE INDEX IF NOT EXISTS llmbroker_call_log_provider_id ON llmbroker_call_log (provider_id);
+
 ALTER TABLE receipt_classification_jobs DROP COLUMN retry_after;
 ALTER TABLE receipt_classification_jobs DROP COLUMN retry_count;
 

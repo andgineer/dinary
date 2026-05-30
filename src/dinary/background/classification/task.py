@@ -51,6 +51,14 @@ _ONE_DAY = 86400
 _DAILY_THRESHOLD = 100  # retry_count at which 15-min phase ends (~1 day elapsed)
 
 
+class ClassificationExhaustedError(Exception):
+    """All provider attempts failed for a receipt; fallback will be applied."""
+
+
+class InsufficientCategoriesError(Exception):
+    """Fewer than 5 active categories; installation is broken."""
+
+
 def _retry_delay(retry_count: int) -> int:
     # No ceiling: the schedule tops out at one day but never stops retrying (by design).
     if retry_count == 0:
@@ -176,8 +184,14 @@ async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
         await _classify_and_persist(broker, job, items, store_id, chain_id)
         logger.info("Receipt drain: completed receipt_id=%s", job.receipt_id)
 
-    except (ParserRequestError, httpx.HTTPError, ConnectionError, RateMissingError) as exc:
-        # RateMissingError is transient: retries until exchange rates are populated.
+    except (
+        ParserRequestError,
+        httpx.HTTPError,
+        ConnectionError,
+        RateMissingError,
+        InsufficientCategoriesError,
+    ) as exc:
+        # These are transient: retries until the condition clears.
         # delay uses the pre-increment count: retry_count=0 → delay=0 → one free immediate retry.
         delay = _retry_delay(job.retry_count)
         new_retry_count = job.retry_count + 1
@@ -328,6 +342,54 @@ def _run_rules_pass(
     return rule_hits, llm_queue, norms
 
 
+def _load_top_fallback_categories(n: int) -> list[int]:
+    """Return top-n category IDs by recent usage, padded with active categories."""
+    with storage.connection() as conn:
+        active_count = conn.execute(
+            "SELECT COUNT(*) FROM categories WHERE is_active = 1",
+        ).fetchone()[0]
+        if active_count < 5:
+            raise InsufficientCategoriesError(
+                f"only {active_count} active categories — need at least 5",
+            )
+
+        rows = conn.execute(
+            """
+            SELECT category_id, COUNT(*) AS cnt
+              FROM expenses
+             WHERE category_id IS NOT NULL
+               AND datetime >= datetime('now', '-3 months')
+             GROUP BY category_id
+             ORDER BY cnt DESC
+             LIMIT ?
+            """,
+            [n],
+        ).fetchall()
+        result = [int(r[0]) for r in rows]
+
+        if len(result) < n:
+            if result:
+                placeholders = ",".join("?" * len(result))
+                not_in_clause = f"AND id NOT IN ({placeholders})"
+                pad_params: list = [*result, n - len(result)]
+            else:
+                not_in_clause = ""
+                pad_params = [n - len(result)]
+            pad_rows = conn.execute(
+                f"""
+                SELECT id FROM categories
+                 WHERE is_active = 1
+                   {not_in_clause}
+                 ORDER BY id
+                 LIMIT ?
+                """,  # noqa: S608
+                pad_params,
+            ).fetchall()
+            result.extend(int(r[0]) for r in pad_rows)
+
+    return result
+
+
 async def _run_llm_pass(
     broker: LLMBroker,
     job: ReceiptJobRow,
@@ -340,32 +402,42 @@ async def _run_llm_pass(
     Raises ConnectionError when the broker is completely unavailable so the
     caller's transient-error handler retries the job instead of silently
     completing it with zero expenses.
+    Raises ClassificationExhaustedError after all retry attempts fail.
     """
     if not llm_queue:
         return {}
     normalized_names = [name for _, name in llm_queue]
-    results, used_fallback = await classify_receipt(
-        broker,
-        normalized_names,
-        job.store_name_raw or "Unknown Store",
-        categories,
-        tags,
-        context_id=job.receipt_id,
-    )
-    if used_fallback:
-        raise ConnectionError(
-            f"LLM broker unavailable for receipt_id={job.receipt_id}"
-            " — all providers returned None, releasing for retry",
+    max_attempts = max(1, min(3, broker.provider_count))
+    for attempt in range(max_attempts):
+        outcome = await classify_receipt(
+            broker,
+            normalized_names,
+            job.store_name_raw or "Unknown Store",
+            categories,
+            tags,
+            execution_id=job.receipt_id,
         )
-    if len(results) != len(llm_queue):
+        if outcome.broker_unavailable:
+            raise ConnectionError(
+                f"LLM broker unavailable for receipt_id={job.receipt_id}"
+                " — all providers returned None, releasing for retry",
+            )
+        if not outcome.execution_failed:
+            return {
+                item_id: result
+                for (item_id, _), result in zip(llm_queue, outcome.results, strict=False)
+            }
+        await outcome.execution.mark_failed()
         logger.warning(
-            "LLM returned %d results for %d queued items for receipt_id=%s"
-            " — trailing items will be unclassified",
-            len(results),
-            len(llm_queue),
+            "classification execution_failed attempt %d/%d receipt_id=%s",
+            attempt + 1,
+            max_attempts,
             job.receipt_id,
         )
-    return {item_id: result for (item_id, _), result in zip(llm_queue, results, strict=False)}
+
+    raise ClassificationExhaustedError(
+        f"receipt_id={job.receipt_id}: all {max_attempts} attempts failed",
+    )
 
 
 def _compute_classifications(
@@ -412,7 +484,21 @@ async def _classify_and_persist(
         categories = load_categories(conn)
         tags = load_tags(conn)
 
-    llm_results = await _run_llm_pass(broker, job, llm_queue, categories, tags)
+    try:
+        llm_results = await _run_llm_pass(broker, job, llm_queue, categories, tags)
+    except ClassificationExhaustedError:
+        top_cats = await asyncio.to_thread(_load_top_fallback_categories, 6)
+        primary_cat = top_cats[0]
+        llm_results = {
+            item_id: ClassificationResult(
+                item_name_normalized=norm,
+                category_id=primary_cat,
+                confidence_level=1,
+                alternative_category_ids=top_cats[1:],
+            )
+            for item_id, norm in llm_queue
+        }
+
     total_penalty = 1 if job.used_journal_fallback else 0
     classifications = _compute_classifications(items, rule_hits, llm_results, total_penalty)
 

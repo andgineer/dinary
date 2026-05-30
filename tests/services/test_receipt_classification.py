@@ -6,15 +6,18 @@ import sqlite3
 import unittest.mock
 from datetime import date
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import allure
 import pytest
 
 from conftest import NullStorage
-from dinary.adapters.llmbroker import LLMBroker
+from dinary.adapters.llmbroker import Execution, LLMBroker
 from dinary.adapters.rate_helpers import save_db_rate
-from dinary.background.classification.receipt_classifier import ClassificationResult
+from dinary.background.classification.receipt_classifier import (
+    ClassificationResult,
+    ClassifyOutcome,
+)
 from dinary.background.classification.persist import RECEIPT_CURRENCY, RateMissingError
 from dinary.background.classification.task import _classify_and_persist
 from dinary.config import settings
@@ -59,6 +62,10 @@ def _seed_catalog(conn):
         "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'продукты', 1, 1)"
     )
     conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (2, 'хоз', 1, 1)")
+    # Add more categories so _load_top_fallback_categories pre-check (>= 5) passes
+    conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (3, 'кат3', 1, 1)")
+    conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (4, 'кат4', 1, 1)")
+    conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (5, 'кат5', 1, 1)")
 
 
 def _seed_receipt(conn, name_raw="hleb"):
@@ -93,10 +100,25 @@ def _broker() -> LLMBroker:
     return LLMBroker(NullStorage())
 
 
-def _classify_patch(results: list[ClassificationResult], used_fallback: bool = False):
+def _make_execution() -> Execution:
+    storage_mock = MagicMock()
+    storage_mock.on_quality_feedback = AsyncMock()
+    return Execution(output="ok", provider_label="P1", storage=storage_mock)
+
+
+def _classify_patch(results: list[ClassificationResult], execution_failed: bool = False):
+    execution = _make_execution()
+    outcome = ClassifyOutcome(
+        results=results,
+        broker_unavailable=False,
+        execution_failed=execution_failed
+        or any(r.category_id is None for r in results)
+        or not results,
+        execution=execution,
+    )
     return patch(
         "dinary.background.classification.task.classify_receipt",
-        return_value=(results, used_fallback),
+        return_value=outcome,
     )
 
 
@@ -169,7 +191,39 @@ class TestClassifyAndPersist:
         assert exp[1] == 1
         assert exp[2] == 3
 
-    def test_level1_item_poisons_job_not_silent_completion(self, conn):
+    def test_all_none_result_uses_fallback_and_creates_expense(self, conn):
+        """When LLM returns cat_id=None for all items, fallback kicks in and creates expense."""
+        _seed_catalog(conn)
+        receipt_id = _seed_receipt(conn)
+        job = claim_next_job(conn)
+        items = get_receipt_items(conn, receipt_id)
+        conn.close()
+
+        # classify_receipt returns execution_failed=True (any None) → retry loop exhausted
+        # → ClassificationExhaustedError → fallback
+        with patch(
+            "dinary.background.classification.task.classify_receipt",
+            side_effect=_exhausted_classify_side_effect(max_calls=3),
+        ):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
+
+        conn2 = storage.get_connection()
+        try:
+            exp_count = conn2.execute(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()[0]
+            job_row = conn2.execute(
+                "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+        finally:
+            conn2.close()
+
+        assert exp_count == 1, "fallback must create an expense at the top catalog category"
+        assert job_row is None, "job must be completed (deleted) after fallback"
+
+    def test_conf1_llm_result_creates_expense_and_rule(self, conn):
+        """cat_id=1, conf=1 → execution_failed=False → expense IS created and rule IS created."""
         _seed_catalog(conn)
         receipt_id = _seed_receipt(conn)
         job = claim_next_job(conn)
@@ -177,24 +231,23 @@ class TestClassifyAndPersist:
         conn.close()
 
         with _classify_patch(
-            [
-                ClassificationResult(
-                    item_name_normalized="hleb", category_id=None, confidence_level=1
-                )
-            ]
+            [ClassificationResult(item_name_normalized="hleb", category_id=1, confidence_level=1)]
         ):
-            with pytest.raises(RuntimeError, match="all unclassifiable"):
-                asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
         conn2 = storage.get_connection()
         try:
             exp_count = conn2.execute(
                 "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
             ).fetchone()[0]
+            rule = conn2.execute(
+                "SELECT category_id FROM classification_rules WHERE item_name_normalized = 'hleb'"
+            ).fetchone()
         finally:
             conn2.close()
 
-        assert exp_count == 0
+        assert exp_count == 1, "conf=1 with valid category must create expense"
+        assert rule is not None, "conf=1 with valid category must create rule"
 
     def test_complete_job_inside_transaction(self, conn):
         _seed_catalog(conn)
@@ -332,34 +385,6 @@ class TestClassifyAndPersist:
         assert exp is not None
         assert exp[0] == 3
 
-    def test_no_rule_created_for_conf1_and_job_poisoned(self, conn):
-        _seed_catalog(conn)
-        receipt_id = _seed_receipt(conn)
-        conn.execute(
-            "INSERT INTO classification_rules"
-            " (item_name_normalized, category_id, confidence_level, source)"
-            " VALUES ('hleb', 1, 1, 'llm')"
-        )
-        job = claim_next_job(conn)
-        items = get_receipt_items(conn, receipt_id)
-        conn.close()
-
-        with _classify_patch(
-            [ClassificationResult(item_name_normalized="hleb", category_id=1, confidence_level=1)]
-        ):
-            with pytest.raises(RuntimeError, match="all unclassifiable"):
-                asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
-
-        conn2 = storage.get_connection()
-        try:
-            exp_count = conn2.execute(
-                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
-            ).fetchone()[0]
-        finally:
-            conn2.close()
-
-        assert exp_count == 0
-
     def test_amount_converted_to_accounting_currency(self, conn, monkeypatch):
         """expenses.amount stores the converted accounting-currency value."""
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
@@ -434,3 +459,22 @@ class TestClassifyAndPersist:
             conn2.close()
 
         assert exp_count == 0
+
+
+def _exhausted_classify_side_effect(max_calls: int):
+    """Return a side_effect that always returns execution_failed=True, simulating exhaustion."""
+    call_count = {"n": 0}
+
+    async def _side_effect(*_args, **_kwargs):
+        call_count["n"] += 1
+        storage_mock = MagicMock()
+        storage_mock.on_quality_feedback = AsyncMock()
+        execution = Execution(output="bad json", provider_label="P1", storage=storage_mock)
+        return ClassifyOutcome(
+            results=[],
+            broker_unavailable=False,
+            execution_failed=True,
+            execution=execution,
+        )
+
+    return _side_effect

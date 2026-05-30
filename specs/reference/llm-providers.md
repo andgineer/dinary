@@ -18,6 +18,15 @@ for survival across restarts. The in-memory path avoids a DB write on every
 provider call; the persistence path ensures a restarted process doesn't hammer a
 provider that was already cooling down.
 
+## Provider identity
+
+`label` is the stable identifier for a provider. It is used as the primary key in
+call-log history, quality-failure stats, and any cross-session or cross-backend
+linking. Once a provider is in use, its `label` must not be changed — doing so
+orphans all historical records for that provider. The label is also what is shown
+in the UI, so pick a short, human-readable name when adding a provider
+(e.g. `"Groq"`, `"OpenRouter-GPT"`, `"Gemini"`).
+
 ## Storage implementations
 
 `SqliteLLMBrokerStorage` is the production implementation: persists call events

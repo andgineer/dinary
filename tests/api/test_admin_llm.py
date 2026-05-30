@@ -11,7 +11,6 @@ def _add_provider(
     base_url="https://api.groq.com/openai/v1",
     api_key="key",
     model="llama-3.3-70b",
-    priority=0,
 ):
     return client.post(
         "/api/llm/providers",
@@ -20,7 +19,6 @@ def _add_provider(
             "base_url": base_url,
             "api_key": api_key,
             "model": model,
-            "priority": priority,
         },
     )
 
@@ -105,10 +103,11 @@ class TestLLMStatus:
         data = client.get("/api/llm/status").json()
         p = data["providers"][0]
         assert "base_url" in p
-        assert "priority" in p
         assert "used_today" in p
         assert "last_status" in p
+        assert "execution_fail_count" in p
         assert "api_key" not in p
+        assert "priority" not in p
 
     def test_health_single_provider(self, client, db):  # noqa: ARG002
         _add_provider(client)

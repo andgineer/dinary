@@ -5,6 +5,7 @@ TomlLLMBrokerStorage   — CLI/standalone: reads toml directly, logs via Python 
 """
 
 import contextlib
+import json
 import logging
 import tomllib
 from collections.abc import AsyncGenerator
@@ -53,11 +54,11 @@ class SqliteLLMBrokerStorage:
             rows = await (
                 await db.execute(
                     """
-                    SELECT id, label, base_url, api_key, model, priority,
+                    SELECT label, base_url, api_key, model,
                            default_rate_limit_sec, rate_limited_until
                       FROM llmbroker_providers
                      WHERE is_enabled = 1
-                     ORDER BY priority, id
+                     ORDER BY label
                     """,
                 )
             ).fetchall()
@@ -65,22 +66,20 @@ class SqliteLLMBrokerStorage:
         result = []
         for r in rows:
             rlu = None
-            if r[7]:
+            if r[5]:
                 try:
-                    rlu = datetime.fromisoformat(str(r[7]))
+                    rlu = datetime.fromisoformat(str(r[5]))
                     if rlu.tzinfo is None:
                         rlu = rlu.replace(tzinfo=UTC)
                 except ValueError:
                     pass
             result.append(
                 ProviderConfig(
-                    id=int(r[0]),
-                    label=str(r[1]),
-                    base_url=str(r[2]),
-                    api_key=str(r[3]),
-                    model=str(r[4]),
-                    priority=int(r[5]),
-                    rate_limit_sec=int(r[6]),
+                    label=str(r[0]),
+                    base_url=str(r[1]),
+                    api_key=str(r[2]),
+                    model=str(r[3]),
+                    rate_limit_sec=int(r[4]),
                     rate_limited_until=rlu,
                 ),
             )
@@ -97,17 +96,16 @@ class SqliteLLMBrokerStorage:
 
         try:
             await db.execute("BEGIN IMMEDIATE")
-            for priority, p in enumerate(providers):
+            for p in providers:
                 await db.execute(
                     "INSERT INTO llmbroker_providers"
-                    " (label, base_url, api_key, model, priority, default_rate_limit_sec)"
-                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    " (label, base_url, api_key, model, default_rate_limit_sec)"
+                    " VALUES (?, ?, ?, ?, ?)",
                     [
                         p["label"],
                         p["base_url"],
                         p["api_key"],
                         p["model"],
-                        priority,
                         p.get("rate_limit_sec", 60),
                     ],
                 )
@@ -127,11 +125,11 @@ class SqliteLLMBrokerStorage:
         async with _open(db_path) as db:
             await db.execute(
                 "INSERT INTO llmbroker_call_log"
-                " (provider_id, context_id, status, latency_ms, error_detail)"
+                " (provider_label, execution_id, status, latency_ms, error_detail)"
                 " VALUES (?, ?, ?, ?, ?)",
                 [
-                    event.provider_id,
-                    event.context_id,
+                    event.provider_label,
+                    event.execution_id,
                     event.status,
                     event.latency_ms,
                     event.error_detail,
@@ -139,12 +137,25 @@ class SqliteLLMBrokerStorage:
             )
             await db.commit()
 
-    async def on_rate_limited(self, provider_id: object, until: datetime) -> None:
+    async def on_rate_limited(self, provider_label: str, until: datetime) -> None:
         db_path = str(db_storage.DB_PATH)
         async with _open(db_path) as db:
             await db.execute(
-                "UPDATE llmbroker_providers SET rate_limited_until = ? WHERE id = ?",
-                [until.isoformat(), provider_id],
+                "UPDATE llmbroker_providers SET rate_limited_until = ? WHERE label = ?",
+                [until.isoformat(), provider_label],
+            )
+            await db.commit()
+
+    async def on_quality_feedback(self, provider_label: str, *, usable: bool) -> None:
+        if usable:
+            return
+        db_path = str(db_storage.DB_PATH)
+        async with _open(db_path) as db:
+            await db.execute(
+                "UPDATE llmbroker_providers"
+                " SET execution_fail_count = execution_fail_count + 1"
+                " WHERE label = ?",
+                [provider_label],
             )
             await db.commit()
 
@@ -172,6 +183,15 @@ def _providers_from_toml(path: Path) -> list[dict]:
     return providers
 
 
+def _toml_stats_path(providers_toml: Path) -> Path:
+    if providers_toml.exists():
+        with providers_toml.open("rb") as fh:
+            data = tomllib.load(fh)
+        if "stats_path" in data:
+            return Path(data["stats_path"])
+    return providers_toml.with_name("llmbroker_stats.json")
+
+
 class TomlLLMBrokerStorage:
     """CLI/standalone BrokerStorage — reads toml directly, logs via Python logging, no DB."""
 
@@ -184,28 +204,41 @@ class TomlLLMBrokerStorage:
             logger.warning("no LLM providers found in %s", self._providers_toml.name)
         return [
             ProviderConfig(
-                id=None,
                 label=p["label"],
                 base_url=p["base_url"],
                 api_key=p["api_key"],
                 model=p["model"],
-                priority=i,
                 rate_limit_sec=p.get("rate_limit_sec", 60),
                 rate_limited_until=None,
             )
-            for i, p in enumerate(raw)
+            for p in raw
         ]
 
     async def on_call_logged(self, event: CallEvent) -> None:
         logger.info(
             "llmbroker provider=%s status=%s latency=%dms",
-            event.provider_id,
+            event.provider_label,
             event.status,
             event.latency_ms,
         )
 
-    async def on_rate_limited(self, provider_id: object, until: datetime) -> None:
-        logger.warning("llmbroker provider %s rate-limited until %s", provider_id, until)
+    async def on_rate_limited(self, provider_label: str, until: datetime) -> None:
+        logger.warning("llmbroker provider %s rate-limited until %s", provider_label, until)
+
+    async def on_quality_feedback(self, provider_label: str, *, usable: bool) -> None:
+        if usable:
+            return
+        stats_path = _toml_stats_path(self._providers_toml)
+        if stats_path.exists():
+            with stats_path.open() as fh:
+                data = json.load(fh)
+        else:
+            data = {}
+        entry = data.setdefault(provider_label, {})
+        entry["execution_fail_count"] = entry.get("execution_fail_count", 0) + 1
+        tmp = stats_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        tmp.rename(stats_path)
 
 
 def _label_from_base_url(base_url: str) -> str:

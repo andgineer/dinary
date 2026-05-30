@@ -5,7 +5,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 
-from dinary.adapters.llmbroker import LLMBroker
+from dinary.adapters.llmbroker import Execution, LLMBroker
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,14 @@ class ClassificationResult:
     tag_ids: list[int] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class ClassifyOutcome:
+    results: list[ClassificationResult]
+    broker_unavailable: bool
+    execution_failed: bool
+    execution: Execution
+
+
 def load_categories(conn: sqlite3.Connection) -> dict[int, str]:
     rows = conn.execute(
         "SELECT c.id, cg.name, c.name"
@@ -74,39 +82,29 @@ def _build_user_message(
 
 def _parse_response(
     raw: str,
-    items: list[str],
     tag_id_set: set[int],
 ) -> list[ClassificationResult]:
-    try:
-        parsed = json.loads(raw)
-        if not isinstance(parsed, list):
-            raise ValueError("expected list")  # noqa: TRY004
-        return [
-            ClassificationResult(
-                item_name_normalized=str(entry.get("item", "")),
-                category_id=int(entry["category_id"])
-                if entry.get("category_id") is not None
-                else None,
-                confidence_level=int(entry.get("confidence", 1)),
-                alternative_category_ids=[
-                    int(a)
-                    for a in entry.get("alternatives", [])
-                    if isinstance(a, (int, float)) and float(a) == int(a)
-                ][:3],
-                tag_ids=[
-                    int(t)
-                    for t in entry.get("tags", [])
-                    if isinstance(t, (int, float)) and int(t) in tag_id_set
-                ],
-            )
-            for entry in parsed
-        ]
-    except (json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
-        logger.warning("LLM parse error (%s), fallback conf=1: %.200s", exc, raw)
-        return [
-            ClassificationResult(item_name_normalized=item, category_id=None, confidence_level=1)
-            for item in items
-        ]
+    parsed = json.loads(raw)
+    if not isinstance(parsed, list):
+        raise ValueError("expected list")  # noqa: TRY004
+    return [
+        ClassificationResult(
+            item_name_normalized=str(entry.get("item", "")),
+            category_id=int(entry["category_id"]) if entry.get("category_id") is not None else None,
+            confidence_level=int(entry.get("confidence", 1)),
+            alternative_category_ids=[
+                int(a)
+                for a in entry.get("alternatives", [])
+                if isinstance(a, (int, float)) and float(a) == int(a)
+            ][:3],
+            tag_ids=[
+                int(t)
+                for t in entry.get("tags", [])
+                if isinstance(t, (int, float)) and int(t) in tag_id_set
+            ],
+        )
+        for entry in parsed
+    ]
 
 
 async def classify_receipt(
@@ -115,8 +113,8 @@ async def classify_receipt(
     store_name_raw: str,
     categories: dict[int, str],
     tags: dict[int, str] | None = None,
-    context_id: int | None = None,
-) -> tuple[list[ClassificationResult], bool]:
+    execution_id: int | None = None,
+) -> ClassifyOutcome:
     if tags is None:
         tags = {}
     user_msg = _build_user_message(items, store_name_raw, categories, tags)
@@ -124,21 +122,41 @@ async def classify_receipt(
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": user_msg},
     ]
-    raw = await broker.chat(
+    execution = await broker.execute(
         messages,
-        context_id=str(context_id) if context_id is not None else None,
+        execution_id=str(execution_id) if execution_id is not None else None,
     )
-    if raw is None:
-        return [
-            ClassificationResult(item_name_normalized=item, category_id=None, confidence_level=1)
-            for item in items
-        ], True
-    return _parse_response(raw, items, set(tags.keys())), False
+    if execution.output is None:
+        return ClassifyOutcome(
+            results=[],
+            broker_unavailable=True,
+            execution_failed=False,
+            execution=execution,
+        )
+
+    try:
+        results = _parse_response(execution.output, set(tags.keys()))
+    except (json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
+        logger.warning("LLM parse error (%s): %.200s", exc, execution.output)
+        return ClassifyOutcome(
+            results=[],
+            broker_unavailable=False,
+            execution_failed=True,
+            execution=execution,
+        )
+
+    execution_failed = len(results) != len(items) or any(r.category_id is None for r in results)
+    return ClassifyOutcome(
+        results=results,
+        broker_unavailable=False,
+        execution_failed=execution_failed,
+        execution=execution,
+    )
 
 
 async def get_chain_name(broker: LLMBroker, store_name_raw: str) -> str:
     prompt = _CHAIN_NAME_PROMPT.format(store_name_raw=store_name_raw)
-    raw = await broker.chat([{"role": "user", "content": prompt}], wait=False)
-    if raw is None:
+    execution = await broker.execute([{"role": "user", "content": prompt}], wait=False)
+    if execution.output is None:
         return store_name_raw
-    return next((ln.strip() for ln in raw.splitlines() if ln.strip()), "")
+    return next((ln.strip() for ln in execution.output.splitlines() if ln.strip()), "")

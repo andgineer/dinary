@@ -28,7 +28,10 @@ class NullStorage:
     async def on_call_logged(self, event: CallEvent) -> None:
         pass
 
-    async def on_rate_limited(self, provider_id: object, until: datetime) -> None:
+    async def on_rate_limited(self, provider_label: str, until: datetime) -> None:
+        pass
+
+    async def on_quality_feedback(self, provider_label: str, *, usable: bool) -> None:
         pass
 
 

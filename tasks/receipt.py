@@ -85,7 +85,7 @@ async def _run_receipt(
     normalized = [normalize_item_name(item.name_raw) for item in receipt.items]
 
     try:
-        results, _ = await llm_classify_receipt(
+        outcome = await llm_classify_receipt(
             broker,
             normalized,
             receipt.store_name,
@@ -95,6 +95,7 @@ async def _run_receipt(
     except Exception as exc:  # noqa: BLE001
         print(f"  LLM error: {exc}")
         return
+    results = outcome.results
 
     col_item = 36
     col_qty = 6

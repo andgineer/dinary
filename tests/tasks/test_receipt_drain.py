@@ -14,9 +14,12 @@ import allure
 import pytest
 
 import dinary.background.classification.task as drain_mod
-from dinary.background.classification.receipt_classifier import ClassificationResult
+from dinary.background.classification.receipt_classifier import (
+    ClassificationResult,
+    ClassifyOutcome,
+)
 from conftest import NullStorage
-from dinary.adapters.llmbroker import LLMBroker
+from dinary.adapters.llmbroker import Execution, LLMBroker
 import httpx
 
 from dinary.adapters.serbian_receipt_parser import (
@@ -190,13 +193,13 @@ class TestProcessJobEdgeCases:
             ),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
+                return_value=_make_classify_outcome(
                     [
                         ClassificationResult(
                             item_name_normalized="hleb", category_id=None, confidence_level=1
                         )
                     ],
-                    True,  # used_fallback=True → broker unavailable → ConnectionError → retry
+                    broker_unavailable=True,
                 ),
             ),
         ):
@@ -268,13 +271,12 @@ class TestProcessJobEdgeCases:
             ),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
+                return_value=_make_classify_outcome(
                     [
                         ClassificationResult(
                             item_name_normalized="mleko", category_id=1, confidence_level=4
                         )
-                    ],
-                    False,
+                    ]
                 ),
             ),
         ):
@@ -391,13 +393,12 @@ class TestProcessJobEdgeCases:
             ),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
+                return_value=_make_classify_outcome(
                     [
                         ClassificationResult(
                             item_name_normalized="kafa", category_id=1, confidence_level=4
                         )
-                    ],
-                    False,
+                    ]
                 ),
             ),
         ):
@@ -571,8 +572,8 @@ class TestProcessJobEdgeCases:
 
         mock_wakeup.assert_called_once_with(86400)
 
-    def test_conf1_items_poison_job_to_prevent_silent_data_loss(self, drain_db):  # noqa: ARG002
-        """When journal penalty reduces all items to conf=1, job is poisoned — not silently dropped."""
+    def test_conf1_items_after_journal_penalty_creates_expense(self, drain_db):  # noqa: ARG002
+        """When journal penalty reduces LLM conf=2 to conf=1, expense is still created."""
         parsed = ParsedReceipt(
             store_name="Lidl",
             store_pib="100",
@@ -624,18 +625,17 @@ class TestProcessJobEdgeCases:
             claim_token="tok",
         )
 
-        # LLM returns cat=1 conf=2; journal penalty (−1) → final conf=1 → no expense
+        # LLM returns cat=1 conf=2; journal penalty (−1) → final conf=1; expense IS created
         with (
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
+                return_value=_make_classify_outcome(
                     [
                         ClassificationResult(
                             item_name_normalized="nepoznato", category_id=1, confidence_level=2
                         )
-                    ],
-                    False,
+                    ]
                 ),
             ),
         ):
@@ -646,10 +646,6 @@ class TestProcessJobEdgeCases:
             exp_count = conn.execute(
                 "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
             ).fetchone()[0]
-            rule = conn.execute(
-                "SELECT category_id, confidence_level FROM classification_rules"
-                " WHERE item_name_normalized = 'nepoznato'"
-            ).fetchone()
             job_row = conn.execute(
                 "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?",
                 [receipt_id],
@@ -657,12 +653,8 @@ class TestProcessJobEdgeCases:
         finally:
             conn.close()
 
-        assert exp_count == 0, "conf=1 items must not generate expenses"
-        assert rule is None, "conf=1 items must not store a classification rule"
-        assert job_row is not None, "job must remain in DB (not silently deleted)"
-        assert job_row[0] == "poisoned", (
-            f"job must be poisoned when all items are unclassifiable, got status={job_row[0]!r}"
-        )
+        assert exp_count == 1, "conf=1 items with valid category must generate an expense"
+        assert job_row is None, "job must be completed (deleted) after creating expense"
 
 
 # ---------------------------------------------------------------------------
@@ -1006,9 +998,8 @@ class TestReceiptSheetLogging:
             ),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
-                    [ClassificationResult("hleb", category_id=1, confidence_level=3)],
-                    False,
+                return_value=_make_classify_outcome(
+                    [ClassificationResult("hleb", category_id=1, confidence_level=3)]
                 ),
             ),
         ):
@@ -1081,12 +1072,11 @@ class TestReceiptSheetLogging:
             ),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
+                return_value=_make_classify_outcome(
                     [
                         ClassificationResult("mleko", category_id=1, confidence_level=3),
                         ClassificationResult("sir", category_id=1, confidence_level=3),
-                    ],
-                    False,
+                    ]
                 ),
             ),
         ):
@@ -1128,6 +1118,28 @@ class TestReceiptSheetLogging:
 def _make_broker() -> LLMBroker:
     """Return a minimal broker instance (NullStorage, never called in unit tests)."""
     return LLMBroker(NullStorage())
+
+
+def _make_classify_outcome(
+    results: list[ClassificationResult],
+    broker_unavailable: bool = False,
+) -> ClassifyOutcome:
+    from unittest.mock import AsyncMock, MagicMock
+
+    storage_mock = MagicMock()
+    storage_mock.on_quality_feedback = AsyncMock()
+    execution = Execution(
+        output=None if broker_unavailable else "ok",
+        provider_label=None if broker_unavailable else "P1",
+        storage=storage_mock,
+    )
+    execution_failed = not broker_unavailable and (any(r.category_id is None for r in results))
+    return ClassifyOutcome(
+        results=results,
+        broker_unavailable=broker_unavailable,
+        execution_failed=execution_failed,
+        execution=execution,
+    )
 
 
 def _seed_drain_db_with_tags(conn):
@@ -1203,13 +1215,12 @@ class TestPerItemExpenses:
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
+                return_value=_make_classify_outcome(
                     [
                         ClassificationResult("a", category_id=1, confidence_level=3),
                         ClassificationResult("b", category_id=1, confidence_level=3),
                         ClassificationResult("c", category_id=1, confidence_level=3),
-                    ],
-                    False,
+                    ]
                 ),
             ),
         ):
@@ -1273,9 +1284,8 @@ class TestPerItemExpenses:
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
-                    [ClassificationResult("x", category_id=1, confidence_level=3, tag_ids=[1])],
-                    False,
+                return_value=_make_classify_outcome(
+                    [ClassificationResult("x", category_id=1, confidence_level=3, tag_ids=[1])]
                 ),
             ),
         ):
@@ -1340,9 +1350,8 @@ class TestPerItemExpenses:
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
-                    [ClassificationResult("y", category_id=1, confidence_level=3)],
-                    False,
+                return_value=_make_classify_outcome(
+                    [ClassificationResult("y", category_id=1, confidence_level=3)]
                 ),
             ),
         ):
@@ -1405,9 +1414,8 @@ class TestPerItemExpenses:
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
-                    [ClassificationResult("z", category_id=1, confidence_level=3)],
-                    False,
+                return_value=_make_classify_outcome(
+                    [ClassificationResult("z", category_id=1, confidence_level=3)]
                 ),
             ),
         ):
@@ -1474,9 +1482,8 @@ class TestPerItemExpenses:
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
-                    [ClassificationResult("w", category_id=1, confidence_level=3)],
-                    False,
+                return_value=_make_classify_outcome(
+                    [ClassificationResult("w", category_id=1, confidence_level=3)]
                 ),
             ),
         ):
@@ -1544,9 +1551,8 @@ class TestPerItemExpenses:
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
-                    [ClassificationResult("q", category_id=1, confidence_level=3)],
-                    False,
+                return_value=_make_classify_outcome(
+                    [ClassificationResult("q", category_id=1, confidence_level=3)]
                 ),
             ),
         ):
@@ -1788,8 +1794,8 @@ class TestBulletProofNeverLoseReceipt:
     The old code logged 'completed' and deleted the job row with zero expenses.
     """
 
-    def test_llm_conf1_all_items_direct_poisons_job(self, drain_db):  # noqa: ARG002
-        """Exact bug scenario: LLM available, returns conf=1 → job poisoned, not silently dropped."""
+    def test_llm_all_none_exhausted_uses_fallback_and_completes_job(self, drain_db):  # noqa: ARG002
+        """LLM available but returns cat_id=None → exhaustion → fallback creates expense, job done."""
         parsed = ParsedReceipt(
             store_name="",
             store_pib="",
@@ -1811,6 +1817,11 @@ class TestBulletProofNeverLoseReceipt:
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
+            # Ensure at least 5 active categories for _load_top_fallback_categories pre-check
+            for i in range(2, 6):
+                conn.execute(
+                    f"INSERT INTO categories (id, name, group_id, is_active) VALUES ({i + 1}, 'cat{i}', 1, 1)"
+                )
             conn.execute(
                 "INSERT INTO receipts (client_receipt_id, url) VALUES ('raid-r1', 'https://x')"
             )
@@ -1828,7 +1839,7 @@ class TestBulletProofNeverLoseReceipt:
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
+                return_value=_make_classify_outcome(
                     [
                         ClassificationResult(
                             item_name_normalized="raid family tec/el.ap. 60 noci",
@@ -1836,7 +1847,6 @@ class TestBulletProofNeverLoseReceipt:
                             confidence_level=1,
                         )
                     ],
-                    False,  # LLM was available, just returned low confidence
                 ),
             ),
         ):
@@ -1853,11 +1863,8 @@ class TestBulletProofNeverLoseReceipt:
         finally:
             conn.close()
 
-        assert exp_count == 0, "conf=1 item must not create an expense"
-        assert job_row is not None, "job must NOT be silently deleted"
-        assert job_row[0] == "poisoned", (
-            f"job must be poisoned when LLM returns conf=1 for all items, got {job_row[0]!r}"
-        )
+        assert exp_count == 1, "fallback must create an expense at the top catalog category"
+        assert job_row is None, "job must be completed (deleted) after fallback"
 
     def test_parser_parse_error_poisons_job(self, drain_db):  # noqa: ARG002
         """ParserParseError (permanent, e.g. unsupported receipt format) → job poisoned."""
@@ -1966,9 +1973,8 @@ class TestBulletProofNeverLoseReceipt:
             patch("dinary.background.classification.task.parse_receipt") as mock_parse,
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
-                    [ClassificationResult("hleb", category_id=1, confidence_level=3)],
-                    False,
+                return_value=_make_classify_outcome(
+                    [ClassificationResult("hleb", category_id=1, confidence_level=3)]
                 ),
             ),
         ):
@@ -1985,12 +1991,8 @@ class TestBulletProofNeverLoseReceipt:
 
         assert exp_count == 1, "expense must be created from pre-existing receipt items"
 
-    def test_mixed_items_partial_classification_completes_normally(self, drain_db):  # noqa: ARG002
-        """2-item receipt: one conf=3 (classifiable) + one conf=1 → 1 expense, job completed.
-
-        Partial classification is correct behaviour: we create expenses for what the LLM
-        could classify and complete the job. No poison needed when at least one expense exists.
-        """
+    def test_mixed_items_any_none_triggers_exhaustion_fallback(self, drain_db):  # noqa: ARG002
+        """2-item receipt: one cat=None triggers execution_failed → exhaustion → fallback → 2 expenses."""
         parsed = ParsedReceipt(
             store_name="",
             store_pib="",
@@ -2019,6 +2021,11 @@ class TestBulletProofNeverLoseReceipt:
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
+            # Ensure at least 5 active categories for _load_top_fallback_categories pre-check
+            for i in range(2, 6):
+                conn.execute(
+                    f"INSERT INTO categories (id, name, group_id, is_active) VALUES ({i + 1}, 'cat{i}', 1, 1)"
+                )
             conn.execute(
                 "INSERT INTO receipts (client_receipt_id, url) VALUES ('mix-r1', 'https://x')"
             )
@@ -2036,12 +2043,11 @@ class TestBulletProofNeverLoseReceipt:
             patch("dinary.background.classification.task.parse_receipt", return_value=parsed),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
+                return_value=_make_classify_outcome(
                     [
                         ClassificationResult("hleb", category_id=1, confidence_level=3),
                         ClassificationResult("nepoznato", category_id=None, confidence_level=1),
-                    ],
-                    False,
+                    ]
                 ),
             ),
         ):
@@ -2058,7 +2064,5 @@ class TestBulletProofNeverLoseReceipt:
         finally:
             conn.close()
 
-        assert exp_count == 1, "only the classifiable item creates an expense"
-        assert job_row is None, (
-            "job must be completed (deleted) when at least one expense was created"
-        )
+        assert exp_count == 2, "fallback applies to all llm_queue items → 2 expenses"
+        assert job_row is None, "job must be completed (deleted) after fallback"

@@ -123,3 +123,20 @@ UPDATE expenses SET event_id = (
 -- Add retry backoff columns to receipt_classification_jobs.
 ALTER TABLE receipt_classification_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE receipt_classification_jobs ADD COLUMN retry_after TIMESTAMP;
+
+ALTER TABLE llmbroker_call_log RENAME COLUMN context_id TO execution_id;
+
+-- Replace integer provider FK with label string — label is the stable provider
+-- identity and survives provider list edits.
+DROP INDEX IF EXISTS llmbroker_call_log_provider_id;
+ALTER TABLE llmbroker_call_log ADD COLUMN provider_label TEXT;
+UPDATE llmbroker_call_log
+   SET provider_label = (
+       SELECT label FROM llmbroker_providers WHERE id = llmbroker_call_log.provider_id
+   );
+ALTER TABLE llmbroker_call_log DROP COLUMN provider_id;
+
+ALTER TABLE llmbroker_providers DROP COLUMN priority;
+
+ALTER TABLE llmbroker_providers
+  ADD COLUMN execution_fail_count INTEGER NOT NULL DEFAULT 0;

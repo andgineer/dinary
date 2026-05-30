@@ -10,10 +10,15 @@ from unittest.mock import patch
 import allure
 import pytest
 
+from unittest.mock import AsyncMock, MagicMock
+
 from conftest import NullStorage
-from dinary.adapters.llmbroker import LLMBroker
+from dinary.adapters.llmbroker import Execution, LLMBroker
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
-from dinary.background.classification.receipt_classifier import ClassificationResult
+from dinary.background.classification.receipt_classifier import (
+    ClassificationResult,
+    ClassifyOutcome,
+)
 from dinary.background.classification.task import _process_job
 from dinary.config import settings
 from dinary.db import storage
@@ -45,6 +50,18 @@ def _broker() -> LLMBroker:
     return LLMBroker(NullStorage())
 
 
+def _make_classify_outcome(results: list[ClassificationResult]) -> ClassifyOutcome:
+    storage_mock = MagicMock()
+    storage_mock.on_quality_feedback = AsyncMock()
+    execution = Execution(output="ok", provider_label="P1", storage=storage_mock)
+    return ClassifyOutcome(
+        results=results,
+        broker_unavailable=False,
+        execution_failed=any(r.category_id is None for r in results),
+        execution=execution,
+    )
+
+
 def _run_drain(job, results=None):
     """Run _process_job synchronously with mocked parse and LLM."""
     if results is None:
@@ -60,7 +77,7 @@ def _run_drain(job, results=None):
         ),
         patch(
             "dinary.background.classification.task.classify_receipt",
-            return_value=(results, False),
+            return_value=_make_classify_outcome(results),
         ),
         patch(
             "dinary.background.classification.store_resolver.get_chain_name",
@@ -241,9 +258,8 @@ class TestReceiptPipelineE2E:
         with (
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(
-                    [ClassificationResult("hleb beli", category_id=1, confidence_level=3)],
-                    False,
+                return_value=_make_classify_outcome(
+                    [ClassificationResult("hleb beli", category_id=1, confidence_level=3)]
                 ),
             ) as mock_classify,
             patch(
@@ -347,7 +363,7 @@ class TestReceiptPipelineE2E:
             ),
             patch(
                 "dinary.background.classification.task.classify_receipt",
-                return_value=(results_3, False),
+                return_value=_make_classify_outcome(results_3),
             ),
             patch(
                 "dinary.background.classification.store_resolver.get_chain_name",
