@@ -90,7 +90,7 @@ def _parse_response(
     return [
         ClassificationResult(
             item_name_normalized=str(entry.get("item", "")),
-            category_id=int(entry["category_id"]) if entry.get("category_id") is not None else None,
+            category_id=int(entry["category_id"]) if entry["category_id"] is not None else None,
             confidence_level=int(entry.get("confidence", 1)),
             alternative_category_ids=[
                 int(a)

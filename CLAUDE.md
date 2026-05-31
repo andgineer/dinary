@@ -52,6 +52,11 @@ These rules come from `AGENTS.md` and supplement the defaults in this file.
 ### Plan files
 - Never reference `.plans/*.md` files or step numbers from plans inside code comments or docstrings. Plans are ephemeral; the code is the source of truth.
 
+### Spec files
+- Specs in `specs/` capture architectural decisions and business requirements only — not implementation details.
+- Correct spec content: "every expense created from a receipt must have a matching rule", "retry every 15 minutes on day 1, then once a day indefinitely."
+- Never put function signatures, argument lists, field names, or internal class structure in specs. The code is the source of truth for those.
+
 ### Tests
 - Every new function needs tests in the same session. Never skip.
 

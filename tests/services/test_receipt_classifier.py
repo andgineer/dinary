@@ -2,6 +2,8 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 import allure
 
 from dinary.adapters.llmbroker import Execution, LLMBroker
@@ -88,11 +90,10 @@ class TestParseResponse:
         with pytest.raises(ValueError, match="expected list"):
             _parse_response('{"item": "hleb"}', set())
 
-    def test_missing_category_id_returns_none(self):
-        raw = json.dumps([{"item": "hleb"}])  # missing category_id and confidence
-        results = _parse_response(raw, set())
-        assert results[0].category_id is None
-        assert results[0].confidence_level == 1
+    def test_missing_category_id_raises(self):
+        raw = json.dumps([{"item": "hleb"}])
+        with pytest.raises((ValueError, KeyError)):
+            _parse_response(raw, set())
 
     def test_category_id_null_parsed_as_none(self):
         raw = json.dumps([{"item": "hleb", "category_id": None, "confidence": 1}])

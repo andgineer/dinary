@@ -425,7 +425,7 @@ async def _run_llm_pass(
         if not outcome.execution_failed:
             return {
                 item_id: result
-                for (item_id, _), result in zip(llm_queue, outcome.results, strict=False)
+                for (item_id, _), result in zip(llm_queue, outcome.results, strict=True)
             }
         await outcome.execution.mark_failed()
         logger.warning(
