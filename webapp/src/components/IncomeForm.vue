@@ -20,14 +20,17 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function currentMonth() {
+function defaultIncomeMonth() {
   const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  // Salary for the previous month is paid on the 5th (or earlier if weekend),
+  // so on days 1–5 the income being entered is for the previous month.
+  const d = now.getDate() <= 5 ? new Date(now.getFullYear(), now.getMonth() - 1, 1) : now;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
 const amount = ref("");
 const selectedCurrency = ref("");
-const monthValue = ref(currentMonth());
+const monthValue = ref(defaultIncomeMonth());
 const dateValue = ref(today());
 const comment = ref("");
 const currencyPickerOpen = ref(false);
@@ -66,7 +69,7 @@ async function save() {
     currency.setLastUsed(code);
     amount.value = "";
     comment.value = "";
-    monthValue.value = currentMonth();
+    monthValue.value = defaultIncomeMonth();
     dateValue.value = today();
     emit("saved");
   } catch {

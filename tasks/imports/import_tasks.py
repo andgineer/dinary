@@ -2,10 +2,12 @@
 
 import json as _json
 import sys
+from pathlib import Path
 from datetime import datetime as _dt
 
 from invoke import task
 
+from tasks.imports import income_original_export
 from tasks.imports import report_2d_3d as _report_2d_3d_module
 from tasks.reports import verify_budget, verify_income
 from tasks.ssh_utils import remote_snapshot_cmd, ssh_capture_bytes, ssh_json, ssh_run
@@ -246,6 +248,19 @@ def verify_income_equivalence_all(c, json=False):  # noqa: A002
     else:
         verify_income.render_batch(results)
     sys.exit(verify_income.exit_code_for_batch(results))
+
+
+@task(name="export-income-original")
+def export_income_original(c, output=""):
+    """Export income from all sheets in original currency (RUB/RSD) to a JSON file.
+
+    Reads every registered income source from .deploy/import_sources.json and
+    writes a flat list of {year, month, amount, currency} entries to JSON.
+    Default output path: data/income_original.json. Override with --output.
+    """
+    dest = Path(output) if output else income_original_export.DEFAULT_OUTPUT
+    count = income_original_export.export_to_file(dest)
+    print(f"Wrote {count} entries to {dest}")
 
 
 def _render_2d3d_locally(raw: bytes, *, as_csv: bool) -> None:
