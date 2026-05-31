@@ -171,6 +171,12 @@ async def _drain_all_pending(broker: LLMBroker) -> None:
                 job.receipt_id,
                 exc_info=result,
             )
+        elif isinstance(result, BaseException):
+            logger.error(
+                "Unexpected BaseException in _process_job for receipt_id=%s",
+                job.receipt_id,
+                exc_info=result,
+            )
 
 
 async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
@@ -290,22 +296,22 @@ def _with_parsed_data(job: ReceiptJobRow, parsed: ParsedReceipt) -> ReceiptJobRo
     )
 
 
-def _check_store_already_resolved(receipt_id: int) -> tuple[int, int] | None:
+def _check_store_already_resolved(receipt_id: int) -> tuple[int, int | None] | None:
     with storage.connection() as conn:
-        existing = conn.execute(
-            "SELECT store_id FROM receipts WHERE id = ?",
+        cur = conn.cursor()
+        cur.row_factory = sqlite3.Row
+        row = cur.execute(
+            """
+            SELECT s.id AS store_id, s.chain_id
+              FROM receipts r
+              JOIN stores s ON s.id = r.store_id
+             WHERE r.id = ?
+            """,
             [receipt_id],
         ).fetchone()
-        if not (existing and existing[0]):
-            return None
-        store_id = int(existing[0])
-        chain_row = conn.execute(
-            "SELECT chain_id FROM stores WHERE id = ?",
-            [store_id],
-        ).fetchone()
-        if chain_row is None or chain_row[0] is None:
-            return None
-        return store_id, int(chain_row[0])
+    if row is None:
+        return None
+    return int(row["store_id"]), row["chain_id"]
 
 
 def _save_store_to_receipt(receipt_id: int, store_id: int) -> None:
@@ -316,7 +322,7 @@ def _save_store_to_receipt(receipt_id: int, store_id: int) -> None:
         )
 
 
-async def _ensure_store(job: ReceiptJobRow, broker: LLMBroker) -> tuple[int, int] | None:
+async def _ensure_store(job: ReceiptJobRow, broker: LLMBroker) -> tuple[int, int | None] | None:
     if not job.store_name_raw and not job.store_pib_raw:
         return None
 
@@ -352,15 +358,17 @@ def _run_rules_pass(
 def _load_top_fallback_categories(n: int) -> list[int]:
     """Return top-n category IDs by recent usage, padded with active categories."""
     with storage.connection() as conn:
-        active_count = conn.execute(
-            "SELECT COUNT(*) FROM categories WHERE is_active = 1",
-        ).fetchone()[0]
+        cur = conn.cursor()
+        cur.row_factory = sqlite3.Row
+        active_count = cur.execute(
+            "SELECT COUNT(*) AS active_count FROM categories WHERE is_active = 1",
+        ).fetchone()["active_count"]
         if active_count < 5:
             raise InsufficientCategoriesError(
                 f"only {active_count} active categories — need at least 5",
             )
 
-        rows = conn.execute(
+        rows = cur.execute(
             """
             SELECT category_id, COUNT(*) AS cnt
               FROM expenses
@@ -372,7 +380,7 @@ def _load_top_fallback_categories(n: int) -> list[int]:
             """,
             [n],
         ).fetchall()
-        result = [int(r[0]) for r in rows]
+        result = [int(r["category_id"]) for r in rows]
 
         if len(result) < n:
             if result:
@@ -382,7 +390,7 @@ def _load_top_fallback_categories(n: int) -> list[int]:
             else:
                 not_in_clause = ""
                 pad_params = [n - len(result)]
-            pad_rows = conn.execute(
+            pad_rows = cur.execute(
                 f"""
                 SELECT id FROM categories
                  WHERE is_active = 1
@@ -392,7 +400,7 @@ def _load_top_fallback_categories(n: int) -> list[int]:
                 """,  # noqa: S608
                 pad_params,
             ).fetchall()
-            result.extend(int(r[0]) for r in pad_rows)
+            result.extend(int(r["id"]) for r in pad_rows)
 
     return result
 

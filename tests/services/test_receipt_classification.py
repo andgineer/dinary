@@ -840,8 +840,8 @@ class TestDrainAllPending:
 @allure.epic("Receipts")
 @allure.feature("Background tasks")
 class TestCheckStoreAlreadyResolved:
-    def test_null_chain_id_returns_none(self, conn):
-        """stores.chain_id = NULL must not crash int(chain_row[0]) — return None instead."""
+    def test_null_chain_id_returns_store_id_with_none_chain(self, conn):
+        """stores.chain_id = NULL must return (store_id, None), not None — store is resolved, chain is pending."""
         conn.execute("INSERT INTO stores (name) VALUES ('NULL CHAIN STORE')")
         store_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.execute(
@@ -853,4 +853,4 @@ class TestCheckStoreAlreadyResolved:
         conn.close()
 
         result = _check_store_already_resolved(receipt_id)
-        assert result is None
+        assert result == (store_id, None)

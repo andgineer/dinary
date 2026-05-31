@@ -42,22 +42,19 @@ def classify_by_rules(
     for the same item name. Returns the stored confidence unchanged — no source
     penalty because no LLM call is involved.
     """
-    saved_row_factory = conn.row_factory
-    try:
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            """
-            SELECT id, category_id, confidence_level, tag_ids
-              FROM classification_rules
-             WHERE (chain_id = ? OR chain_id IS NULL)
-               AND item_name_normalized = ?
-             ORDER BY chain_id NULLS LAST
-             LIMIT 1
-            """,
-            [chain_id, item_name_normalized],
-        ).fetchone()
-    finally:
-        conn.row_factory = saved_row_factory
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
+    row = cur.execute(
+        """
+        SELECT id, category_id, confidence_level, tag_ids
+          FROM classification_rules
+         WHERE (chain_id = ? OR chain_id IS NULL)
+           AND item_name_normalized = ?
+         ORDER BY chain_id NULLS LAST
+         LIMIT 1
+        """,
+        [chain_id, item_name_normalized],
+    ).fetchone()
     if row is None:
         return None
     tag_ids: list[int] = []
@@ -95,19 +92,16 @@ def create_or_update_rule(
 
     now = datetime.now(UTC).isoformat()
 
-    saved_row_factory = conn.row_factory
-    try:
-        conn.row_factory = sqlite3.Row
-        existing = conn.execute(
-            """
-            SELECT id, alternative_category_ids FROM classification_rules
-             WHERE (chain_id IS ? OR (chain_id IS NULL AND ? IS NULL))
-               AND item_name_normalized = ?
-            """,
-            [chain_id, chain_id, item_name_normalized],
-        ).fetchone()
-    finally:
-        conn.row_factory = saved_row_factory
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
+    existing = cur.execute(
+        """
+        SELECT id, alternative_category_ids FROM classification_rules
+         WHERE (chain_id IS ? OR (chain_id IS NULL AND ? IS NULL))
+           AND item_name_normalized = ?
+        """,
+        [chain_id, chain_id, item_name_normalized],
+    ).fetchone()
 
     if existing:
         conn.execute(
