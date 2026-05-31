@@ -147,14 +147,17 @@ class TestResolveStore:
 
     def test_concurrent_pib_conflict_returns_existing_store(self, conn):
         """When a concurrent task inserts the store during the LLM await, the fallback
-        SELECT by pib must find the winner instead of crashing."""
+        SELECT by pib must find the winner instead of crashing, and the returned chain_id
+        must match the DB-stored value, not the loser's locally-computed chain_id."""
 
         async def competing_insert(broker, store_name_raw):
             conn.execute("INSERT INTO shop_chains (name) VALUES ('Winner') ON CONFLICT DO NOTHING")
-            chain_id = conn.execute("SELECT id FROM shop_chains WHERE name='Winner'").fetchone()[0]
+            winner_chain_id = conn.execute(
+                "SELECT id FROM shop_chains WHERE name='Winner'"
+            ).fetchone()[0]
             conn.execute(
                 "INSERT INTO stores (name, chain_id, pib) VALUES ('WINNER STORE', ?, '555000001')",
-                [chain_id],
+                [winner_chain_id],
             )
             return "Loser"
 
@@ -162,10 +165,13 @@ class TestResolveStore:
             "dinary.background.classification.store_resolver.get_chain_name",
             side_effect=competing_insert,
         ):
-            store_id, _ = asyncio.run(resolve_store(_broker(), "555000001", "WINNER STORE"))
+            store_id, chain_id = asyncio.run(resolve_store(_broker(), "555000001", "WINNER STORE"))
 
-        row = conn.execute("SELECT name FROM stores WHERE id = ?", [store_id]).fetchone()
+        row = conn.execute("SELECT name, chain_id FROM stores WHERE id = ?", [store_id]).fetchone()
         assert row[0] == "WINNER STORE"
+        assert chain_id == row[1], (
+            "returned chain_id must match stores.chain_id for the winning row"
+        )
 
     def test_no_connection_held_during_llm_call(self, conn):
         """resolve_store must not hold an open connection while awaiting the LLM."""

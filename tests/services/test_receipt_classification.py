@@ -24,7 +24,9 @@ from dinary.background.classification.persist import (
     RateMissingError,
 )
 from dinary.background.classification.task import (
+    _check_store_already_resolved,
     _classify_and_persist,
+    _drain_all_pending,
     _load_top_fallback_categories,
     _run_llm_pass,
     ClassificationExhaustedError,
@@ -494,6 +496,68 @@ class TestClassifyAndPersist:
         assert captured[0].category_id == 3
         assert captured[0].alternative_category_ids == [1, 2, 4, 5]
 
+    def test_notify_new_work_raises_expenses_committed_no_propagation(self, conn):
+        """notify_new_work raising must not propagate — expenses stay committed, job not poisoned."""
+        _seed_catalog(conn)
+        receipt_id = _seed_receipt(conn)
+        job = claim_next_job(conn)
+        items = get_receipt_items(conn, receipt_id)
+        conn.close()
+
+        with (
+            _classify_patch([_hleb_result(cat_id=1, conf=3)]),
+            patch(
+                "dinary.background.classification.persist.sheet_logging.notify_new_work",
+                side_effect=RuntimeError("sheet down"),
+            ),
+        ):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
+
+        conn2 = storage.get_connection()
+        try:
+            exp_count = conn2.execute(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()[0]
+        finally:
+            conn2.close()
+
+        assert exp_count == 1
+
+    def test_mark_failed_raises_fallback_creates_expense(self, conn):
+        """mark_failed() raising on the last attempt must not prevent fallback expense creation."""
+        _seed_catalog(conn)
+        receipt_id = _seed_receipt(conn)
+        job = claim_next_job(conn)
+        items = get_receipt_items(conn, receipt_id)
+        conn.close()
+
+        async def _failing_mark_failed(*_args, **_kwargs):
+            storage_mock = MagicMock()
+            storage_mock.on_quality_feedback = AsyncMock(side_effect=RuntimeError("storage down"))
+            execution = Execution(output="bad json", provider_label="P1", storage=storage_mock)
+            return ClassifyOutcome(
+                results=[],
+                broker_unavailable=False,
+                execution_failed=True,
+                execution=execution,
+            )
+
+        with patch(
+            "dinary.background.classification.task.classify_receipt",
+            side_effect=_failing_mark_failed,
+        ):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
+
+        conn2 = storage.get_connection()
+        try:
+            exp_count = conn2.execute(
+                "SELECT COUNT(*) FROM expenses WHERE receipt_id = ?", [receipt_id]
+            ).fetchone()[0]
+        finally:
+            conn2.close()
+
+        assert exp_count == 1, "fallback must create an expense even when mark_failed raises"
+
     def test_rate_missing_raises_and_no_expense(self, conn, monkeypatch):
         """When no rate is available RateMissingError is raised and no expense is stored."""
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
@@ -690,6 +754,30 @@ class TestRunLLMPass:
                 asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
         assert mock_classify.call_count == 3
 
+    def test_mark_failed_raises_still_raises_exhausted(self):
+        """mark_failed() raising must not prevent ClassificationExhaustedError from propagating."""
+        broker = MagicMock(spec=LLMBroker)
+        broker.provider_count = 1
+        job = _make_job(receipt_id=1)
+
+        async def _failing_mark_failed(*_args, **_kwargs):
+            storage_mock = MagicMock()
+            storage_mock.on_quality_feedback = AsyncMock(side_effect=RuntimeError("storage down"))
+            execution = Execution(output="bad json", provider_label="P1", storage=storage_mock)
+            return ClassifyOutcome(
+                results=[],
+                broker_unavailable=False,
+                execution_failed=True,
+                execution=execution,
+            )
+
+        with patch(
+            "dinary.background.classification.task.classify_receipt",
+            side_effect=_failing_mark_failed,
+        ):
+            with pytest.raises(ClassificationExhaustedError):
+                asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
+
     def test_second_attempt_succeeds_after_first_fails(self):
         """provider_count=2 → max_attempts=2; first fails, second succeeds."""
         broker = MagicMock(spec=LLMBroker)
@@ -723,3 +811,46 @@ class TestRunLLMPass:
             result = asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
         assert mock_classify.call_count == 2
         assert result[1] == expected
+
+
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
+class TestDrainAllPending:
+    def test_cancelled_job_does_not_propagate(self):
+        """CancelledError from a gather result must be logged, not propagated."""
+        broker = MagicMock(spec=LLMBroker)
+        job = _make_job(receipt_id=99)
+
+        async def _raise_cancelled(*_args, **_kwargs):
+            raise asyncio.CancelledError()
+
+        with (
+            patch(
+                "dinary.background.classification.task._claim_all_pending",
+                return_value=[job],
+            ),
+            patch(
+                "dinary.background.classification.task._process_job",
+                side_effect=_raise_cancelled,
+            ),
+        ):
+            asyncio.run(_drain_all_pending(broker))
+
+
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
+class TestCheckStoreAlreadyResolved:
+    def test_null_chain_id_returns_none(self, conn):
+        """stores.chain_id = NULL must not crash int(chain_row[0]) — return None instead."""
+        conn.execute("INSERT INTO stores (name) VALUES ('NULL CHAIN STORE')")
+        store_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO receipts (client_receipt_id, url, parsed_at, store_id)"
+            " VALUES ('r_nullchain', 'https://x', '2026-05-01T10:00:00', ?)",
+            [store_id],
+        )
+        receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.close()
+
+        result = _check_store_already_resolved(receipt_id)
+        assert result is None

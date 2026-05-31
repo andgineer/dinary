@@ -1,6 +1,7 @@
 """DB write path for receipt classification results."""
 
 import dataclasses
+import logging
 import sqlite3
 import uuid
 from datetime import UTC, date, datetime
@@ -23,6 +24,8 @@ from dinary.db.receipts import (
 )
 from dinary.db.storage import get_connection, transaction
 from dinary.sheets.sheet_mapping import resolve_event_auto_tag_ids
+
+logger = logging.getLogger(__name__)
 
 RECEIPT_CURRENCY = "RSD"  # Serbian fiscal receipts are always denominated in RSD
 
@@ -201,12 +204,18 @@ def persist_classification_results(
             trim_llm_call_log(conn)
             complete_job(conn, job.receipt_id)
             conn.execute("COMMIT")
-            sheet_logging.notify_new_work()
         except BaseException:
             conn.execute("ROLLBACK")
             raise
     finally:
         conn.close()
+    try:
+        sheet_logging.notify_new_work()
+    except Exception:
+        logger.exception(
+            "notify_new_work failed after commit for receipt_id=%s",
+            job.receipt_id,
+        )
 
 
 def write_fetch_fallback_metadata(

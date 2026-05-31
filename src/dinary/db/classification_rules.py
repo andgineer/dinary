@@ -42,18 +42,22 @@ def classify_by_rules(
     for the same item name. Returns the stored confidence unchanged — no source
     penalty because no LLM call is involved.
     """
-    conn.row_factory = sqlite3.Row
-    row = conn.execute(
-        """
-        SELECT id, category_id, confidence_level, tag_ids
-          FROM classification_rules
-         WHERE (chain_id = ? OR chain_id IS NULL)
-           AND item_name_normalized = ?
-         ORDER BY chain_id NULLS LAST
-         LIMIT 1
-        """,
-        [chain_id, item_name_normalized],
-    ).fetchone()
+    saved_row_factory = conn.row_factory
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT id, category_id, confidence_level, tag_ids
+              FROM classification_rules
+             WHERE (chain_id = ? OR chain_id IS NULL)
+               AND item_name_normalized = ?
+             ORDER BY chain_id NULLS LAST
+             LIMIT 1
+            """,
+            [chain_id, item_name_normalized],
+        ).fetchone()
+    finally:
+        conn.row_factory = saved_row_factory
     if row is None:
         return None
     tag_ids: list[int] = []
@@ -81,8 +85,7 @@ def create_or_update_rule(
 
     ``spec.source`` must be 'llm' or 'user_correction'.
     User corrections always set confidence_level=4 regardless of what is passed.
-    For 'user_correction': overwrites tag_ids, leaves alternative_category_ids unchanged.
-    For 'llm': persists alternative_category_ids and tag_ids.
+    Both sources persist alternative_category_ids and tag_ids from spec.
     """
     category_id = spec.category_id
     confidence_level = spec.confidence_level
@@ -92,52 +95,38 @@ def create_or_update_rule(
 
     now = datetime.now(UTC).isoformat()
 
-    conn.row_factory = sqlite3.Row
-    existing = conn.execute(
-        """
-        SELECT id, alternative_category_ids FROM classification_rules
-         WHERE (chain_id IS ? OR (chain_id IS NULL AND ? IS NULL))
-           AND item_name_normalized = ?
-        """,
-        [chain_id, chain_id, item_name_normalized],
-    ).fetchone()
+    saved_row_factory = conn.row_factory
+    try:
+        conn.row_factory = sqlite3.Row
+        existing = conn.execute(
+            """
+            SELECT id, alternative_category_ids FROM classification_rules
+             WHERE (chain_id IS ? OR (chain_id IS NULL AND ? IS NULL))
+               AND item_name_normalized = ?
+            """,
+            [chain_id, chain_id, item_name_normalized],
+        ).fetchone()
+    finally:
+        conn.row_factory = saved_row_factory
 
     if existing:
-        if source == "user_correction":
-            conn.execute(
-                """
-                UPDATE classification_rules
-                   SET category_id = ?, confidence_level = ?, source = ?,
-                       alternative_category_ids = '[]', tag_ids = ?, updated_at = ?
-                 WHERE id = ?
-                """,
-                [
-                    category_id,
-                    confidence_level,
-                    source,
-                    json.dumps(list(spec.tag_ids)),
-                    now,
-                    existing["id"],
-                ],
-            )
-        else:
-            conn.execute(
-                """
-                UPDATE classification_rules
-                   SET category_id = ?, confidence_level = ?, source = ?,
-                       alternative_category_ids = ?, tag_ids = ?, updated_at = ?
-                 WHERE id = ?
-                """,
-                [
-                    category_id,
-                    confidence_level,
-                    source,
-                    json.dumps(list(spec.alternative_category_ids)),
-                    json.dumps(list(spec.tag_ids)),
-                    now,
-                    existing["id"],
-                ],
-            )
+        conn.execute(
+            """
+            UPDATE classification_rules
+               SET category_id = ?, confidence_level = ?, source = ?,
+                   alternative_category_ids = ?, tag_ids = ?, updated_at = ?
+             WHERE id = ?
+            """,
+            [
+                category_id,
+                confidence_level,
+                source,
+                json.dumps(list(spec.alternative_category_ids)),
+                json.dumps(list(spec.tag_ids)),
+                now,
+                existing["id"],
+            ],
+        )
         return int(existing["id"])
     conn.execute(
         """

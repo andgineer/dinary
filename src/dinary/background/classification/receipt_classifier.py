@@ -100,7 +100,7 @@ def _parse_response(
             tag_ids=[
                 int(t)
                 for t in entry.get("tags", [])
-                if isinstance(t, (int, float)) and int(t) in tag_id_set
+                if isinstance(t, (int, float)) and float(t) == int(t) and int(t) in tag_id_set
             ],
         )
         for entry in parsed

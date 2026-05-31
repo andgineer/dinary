@@ -55,12 +55,12 @@ async def resolve_store(
         )
         if store_pib:
             row = conn.execute(
-                "SELECT id FROM stores WHERE pib = ?",
+                "SELECT id, chain_id FROM stores WHERE pib = ?",
                 [store_pib],
             ).fetchone()
         else:
             row = conn.execute(
-                "SELECT id FROM stores WHERE name = ? AND pib IS NULL",
+                "SELECT id, chain_id FROM stores WHERE name = ? AND pib IS NULL",
                 [store_name_raw],
             ).fetchone()
 
@@ -68,4 +68,4 @@ async def resolve_store(
         raise RuntimeError(
             f"Failed to resolve store: name={store_name_raw!r}, pib={store_pib!r}",
         )
-    return int(row[0]), chain_id
+    return int(row[0]), int(row[1])

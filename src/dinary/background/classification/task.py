@@ -160,7 +160,12 @@ async def _drain_all_pending(broker: LLMBroker) -> None:
         return_exceptions=True,
     )
     for job, result in zip(jobs, results, strict=True):
-        if isinstance(result, BaseException):
+        if isinstance(result, asyncio.CancelledError):
+            logger.warning(
+                "_process_job cancelled for receipt_id=%s",
+                job.receipt_id,
+            )
+        elif isinstance(result, Exception):
             logger.error(
                 "Unhandled exception in _process_job for receipt_id=%s",
                 job.receipt_id,
@@ -298,6 +303,8 @@ def _check_store_already_resolved(receipt_id: int) -> tuple[int, int] | None:
             "SELECT chain_id FROM stores WHERE id = ?",
             [store_id],
         ).fetchone()
+        if chain_row is None or chain_row[0] is None:
+            return None
         return store_id, int(chain_row[0])
 
 
@@ -427,7 +434,14 @@ async def _run_llm_pass(
                 item_id: result
                 for (item_id, _), result in zip(llm_queue, outcome.results, strict=True)
             }
-        await outcome.execution.mark_failed()
+        try:
+            await outcome.execution.mark_failed()
+        except Exception:
+            logger.exception(
+                "mark_failed raised for receipt_id=%s attempt %d — continuing",
+                job.receipt_id,
+                attempt + 1,
+            )
         logger.warning(
             "classification execution_failed attempt %d/%d receipt_id=%s",
             attempt + 1,

@@ -182,7 +182,7 @@ class TestCreateOrUpdateRule:
         assert json.loads(row[0]) == [2]
         assert json.loads(row[1]) == [10]
 
-    def test_user_correction_clears_alternative_category_ids(self, conn):
+    def test_user_correction_preserves_spec_alternative_category_ids(self, conn):
         create_or_update_rule(
             conn,
             1,
@@ -193,16 +193,14 @@ class TestCreateOrUpdateRule:
             conn,
             1,
             "ananas",
-            RuleSpec(2, 4, "user_correction", tag_ids=(11,)),
+            RuleSpec(2, 4, "user_correction", alternative_category_ids=(1,), tag_ids=(11,)),
         )
         row = conn.execute(
             "SELECT alternative_category_ids, tag_ids FROM classification_rules"
             " WHERE item_name_normalized = 'ananas'",
         ).fetchone()
         assert row is not None
-        # user_correction sets confidence=4 so alternatives are meaningless — must be cleared
-        assert json.loads(row[0]) == []
-        # tag_ids must be overwritten by user_correction
+        assert json.loads(row[0]) == [1]
         assert json.loads(row[1]) == [11]
 
     def test_user_correction_overwrites_tag_ids(self, conn):

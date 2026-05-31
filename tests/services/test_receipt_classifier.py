@@ -134,6 +134,11 @@ class TestParseResponse:
         results = _parse_response(raw, {1, 2})
         assert results[0].tag_ids == []
 
+    def test_tags_non_integer_float_excluded(self):
+        raw = json.dumps([{"item": "x", "category_id": 1, "confidence": 3, "tags": [1.5]}])
+        results = _parse_response(raw, {1, 2})
+        assert results[0].tag_ids == []
+
 
 @allure.epic("Receipts")
 @allure.feature("Pipeline")
