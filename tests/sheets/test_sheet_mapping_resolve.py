@@ -138,7 +138,7 @@ class TestAtomicSwap:
             ).fetchall()
         finally:
             con.close()
-        assert result == [(1, 1, "Food", "Ess")]
+        assert [tuple(r) for r in result] == [(1, 1, "Food", "Ess")]
 
     def test_swap_wipes_previous_rows(self):
         cats, events, tags = _catalog()
@@ -163,7 +163,7 @@ class TestAtomicSwap:
             ).fetchall()
         finally:
             con.close()
-        assert rows == [(2, "Car")]
+        assert [tuple(r) for r in rows] == [(2, "Car")]
 
     def test_swap_survives_preexisting_tag_rows(self):
         """When a prior swap inserted ``sheet_mapping_tags`` rows, a
@@ -202,9 +202,9 @@ class TestAtomicSwap:
             ).fetchall()
         finally:
             con.close()
-        assert first_tags == [(1, 1), (1, 2)]
-        assert rows == [(2, "Car", "путешествия")]
-        assert new_tags == [(1, 3)]
+        assert [tuple(r) for r in first_tags] == [(1, 1), (1, 2)]
+        assert [tuple(r) for r in rows] == [(2, "Car", "путешествия")]
+        assert [tuple(r) for r in new_tags] == [(1, 3)]
 
 
 @allure.epic("Sheets Sync")

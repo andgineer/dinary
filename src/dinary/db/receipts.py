@@ -350,7 +350,6 @@ def get_receipt_summary(conn: sqlite3.Connection, receipt_id: int) -> dict | Non
 
     Returns None if the receipt does not exist.
     """
-    conn.row_factory = sqlite3.Row
     row = conn.execute(
         """
         SELECT r.id, r.store_name_raw AS merchant, r.purchase_datetime AS captured_at

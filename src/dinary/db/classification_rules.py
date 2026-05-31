@@ -6,8 +6,11 @@ User corrections always store confidence_level=4.
 
 import dataclasses
 import json
+import logging
 import sqlite3
 from datetime import UTC, datetime
+
+logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -42,9 +45,7 @@ def classify_by_rules(
     for the same item name. Returns the stored confidence unchanged — no source
     penalty because no LLM call is involved.
     """
-    cur = conn.cursor()
-    cur.row_factory = sqlite3.Row
-    row = cur.execute(
+    row = conn.execute(
         """
         SELECT id, category_id, confidence_level, tag_ids
           FROM classification_rules
@@ -61,9 +62,9 @@ def classify_by_rules(
     if row["tag_ids"]:
         try:
             raw = json.loads(row["tag_ids"])
-            tag_ids = [int(t) for t in raw if isinstance(t, (int, float))]
+            tag_ids = [int(t) for t in raw]
         except (json.JSONDecodeError, ValueError):
-            pass
+            logger.warning("corrupt tag_ids for rule %s: %r", row["id"], row["tag_ids"])
     return RuleHit(
         rule_id=int(row["id"]),
         category_id=int(row["category_id"]),
@@ -92,9 +93,7 @@ def create_or_update_rule(
 
     now = datetime.now(UTC).isoformat()
 
-    cur = conn.cursor()
-    cur.row_factory = sqlite3.Row
-    existing = cur.execute(
+    existing = conn.execute(
         """
         SELECT id, alternative_category_ids FROM classification_rules
          WHERE (chain_id IS ? OR (chain_id IS NULL AND ? IS NULL))

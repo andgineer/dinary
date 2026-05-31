@@ -5,6 +5,7 @@ See "Classification Layer" in specs/architecture/architecture.md.
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import sqlite3
 from datetime import UTC, datetime, timedelta
@@ -49,6 +50,7 @@ logger = logging.getLogger(__name__)
 _FIFTEEN_MINUTES = 900
 _ONE_DAY = 86400
 _DAILY_THRESHOLD = 100  # retry_count at which 15-min phase ends (~1 day elapsed)
+_FALLBACK_CATEGORY_COUNT = 6  # 1 primary + 5 alternatives
 
 
 class ClassificationExhaustedError(Exception):
@@ -172,6 +174,10 @@ async def _drain_all_pending(broker: LLMBroker) -> None:
                 exc_info=result,
             )
         elif isinstance(result, BaseException):
+            # CancelledError is already handled above; this catches any other
+            # BaseException (e.g. SystemExit) that asyncio.gather captured as a
+            # result.  Do NOT merge with the Exception branch — that would lose
+            # the warning/error severity distinction for CancelledError.
             logger.error(
                 "Unexpected BaseException in _process_job for receipt_id=%s",
                 job.receipt_id,
@@ -188,8 +194,7 @@ async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
             job = _with_parsed_data(job, parsed)
 
         store_info = await _ensure_store(job, broker)
-        store_id = store_info[0] if store_info else None
-        chain_id = store_info[1] if store_info else None
+        store_id, chain_id = store_info if store_info else (None, None)
 
         items = await asyncio.to_thread(_get_items, job.receipt_id)
         await _classify_and_persist(broker, job, items, store_id, chain_id)
@@ -283,24 +288,19 @@ def _save_parsed(receipt_id: int, parsed: ParsedReceipt) -> None:
 
 
 def _with_parsed_data(job: ReceiptJobRow, parsed: ParsedReceipt) -> ReceiptJobRow:
-    return ReceiptJobRow(
-        receipt_id=job.receipt_id,
-        url=job.url,
+    return dataclasses.replace(
+        job,
         store_name_raw=parsed.store_name,
         store_pib_raw=parsed.store_pib,
         invoice_number=parsed.invoice_number,
         parsed_at=datetime.now(UTC).isoformat(),
         used_journal_fallback=parsed.used_journal_fallback,
-        claim_token=job.claim_token,
-        retry_count=job.retry_count,
     )
 
 
 def _check_store_already_resolved(receipt_id: int) -> tuple[int, int | None] | None:
     with storage.connection() as conn:
-        cur = conn.cursor()
-        cur.row_factory = sqlite3.Row
-        row = cur.execute(
+        row = conn.execute(
             """
             SELECT s.id AS store_id, s.chain_id
               FROM receipts r
@@ -358,9 +358,7 @@ def _run_rules_pass(
 def _load_top_fallback_categories(n: int) -> list[int]:
     """Return top-n category IDs by recent usage, padded with active categories."""
     with storage.connection() as conn:
-        cur = conn.cursor()
-        cur.row_factory = sqlite3.Row
-        active_count = cur.execute(
+        active_count = conn.execute(
             "SELECT COUNT(*) AS active_count FROM categories WHERE is_active = 1",
         ).fetchone()["active_count"]
         if active_count < 5:
@@ -368,7 +366,7 @@ def _load_top_fallback_categories(n: int) -> list[int]:
                 f"only {active_count} active categories — need at least 5",
             )
 
-        rows = cur.execute(
+        rows = conn.execute(
             """
             SELECT category_id, COUNT(*) AS cnt
               FROM expenses
@@ -390,7 +388,7 @@ def _load_top_fallback_categories(n: int) -> list[int]:
             else:
                 not_in_clause = ""
                 pad_params = [n - len(result)]
-            pad_rows = cur.execute(
+            pad_rows = conn.execute(
                 f"""
                 SELECT id FROM categories
                  WHERE is_active = 1
@@ -509,7 +507,7 @@ async def _classify_and_persist(
     try:
         llm_results = await _run_llm_pass(broker, job, llm_queue, categories, tags)
     except ClassificationExhaustedError:
-        top_cats = await asyncio.to_thread(_load_top_fallback_categories, 6)
+        top_cats = await asyncio.to_thread(_load_top_fallback_categories, _FALLBACK_CATEGORY_COUNT)
         primary_cat = top_cats[0]
         llm_results = {
             item_id: ClassificationResult(

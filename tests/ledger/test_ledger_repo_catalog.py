@@ -44,7 +44,7 @@ class TestConnectionLifecycle:
             row = con.execute("SELECT 1").fetchone()
         finally:
             con.close()
-        assert row == (1,)
+        assert row[0] == 1
 
     def test_get_connection_returns_usable_connection(self, fresh_db):
         con = storage.get_connection()
@@ -52,7 +52,7 @@ class TestConnectionLifecycle:
             row = con.execute("SELECT 1").fetchone()
         finally:
             con.close()
-        assert row == (1,)
+        assert row[0] == 1
 
     def test_multiple_connections_see_each_others_commits(self, fresh_db):
         """Two independent connections observe each other's commits.
@@ -75,7 +75,7 @@ class TestConnectionLifecycle:
         finally:
             c1.close()
             c2.close()
-        assert row == ("g42",)
+        assert row["name"] == "g42"
 
 
 @allure.epic("Catalog")

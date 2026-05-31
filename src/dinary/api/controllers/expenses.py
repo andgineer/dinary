@@ -199,7 +199,6 @@ def list_expenses_sync(
     page: int,
     page_size: int,
 ) -> dict:
-    con.row_factory = sqlite3.Row
     offset = (page - 1) * page_size
     total = con.execute("SELECT COUNT(*) FROM expenses").fetchone()[0]
     rows = con.execute(

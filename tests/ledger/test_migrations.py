@@ -374,4 +374,4 @@ class TestAccountingCurrencyAnchor:
             ).fetchone()
         finally:
             con.close()
-        assert row == ("EUR",)
+        assert row[0] == "EUR"

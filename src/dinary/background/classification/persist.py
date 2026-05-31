@@ -22,7 +22,7 @@ from dinary.db.receipts import (
     trim_llm_call_log,
     update_receipt_item,
 )
-from dinary.db.storage import get_connection, transaction
+from dinary.db.storage import connection, transaction
 from dinary.sheets.sheet_mapping import resolve_event_auto_tag_ids
 
 logger = logging.getLogger(__name__)
@@ -138,11 +138,10 @@ def persist_classification_results(
     llm_results: dict[int, ClassificationResult],
     store_id: int | None,
     chain_id: int | None,
-    norms: dict[int, str] | None = None,
+    norms: dict[int, str],
 ) -> None:
     """Write classification results atomically; handles idempotency inside the transaction."""
-    conn = get_connection()
-    try:
+    with connection() as conn:
         receipt_dt_row = conn.execute(
             "SELECT COALESCE(purchase_datetime, created_at) FROM receipts WHERE id = ?",
             [job.receipt_id],
@@ -186,29 +185,21 @@ def persist_classification_results(
             chain_id=chain_id,
             receipt_id=job.receipt_id,
         )
-        conn.execute("BEGIN IMMEDIATE")
-        try:
+        with transaction(conn):
             if conn.execute(
                 "SELECT 1 FROM expenses WHERE receipt_id = ? LIMIT 1",
                 [job.receipt_id],
             ).fetchone():
                 complete_job(conn, job.receipt_id)
-                conn.execute("COMMIT")
                 return
 
             for item in items:
                 cat_id, conf = classifications.get(item.id, (None, 1))
-                norm = (norms or {}).get(item.id) or normalize_item_name(item.name_raw)
+                norm = norms.get(item.id) or normalize_item_name(item.name_raw)
                 _write_single_item(conn, item, cat_id, conf, norm, ctx)
 
             trim_llm_call_log(conn)
             complete_job(conn, job.receipt_id)
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-    finally:
-        conn.close()
     try:
         sheet_logging.notify_new_work()
     except Exception:

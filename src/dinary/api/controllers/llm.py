@@ -132,7 +132,6 @@ def delete_provider(provider_id: int, con: sqlite3.Connection) -> dict[str, Any]
 
 
 def llm_status(con: sqlite3.Connection) -> dict[str, Any]:
-    con.row_factory = sqlite3.Row
     rows = con.execute(
         """
         SELECT p.id, p.label, p.base_url, p.model,

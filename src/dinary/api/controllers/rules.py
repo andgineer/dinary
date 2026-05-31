@@ -182,7 +182,6 @@ def build_rules_feed(
     *,
     doubtful_only: bool = True,
 ) -> dict[str, Any]:
-    con.row_factory = sqlite3.Row
     offset = (page - 1) * page_size
     d_total = count_doubtful(con)
     effective_total = d_total

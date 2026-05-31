@@ -103,6 +103,7 @@ def connect(
             timeout=timeout,
         )
         con.execute("PRAGMA foreign_keys=ON")
+        con.row_factory = sqlite3.Row
         return con
     con = sqlite3.connect(
         path,
@@ -115,6 +116,7 @@ def connect(
     con.execute("PRAGMA synchronous=NORMAL")
     con.execute("PRAGMA foreign_keys=ON")
     con.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")
+    con.row_factory = sqlite3.Row
     return con
 
 

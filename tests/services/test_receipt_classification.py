@@ -22,7 +22,9 @@ from dinary.background.classification.item_normalizer import normalize_item_name
 from dinary.background.classification.persist import (
     RECEIPT_CURRENCY,
     RateMissingError,
+    persist_classification_results,
 )
+from dinary.db.storage import connect
 from dinary.background.classification.task import (
     _check_store_already_resolved,
     _classify_and_persist,
@@ -854,3 +856,85 @@ class TestCheckStoreAlreadyResolved:
 
         result = _check_store_already_resolved(receipt_id)
         assert result == (store_id, None)
+
+
+@allure.epic("Receipts")
+@allure.feature("Background tasks")
+class TestPersistRollbackSafety:
+    @pytest.fixture(autouse=True)
+    def _no_fx_conversion(self, monkeypatch):
+        monkeypatch.setattr(settings, "accounting_currency", "RSD")
+
+    def test_write_failure_propagates_original_exception(self, conn, monkeypatch):
+        """Write failures inside the transaction must reach the caller unchanged."""
+        _seed_catalog(conn)
+        receipt_id = _seed_receipt(conn)
+        job = claim_next_job(conn)
+        items = get_receipt_items(conn, receipt_id)
+        conn.close()
+
+        def _bad_write(*_args, **_kw):
+            raise RuntimeError("intentional write failure")
+
+        monkeypatch.setattr(
+            "dinary.background.classification.persist._write_single_item",
+            _bad_write,
+        )
+
+        with pytest.raises(RuntimeError, match="intentional write failure"):
+            persist_classification_results(
+                job,
+                items,
+                {item.id: (1, 3) for item in items},
+                {},
+                {},
+                None,
+                None,
+                {item.id: normalize_item_name(item.name_raw) for item in items},
+            )
+
+    def test_best_effort_rollback_suppresses_secondary_error(self, tmp_path):
+        """best_effort_rollback on a closed connection must not raise.
+
+        This is what prevents a failed ROLLBACK from masking the original
+        exception in persist_classification_results's except BaseException block.
+        """
+        from dinary.db.storage import best_effort_rollback
+
+        c = connect(str(tmp_path / "t.db"))
+        c.close()
+        best_effort_rollback(c, context="test")  # must not raise
+
+
+@allure.epic("Infrastructure")
+@allure.feature("Storage")
+class TestConnectRowFactory:
+    def test_connection_has_row_factory_set(self, tmp_path):
+        """connect() must return a connection with row_factory=sqlite3.Row so
+        named column access works without per-call cursor setup."""
+        db_path = tmp_path / "test.db"
+        con = connect(str(db_path))
+        try:
+            con.execute("CREATE TABLE t (id INTEGER, name TEXT)")
+            con.execute("INSERT INTO t VALUES (1, 'hello')")
+            row = con.execute("SELECT id, name FROM t").fetchone()
+            assert row["name"] == "hello"
+            assert row["id"] == 1
+            assert row[0] == 1  # integer indexing must still work
+        finally:
+            con.close()
+
+    def test_read_only_connection_has_row_factory_set(self, tmp_path):
+        """read_only=True path must also set row_factory."""
+        db_path = tmp_path / "test_ro.db"
+        rw = connect(str(db_path))
+        rw.execute("CREATE TABLE t (id INTEGER)")
+        rw.execute("INSERT INTO t VALUES (42)")
+        rw.close()
+
+        ro = connect(str(db_path), read_only=True)
+        try:
+            row = ro.execute("SELECT id FROM t").fetchone()
+            assert row["id"] == 42
+        finally:
+            ro.close()

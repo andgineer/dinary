@@ -173,7 +173,7 @@ class TestLoggingQueue:
             assert list_logging_jobs(con) == []
         finally:
             con.close()
-        assert row == ("poisoned", "boom")
+        assert row["status"] == "poisoned" and row["last_error"] == "boom"
 
     def test_force_clear_wipes_row(self, populated_catalog):
         pk = self._insert_one_expense()

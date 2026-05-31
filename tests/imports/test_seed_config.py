@@ -323,7 +323,7 @@ class TestRebuildConfigFromSheets:
                 "SELECT id, is_active FROM categories WHERE id = ?",
                 [kafe_id],
             ).fetchone()
-            assert row == (kafe_id, False), (
+            assert row is not None and row["id"] == kafe_id and not row["is_active"], (
                 "FK-safe sync must mark the retired category inactive, "
                 "not delete it (expenses.category_id still points at it)"
             )

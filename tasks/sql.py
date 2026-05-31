@@ -34,7 +34,7 @@ def _execute(sql: str, *, write: bool = False) -> tuple[list[str], list[tuple]]:
     try:
         cursor = con.execute(sql)
         columns = [d[0] for d in cursor.description] if cursor.description else []
-        rows = cursor.fetchall() if columns else []
+        rows = [tuple(r) for r in cursor.fetchall()] if columns else []
     finally:
         con.close()
     return columns, rows

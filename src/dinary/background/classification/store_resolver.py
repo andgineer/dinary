@@ -12,9 +12,7 @@ logger = logging.getLogger(__name__)
 
 def _upsert_chain(conn: sqlite3.Connection, chain_name: str) -> int:
     conn.execute("INSERT OR IGNORE INTO shop_chains (name) VALUES (?)", [chain_name])
-    cur = conn.cursor()
-    cur.row_factory = sqlite3.Row
-    row = cur.execute("SELECT id FROM shop_chains WHERE name = ?", [chain_name]).fetchone()
+    row = conn.execute("SELECT id FROM shop_chains WHERE name = ?", [chain_name]).fetchone()
     return int(row["id"])
 
 
@@ -23,14 +21,12 @@ def _select_store(
     store_pib: str,
     store_name_raw: str,
 ) -> sqlite3.Row | None:
-    cur = conn.cursor()
-    cur.row_factory = sqlite3.Row
     if store_pib:
-        return cur.execute(
+        return conn.execute(
             "SELECT id, chain_id FROM stores WHERE pib = ?",
             [store_pib],
         ).fetchone()
-    return cur.execute(
+    return conn.execute(
         "SELECT id, chain_id FROM stores WHERE name = ? AND pib IS NULL",
         [store_name_raw],
     ).fetchone()
