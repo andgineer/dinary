@@ -164,9 +164,22 @@ async def _drain_all_pending(broker: LLMBroker) -> None:
     for job, result in zip(jobs, results, strict=True):
         if isinstance(result, asyncio.CancelledError):
             logger.warning(
-                "_process_job cancelled for receipt_id=%s",
+                "_process_job cancelled for receipt_id=%s — releasing",
                 job.receipt_id,
             )
+            try:
+                await asyncio.to_thread(
+                    _release,
+                    job.receipt_id,
+                    job.claim_token,
+                    job.retry_count,
+                    None,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to release cancelled job receipt_id=%s",
+                    job.receipt_id,
+                )
         elif isinstance(result, Exception):
             logger.error(
                 "Unhandled exception in _process_job for receipt_id=%s",
@@ -174,15 +187,24 @@ async def _drain_all_pending(broker: LLMBroker) -> None:
                 exc_info=result,
             )
         elif isinstance(result, BaseException):
-            # CancelledError is already handled above; this catches any other
-            # BaseException (e.g. SystemExit) that asyncio.gather captured as a
-            # result.  Do NOT merge with the Exception branch — that would lose
-            # the warning/error severity distinction for CancelledError.
-            logger.error(
-                "Unexpected BaseException in _process_job for receipt_id=%s",
+            logger.warning(
+                "Unexpected BaseException in _process_job for receipt_id=%s — releasing",
                 job.receipt_id,
                 exc_info=result,
             )
+            try:
+                await asyncio.to_thread(
+                    _release,
+                    job.receipt_id,
+                    job.claim_token,
+                    job.retry_count,
+                    None,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to release BaseException job receipt_id=%s",
+                    job.receipt_id,
+                )
 
 
 async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:

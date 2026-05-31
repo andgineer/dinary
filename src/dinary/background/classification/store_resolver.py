@@ -6,6 +6,7 @@ import sqlite3
 from dinary.adapters.llmbroker import LLMBroker
 from dinary.background.classification.receipt_classifier import get_chain_name
 from dinary.db import storage
+from dinary.db.storage import transaction
 
 logger = logging.getLogger(__name__)
 
@@ -50,22 +51,21 @@ async def resolve_store(
                 store_name_raw,
             )
         row = _select_store(conn, store_pib, store_name_raw)
-    if row:
-        return int(row["id"]), row["chain_id"]
+        if row:
+            return int(row["id"]), row["chain_id"]
 
     chain_name = await get_chain_name(broker, store_name_raw)
     chain_name = chain_name.strip() or store_name_raw.strip()
 
-    with storage.connection() as conn:
+    with storage.connection() as conn, transaction(conn):
         chain_id = _upsert_chain(conn, chain_name)
         conn.execute(
             "INSERT OR IGNORE INTO stores (name, chain_id, pib) VALUES (?, ?, ?)",
             [store_name_raw, chain_id, store_pib or None],
         )
         row = _select_store(conn, store_pib, store_name_raw)
-
-    if row is None:
-        raise RuntimeError(
-            f"Failed to resolve store: name={store_name_raw!r}, pib={store_pib!r}",
-        )
-    return int(row["id"]), row["chain_id"]
+        if row is None:
+            raise RuntimeError(
+                f"Failed to resolve store: name={store_name_raw!r}, pib={store_pib!r}",
+            )
+        return int(row["id"]), row["chain_id"]

@@ -108,7 +108,7 @@ onBeforeUnmount(() => {
         <span class="queue-label">RECEIPT QUEUE</span>
       </div>
       <div class="queue-chips">
-        <span v-if="reviewStore.receiptsQueue.pending > 0" class="queue-chip queue-chip--ready">{{ reviewStore.receiptsQueue.pending }} ready</span>
+        <span v-if="reviewStore.receiptsQueue.pending > 0" class="queue-chip queue-chip--ready">{{ reviewStore.receiptsQueue.pending }} queued</span>
         <span v-if="reviewStore.receiptsQueue.in_progress > 0" class="queue-chip queue-chip--processing">{{ reviewStore.receiptsQueue.in_progress }} processing</span>
         <span v-if="reviewStore.receiptsQueue.sleeping > 0" class="queue-chip queue-chip--sleeping">{{ reviewStore.receiptsQueue.sleeping }} sleeping</span>
         <span v-if="reviewStore.receiptsQueue.poisoned > 0" class="queue-chip queue-chip--failed">{{ reviewStore.receiptsQueue.poisoned }} failed</span>

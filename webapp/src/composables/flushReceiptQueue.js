@@ -29,10 +29,13 @@ export async function flushReceiptQueue() {
           const { amount } = parseReceiptUrl(item.url);
           amountLabel = ` · ${amount.toLocaleString()} RSD`;
         } catch { /* URL may not be decodable */ }
-        useLlmStore().markDirty();
-        useReviewStore().markDirty();
-        if (body?.status === "duplicate") toast.show(`Receipt already recorded${amountLabel}`, "info");
-        else toast.show(`Receipt saved${amountLabel}`, "success");
+        if (body?.status === "duplicate") {
+          toast.show(`Receipt already recorded${amountLabel}`, "info");
+        } else {
+          useLlmStore().markDirty();
+          useReviewStore().markDirty();
+          toast.show(`Receipt saved${amountLabel}`, "success");
+        }
       } catch (err) {
         // 409 conflict — receipt already registered with a different URL; discard locally.
         if (err?.status === 409) {
