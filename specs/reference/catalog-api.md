@@ -37,11 +37,10 @@ to show a delete button before the user attempts it — avoids a round-trip erro
 
 ## Auto-tags on events
 
-Event auto-tags are stored as tag names, not IDs. At expense-insert time names
-are resolved to live IDs. This decouples event configuration from catalog row
-IDs, which can change across seeds. Tag deactivation (hiding from the picker)
-does not block auto-attach — retired tags must still work for events that
-reference them.
+Event auto-tags are stored as tag IDs. At expense-insert time the stored IDs
+are resolved to live tag records. Tag deactivation (hiding from the picker)
+does not block auto-attach — retired tags still apply to events that reference
+them.
 
 ## Frequent categories
 
@@ -68,7 +67,5 @@ and the derived expenses that reference them.
 
 ## Authentication
 
-No auth on admin endpoints yet. The previous shared-token approach was removed
-because a single token across all operators stored in localStorage has poor
-security properties. A proper auth layer will land with multi-user support; until
-then, deployments must sit behind a private network or reverse-proxy ACL.
+No auth on admin endpoints. Deployments must sit behind a private network or
+reverse-proxy ACL.

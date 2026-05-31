@@ -43,7 +43,7 @@ not in production code.
 
 ## Provider pool rationale
 
-Provider selection (tested 2026-05-07/08 against real Serbian fiscal receipts):
+Provider selection (validated against real Serbian fiscal receipts):
 
 - **Groq / llama-3.3-70b-versatile** — primary. Best classification quality and
   speed. Correctly handles non-food items (clothing) and Serbian vocabulary without
@@ -68,6 +68,15 @@ On 429 or 503: move immediately to the next provider without waiting. The drain
 processes jobs at a steady personal-tracker pace; at normal load the pool is
 never exhausted. Rate-limit cooldown is tracked per provider so the primary is
 preferred again as soon as its window resets.
+
+## Quality failure tracking
+
+Each execution failure (a classification result deemed unusable — see
+[classification-pipeline.md](classification-pipeline.md)) is counted per
+provider label and surfaced in the admin UI alongside rate-limit and call-log
+stats. This lets operators identify unreliable providers without digging through
+server logs. For the TOML-backed path, counts are persisted to a JSON sidecar
+file whose location is configurable via the providers TOML.
 
 ## Prompt design principles
 

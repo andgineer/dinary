@@ -37,8 +37,7 @@ prioritises clean data, scriptability, and low hosting cost over UI polish.
 
 ### SQLite over DuckDB
 
-Moved from DuckDB in an early prototype. Three concrete frictions drove the
-switch:
+Three concrete frictions make DuckDB unsuitable:
 
 1. **Exclusive file lock.** DuckDB 1.x holds an exclusive write lock for the
    lifetime of any connection, including `read_only=True`. Any concurrent
@@ -55,11 +54,6 @@ switch:
 SQLite in WAL mode gives: single-file embedded storage, zero configuration,
 live readers concurrent with a single writer, and a Litestream sidecar that
 streams WAL segments off-box without blocking writes.
-
-**DuckDB on the laptop (Phase 5, not yet implemented):** planned for analytics.
-`ATTACH 'dinary.db' AS ledger (TYPE sqlite, READ_ONLY)` makes the local replica
-queryable with vectorised execution and full analytical SQL — no ETL, no
-persistent DuckDB state. `duckdb` is not yet in `pyproject.toml`.
 
 ### SQL files over Ibis
 
@@ -78,9 +72,6 @@ The extra cost comes from Ibis building query expressions instead of executing
 SQL directly, materialising results through `expr.execute()`, and mapping from
 pandas objects to dataclasses. Small lookup-heavy reads pay the penalty on every
 call — which is exactly the dominant pattern here.
-
-Ibis's one useful contribution was `yoyo` migrations. That was adopted
-independently of Ibis itself.
 
 **Decision:** plain SQL files + `yoyo` migrations. Query SQL lives in
 `src/dinary/db/sql/`; migrations in `src/dinary/db/migrations/`.
@@ -208,10 +199,6 @@ For implementation detail on each subsystem see `specs/reference/`:
 (1 OCPU, 1 GB RAM). Litestream streams WAL segments to a secondary VM over
 SFTP. Accessible via Cloudflare Tunnel or Tailscale. No Docker in production —
 saves RAM. See `docs/src/en/operations.md` for the ops runbook.
-
-**Local agent (planned, Phase 4):** Rust desktop app with a background daemon
-that fetches analysis tasks from the server API, processes via `claude -p`, and
-pushes results back. GUI for interactive review and quick data entry.
 
 ---
 

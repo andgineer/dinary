@@ -56,6 +56,7 @@ These rules come from `AGENTS.md` and supplement the defaults in this file.
 - Specs in `specs/` capture architectural decisions and business requirements only — not implementation details.
 - Correct spec content: "every expense created from a receipt must have a matching rule", "retry every 15 minutes on day 1, then once a day indefinitely."
 - Never put function signatures, argument lists, field names, or internal class structure in specs. The code is the source of truth for those.
+- Specs describe **current state only**. Motivation, experiments, and rationale are welcome. Never track implementation changes ("previously X, now Y", "approach Z was removed") — state only the current rule. Git history records the evolution.
 
 ### Tests
 - Every new function needs tests in the same session. Never skip.

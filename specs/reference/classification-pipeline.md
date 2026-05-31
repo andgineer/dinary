@@ -14,9 +14,8 @@ a miss and its item is re-queued for LLM classification. Confidence-1 means "see
 but uncertain" — the rule exists only to record normalised name history, not to
 make a definitive assignment.
 
-**Confidence penalty**: if the broker fell back to a lower-priority provider or
-a provider failed mid-loop, a penalty is applied to LLM-classified items'
-confidence. Rule-hit items are not penalised — their stored confidence is already
+**Confidence penalty**: if a provider failed mid-loop and a fallback provider
+was used, a penalty is applied to LLM-classified items' confidence. Rule-hit items are not penalised — their stored confidence is already
 calibrated from a prior LLM call. The penalty signals that the result comes from
 a less reliable source than the configured primary.
 
@@ -30,6 +29,12 @@ is the highest authority. Clearing stored alternatives prevents stale LLM
 suggestions from surfacing in future review flows after the user has expressed a
 definitive preference.
 
+**Rule creation threshold**: rules are created for any item with a known
+category, regardless of confidence level. A confidence-1 rule records the
+normalised name but is still treated as a miss for re-queuing — the item is
+sent to the LLM again on next classification, so a definitive assignment can
+eventually replace it.
+
 ## Error handling strategy
 
 Network/parse errors on receipt fetch are treated differently:
@@ -41,6 +46,36 @@ This distinction matters because the government fiscal API is unreliable;
 treating all failures as permanent would silently discard valid receipts. See
 [receipt-fetching.md](receipt-fetching.md) for the fetch strategy and
 reliability characteristics of `suf.purs.gov.rs`.
+
+## LLM execution failure and retry
+
+An LLM execution is considered failed when: the response is not valid JSON,
+any classified item has no assigned category, or the count of classified items
+differs from the count sent. A fully assigned response at any confidence level
+is not a failure.
+
+On execution failure the pipeline retries with a different provider, up to
+three attempts bounded by the number of configured providers. Each failure is
+reported back to the provider so its quality-failure counter is incremented.
+If all attempts fail, the job enters the frequency-based exhaustion fallback
+rather than being poisoned.
+
+## Frequency-based exhaustion fallback
+
+After all provider attempts are exhausted, every unclassified item receives a
+best-guess assignment drawn from the most-frequently-used categories over the
+last 3 months. The top category becomes the primary at confidence 1; the next
+five become alternatives. This lands the receipt in the review queue pre-filled
+for the user rather than silently losing it.
+
+Padding: when fewer than six categories appear in recent expense history, the
+list is extended with active categories (ordered by ID) until six entries are
+reached.
+
+If fewer than 5 active categories exist the fallback is treated as a transient
+error and retried under the existing job retry policy (15-minute retries for a
+day, then once daily). This prevents a broken installation from silently
+discarding receipts.
 
 ## Sync DB calls on the event loop
 

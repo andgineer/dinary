@@ -35,9 +35,6 @@ multi-tab coordination concern and no risk of disrupting concurrent sessions.
 
 ## Rollback is image-level
 
-There is no in-tree rollback path for the PWA. The `static/` vanilla-JS
-predecessor and its FastAPI fallback were removed in the same commit that
-completed the Vue migration. Rollback means redeploying the last container
-image built before that change, which still ships the old app. This is
-intentional — keeping a dead fallback path in-tree would accumulate drift and
-create false confidence in a code path that is never tested.
+There is no in-tree rollback path for the PWA. Rollback means redeploying a
+prior container image. Keeping a dead fallback path in-tree would accumulate
+drift and create false confidence in a code path that is never tested.
