@@ -1,0 +1,1 @@
+2026-05-30 13:36:51,815 INFO     dinary.api.controllers.catalog_writer — catalog_writer add_event(reactivate name='отпуск-2024'): bumped catalog_version

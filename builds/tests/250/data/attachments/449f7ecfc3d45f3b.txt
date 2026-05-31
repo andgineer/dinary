@@ -1,0 +1,1 @@
+2026-05-30 18:41:15,550 INFO     dinary.background.sheet_logging.sheets_write — Inserted logging row at 2 for month 4 (Clothes/)

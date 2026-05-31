@@ -1,0 +1,1 @@
+2026-05-29 16:24:38,496 WARNING  tasks.imports.report_2d_3d — No resolution context for year 2024, skipping

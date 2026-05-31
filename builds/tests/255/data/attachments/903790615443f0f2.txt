@@ -1,0 +1,1 @@
+2026-05-31 12:11:50,180 INFO     dinary.api.controllers.catalog_writer — catalog_writer add_category(reactivate name='food'): bumped catalog_version

@@ -1,0 +1,46 @@
+2026-05-31 18:51:44,360 INFO     tasks.imports.income_original_export — Extracting year 2021 from worksheet 'Balance'
+2026-05-31 18:51:44,360 ERROR    tasks.imports.income_original_export — Failed to read year 2021 — skipping
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/tasks/imports/income_original_export.py", line 125, in extract_all_years
+    monthly = aggregate_original_currency(
+        source.year,
+    ...<2 lines>...
+        layout,
+    )
+  File "/home/runner/work/dinary/dinary/tasks/imports/income_original_export.py", line 61, in aggregate_original_currency
+    ss = get_sheet(spreadsheet_id)
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1240, in _execute_mock_call
+    result = effect(*args, **kwargs)
+  File "/home/runner/work/dinary/dinary/tests/imports/test_income_original_export.py", line 163, in _get_sheet
+    return _ss(_ws(data_by_sid[spreadsheet_id]))
+                   ~~~~~~~~~~~^^^^^^^^^^^^^^^^
+KeyError: 'sid21'
+2026-05-31 18:51:44,361 INFO     tasks.imports.income_original_export — Extracting year 2023 from worksheet 'Income'
+2026-05-31 18:51:44,361 ERROR    tasks.imports.income_original_export — Failed to read year 2023 — skipping
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/tasks/imports/income_original_export.py", line 125, in extract_all_years
+    monthly = aggregate_original_currency(
+        source.year,
+    ...<2 lines>...
+        layout,
+    )
+  File "/home/runner/work/dinary/dinary/tasks/imports/income_original_export.py", line 61, in aggregate_original_currency
+    ss = get_sheet(spreadsheet_id)
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1240, in _execute_mock_call
+    result = effect(*args, **kwargs)
+  File "/home/runner/work/dinary/dinary/tests/imports/test_income_original_export.py", line 163, in _get_sheet
+    return _ss(_ws(data_by_sid[spreadsheet_id]))
+                   ~~~~~~~~~~~^^^^^^^^^^^^^^^^
+KeyError: 'sid23'

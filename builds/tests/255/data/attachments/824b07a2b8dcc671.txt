@@ -1,0 +1,5 @@
+INFO     dinary.db.storage:storage.py:260 anchored accounting_currency=EUR in app_metadata
+INFO     dinary.background.sheet_logging.task:task.py:66 sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+INFO     dinary.api.controllers.catalog_writer:catalog_writer.py:82 catalog_writer add_group(name='Transport'): bumped catalog_version
+INFO     dinary.background.rate_prefetch.task:task.py:101 prefetched RSD/EUR rate for 2026-05-31: 0.008517
+INFO     dinary.api.controllers.catalog_writer:catalog_writer.py:82 catalog_writer add_category(name='metro'): bumped catalog_version

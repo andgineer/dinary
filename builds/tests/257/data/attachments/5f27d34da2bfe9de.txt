@@ -1,0 +1,1 @@
+2026-05-31 16:54:16,242 INFO     dinary.adapters.nbp — Got rate from NBP table B for RSD

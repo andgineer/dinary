@@ -1,0 +1,1 @@
+INFO     tasks.imports.income_original_export:income_original_export.py:118 Extracting year 2024 from worksheet 'Income'

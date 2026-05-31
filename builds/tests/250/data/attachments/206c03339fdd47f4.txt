@@ -1,0 +1,31 @@
+2026-05-30 18:41:19,943 INFO     dinary.db.storage — anchored accounting_currency=RSD in app_metadata
+2026-05-30 18:41:19,946 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-05-30 18:41:19,952 WARNING  dinary.background.rate_prefetch.task — rate for RSD/RSD on 2026-05-30 not written to DB (stale fallback 1), retrying in 30 min
+2026-05-30 18:41:19,961 INFO     dinary.background.classification.task — Receipt drain: processing receipt_id=1
+2026-05-30 18:41:19,966 ERROR    dinary.background.classification.task — Permanent error for receipt_id=1 — poisoning
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/background/classification/task.py", line 184, in _process_job
+    await _classify_and_persist(broker, job, items, store_id, chain_id)
+  File "/home/runner/work/dinary/dinary/src/dinary/background/classification/task.py", line 505, in _classify_and_persist
+    await asyncio.to_thread(
+    ...<9 lines>...
+    )
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/home/runner/work/dinary/dinary/src/dinary/background/classification/persist.py", line 199, in persist_classification_results
+    _write_single_item(conn, item, cat_id, conf, norm, ctx)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/dinary/dinary/src/dinary/background/classification/persist.py", line 93, in _write_single_item
+    conn.execute(
+    ~~~~~~~~~~~~^
+        """
+        ^^^
+    ...<19 lines>...
+        ],
+        ^^
+    )
+    ^
+sqlite3.IntegrityError: NOT NULL constraint failed: expenses.category_id

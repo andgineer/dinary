@@ -1,0 +1,22 @@
+2026-05-29 17:38:28,068 INFO     dinary.db.storage — anchored accounting_currency=RSD in app_metadata
+2026-05-29 17:38:28,072 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-05-29 17:38:28,074 WARNING  dinary.background.rate_prefetch.task — rate for RSD/RSD on 2026-05-29 not written to DB (stale fallback 1), retrying in 30 min
+2026-05-29 17:38:28,095 INFO     dinary.background.classification.task — Receipt drain: processing receipt_id=1
+2026-05-29 17:38:28,100 ERROR    dinary.background.classification.task — Permanent error for receipt_id=1 — poisoning
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/background/classification/task.py", line 176, in _process_job
+    await _classify_and_persist(broker, job, items, store_id, chain_id)
+  File "/home/runner/work/dinary/dinary/src/dinary/background/classification/task.py", line 419, in _classify_and_persist
+    await asyncio.to_thread(
+    ...<9 lines>...
+    )
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/home/runner/work/dinary/dinary/src/dinary/background/classification/persist.py", line 211, in persist_classification_results
+    raise RuntimeError(
+    ...<2 lines>...
+    )
+RuntimeError: no expenses created for receipt_id=1 (1 item(s) — all unclassifiable)

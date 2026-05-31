@@ -1,0 +1,1 @@
+2026-05-29 16:24:41,687 WARNING  dinary.background.classification.receipt_classifier — LLM parse error (expected list), fallback conf=1: {"item": "hleb"}

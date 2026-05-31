@@ -1,0 +1,13 @@
+2026-05-31 16:27:03,553 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-05-31 16:27:03,555 ERROR    tasks.imports.expense_import — Failed to resolve dimensions for ('еда', 'собака') in year 2026
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/tasks/imports/expense_import.py", line 1142, in _prepare_row_dimensions
+    resolved = _resolve_dimensions(
+        con,
+    ...<5 lines>...
+        ctx=ctx,
+    )
+  File "/home/runner/work/dinary/dinary/tests/imports/test_expense_import.py", line 284, in flaky_resolve
+    raise ValueError(msg)
+ValueError: tag 'phantom' not found in tags; re-seed required
+2026-05-31 16:27:03,557 INFO     tasks.imports.expense_import — Applied post-import fixes for 2026

@@ -1,0 +1,1 @@
+WARNING  dinary.background.classification.task:task.py:164 _process_job cancelled for receipt_id=99

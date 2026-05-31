@@ -1,0 +1,2 @@
+2026-05-29 17:24:12,940 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-05-29 17:24:12,943 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
