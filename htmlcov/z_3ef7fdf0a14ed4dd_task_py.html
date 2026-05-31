@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for src/dinary/background/classification/task.py: 94%</title>
+    <title>Coverage for src/dinary/background/classification/task.py: 93%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>src<span class="sep">/</span>dinary<span class="sep">/</span>background<span class="sep">/</span>classification<span class="sep">/</span>task.py</b>:
-            <span class="pc_cov">94%</span>
+            <span class="pc_cov">93%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">233 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">218<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">15<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">217<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">16<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_24919348b8810132_task_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.1">coverage.py v7.14.1</a>,
-            created at 2026-05-30 18:51 +0000
+            created at 2026-05-31 06:58 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -507,7 +507,7 @@
     <p class="run"><span class="n"><a id="t425" href="#t425">425</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">outcome</span><span class="op">.</span><span class="nam">execution_failed</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t426" href="#t426">426</a></span><span class="t">            <span class="key">return</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t427" href="#t427">427</a></span><span class="t">                <span class="nam">item_id</span><span class="op">:</span> <span class="nam">result</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t428" href="#t428">428</a></span><span class="t">                <span class="key">for</span> <span class="op">(</span><span class="nam">item_id</span><span class="op">,</span> <span class="nam">_</span><span class="op">)</span><span class="op">,</span> <span class="nam">result</span> <span class="key">in</span> <span class="nam">zip</span><span class="op">(</span><span class="nam">llm_queue</span><span class="op">,</span> <span class="nam">outcome</span><span class="op">.</span><span class="nam">results</span><span class="op">,</span> <span class="nam">strict</span><span class="op">=</span><span class="key">False</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t428" href="#t428">428</a></span><span class="t">                <span class="key">for</span> <span class="op">(</span><span class="nam">item_id</span><span class="op">,</span> <span class="nam">_</span><span class="op">)</span><span class="op">,</span> <span class="nam">result</span> <span class="key">in</span> <span class="nam">zip</span><span class="op">(</span><span class="nam">llm_queue</span><span class="op">,</span> <span class="nam">outcome</span><span class="op">.</span><span class="nam">results</span><span class="op">,</span> <span class="nam">strict</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t429" href="#t429">429</a></span><span class="t">            <span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t430" href="#t430">430</a></span><span class="t">        <span class="key">await</span> <span class="nam">outcome</span><span class="op">.</span><span class="nam">execution</span><span class="op">.</span><span class="nam">mark_failed</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t431" href="#t431">431</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -537,7 +537,7 @@
     <p class="pln"><span class="n"><a id="t455" href="#t455">455</a></span><span class="t">        <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t456" href="#t456">456</a></span><span class="t">            <span class="nam">llm</span> <span class="op">=</span> <span class="nam">llm_results</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">item</span><span class="op">.</span><span class="nam">id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t457" href="#t457">457</a></span><span class="t">            <span class="key">if</span> <span class="nam">llm</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t458" href="#t458">458</a></span><span class="t">                <span class="nam">result</span><span class="op">[</span><span class="nam">item</span><span class="op">.</span><span class="nam">id</span><span class="op">]</span> <span class="op">=</span> <span class="op">(</span><span class="key">None</span><span class="op">,</span> <span class="num">1</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t458" href="#t458">458</a></span><span class="t">                <span class="nam">result</span><span class="op">[</span><span class="nam">item</span><span class="op">.</span><span class="nam">id</span><span class="op">]</span> <span class="op">=</span> <span class="op">(</span><span class="key">None</span><span class="op">,</span> <span class="num">1</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t459" href="#t459">459</a></span><span class="t">            <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t460" href="#t460">460</a></span><span class="t">                <span class="nam">conf</span> <span class="op">=</span> <span class="nam">max</span><span class="op">(</span><span class="num">1</span><span class="op">,</span> <span class="nam">llm</span><span class="op">.</span><span class="nam">confidence_level</span> <span class="op">-</span> <span class="nam">total_penalty</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t461" href="#t461">461</a></span><span class="t">                <span class="nam">result</span><span class="op">[</span><span class="nam">item</span><span class="op">.</span><span class="nam">id</span><span class="op">]</span> <span class="op">=</span> <span class="op">(</span><span class="nam">llm</span><span class="op">.</span><span class="nam">category_id</span><span class="op">,</span> <span class="nam">conf</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -604,7 +604,7 @@
             <a class="nav" href="z_24919348b8810132_task_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.1">coverage.py v7.14.1</a>,
-            created at 2026-05-30 18:51 +0000
+            created at 2026-05-31 06:58 +0000
         </p>
     </div>
 </footer>
