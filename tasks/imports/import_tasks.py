@@ -7,7 +7,7 @@ from datetime import datetime as _dt
 
 from invoke import task
 
-from tasks.imports import income_original_export
+from tasks.imports import income_extract
 from tasks.imports import report_2d_3d as _report_2d_3d_module
 from tasks.reports import verify_budget, verify_income
 from tasks.ssh_utils import remote_snapshot_cmd, ssh_capture_bytes, ssh_json, ssh_run
@@ -250,16 +250,16 @@ def verify_income_equivalence_all(c, json=False):  # noqa: A002
     sys.exit(verify_income.exit_code_for_batch(results))
 
 
-@task(name="export-income-original")
-def export_income_original(c, output=""):
-    """Export income from all sheets in original currency (RUB/RSD) to a JSON file.
+@task(name="import-extract-income")
+def import_extract_income(c, output=""):
+    """Extract individual income records from all sheets in original currency to JSON.
 
     Reads every registered income source from .deploy/import_sources.json and
-    writes a flat list of {year, month, amount, currency} entries to JSON.
-    Default output path: data/income_original.json. Override with --output.
+    writes one entry per sheet row with predicted income_month.
+    Default output path: data/income_extract.json. Override with --output.
     """
-    dest = Path(output) if output else income_original_export.DEFAULT_OUTPUT
-    count = income_original_export.export_to_file(dest)
+    dest = Path(output) if output else income_extract.DEFAULT_OUTPUT
+    count = income_extract.export_to_file(dest)
     print(f"Wrote {count} entries to {dest}")
 
 

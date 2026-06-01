@@ -20,10 +20,10 @@ from .devtools.constants import ALLOWED_VERSION_TYPES
 from .devtools.dev import build_static, dev, pre, reqs, test, uv, ver_task_factory, version
 from .healthcheck import healthcheck
 from .imports.import_tasks import (
-    export_income_original,
     import_budget,
     import_budget_all,
     import_catalog,
+    import_extract_income,
     import_income,
     import_income_all,
     import_report_2d_3d,
@@ -48,11 +48,11 @@ __all__ = [
     "dev",
     "docs_task_factory",
     "healthcheck",
-    "export_income_original",
     "import_budget",
     "import_budget_all",
     "import_catalog",
     "import_config",
+    "import_extract_income",
     "import_income",
     "import_income_all",
     "import_report_2d_3d",

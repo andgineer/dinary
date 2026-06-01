@@ -106,6 +106,38 @@ def _parse_date(raw: str) -> tuple[int, int] | None:
     return None
 
 
+def _parse_full_date(raw: str) -> tuple[int, int, int] | None:
+    """Extract (year, month, day) from a date string. Returns None if unparseable."""
+    if not raw:
+        return None
+    m = _LOOSE_DATE_RE.match(raw)
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3))
+    for fmt in _DATE_FORMATS:
+        try:
+            dt = datetime.strptime(raw, fmt)  # noqa: DTZ007
+            return dt.year, dt.month, dt.day
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_full_date(raw: str) -> tuple[int, int, int] | None:
+    """Extract (year, month, day) from a date string. Returns None if unparseable."""
+    if not raw:
+        return None
+    m = _LOOSE_DATE_RE.match(raw)
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3))
+    for fmt in _DATE_FORMATS:
+        try:
+            dt = datetime.strptime(raw, fmt)  # noqa: DTZ007
+            return dt.year, dt.month, dt.day
+        except ValueError:
+            continue
+    return None
+
+
 def _convert_to_accounting_from_cache(
     amount: Decimal,
     currency: str,
