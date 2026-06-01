@@ -97,12 +97,28 @@ describe("ProviderCard", () => {
     expect(wrapper.emitted("toggle")).toBeTruthy();
   });
 
-  it("shows error detail when last_error_detail is set", () => {
+  it("shows plain-text error detail as-is", () => {
     const wrapper = mount(ProviderCard, {
       props: { provider: { ...BASE_PROVIDER, last_error_detail: "401 Incorrect API key provided" } },
     });
     expect(wrapper.find(".error-detail").exists()).toBe(true);
     expect(wrapper.text()).toContain("401 Incorrect API key provided");
+  });
+
+  it("extracts message from JSON object error_detail", () => {
+    const raw = JSON.stringify({ error: { code: 500, message: "Internal server error" } });
+    const wrapper = mount(ProviderCard, {
+      props: { provider: { ...BASE_PROVIDER, last_error_detail: raw } },
+    });
+    expect(wrapper.find(".error-detail").text()).toBe("Internal server error");
+  });
+
+  it("extracts message from Gemini-style array-wrapped error_detail", () => {
+    const raw = JSON.stringify([{ error: { code: 503, message: "High demand, try later" } }]);
+    const wrapper = mount(ProviderCard, {
+      props: { provider: { ...BASE_PROVIDER, last_error_detail: raw } },
+    });
+    expect(wrapper.find(".error-detail").text()).toBe("High demand, try later");
   });
 
   it("hides error detail when last_error_detail is null", () => {

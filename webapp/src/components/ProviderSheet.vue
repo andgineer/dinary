@@ -36,6 +36,18 @@ const PRESETS = {
 
 const isEditMode = computed(() => !!props.provider);
 
+const parsedError = computed(() => {
+  const raw = props.provider?.last_error_detail;
+  if (!raw) return null;
+  try {
+    let parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) parsed = parsed[0];
+    return parsed?.error?.message ?? raw;
+  } catch {
+    return raw;
+  }
+});
+
 const label = ref("");
 const baseUrl = ref("");
 const model = ref("");
@@ -168,6 +180,8 @@ async function handleDelete() {
       </div>
 
       <div class="sheet-body">
+        <div v-if="parsedError" class="error-banner">{{ parsedError }}</div>
+
         <div class="preset-row">
           <button
             v-for="(_, name) in PRESETS"
@@ -372,6 +386,17 @@ async function handleDelete() {
   flex: 1;
   overflow-y: auto;
   padding: 0.5rem 1rem;
+}
+
+.error-banner {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.82rem;
+  color: var(--danger, #ef4444);
+  margin-bottom: 0.75rem;
+  word-break: break-word;
 }
 
 .preset-row {

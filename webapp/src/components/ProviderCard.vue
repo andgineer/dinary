@@ -41,6 +41,18 @@ const latencyColor = computed(() => {
   if (ms == null) return "var(--muted)";
   return ms > 3000 ? "var(--warning)" : "var(--muted)";
 });
+
+const errorMessage = computed(() => {
+  const raw = props.provider.last_error_detail;
+  if (!raw) return null;
+  try {
+    let parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) parsed = parsed[0];
+    return parsed?.error?.message ?? raw;
+  } catch {
+    return raw;
+  }
+});
 </script>
 
 <template>
@@ -63,7 +75,7 @@ const latencyColor = computed(() => {
         <span v-if="rateLimitSecsLeft > 0" class="rate-limit-pill">{{ rateLimitSecsLeft }}s</span>
       </div>
       <div class="card-model">{{ provider.model }}</div>
-      <div v-if="provider.last_error_detail" class="error-detail">{{ provider.last_error_detail }}</div>
+      <div v-if="errorMessage" class="error-detail">{{ errorMessage }}</div>
     </div>
 
     <div class="usage-row">
@@ -195,9 +207,10 @@ const latencyColor = computed(() => {
   font-size: 0.7rem;
   color: var(--danger, #ef4444);
   margin-top: 0.2rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .card-model {

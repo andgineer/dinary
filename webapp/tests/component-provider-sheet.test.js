@@ -127,6 +127,26 @@ describe("ProviderSheet — edit mode", () => {
     wrapper.unmount();
   });
 
+  it("shows error banner with parsed message when last_error_detail is set", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const raw = JSON.stringify([{ error: { code: 503, message: "High demand, try later" } }]);
+    const wrapper = mountSheet(pinia, { provider: { ...PROVIDER, last_error_detail: raw } });
+    await flushPromises();
+    expect(wrapper.find(".error-banner").exists()).toBe(true);
+    expect(wrapper.find(".error-banner").text()).toBe("High demand, try later");
+    wrapper.unmount();
+  });
+
+  it("hides error banner when last_error_detail is null", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const wrapper = mountSheet(pinia, { provider: { ...PROVIDER, last_error_detail: null } });
+    await flushPromises();
+    expect(wrapper.find(".error-banner").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
   it("calls llmStore.remove on second Remove click", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
