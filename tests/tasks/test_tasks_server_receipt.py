@@ -2,7 +2,11 @@
 
 import allure
 
-from tasks.healthcheck import _healthcheck_receipt_fetch, _healthcheck_receipt_llm
+from tasks.healthcheck import (
+    _healthcheck_receipt_fetch,
+    _healthcheck_receipt_llm,
+    _healthcheck_receipt_queue,
+)
 
 
 @allure.epic("Receipts")
@@ -46,6 +50,47 @@ class TestHealthcheckReceiptLLM:
         _healthcheck_receipt_llm(results)
         out = capsys.readouterr().out
         assert "5" in out
+
+
+@allure.epic("Receipts")
+@allure.feature("Admin")
+class TestHealthcheckReceiptQueue:
+    def test_ok_when_all_zero(self, capsys):
+        assert _healthcheck_receipt_queue({"receipt_queue": "0|0|0|0"}) is False
+        assert "empty" in capsys.readouterr().out
+
+    def test_ok_when_key_missing(self, capsys):
+        assert _healthcheck_receipt_queue({}) is False
+        assert "empty" in capsys.readouterr().out
+
+    def test_fails_on_pending(self, capsys):
+        assert _healthcheck_receipt_queue({"receipt_queue": "3|0|0|0"}) is True
+        assert "pending=3" in capsys.readouterr().err
+
+    def test_fails_on_sleeping(self, capsys):
+        assert _healthcheck_receipt_queue({"receipt_queue": "0|2|0|0"}) is True
+        assert "sleeping=2" in capsys.readouterr().err
+
+    def test_fails_on_in_progress(self, capsys):
+        assert _healthcheck_receipt_queue({"receipt_queue": "0|0|1|0"}) is True
+        assert "in_progress=1" in capsys.readouterr().err
+
+    def test_fails_on_poisoned(self, capsys):
+        assert _healthcheck_receipt_queue({"receipt_queue": "0|0|0|4"}) is True
+        assert "poisoned=4" in capsys.readouterr().err
+
+    def test_reports_all_non_zero_fields(self, capsys):
+        assert _healthcheck_receipt_queue({"receipt_queue": "1|2|3|4"}) is True
+        err = capsys.readouterr().err
+        assert "pending=1" in err
+        assert "sleeping=2" in err
+        assert "in_progress=3" in err
+        assert "poisoned=4" in err
+
+    def test_does_not_call_sys_exit(self):
+        # caller is responsible for exiting; helper only returns bool
+        result = _healthcheck_receipt_queue({"receipt_queue": "1|0|0|0"})
+        assert result is True
 
 
 @allure.epic("Receipts")

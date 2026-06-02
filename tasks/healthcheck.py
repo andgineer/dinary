@@ -140,6 +140,32 @@ def _healthcheck_receipt_llm(results: dict[str, str]) -> bool:
     return failed
 
 
+def _healthcheck_receipt_queue(results: dict[str, str]) -> bool:
+    """Print receipt classification queue health lines. Returns True if any failure was found."""
+    raw = results.get("receipt_queue", "0|0|0|0").strip()
+    parts = (raw.split("|") + ["0", "0", "0", "0"])[:4]
+    pending, sleeping, in_progress, poisoned = (int(p or 0) for p in parts)
+
+    problems = []
+    if pending:
+        problems.append(f"pending={pending}")
+    if sleeping:
+        problems.append(f"sleeping={sleeping}")
+    if in_progress:
+        problems.append(f"in_progress={in_progress}")
+    if poisoned:
+        problems.append(f"poisoned={poisoned}")
+
+    if problems:
+        print(
+            f"FAIL: receipt classification queue not empty: {', '.join(problems)}",
+            file=sys.stderr,
+        )
+        return True
+    print("OK: receipt classification queue is empty")
+    return False
+
+
 def _healthcheck_receipt_fetch(results: dict[str, str]) -> bool:
     """Print receipt-fetch health lines. Returns True if any failure was found."""
     fallback = results.get("receipt_fallback", "").strip()
@@ -200,6 +226,20 @@ def healthcheck(c, remote=False):  # noqa: ARG001
             "SELECT COALESCE((SELECT value FROM app_metadata"
             " WHERE key = 'receipt_fetch_fallback_count'), '0')"
         ),
+        receipt_queue=(
+            "SELECT"
+            " COALESCE(SUM(CASE WHEN status='pending'"
+            "  AND (retry_after IS NULL OR retry_after<=datetime('now'))"
+            "  THEN 1 ELSE 0 END),0)"
+            " ||'|'||"
+            " COALESCE(SUM(CASE WHEN status='pending'"
+            "  AND retry_after>datetime('now') THEN 1 ELSE 0 END),0)"
+            " ||'|'||"
+            " COALESCE(SUM(CASE WHEN status='in_progress' THEN 1 ELSE 0 END),0)"
+            " ||'|'||"
+            " COALESCE(SUM(CASE WHEN status='poisoned' THEN 1 ELSE 0 END),0)"
+            " FROM receipt_classification_jobs"
+        ),
         sheet=(
             "SELECT COALESCE("
             "(SELECT e.id || '|' || COALESCE(slj.status, '')"
@@ -238,5 +278,6 @@ def healthcheck(c, remote=False):  # noqa: ARG001
     _healthcheck_last_expense_info(results)
     llm_failed = _healthcheck_receipt_llm(results)
     fetch_failed = _healthcheck_receipt_fetch(results)
-    if llm_failed or fetch_failed:
+    queue_failed = _healthcheck_receipt_queue(results)
+    if llm_failed or fetch_failed or queue_failed:
         sys.exit(1)
