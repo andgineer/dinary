@@ -58,11 +58,13 @@
 | src/dinary/main.py                                             |       87 |        8 |     91% |43-45, 118, 124, 130, 140, 150 |
 | src/dinary/sheets/sheet\_mapping.py                            |      240 |       52 |     78% |239, 311-313, 340-341, 348-354, 401, 404-416, 430-431, 441-459, 536-543, 571-617, 645, 656-661, 666-667 |
 | src/dinary/sheets/sheets.py                                    |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
-| src/dinary\_analytics/backup.py                                |       66 |       66 |      0% |      7-99 |
-| src/dinary\_analytics/connection.py                            |       17 |       17 |      0% |      3-96 |
-| src/dinary\_analytics/mcp\_server.py                           |       29 |       29 |      0% |      3-58 |
-| src/dinary\_analytics/settings.py                              |       22 |       22 |      0% |      3-41 |
-| **TOTAL**                                                      | **4221** |  **626** | **85%** |           |
+| src/dinary\_analytics/backup.py                                |       66 |       21 |     68% |24-25, 43-44, 62-63, 77-95, 99 |
+| src/dinary\_analytics/charts.py                                |       28 |        0 |    100% |           |
+| src/dinary\_analytics/connection.py                            |       17 |        0 |    100% |           |
+| src/dinary\_analytics/mcp\_server.py                           |       29 |       10 |     66% |32, 38, 42-54, 58 |
+| src/dinary\_analytics/notebooks/dashboard.py                   |       97 |       79 |     19% |9-21, 26-95, 107, 118-136, 141-210, 223-234, 239-319, 323 |
+| src/dinary\_analytics/settings.py                              |       22 |        0 |    100% |           |
+| **TOTAL**                                                      | **4346** |  **602** | **86%** |           |
 
 
 ## Setup coverage badge
