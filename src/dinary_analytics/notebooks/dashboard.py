@@ -21,11 +21,6 @@ def _():
 
 
 @app.cell
-def _(mo):
-    mo.md("# Dinary Analytics Dashboard")
-
-
-@app.cell
 def _(open_ledger, pl):
     _con = open_ledger()
     try:
@@ -146,24 +141,37 @@ def _(
         .mark_area(opacity=0.85, interpolate="monotone")
         .encode(
             x=alt.X("month:O", title="Month"),
-            y=alt.Y("total:Q", stack=True, title="EUR"),
+            y=alt.Y(
+                "total:Q",
+                stack=True,
+                title="EUR",
+                scale=alt.Scale(nice=True),
+                axis=alt.Axis(tickCount=6, format="~s", grid=True),
+            ),
             color=alt.Color("category:N", scale=_color_scale, legend=None),
             order=alt.Order("cat_rank:Q", sort="ascending"),
             tooltip=["month:O", "category:N", alt.Tooltip("total:Q", format=".0f")],
         )
     )
-    # White text, thin dark outline — readable on all tableau20 colours
-    _labels = (
+    _labels_enc = {"x": alt.X("month:O"), "y": alt.Y("y_mid:Q"), "text": alt.Text("category:N")}
+    _labels_bg = (
         alt.Chart(_label_df)
-        .mark_text(align="left", dx=5, fontSize=11, fontWeight="bold")
-        .encode(
-            x=alt.X("month:O"),
-            y=alt.Y("y_mid:Q"),
-            text=alt.Text("category:N"),
-            color=alt.value("#333333"),
+        .mark_text(
+            align="left",
+            dx=5,
+            fontSize=11,
+            fontWeight="bold",
+            fill="white",
+            stroke="white",
+            strokeWidth=5,
         )
+        .encode(**_labels_enc)
     )
-    # Savings line on a right-side independent y axis
+    _labels_fg = (
+        alt.Chart(_label_df)
+        .mark_text(align="left", dx=5, fontSize=11, fontWeight="bold", fill="#333333")
+        .encode(**_labels_enc)
+    )
     _savings_line = (
         alt.Chart(_savings_df)
         .mark_line(
@@ -174,7 +182,7 @@ def _(
         )
         .encode(
             x=alt.X("month:O"),
-            y=alt.Y("saved:Q", title="saved / month (EUR)", axis=alt.Axis(orient="right")),
+            y=alt.Y("saved:Q"),
             tooltip=["month:O", alt.Tooltip("saved:Q", format=".0f", title="Saved")],
         )
     )
@@ -204,15 +212,20 @@ def _(
             tooltip=["category:N", alt.Tooltip("total:Q", format=".0f")],
         )
     )
-    _year_text = (
+    _year_enc = {
+        "y": alt.Y("category:N", sort=_year_order, axis=None),
+        "x": alt.X("label_x:Q"),
+        "text": alt.Text("category:N"),
+    }
+    _year_text_bg = (
         alt.Chart(_year_df_pos)
-        .mark_text(align="left", dx=5, fontSize=10)
-        .encode(
-            y=alt.Y("category:N", sort=_year_order, axis=None),
-            x=alt.X("label_x:Q"),
-            text="category:N",
-            color=alt.value("#333333"),
-        )
+        .mark_text(align="left", dx=5, fontSize=10, fill="white", stroke="white", strokeWidth=4)
+        .encode(**_year_enc)
+    )
+    _year_text_fg = (
+        alt.Chart(_year_df_pos)
+        .mark_text(align="left", dx=5, fontSize=10, fill="#333333")
+        .encode(**_year_enc)
     )
     _saved_text = (
         alt.Chart(pl.DataFrame({"t": [f"Saved {_sign}{_annual_saved:,.0f}€"]}))
@@ -227,12 +240,14 @@ def _(
     )
 
     alt.hconcat(
-        alt.layer(alt.layer(_areas, _labels), _savings_line, _savings_label)
-        .resolve_scale(y="independent")
+        alt.layer(_areas, _labels_bg, _labels_fg, _savings_line, _savings_label)
         .properties(width=_CHART_WIDTH, height=_CHART_HEIGHT, title="Monthly Expenses by Category")
         .interactive(),
         alt.vconcat(
-            alt.layer(_year_bars, _year_text).properties(width=_YEAR_WIDTH, height=_CHART_HEIGHT),
+            alt.layer(_year_bars, _year_text_bg, _year_text_fg).properties(
+                width=_YEAR_WIDTH,
+                height=_CHART_HEIGHT,
+            ),
             _saved_text,
             spacing=4,
         ),
