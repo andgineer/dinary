@@ -140,11 +140,11 @@ def _(
         alt.Chart(expense_monthly_df)
         .mark_area(opacity=0.85, interpolate="monotone")
         .encode(
-            x=alt.X("month:O", title="Month"),
+            x=alt.X("month:O", title=None),
             y=alt.Y(
                 "total:Q",
                 stack=True,
-                title="EUR",
+                title=None,
                 scale=alt.Scale(nice=True),
                 axis=alt.Axis(tickCount=6, format="~s", grid=True),
             ),
@@ -182,11 +182,10 @@ def _(
         )
         .encode(
             x=alt.X("month:O"),
-            y=alt.Y("saved:Q"),
+            y=alt.Y("saved:Q", title="Saved (EUR)", axis=alt.Axis(orient="right")),
             tooltip=["month:O", alt.Tooltip("saved:Q", format=".0f", title="Saved")],
         )
     )
-    # Label pinned to the last point of the savings line
     _savings_label = (
         alt.Chart(_savings_df.tail(1))
         .mark_text(align="right", dx=-6, dy=-10, fontSize=10, fontWeight="bold")
@@ -198,8 +197,7 @@ def _(
         )
     )
 
-    # Right panel: saved text + year totals
-    # Year bars reversed so top-of-bars matches top-of-stack (Other at top, еда at bottom)
+    # Right panel: year totals with title above, saved amount below
     _year_order = list(reversed(category_order))
     _year_df_pos = year_df.with_columns(pl.lit(0.0).alias("label_x"))
     _year_bars = (
@@ -207,7 +205,7 @@ def _(
         .mark_bar()
         .encode(
             y=alt.Y("category:N", sort=_year_order, title=None, axis=None),
-            x=alt.X("total:Q", title="Year total", axis=alt.Axis(tickCount=3, format="~s")),
+            x=alt.X("total:Q", title=None, axis=alt.Axis(tickCount=3, format="~s")),
             color=alt.Color("category:N", scale=_color_scale, legend=None),
             tooltip=["category:N", alt.Tooltip("total:Q", format=".0f")],
         )
@@ -240,13 +238,18 @@ def _(
     )
 
     alt.hconcat(
-        alt.layer(_areas, _labels_bg, _labels_fg, _savings_line, _savings_label)
-        .properties(width=_CHART_WIDTH, height=_CHART_HEIGHT, title="Monthly Expenses by Category")
+        alt.layer(
+            alt.layer(_areas, _labels_bg, _labels_fg),
+            alt.layer(_savings_line, _savings_label),
+        )
+        .resolve_scale(y="independent")
+        .properties(width=_CHART_WIDTH, height=_CHART_HEIGHT)
         .interactive(),
         alt.vconcat(
             alt.layer(_year_bars, _year_text_bg, _year_text_fg).properties(
                 width=_YEAR_WIDTH,
                 height=_CHART_HEIGHT,
+                title="Year total",
             ),
             _saved_text,
             spacing=4,
