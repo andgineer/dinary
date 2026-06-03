@@ -126,11 +126,10 @@ def _(mo, open_ledger):
         _con.close()
 
     _all_years = [str(r[0]) for r in _year_rows]
-    _default = [_all_years[1]] if len(_all_years) > 1 else [_all_years[0]]
 
     year_selector = mo.ui.multiselect(
         options=_all_years,
-        value=_default,
+        value=[],
         label="Compare years:",
     )
     year_selector
@@ -236,7 +235,7 @@ def _(
 
 
 @app.cell
-def _(LEDGER_SCHEMA, genai, json, mo, open_ledger, os, types):
+def _(LEDGER_SCHEMA, category_order, genai, json, mo, open_ledger, os, types):
     _api_key = os.getenv("GOOGLE_AI_STUDIO_API_KEY", "")
 
     if not _api_key:
@@ -247,12 +246,21 @@ def _(LEDGER_SCHEMA, genai, json, mo, open_ledger, os, types):
     else:
         _status = mo.md("")
 
+    _top10 = category_order[:-1]
+    _top10_sql = ", ".join(f"'{c}'" for c in _top10)
+
     _system_prompt = (
         "You are a financial analytics assistant for the dinary expense tracker. "
         "Use the query tool to answer questions about the user's expenses. "
         "Tables are in the 'ledger' schema — prefix all table names: "
         "ledger.expenses, ledger.categories, ledger.events, etc. "
         "The amount column in ledger.expenses is in EUR (accounting currency). "
+        "\n\nDashboard context: the stacked area chart shows the top-10 expense categories "
+        "by spending over the last 12 months, plus 'Other'. "
+        f"The 10 categories shown individually are: {', '.join(_top10)}. "
+        "'Other' on the chart means ALL expenses whose category is NOT in that list — "
+        "there is no category literally named 'Other' in the DB. "
+        f"To query 'Other' expenses use: WHERE c.name NOT IN ({_top10_sql}).\n\n"
         "Schema:\n" + LEDGER_SCHEMA
     )
 
@@ -287,7 +295,7 @@ def _(LEDGER_SCHEMA, genai, json, mo, open_ledger, os, types):
             for m in messages
         ]
         _response = _client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=_history,
             config=types.GenerateContentConfig(
                 system_instruction=_system_prompt,
