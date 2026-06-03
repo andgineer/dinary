@@ -15,9 +15,10 @@ def _():
     from google import genai
     from google.genai import types
 
+    from dinary_analytics.charts import make_chart_pair
     from dinary_analytics.connection import LEDGER_SCHEMA, open_ledger
 
-    return LEDGER_SCHEMA, alt, genai, json, mo, open_ledger, os, pl, types
+    return LEDGER_SCHEMA, alt, genai, json, make_chart_pair, mo, open_ledger, os, pl, types
 
 
 @app.cell
@@ -96,166 +97,142 @@ def _(open_ledger, pl):
 
 @app.cell
 def _(
-    alt,
     category_order,
     expense_monthly_df,
     income_monthly_df,
-    pl,
+    make_chart_pair,
     total_annual_income,
     year_df,
 ):
-    _CHART_WIDTH = 700
-    _CHART_HEIGHT = 400
-    _YEAR_WIDTH = 160
-
-    # Annual savings
-    _total_expenses = float(year_df["total"].sum())
-    _annual_saved = total_annual_income - _total_expenses
-    _sign = "+" if _annual_saved >= 0 else ""
-    _savings_color = "#2ca02c" if _annual_saved >= 0 else "#d62728"
-
-    # Monthly savings for the overlay line
-    _monthly_totals = (
-        expense_monthly_df.group_by("month").agg(pl.sum("total").alias("expenses")).sort("month")
-    )
-    _savings_df = (
-        income_monthly_df.join(_monthly_totals, on="month", how="left")
-        .fill_null(0)
-        .sort("month")
-        .with_columns((pl.col("income") - pl.col("expenses")).alias("saved"))
+    make_chart_pair(
+        expense_monthly_df,
+        income_monthly_df,
+        year_df,
+        total_annual_income,
+        category_order,
     )
 
-    # Midpoints for left-edge labels at the first month
-    _first_month = expense_monthly_df["month"].min()
-    _label_df = (
-        expense_monthly_df.filter(pl.col("month") == _first_month)
-        .sort("cat_rank")
-        .with_columns(pl.col("total").cum_sum().alias("y_top"))
-        .with_columns((pl.col("y_top") - pl.col("total") / 2).alias("y_mid"))
-    )
 
-    _color_scale = alt.Scale(domain=category_order, scheme="tableau20")
+@app.cell
+def _(mo, open_ledger):
+    _con = open_ledger()
+    try:
+        _year_rows = _con.execute("""
+            SELECT DISTINCT EXTRACT(YEAR FROM datetime::TIMESTAMP)::INT AS yr
+            FROM ledger.expenses
+            ORDER BY yr DESC
+        """).fetchall()
+    finally:
+        _con.close()
 
-    _areas = (
-        alt.Chart(expense_monthly_df)
-        .mark_area(opacity=0.85, interpolate="monotone")
-        .encode(
-            x=alt.X("month:O", title=None),
-            y=alt.Y(
-                "total:Q",
-                stack=True,
-                title=None,
-                scale=alt.Scale(nice=True),
-                axis=alt.Axis(tickCount=6, format="~s", grid=True),
-            ),
-            color=alt.Color("category:N", scale=_color_scale, legend=None),
-            order=alt.Order("cat_rank:Q", sort="ascending"),
-            tooltip=["month:O", "category:N", alt.Tooltip("total:Q", format=".0f")],
-        )
-    )
-    _labels_enc = {"x": alt.X("month:O"), "y": alt.Y("y_mid:Q"), "text": alt.Text("category:N")}
-    _labels_bg = (
-        alt.Chart(_label_df)
-        .mark_text(
-            align="left",
-            dx=5,
-            fontSize=11,
-            fontWeight="bold",
-            fill="white",
-            stroke="white",
-            strokeWidth=5,
-        )
-        .encode(**_labels_enc)
-    )
-    _labels_fg = (
-        alt.Chart(_label_df)
-        .mark_text(align="left", dx=5, fontSize=11, fontWeight="bold", fill="#333333")
-        .encode(**_labels_enc)
-    )
-    _savings_line = (
-        alt.Chart(_savings_df)
-        .mark_line(
-            color="#555555",
-            strokeWidth=2,
-            strokeDash=[6, 3],
-            point={"color": "#555555", "size": 40, "filled": True},
-        )
-        .encode(
-            x=alt.X("month:O"),
-            y=alt.Y("saved:Q", title="Saved (EUR)", axis=alt.Axis(orient="right")),
-            tooltip=["month:O", alt.Tooltip("saved:Q", format=".0f", title="Saved")],
-        )
-    )
-    _savings_label = (
-        alt.Chart(_savings_df.tail(1))
-        .mark_text(align="right", dx=-6, dy=-10, fontSize=10, fontWeight="bold")
-        .encode(
-            x=alt.X("month:O"),
-            y=alt.Y("saved:Q"),
-            text=alt.value("saved"),
-            color=alt.value("#555555"),
-        )
-    )
+    _all_years = [str(r[0]) for r in _year_rows]
+    _default = [_all_years[1]] if len(_all_years) > 1 else [_all_years[0]]
 
-    # Right panel: year totals with title above, saved amount below
-    _year_order = list(reversed(category_order))
-    _year_df_pos = year_df.with_columns(pl.lit(0.0).alias("label_x"))
-    _year_bars = (
-        alt.Chart(_year_df_pos)
-        .mark_bar()
-        .encode(
-            y=alt.Y("category:N", sort=_year_order, title=None, axis=None),
-            x=alt.X("total:Q", title=None, axis=alt.Axis(tickCount=3, format="~s")),
-            color=alt.Color("category:N", scale=_color_scale, legend=None),
-            tooltip=["category:N", alt.Tooltip("total:Q", format=".0f")],
-        )
+    year_selector = mo.ui.multiselect(
+        options=_all_years,
+        value=_default,
+        label="Compare years:",
     )
-    _year_enc = {
-        "y": alt.Y("category:N", sort=_year_order, axis=None),
-        "x": alt.X("label_x:Q"),
-        "text": alt.Text("category:N"),
-    }
-    _year_text_bg = (
-        alt.Chart(_year_df_pos)
-        .mark_text(align="left", dx=5, fontSize=10, fill="white", stroke="white", strokeWidth=4)
-        .encode(**_year_enc)
-    )
-    _year_text_fg = (
-        alt.Chart(_year_df_pos)
-        .mark_text(align="left", dx=5, fontSize=10, fill="#333333")
-        .encode(**_year_enc)
-    )
-    _saved_text = (
-        alt.Chart(pl.DataFrame({"t": [f"Saved {_sign}{_annual_saved:,.0f}€"]}))
-        .mark_text(fontSize=13, fontWeight="bold", align="center", baseline="middle")
-        .encode(
-            x=alt.value(_YEAR_WIDTH / 2),
-            y=alt.value(15),
-            text="t:N",
-            color=alt.value(_savings_color),
-        )
-        .properties(width=_YEAR_WIDTH, height=30)
-    )
+    year_selector
+    return (year_selector,)
 
-    alt.hconcat(
-        alt.layer(
-            alt.layer(_areas, _labels_bg, _labels_fg),
-            alt.layer(_savings_line, _savings_label),
-        )
-        .resolve_scale(y="independent")
-        .properties(width=_CHART_WIDTH, height=_CHART_HEIGHT)
-        .interactive(),
-        alt.vconcat(
-            alt.layer(_year_bars, _year_text_bg, _year_text_fg).properties(
-                width=_YEAR_WIDTH,
-                height=_CHART_HEIGHT,
-                title="Year total",
-            ),
-            _saved_text,
-            spacing=4,
-        ),
-        spacing=10,
+
+@app.cell
+def _(category_order, open_ledger, pl, year_selector):
+    _selected = [int(y) for y in year_selector.value]
+    _rank_df = pl.DataFrame(
+        {"category": category_order, "cat_rank": list(range(len(category_order)))},
     )
+    _top10 = category_order[:-1]
+
+    if not _selected:
+        comp_expense_monthly_df = pl.DataFrame(
+            {"month": [], "category": [], "total": [], "cat_rank": []},
+            schema={
+                "month": pl.String,
+                "category": pl.String,
+                "total": pl.Float64,
+                "cat_rank": pl.Int32,
+            },
+        )
+        comp_income_monthly_df = pl.DataFrame(
+            {"month": [], "income": []},
+            schema={"month": pl.String, "income": pl.Float64},
+        )
+    else:
+        _con = open_ledger()
+        try:
+            _exp_rows = _con.execute(
+                """
+                SELECT
+                    strftime(e.datetime::TIMESTAMP, '%Y-%m') AS month,
+                    CASE WHEN list_contains($1::VARCHAR[], c.name)
+                        THEN c.name ELSE 'Other' END AS category,
+                    CAST(SUM(e.amount) AS DOUBLE) AS total
+                FROM ledger.expenses e
+                JOIN ledger.categories c ON e.category_id = c.id
+                WHERE list_contains($2::INT[], EXTRACT(YEAR FROM e.datetime::TIMESTAMP)::INT)
+                GROUP BY month, category
+                ORDER BY month
+            """,
+                [_top10, _selected],
+            ).fetchall()
+            _inc_rows = _con.execute(
+                """
+                SELECT
+                    strftime(make_date(year, month, 1), '%Y-%m') AS month,
+                    CAST(amount AS DOUBLE) AS income
+                FROM ledger.income
+                WHERE list_contains($1::INT[], year)
+                ORDER BY month
+            """,
+                [_selected],
+            ).fetchall()
+        finally:
+            _con.close()
+        comp_expense_monthly_df = pl.DataFrame(
+            {
+                "month": [r[0] for r in _exp_rows],
+                "category": [r[1] for r in _exp_rows],
+                "total": [float(r[2]) for r in _exp_rows],
+            },
+        ).join(_rank_df, on="category", how="left")
+        comp_income_monthly_df = pl.DataFrame(
+            {"month": [r[0] for r in _inc_rows], "income": [float(r[1]) for r in _inc_rows]},
+        )
+
+    comp_year_df = (
+        comp_expense_monthly_df.group_by("category")
+        .agg(pl.sum("total"), pl.first("cat_rank"))
+        .sort("total", descending=True)
+    )
+    total_comp_income = float(comp_income_monthly_df["income"].sum())
+
+    return comp_expense_monthly_df, comp_income_monthly_df, comp_year_df, total_comp_income
+
+
+@app.cell
+def _(
+    category_order,
+    comp_expense_monthly_df,
+    comp_income_monthly_df,
+    comp_year_df,
+    make_chart_pair,
+    total_comp_income,
+    year_selector,
+):
+    _chart = None
+    if year_selector.value and not comp_expense_monthly_df.is_empty():
+        _title = ", ".join(sorted(year_selector.value))
+        _chart = make_chart_pair(
+            comp_expense_monthly_df,
+            comp_income_monthly_df,
+            comp_year_df,
+            total_comp_income,
+            category_order,
+            period_title=_title,
+        )
+    _chart
 
 
 @app.cell

@@ -58,7 +58,7 @@ search_path = ["src", "."]
 line-length = 99
 
 [tool.ruff.lint]
-per-file-ignores = { "src/dinary_analytics/notebooks/*.py" = ["PLC0415", "N803", "N806"] }
+per-file-ignores = { "src/dinary_analytics/notebooks/*.py" = ["PLC0415", "N803", "N806", "B018"] }
 
 [tool.ruff.lint.pylint]
 max-args = 8
