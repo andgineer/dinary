@@ -1,167 +1,70 @@
-# Analytics — standalone app (dinary-analytics)
+# Analytics AI — implementation plan
 
-## Status
+See `specs/reference/analytics-ai.md` for architecture, storage design, LLM
+strategy, invariants, and Analytics Views design.
 
-MVP complete. Full implementation pending.
+## Remaining deliverables
 
-## Scope
+### Template notebooks and extended dashboard
 
-A standalone application installed locally by each user. Opens a browser dashboard
-(Marimo in `run` mode — no code visible), provides a natural-language AI chat, and
-connects to the dinary ledger via a local read-only replica. Non-technical users
-see a clean web app; power users additionally connect Claude Code or Claude Desktop
-via the MCP server.
+1. `notebooks/events.py` — event/trip cost breakdown notebook.
+2. `notebooks/tags.py` — tag-bucket comparison notebook.
+3. `dashboard.py` extended to full configurable widget set.
 
-Out of scope: OLTP writes, sheet logging, imports, migrations, API surface.
+### MCP server extensions
 
-## Repository placement
+4. `get_config(key)` and `set_config(key, value)` tools in `mcp_server.py`.
 
-`src/dinary_analytics/` alongside `src/dinary/` in the monorepo root. One-way
-dependency: `dinary_analytics` imports from `dinary`; `dinary` never imports
-from `dinary_analytics`. Heavy deps (DuckDB, Polars, Marimo, LLM SDKs) live in
-the `analytics` dependency group in the root `pyproject.toml`.
+### PWA sync
 
-`uv sync` on the laptop installs everything. The deploy task runs
-`uv sync --no-dev --no-group analytics` on VM 1, keeping the server image lean.
+5. `PUT /api/analytics/config` endpoint in dinary server + `analytics_pwa_config`
+   migration (coordinated with `analytics-pwa.md` work).
 
-## Package structure
+---
 
-```
-src/dinary_analytics/
-  connection.py       # open_ledger(): DuckDB ATTACH ledger-replica.db READ_ONLY
-  mcp_server.py       # MCP server: DuckDB queries + analytics.db config writes
-  settings.py         # read/write analytics.db (LMDB)
-  backup.py           # analytics.db backup/restore CLI
-  queries/            # named .sql files for reusable analytical queries
-  notebooks/          # template Marimo notebooks, committed to git
-    dashboard.py      # main app: configurable widgets + Gemini chat
-    events.py         # event/trip cost breakdown
-    tags.py           # tag-bucket comparison
-```
+### AI Views feature
 
-## Runtime directory
+6. **`queries/spending_summary.sql`** — aggregates last-12-months expenses into
+   three result sets: events (id, name, total_amount, date_from, date_to),
+   tags (id, name, expense_count, total_amount), category groups (id, name,
+   total_amount). Used by the LLM before proposing a new view.
 
-`.analytics/` at the repo root, gitignored. Created on first `inv analytics`.
+7. **`queries/view_data.sql`** — given a basket config passed as a JSON parameter,
+   assigns each expense to its first-matching basket (event match checked before
+   tag match, unmatched → default basket name), then aggregates by
+   (basket_name, year_month, group_name). Returns one row per
+   (basket, month, group) triple.
 
-```
-.analytics/
-  ledger-replica.db     # read-only SQLite replica of dinary ledger
-  analytics.db          # app database: configs, history (PoloDB or LMDB)
-```
+8. **`settings.py` extensions** — `list_view_ids() → list[str]`, `get_view(id)`,
+   `save_view(config: dict)`, `delete_view(id)`. Keys in LMDB: `view:<uuid>`.
 
-Backup = copy of `analytics.db`. `ledger-replica.db` is not backed up — it is
-regenerated from the server on any `inv analytics` run.
+9. **MCP server** — expose `list_views`, `get_view(id)`, `save_view(config)`,
+   `delete_view(id)` tools so Claude Desktop / Claude Code can manage views
+   externally.
 
-## Storage
+10. **In-session LLM tools in `dashboard.py`** (Gemini chat tool definitions):
+    - `query_spending_summary()` → runs `spending_summary.sql`, returns JSON
+    - `propose_view(baskets, default_basket, chart_type)` → sets the in-memory
+      draft view config and triggers chart re-render; does not save
+    - `update_basket(name, event_ids, tag_ids)` → modifies a basket in the draft
+    - `remove_basket(name)` → removes a basket from the draft
+    - `set_chart_type(type)` → updates draft chart type
+    - `save_current_view(name)` → persists draft via `settings.save_view()`
+    - `delete_view(id)` → removes a saved view via `settings.delete_view()`
 
-### ledger-replica.db
+11. **Altair chart for basket views** — stacked bar: X = year_month, Y = amount,
+    color = basket_name. On click of a bar segment: filter to that basket + period
+    and show a secondary stacked bar by group_name as a drill-down panel below.
+    Use `alt.selection_point` on basket + month for the drill-down interaction.
 
-Read-only SQLite replica of the dinary server DB. Synced automatically on every
-`inv analytics` run before Marimo starts. DuckDB opens it with `ATTACH ...
-(READ_ONLY)` — never writable.
+12. **View selector UI in `dashboard.py`** — `mo.ui.dropdown` populated from
+    `settings.list_view_ids()` + labels from stored configs; "New view" button
+    clears the draft and triggers the LLM with the `query_spending_summary()`
+    result plus instructions to propose baskets with chart. Period selector
+    (year / custom range) shown alongside the chart.
 
-### analytics.db — LMDB
-
-`analytics.db` holds:
-- Dashboard configurations (widget list, order, parameters).
-- Tag bucket definitions (which tags → which bucket; which stay in baseline).
-- LLM conversation history (append-only).
-
-DuckDB never stores application data. Any materialized caches are DuckDB-local,
-disposable, and regenerated from the replica.
-
-## SQL-first design
-
-Analytical business logic lives in SQL executed by DuckDB, not in Python
-DataFrames. Python owns orchestration, plotting, and LLM glue. This keeps queries
-portable to DuckDB-WASM (Tier 2, deferred) without rewrite.
-
-## LLM strategy
-
-Two tiers configured in `analytics.db`:
-
-**Default — Gemini Free API.** Built into the Marimo dashboard chat. User provides
-a Google AI Studio API key (free tier). The model receives the ledger schema and
-executes DuckDB queries via tool calls to answer questions.
-
-**Power users — Claude Code / Claude Desktop via MCP.** User connects their Claude
-subscription to the `dinary-analytics` MCP server. No per-token cost. Claude can
-answer arbitrary questions AND reconfigure dashboards (tag buckets, pinned events,
-widget order) by writing to `analytics.db` — without the user editing code or
-config files. This is the primary interface for technically proficient users.
-
-## inv analytics
-
-Single entry point. On every run:
-
-1. Syncs `ledger-replica.db` from the dinary server.
-2. Starts the MCP server.
-3. Opens `notebooks/dashboard.py` via `marimo run`.
-
-## MCP server
-
-`dinary_analytics.mcp_server` exposes:
-
-- `query(sql)` — executes a read-only DuckDB query against the ledger replica,
-  returns JSON.
-- `schema()` — returns ledger schema for LLM context.
-- `get_config(key)` — reads a config entry from `analytics.db`.
-- `set_config(key, value)` — writes a config entry to `analytics.db`.
-
-`set_config` is the only write path to `analytics.db`. Marimo uses it internally
-for dashboard persistence; Claude Code / Claude Desktop connect to it externally.
-
-## PWA integration
-
-The standalone app syncs tag bucket definitions and pinned events to the PWA by
-calling `PUT /api/analytics/config` on the dinary server (see `analytics-pwa.md`).
-This updates the PWA embedded view without code changes.
-
-## Runtime tiers
-
-**Tier 1 — laptop/desktop (primary, current target).** `inv analytics` opens
-Marimo in the browser. Full AI integration. Zero extra services.
-
-**Tier 2 — DuckDB-WASM in browser (deferred).** Pre-approved additive path for
-phone or sharing use cases. SQL-first design keeps this achievable without rewrite.
-Building blocks: DuckDB-WASM, Evidence.dev or Marimo-WASM, SQLite replica over
-HTTPS Range requests.
-
-## Invariants
-
-- Analytics is strictly read-only against `ledger.*`. `ATTACH (READ_ONLY)` enforced
-  at connection level.
-- `dinary` server package never depends on `dinary-analytics`.
-- DuckDB is a query engine only — no application state stored there.
-- `analytics.db` is the sole write target for configs and history.
-- `analytics.db` must be backed up. `ledger-replica.db` is reproducible and
-  excluded from backup.
-
-## Deliverables
-
-### Phase 0 — DB selection ✓ LMDB
-
-### MVP ✓ DONE
-
-End-to-end slice covering all three layers (data / chat / MCP) in minimal form.
-Goal: validate the full stack is viable before investing in polish.
-
-1. `analytics` dependency group in root `pyproject.toml`. ✓
-2. `connection.open_ledger()` + replica sync logic. ✓
-3. `settings.py` with `analytics.db` (DB chosen in Phase 0). ✓
-4. `dashboard.py` — one chart block + Gemini chat (`query` and `schema` tool calls). ✓
-5. MCP server — `query` and `schema` tools only. ✓
-6. `inv analytics`: syncs replica, starts MCP server, opens `dashboard.py`. ✓
-
-### Full implementation
-
-7. Template notebooks: `events.py`, `tags.py`.
-8. `dashboard.py` extended to full configurable widget set.
-9. MCP server extended with `get_config` and `set_config`.
-10. `PUT /api/analytics/config` endpoint in dinary server + `analytics_pwa_config`
-    migration (may land in a separate PR as part of `analytics-pwa.md` work).
-
-### Post-completion
-
-Create `specs/plans/analytics-followup.md` (empty skeleton) for future
-improvements backlog.
+13. **"New view" LLM prompt** — system prompt instructs the LLM: (a) call
+    `query_spending_summary()` first, (b) produce a `propose_view()` call
+    immediately with a concrete basket set, (c) explain each basket choice with
+    the numbers from the summary, (d) invite the user to react — never to describe
+    what they want in terms of categories or tags.

@@ -7,44 +7,72 @@ ledger drawn from the dinary server. Complements the standalone `dinary-analytic
 app (`analytics-ai.md`) — the PWA view is always-accessible and mobile-friendly;
 the standalone app is where deep exploration and AI interaction happen.
 
-Explicitly out of scope: OLTP writes, sheet logging, imports, migrations — those
-stay in the existing service layer.
+Out of scope: OLTP writes, sheet logging, imports, migrations.
 
 ## Data source
 
 New FastAPI endpoints reading dinary SQLite directly. DuckDB is not used on the
-server (1 GB RAM constraint — see `architecture.md`). Queries are simple GROUP BY
-aggregations that SQLite handles without issue at the expected data volume.
+server (1 GB RAM constraint — see `architecture.md`). All queries are plain SQLite
+GROUP BY aggregations.
 
-## Config
+## Default views (zero configuration)
 
-A minimal `analytics_pwa_config` table in dinary SQLite stores display preferences
-for the PWA view:
+These views are always present regardless of whether analytics-ai has ever been run.
 
-- Which tag buckets appear as separate columns (vs folded into "baseline").
-- Default time range (current year / last 12 months / all time).
-- Pinned events to highlight.
+1. **Monthly trend** — total expenses per month for the selected year, broken down
+   by category group. Query: expenses JOIN categories JOIN category_groups,
+   GROUP BY year_month, group_name.
 
-This table is written by the `dinary-analytics` standalone app via `PUT
-/api/analytics/config`. The server never writes it. The same auth as the rest of
-the API applies.
+2. **Events** — all events with total cost in accounting currency, sorted by date
+   descending. Query: expenses JOIN events, GROUP BY event_id.
 
-## First dashboards
+## Config-driven basket views
 
-1. **Events** — all events (trips, relocation, etc.) with total cost in accounting
-   currency, sorted by date descending.
-2. **Tag buckets** — spending by tag group: each configured bucket as its own bar
-   or column, remaining expenses as "baseline". Yearly or monthly granularity.
-3. **Monthly trend** — total expenses per month for the current year, broken down
-   by category group.
+When the user has run analytics-ai and saved one or more Analytics Views, those
+views appear as additional tabs in `/analytics`. The PWA has no view editor — the
+standalone app is the only configuration tool.
+
+Config is written by analytics-ai via `PUT /api/analytics/config` and stored in
+`analytics_pwa_config` as a JSON blob under key `views`. The server executes basket
+assignment on request using a parameterised SQLite query; no basket logic lives in
+Python. Basket assignment: for each expense, check event triggers first, then tag
+triggers, first match wins, unmatched go to the default basket.
+
+## Config table
+
+`analytics_pwa_config` in dinary SQLite:
+
+```
+key        TEXT  PRIMARY KEY
+value      JSON
+updated_at TIMESTAMP
+```
+
+Only key in use: `views` — JSON array of view config objects (same schema as
+stored in analytics.db, see `analytics-ai.md`). The server never writes this
+table; only `PUT /api/analytics/config` does.
 
 ## Implementation outline
 
-- New Vue route `/analytics`, new `AnalyticsView.vue` component.
+**Backend**
+
 - New FastAPI router `api/analytics.py`.
-- New SQL: `db/sql/analytics_events.sql`, `db/sql/analytics_tags.sql`,
-  `db/sql/analytics_monthly.sql`.
-- New migration: `analytics_pwa_config` table (`key TEXT PK`, `value JSON`,
-  `updated_at TIMESTAMP`).
-- Endpoints: `GET /api/analytics/config`, `PUT /api/analytics/config`,
-  `GET /api/analytics/events`, `GET /api/analytics/tags`, `GET /api/analytics/monthly`.
+- New migration: `analytics_pwa_config` table.
+- `GET /api/analytics/config` — returns current `analytics_pwa_config` rows as JSON.
+- `PUT /api/analytics/config` — replaces one or more keys; called by analytics-ai only.
+- `GET /api/analytics/monthly?year=<year>` — monthly trend data.
+- `GET /api/analytics/events` — events with totals.
+- `GET /api/analytics/view/<view_id>?year=<year>` — executes basket assignment for
+  the named view config stored in `analytics_pwa_config.views`, returns
+  (basket_name, year_month, group_name, amount) rows.
+- New SQL files: `db/sql/analytics_monthly.sql`, `db/sql/analytics_events.sql`,
+  `db/sql/analytics_view.sql` (parameterised basket assignment).
+
+**Frontend**
+
+- New Vue route `/analytics`, new `AnalyticsView.vue`.
+- On load: fetches config + default view data in parallel.
+- Tab bar: "Monthly" tab + "Events" tab always present; one tab per basket view
+  from config (if any).
+- Period selector (year) applies to all tabs.
+- Chart library: to be decided at implementation time — keep it lightweight.
