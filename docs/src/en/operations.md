@@ -333,7 +333,7 @@ within hours rather than the next morning.
 
 ### Local Yandex.Disk access: `inv setup-yadisk`
 
-`restore-cloud-backup` reads from `yandex:` on whichever machine it
+`restore-yadisk` reads from `yandex:` on whichever machine it
 runs. `inv setup-yadisk` configures that remote locally — on VM 1
 during disaster recovery, or on the operator laptop for debug
 bootstraps:
@@ -346,16 +346,16 @@ Uses the same WebDAV + app-password flow as `inv setup-replica` (no
 browser OAuth needed). Idempotent: skips the prompt if `yandex:` is
 already configured and healthy.
 
-`restore-cloud-backup` calls this automatically when `yandex:` is
+`restore-yadisk` calls this automatically when `yandex:` is
 absent, so running it beforehand is optional.
 
 ## Point-in-time restore from Yandex.Disk
 
 ```bash
-inv restore-cloud-backup --list-only                     # show inventory
-inv restore-cloud-backup                                 # restore latest
-inv restore-cloud-backup --snapshot 2026-03-15           # specific date
-inv restore-cloud-backup --yes                           # skip confirm
+inv restore-yadisk --list-only                     # show inventory
+inv restore-yadisk                                 # restore latest
+inv restore-yadisk --snapshot 2026-03-15           # specific date
+inv restore-yadisk --yes                           # skip confirm
 ```
 
 ### Two intended use cases
@@ -369,10 +369,10 @@ inv restore-cloud-backup --yes                           # skip confirm
   (via SSH) when both the local DB and the Litestream replica on
   VM 2 are unusable. The SSH + `cd ~/dinary` + interactive
   confirmation hops are intentional friction so a one-word
-  `inv restore-cloud-backup` on the wrong terminal cannot silently
+  `inv restore-yadisk` on the wrong terminal cannot silently
   overwrite prod.
 
-`restore-cloud-backup` is **local-only** — it writes to
+`restore-yadisk` is **local-only** — it writes to
 `./data/dinary.db` relative to the cwd and has no `--remote` mode.
 There is no way to invoke it against a remote host from the
 operator machine.
@@ -391,7 +391,7 @@ operator machine.
   present on VM 1 via `inv setup-server`. On macOS: `brew install
   rclone sqlite zstd`.
 - A `yandex:` rclone remote configured locally. If it is absent,
-  **`restore-cloud-backup` prompts automatically** (same WebDAV +
+  **`restore-yadisk` prompts automatically** (same WebDAV +
   app-password flow as `inv setup-replica`). To pre-configure before
   the first restore run: `inv setup-yadisk`.
 
@@ -415,7 +415,7 @@ unusable:
 ssh ubuntu@dinary                       # or the public IP / Tailscale IP
 sudo systemctl stop dinary litestream   # avoid a half-written DB
 cd ~/dinary
-inv restore-cloud-backup --snapshot 2026-03-15
+inv restore-yadisk --snapshot 2026-03-15
 # confirmation prompt: shows row count / size / mtime of the
 # current DB plus compressed size of the incoming snapshot, then
 # asks for literal 'yes'.
@@ -430,7 +430,7 @@ directory (so `./data/dinary.db` is the snapshot, not prod):
 ```bash
 cd /tmp/restore-preview
 mkdir -p data
-inv restore-cloud-backup --snapshot 2026-03-15 --yes
+inv restore-yadisk --snapshot 2026-03-15 --yes
 sqlite3 data/dinary.db 'SELECT COUNT(*) FROM expense'
 ```
 
@@ -448,7 +448,7 @@ To deploy a specific version with a DB restore (e.g. rollback after a bad deploy
 
 ```bash
 inv deploy --ref=v0.4.0 --no-start   # deploy code but skip service start
-inv restore-cloud-backup              # restore DB from Yandex.Disk
+inv restore-yadisk              # restore DB from Yandex.Disk
 inv restart-server                    # start; yoyo applies forward migrations
 ```
 

@@ -291,7 +291,7 @@ def ensure_local_yandex_rclone_configured() -> None:
     """Idempotent: ensure the local machine has a working ``yandex:`` WebDAV remote.
 
     Called by ``inv setup-yadisk`` and automatically by
-    ``inv restore-cloud-backup`` when the remote is absent. Uses
+    ``inv restore-yadisk`` when the remote is absent. Uses
     WebDAV + app-password so no browser OAuth is required on headless
     machines (VM1).
     """
@@ -308,7 +308,7 @@ def setup_yadisk(c):  # noqa: ARG001
     """Configure the yandex: WebDAV rclone remote on this machine.
 
     Prompts for Yandex login + app-password. Idempotent; skips prompt when already configured.
-    restore-cloud-backup calls this automatically if the remote is absent.
+    restore-yadisk calls this automatically if the remote is absent.
     """
     ensure_local_yandex_rclone_configured()
 

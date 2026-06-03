@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned.
+MVP complete. Full implementation pending.
 
 ## Scope
 
@@ -16,31 +16,27 @@ Out of scope: OLTP writes, sheet logging, imports, migrations, API surface.
 
 ## Repository placement
 
-`packages/dinary-analytics/` inside the dinary monorepo. One-way dependency:
-`dinary-analytics` depends on `dinary` for shared types and helpers; `dinary`
-never depends on `dinary-analytics`. Separate `pyproject.toml`; heavy deps
-(DuckDB, Polars, Marimo, LLM SDKs) are absent from the server venv.
+`src/dinary_analytics/` alongside `src/dinary/` in the monorepo root. One-way
+dependency: `dinary_analytics` imports from `dinary`; `dinary` never imports
+from `dinary_analytics`. Heavy deps (DuckDB, Polars, Marimo, LLM SDKs) live in
+the `analytics` dependency group in the root `pyproject.toml`.
 
-uv workspace: `uv sync` on the laptop resolves both packages; `uv sync --package
-dinary` on VM 1 resolves only the server.
-
-Reasons for separate package over an optional extra: architectural isolation
-enforced at install time, independent version pins, cleaner VM 1 image.
+`uv sync` on the laptop installs everything. The deploy task runs
+`uv sync --no-dev --no-group analytics` on VM 1, keeping the server image lean.
 
 ## Package structure
 
 ```
-packages/dinary-analytics/
-  src/dinary_analytics/
-    connection.py       # open_ledger(): DuckDB ATTACH ledger-replica.db READ_ONLY
-    mcp_server.py       # MCP server: DuckDB queries + analytics.db config writes
-    settings.py         # read/write analytics.db (PoloDB or LMDB — see §Storage)
-    queries/            # named .sql files for reusable analytical queries
-  notebooks/            # template Marimo notebooks, committed to git
-    dashboard.py        # main app: configurable widgets + Gemini chat
-    events.py           # event/trip cost breakdown
-    tags.py             # tag-bucket comparison
-  pyproject.toml
+src/dinary_analytics/
+  connection.py       # open_ledger(): DuckDB ATTACH ledger-replica.db READ_ONLY
+  mcp_server.py       # MCP server: DuckDB queries + analytics.db config writes
+  settings.py         # read/write analytics.db (LMDB)
+  backup.py           # analytics.db backup/restore CLI
+  queries/            # named .sql files for reusable analytical queries
+  notebooks/          # template Marimo notebooks, committed to git
+    dashboard.py      # main app: configurable widgets + Gemini chat
+    events.py         # event/trip cost breakdown
+    tags.py           # tag-bucket comparison
 ```
 
 ## Runtime directory
@@ -145,17 +141,17 @@ HTTPS Range requests.
 
 ### Phase 0 — DB selection ✓ LMDB
 
-### MVP
+### MVP ✓ DONE
 
 End-to-end slice covering all three layers (data / chat / MCP) in minimal form.
 Goal: validate the full stack is viable before investing in polish.
 
-1. uv workspace wiring + `packages/dinary-analytics/pyproject.toml`.
-2. `connection.open_ledger()` + replica sync logic.
-3. `settings.py` with `analytics.db` (DB chosen in Phase 0).
-4. `dashboard.py` — one chart block + Gemini chat (`query` and `schema` tool calls).
-5. MCP server — `query` and `schema` tools only.
-6. `inv analytics`: syncs replica, starts MCP server, opens `dashboard.py`.
+1. `analytics` dependency group in root `pyproject.toml`. ✓
+2. `connection.open_ledger()` + replica sync logic. ✓
+3. `settings.py` with `analytics.db` (DB chosen in Phase 0). ✓
+4. `dashboard.py` — one chart block + Gemini chat (`query` and `schema` tool calls). ✓
+5. MCP server — `query` and `schema` tools only. ✓
+6. `inv analytics`: syncs replica, starts MCP server, opens `dashboard.py`. ✓
 
 ### Full implementation
 

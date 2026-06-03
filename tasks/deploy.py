@@ -118,7 +118,7 @@ def deploy(c, ref="", no_start=False):
     Pipeline: backup → downgrade DB if needed (with confirmation) →
     git checkout → uv sync → restart → health check.
 
-    Pass --no-start to skip restart (use before inv restore-cloud-backup).
+    Pass --no-start to skip restart (use before inv restore-yadisk).
     See https://andgineer.github.io/dinary/operations for deploy+restore runbooks.
     """
     if not ref:
@@ -167,7 +167,7 @@ def deploy(c, ref="", no_start=False):
     ssh_run(
         c,
         f"cd ~/dinary && git fetch --tags && git checkout {ref} "
-        "&& source ~/.local/bin/env && uv sync --no-dev",
+        "&& source ~/.local/bin/env && uv sync --no-dev --no-group analytics",
     )
 
     print("=== Ensuring data/ directory (0700) ===")
@@ -188,7 +188,7 @@ def deploy(c, ref="", no_start=False):
         print(
             "=== --no-start set: code deployed, service NOT started. ===\n"
             "=== DB restore flow:                                      ===\n"
-            "===   inv restore-cloud-backup                            ===\n"
+            "===   inv restore-yadisk                            ===\n"
             "===   inv restart-server                                  ===\n"
             "=== Full reset flow:                                      ===\n"
             "===   ssh $HOST 'rm -f ~/dinary/data/dinary.db*'          ===\n"

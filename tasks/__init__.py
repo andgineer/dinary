@@ -4,6 +4,13 @@ import sys
 
 from invoke import Collection
 
+from .analytics import analytics
+from .backups.analytics_backup import (
+    backup_analytics,
+    backup_analytics_yadisk,
+    restore_analytics,
+    restore_analytics_yadisk,
+)
 from .backups.backups_replica import (
     replica_reset_trust,
     replica_resync,
@@ -38,6 +45,11 @@ from .server import logs, restart_server, ssh, ssh_replica, status
 from .setup import setup_server
 
 __all__ = [
+    "analytics",
+    "backup_analytics",
+    "backup_analytics_yadisk",
+    "restore_analytics",
+    "restore_analytics_yadisk",
     "backup_status",
     "bootstrap_catalog",
     "classify_receipt",

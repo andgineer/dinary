@@ -55,7 +55,11 @@ def _setup_system_packages(c, no_swap: bool) -> None:
     ssh_run(c, "curl -LsSf https://astral.sh/uv/install.sh | sh")
     print("=== Cloning repo ===")
     ssh_run(c, f"test -d ~/dinary || git clone {REPO_URL} ~/dinary")
-    ssh_run(c, "cd ~/dinary && git pull && source ~/.local/bin/env && uv sync --no-dev")
+    ssh_run(
+        c,
+        "cd ~/dinary && git pull && source ~/.local/bin/env"
+        " && uv sync --no-dev --no-group analytics",
+    )
     print("=== Ensuring data/ directory (0700) ===")
     ssh_run(c, "mkdir -p ~/dinary/data && " + build_data_dir_permissions_script())
 

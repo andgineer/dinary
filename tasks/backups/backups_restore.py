@@ -100,7 +100,7 @@ def _download_and_verify(c, picked, workpath: Path) -> Path:
     return restored
 
 
-@task(name="restore-cloud-backup")
+@task(name="restore-yadisk")
 def restore_from_yadisk(c, snapshot="latest", list_only=False, yes=False, no_resync=False):
     """Restore a snapshot from Yandex.Disk to data/dinary.db.
 

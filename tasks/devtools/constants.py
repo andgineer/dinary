@@ -161,7 +161,7 @@ REPLICA_DB_NAME = "dinary"
 # Off-site backup to Yandex.Disk (see docs/src/en/operations.md,
 # section "Off-site backup: Yandex.Disk"). Everything on the replica
 # is managed by ``inv setup-replica``; the restore side is
-# ``inv restore-cloud-backup`` (local-only, runs in cwd).
+# ``inv restore-yadisk`` (local-only, runs in cwd).
 BACKUP_SCRIPT_PATH = "/usr/local/bin/dinary-backup"
 BACKUP_RETENTION_SCRIPT_PATH = "/usr/local/bin/dinary-backup-retention"
 BACKUP_SERVICE_PATH = "/etc/systemd/system/dinary-backup.service"

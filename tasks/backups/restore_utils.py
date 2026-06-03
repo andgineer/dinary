@@ -1,4 +1,4 @@
-"""Shared helpers for restore-primary, restore-replica, and restore-cloud-backup."""
+"""Shared helpers for restore-primary, restore-replica, and restore-yadisk."""
 
 import re
 import subprocess

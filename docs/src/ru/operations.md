@@ -346,7 +346,7 @@ UTC уже через несколько часов, а не следующим 
 
 ### Локальный доступ к Яндекс.Диску: `inv setup-yadisk`
 
-`restore-cloud-backup` читает из `yandex:` на той машине, где
+`restore-yadisk` читает из `yandex:` на той машине, где
 запущена. `inv setup-yadisk` настраивает этот remote локально — на
 VM 1 при disaster recovery или на ноутбуке для отладочного
 бутстрапа:
@@ -359,16 +359,16 @@ inv setup-yadisk
 setup-replica`, — браузерный OAuth не нужен. Идемпотентна:
 пропускает промпт, если `yandex:` уже настроен и работает.
 
-`restore-cloud-backup` вызывает её автоматически при отсутствии
+`restore-yadisk` вызывает её автоматически при отсутствии
 `yandex:`, так что ручной запуск заранее необязателен.
 
 ## Восстановление на конкретную дату из Яндекс.Диска
 
 ```bash
-inv restore-cloud-backup --list-only                     # список снапшотов
-inv restore-cloud-backup                                 # восстановить самый свежий
-inv restore-cloud-backup --snapshot 2026-03-15           # конкретную дату
-inv restore-cloud-backup --yes                           # без подтверждения
+inv restore-yadisk --list-only                     # список снапшотов
+inv restore-yadisk                                 # восстановить самый свежий
+inv restore-yadisk --snapshot 2026-03-15           # конкретную дату
+inv restore-yadisk --yes                           # без подтверждения
 ```
 
 ### Два предполагаемых сценария
@@ -382,10 +382,10 @@ inv restore-cloud-backup --yes                           # без подтвер
   (через SSH), когда и локальная БД, и Litestream-реплика на VM 2
   непригодны. Тройная защита «SSH + `cd ~/dinary` + интерактивное
   подтверждение» — это намеренное трение, чтобы одним словом
-  `inv restore-cloud-backup` в случайном терминале нельзя было
+  `inv restore-yadisk` в случайном терминале нельзя было
   молча затереть прод.
 
-`restore-cloud-backup` — **local-only**: пишет в `./data/dinary.db`
+`restore-yadisk` — **local-only**: пишет в `./data/dinary.db`
 относительно cwd, режима `--remote` нет. Запустить задачу на
 удалённом хосте с операторской машины невозможно.
 
@@ -403,7 +403,7 @@ inv restore-cloud-backup --yes                           # без подтвер
   есть через `inv setup-server`. На macOS: `brew install rclone
   sqlite zstd`.
 - Настроен удалённый `yandex:` в rclone. Если его нет,
-  **`restore-cloud-backup` сам запросит авторизацию** (та же схема
+  **`restore-yadisk` сам запросит авторизацию** (та же схема
   WebDAV + app-пароль, что у `inv setup-replica`). Для
   предварительной настройки до первого restore: `inv setup-yadisk`.
 
@@ -427,7 +427,7 @@ inv restore-cloud-backup --yes                           # без подтвер
 ssh ubuntu@dinary                       # или публичный IP / Tailscale IP
 sudo systemctl stop dinary litestream   # чтобы не получить наполовину переписанную БД
 cd ~/dinary
-inv restore-cloud-backup --snapshot 2026-03-15
+inv restore-yadisk --snapshot 2026-03-15
 # промпт подтверждения: печатает row count / size / mtime текущей
 # БД плюс сжатый размер входящего снапшота и требует напечатать
 # буквально 'yes'.
@@ -442,7 +442,7 @@ inv verify-db                           # integrity + FK check
 ```bash
 cd /tmp/restore-preview
 mkdir -p data
-inv restore-cloud-backup --snapshot 2026-03-15 --yes
+inv restore-yadisk --snapshot 2026-03-15 --yes
 sqlite3 data/dinary.db 'SELECT COUNT(*) FROM expense'
 ```
 
@@ -461,7 +461,7 @@ sqlite3 data/dinary.db 'SELECT COUNT(*) FROM expense'
 
 ```bash
 inv deploy --ref=v0.4.0 --no-start   # задеплоить код, сервис не запускать
-inv restore-cloud-backup              # восстановить БД с Яндекс.Диска
+inv restore-yadisk              # восстановить БД с Яндекс.Диска
 inv restart-server                    # запустить; yoyo применит прямые миграции
 ```
 

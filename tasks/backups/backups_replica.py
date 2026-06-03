@@ -389,7 +389,7 @@ def replica_resync(c):
 def restore_replica(c, output=None, yes=False, timestamp=None, no_resync=False):
     """Restore a snapshot from VM2's Litestream LTX archive to data/dinary.db.
 
-    More current than restore-cloud-backup (WAL-level vs daily Yandex.Disk).
+    More current than restore-yadisk (WAL-level vs daily Yandex.Disk).
     Flags: -o PATH, --yes, --timestamp ISO8601 (default: latest), --no-resync.
     See https://andgineer.github.io/dinary/operations for restore runbooks.
     """
