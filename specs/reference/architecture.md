@@ -147,6 +147,14 @@ verbatim for audit. The accounting currency is pinned to an `app_metadata` row
 on first boot and cannot change without explicit migration — see
 `src/dinary/db/db_migrations.py` (`_reconcile_accounting_currency`).
 
+### LMDB for analytics.db
+
+`analytics.db` (dashboard configs, tag bucket definitions, LLM conversation
+history) uses LMDB. PoloDB was evaluated but its PyPI package ships wheels only
+for Python 3.9/3.10; the project requires 3.13+. LMDB installs cleanly on 3.13,
+is ACID-compliant, and its key-value model maps naturally to named config keys
+and sequence-keyed history entries with standard-library JSON encode/decode.
+
 ### Google Sheets as export-only
 
 From Phase 1 onward Sheets are append-only output, never the source of truth.
