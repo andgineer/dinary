@@ -100,15 +100,35 @@ def _(open_ledger, pl):
 
 
 @app.cell
-def _(alt, category_order, expense_monthly_df, pl, total_annual_income, year_df):
+def _(
+    alt,
+    category_order,
+    expense_monthly_df,
+    income_monthly_df,
+    pl,
+    total_annual_income,
+    year_df,
+):
     _CHART_WIDTH = 700
     _CHART_HEIGHT = 400
     _YEAR_WIDTH = 160
 
+    # Annual savings
     _total_expenses = float(year_df["total"].sum())
     _annual_saved = total_annual_income - _total_expenses
     _sign = "+" if _annual_saved >= 0 else ""
     _savings_color = "#2ca02c" if _annual_saved >= 0 else "#d62728"
+
+    # Monthly savings for the overlay line
+    _monthly_totals = (
+        expense_monthly_df.group_by("month").agg(pl.sum("total").alias("expenses")).sort("month")
+    )
+    _savings_df = (
+        income_monthly_df.join(_monthly_totals, on="month", how="left")
+        .fill_null(0)
+        .sort("month")
+        .with_columns((pl.col("income") - pl.col("expenses")).alias("saved"))
+    )
 
     # Midpoints for left-edge labels at the first month
     _first_month = expense_monthly_df["month"].min()
@@ -119,32 +139,81 @@ def _(alt, category_order, expense_monthly_df, pl, total_annual_income, year_df)
         .with_columns((pl.col("y_top") - pl.col("total") / 2).alias("y_mid"))
     )
 
+    _color_scale = alt.Scale(domain=category_order, scheme="tableau20")
+
     _areas = (
         alt.Chart(expense_monthly_df)
         .mark_area(opacity=0.85, interpolate="monotone")
         .encode(
             x=alt.X("month:O", title="Month"),
             y=alt.Y("total:Q", stack=True, title="EUR"),
-            color=alt.Color(
-                "category:N",
-                scale=alt.Scale(domain=category_order, scheme="tableau20"),
-                legend=alt.Legend(title="Category"),
-            ),
+            color=alt.Color("category:N", scale=_color_scale, legend=None),
             order=alt.Order("cat_rank:Q", sort="ascending"),
             tooltip=["month:O", "category:N", alt.Tooltip("total:Q", format=".0f")],
         )
     )
+    # White text, thin dark outline — readable on all tableau20 colours
     _labels = (
         alt.Chart(_label_df)
-        .mark_text(align="left", dx=5, fontSize=10, fontWeight="bold")
+        .mark_text(align="left", dx=5, fontSize=11, fontWeight="bold")
         .encode(
             x=alt.X("month:O"),
             y=alt.Y("y_mid:Q"),
             text=alt.Text("category:N"),
-            color=alt.value("white"),
+            color=alt.value("#333333"),
+        )
+    )
+    # Savings line on a right-side independent y axis
+    _savings_line = (
+        alt.Chart(_savings_df)
+        .mark_line(
+            color="#555555",
+            strokeWidth=2,
+            strokeDash=[6, 3],
+            point={"color": "#555555", "size": 40, "filled": True},
+        )
+        .encode(
+            x=alt.X("month:O"),
+            y=alt.Y("saved:Q", title="saved / month (EUR)", axis=alt.Axis(orient="right")),
+            tooltip=["month:O", alt.Tooltip("saved:Q", format=".0f", title="Saved")],
+        )
+    )
+    # Label pinned to the last point of the savings line
+    _savings_label = (
+        alt.Chart(_savings_df.tail(1))
+        .mark_text(align="right", dx=-6, dy=-10, fontSize=10, fontWeight="bold")
+        .encode(
+            x=alt.X("month:O"),
+            y=alt.Y("saved:Q"),
+            text=alt.value("saved"),
+            color=alt.value("#555555"),
         )
     )
 
+    # Right panel: saved text + year totals
+    # Year bars reversed so top-of-bars matches top-of-stack (Other at top, еда at bottom)
+    _year_order = list(reversed(category_order))
+    _year_df_pos = year_df.with_columns(pl.lit(0.0).alias("label_x"))
+    _year_bars = (
+        alt.Chart(_year_df_pos)
+        .mark_bar()
+        .encode(
+            y=alt.Y("category:N", sort=_year_order, title=None, axis=None),
+            x=alt.X("total:Q", title="Year total", axis=alt.Axis(tickCount=3, format="~s")),
+            color=alt.Color("category:N", scale=_color_scale, legend=None),
+            tooltip=["category:N", alt.Tooltip("total:Q", format=".0f")],
+        )
+    )
+    _year_text = (
+        alt.Chart(_year_df_pos)
+        .mark_text(align="left", dx=5, fontSize=10)
+        .encode(
+            y=alt.Y("category:N", sort=_year_order, axis=None),
+            x=alt.X("label_x:Q"),
+            text="category:N",
+            color=alt.value("#333333"),
+        )
+    )
     _saved_text = (
         alt.Chart(pl.DataFrame({"t": [f"Saved {_sign}{_annual_saved:,.0f}€"]}))
         .mark_text(fontSize=13, fontWeight="bold", align="center", baseline="middle")
@@ -156,27 +225,17 @@ def _(alt, category_order, expense_monthly_df, pl, total_annual_income, year_df)
         )
         .properties(width=_YEAR_WIDTH, height=30)
     )
-    _year_bars = (
-        alt.Chart(year_df)
-        .mark_bar()
-        .encode(
-            y=alt.Y("category:N", sort=category_order, title=None, axis=None),
-            x=alt.X("total:Q", title="Year total", axis=alt.Axis(tickCount=3, format="~s")),
-            color=alt.Color(
-                "category:N",
-                scale=alt.Scale(domain=category_order, scheme="tableau20"),
-                legend=None,
-            ),
-            tooltip=["category:N", alt.Tooltip("total:Q", format=".0f")],
-        )
-        .properties(width=_YEAR_WIDTH, height=_CHART_HEIGHT)
-    )
 
     alt.hconcat(
-        alt.layer(_areas, _labels)
+        alt.layer(alt.layer(_areas, _labels), _savings_line, _savings_label)
+        .resolve_scale(y="independent")
         .properties(width=_CHART_WIDTH, height=_CHART_HEIGHT, title="Monthly Expenses by Category")
         .interactive(),
-        alt.vconcat(_saved_text, _year_bars, spacing=4),
+        alt.vconcat(
+            alt.layer(_year_bars, _year_text).properties(width=_YEAR_WIDTH, height=_CHART_HEIGHT),
+            _saved_text,
+            spacing=4,
+        ),
         spacing=10,
     )
 
