@@ -3,6 +3,7 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import allure
 import pytest
 
 import tasks.imports.income_extract as _mod
@@ -38,6 +39,8 @@ def _ss(ws: MagicMock) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
+@allure.epic("Income")
+@allure.feature("Import")
 class TestPredictIncomeMonth:
     def test_day_25_is_prev_month(self):
         assert _predict_income_month(2024, 3, 25) == (2024, 2)
@@ -63,6 +66,8 @@ class TestPredictIncomeMonth:
 # ---------------------------------------------------------------------------
 
 
+@allure.epic("Income")
+@allure.feature("Import")
 class TestExtractIncomeRecords:
     def test_returns_separate_record_per_row(self):
         layout = INCOME_LAYOUTS["balance_rub"]
@@ -167,6 +172,8 @@ class TestExtractIncomeRecords:
 # ---------------------------------------------------------------------------
 
 
+@allure.epic("Income")
+@allure.feature("Import")
 class TestExtractAllYears:
     @pytest.fixture(autouse=True)
     def _stub_sources(self, monkeypatch):
@@ -272,6 +279,8 @@ class TestExtractAllYears:
 # ---------------------------------------------------------------------------
 
 
+@allure.epic("Income")
+@allure.feature("Import")
 class TestExportToFile:
     def test_writes_valid_json_with_all_fields(self, tmp_path, monkeypatch):
         sources = [

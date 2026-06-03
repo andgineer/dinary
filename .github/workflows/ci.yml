@@ -25,6 +25,7 @@ env:
     --junitxml=pytest.xml
     --cov-report=term-missing:skip-covered
     --cov=src
+    --ignore=tests/analytics
     tests/
 
 on:
@@ -90,7 +91,6 @@ jobs:
       with:
         python-version: ${{ env.PRIMARY_PYTHON_VERSION }}
 
-
     - name: Install uv environment
       uses: andgineer/uv-venv@v3
 
@@ -108,8 +108,28 @@ jobs:
     - name: Run JS tests with Allure
       run: npm --prefix webapp test
 
-    - name: Test with pytest and Allure report
-      run: "${{ env.PYTEST_CMD }} --alluredir=./allure-results"
+    - name: Test server with pytest and Allure
+      run: >-
+        python -m pytest
+        --junitxml=pytest.xml
+        --cov=src
+        --cov-report=term-missing:skip-covered
+        --ignore=tests/analytics
+        --alluredir=./allure-results
+        tests/
+
+    - name: Install analytics dependencies
+      run: uv sync --frozen --group analytics
+
+    - name: Test analytics with pytest and Allure
+      run: >-
+        python -m pytest
+        --junitxml=pytest-analytics.xml
+        --cov=src
+        --cov-append
+        --cov-report=term-missing:skip-covered
+        --alluredir=./allure-results
+        tests/analytics/
 
     - name: Load Allure test report history
       uses: actions/checkout@v4

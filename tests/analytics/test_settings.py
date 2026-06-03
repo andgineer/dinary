@@ -1,3 +1,5 @@
+import allure
+
 from dinary_analytics.settings import (
     get_config,
     get_config_json,
@@ -6,18 +8,24 @@ from dinary_analytics.settings import (
 )
 
 
+@allure.epic("Analytics")
+@allure.feature("Settings")
 def test_set_and_get_string(tmp_path):
     db = tmp_path / "analytics.db"
     set_config("api_key", "secret123", db_path=db)
     assert get_config("api_key", db_path=db) == "secret123"
 
 
+@allure.epic("Analytics")
+@allure.feature("Settings")
 def test_get_missing_key_returns_none(tmp_path):
     db = tmp_path / "analytics.db"
     set_config("present", "yes", db_path=db)
     assert get_config("absent", db_path=db) is None
 
 
+@allure.epic("Analytics")
+@allure.feature("Settings")
 def test_overwrite_existing_key(tmp_path):
     db = tmp_path / "analytics.db"
     set_config("key", "first", db_path=db)
@@ -25,6 +33,8 @@ def test_overwrite_existing_key(tmp_path):
     assert get_config("key", db_path=db) == "second"
 
 
+@allure.epic("Analytics")
+@allure.feature("Settings")
 def test_multiple_independent_keys(tmp_path):
     db = tmp_path / "analytics.db"
     set_config("a", "alpha", db_path=db)
@@ -33,6 +43,8 @@ def test_multiple_independent_keys(tmp_path):
     assert get_config("b", db_path=db) == "beta"
 
 
+@allure.epic("Analytics")
+@allure.feature("Settings")
 def test_set_config_json_round_trips(tmp_path):
     db = tmp_path / "analytics.db"
     payload = {"widgets": ["chart", "chat"], "count": 2}
@@ -41,11 +53,15 @@ def test_set_config_json_round_trips(tmp_path):
     assert result == payload
 
 
+@allure.epic("Analytics")
+@allure.feature("Settings")
 def test_get_config_json_missing_returns_none(tmp_path):
     db = tmp_path / "analytics.db"
     assert get_config_json("nonexistent", db_path=db) is None
 
 
+@allure.epic("Analytics")
+@allure.feature("Settings")
 def test_unicode_value(tmp_path):
     db = tmp_path / "analytics.db"
     set_config("tag", "командировка", db_path=db)

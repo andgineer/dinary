@@ -1,6 +1,7 @@
 import json
 import sqlite3
 
+import allure
 import pytest
 
 import dinary_analytics.connection as conn_module
@@ -36,6 +37,8 @@ def patched_replica(tmp_path, monkeypatch):
     return db
 
 
+@allure.epic("Analytics")
+@allure.feature("MCP Server")
 def test_run_query_returns_json_array(patched_replica):
     result = _run_query("SELECT id, amount FROM ledger.expenses ORDER BY id")
     data = json.loads(result)
@@ -46,18 +49,24 @@ def test_run_query_returns_json_array(patched_replica):
     assert data[1]["amount"] == pytest.approx(50.0)
 
 
+@allure.epic("Analytics")
+@allure.feature("MCP Server")
 def test_run_query_empty_result(patched_replica):
     result = _run_query("SELECT * FROM ledger.expenses WHERE amount > 9999")
     data = json.loads(result)
     assert data == []
 
 
+@allure.epic("Analytics")
+@allure.feature("MCP Server")
 def test_run_query_aggregate(patched_replica):
     result = _run_query("SELECT SUM(amount) AS total FROM ledger.expenses")
     data = json.loads(result)
     assert data[0]["total"] == pytest.approx(62.5)
 
 
+@allure.epic("Analytics")
+@allure.feature("MCP Server")
 def test_schema_contains_key_tables():
     assert "expenses" in LEDGER_SCHEMA
     assert "categories" in LEDGER_SCHEMA

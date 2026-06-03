@@ -8,6 +8,7 @@ or broken imports are caught here before runtime.
 import json
 import sqlite3
 
+import allure
 import polars as pl
 import pytest
 
@@ -123,6 +124,8 @@ def chart_data(ledger_db):
     )
 
 
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
 def test_make_chart_pair_builds_valid_spec(chart_data):
     exp_df, inc_df, yr_df, total_inc, cat_order = chart_data
     chart = make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order)
@@ -131,6 +134,8 @@ def test_make_chart_pair_builds_valid_spec(chart_data):
     assert len(spec["hconcat"]) == 2
 
 
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
 def test_make_chart_pair_with_title(chart_data):
     exp_df, inc_df, yr_df, total_inc, cat_order = chart_data
     chart = make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order, period_title="2025")
@@ -139,6 +144,8 @@ def test_make_chart_pair_with_title(chart_data):
     assert main.get("title") == "2025"
 
 
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
 def test_make_chart_pair_main_layers(chart_data):
     exp_df, inc_df, yr_df, total_inc, cat_order = chart_data
     chart = make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order)
@@ -154,6 +161,8 @@ def test_make_chart_pair_main_layers(chart_data):
     assert "line" in mark_types
 
 
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
 def test_make_chart_pair_no_invalid_mark_params(chart_data):
     exp_df, inc_df, yr_df, total_inc, cat_order = chart_data
     chart = make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order)
@@ -161,6 +170,8 @@ def test_make_chart_pair_no_invalid_mark_params(chart_data):
     assert "paintOrder" not in spec_str
 
 
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
 def test_dashboard_notebook_imports():
     """Verify the notebook module loads and make_chart_pair is importable from charts.py."""
     import dinary_analytics.charts as charts_module

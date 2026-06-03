@@ -1,5 +1,6 @@
 import sqlite3
 
+import allure
 import pytest
 
 from dinary_analytics.connection import LEDGER_SCHEMA, open_ledger, sync_replica
@@ -39,6 +40,8 @@ def ledger_sqlite(tmp_path):
     return db
 
 
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
 def test_open_ledger_attaches_sqlite(ledger_sqlite):
     con = open_ledger(replica_path=ledger_sqlite)
     try:
@@ -48,6 +51,8 @@ def test_open_ledger_attaches_sqlite(ledger_sqlite):
         con.close()
 
 
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
 def test_open_ledger_is_read_only(ledger_sqlite):
     con = open_ledger(replica_path=ledger_sqlite)
     try:
@@ -60,6 +65,8 @@ def test_open_ledger_is_read_only(ledger_sqlite):
         con.close()
 
 
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
 def test_open_ledger_can_query_join(ledger_sqlite):
     con = open_ledger(replica_path=ledger_sqlite)
     try:
@@ -73,6 +80,8 @@ def test_open_ledger_can_query_join(ledger_sqlite):
         con.close()
 
 
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
 def test_sync_replica_copies_file(tmp_path, ledger_sqlite):
     target = tmp_path / "replica.db"
     sync_replica(ledger_sqlite, target)
@@ -80,12 +89,16 @@ def test_sync_replica_copies_file(tmp_path, ledger_sqlite):
     assert target.stat().st_size == ledger_sqlite.stat().st_size
 
 
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
 def test_sync_replica_creates_parent_dir(tmp_path, ledger_sqlite):
     target = tmp_path / "sub" / "dir" / "replica.db"
     sync_replica(ledger_sqlite, target)
     assert target.exists()
 
 
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
 def test_ledger_schema_is_non_empty_string():
     assert isinstance(LEDGER_SCHEMA, str)
     assert "expenses" in LEDGER_SCHEMA
