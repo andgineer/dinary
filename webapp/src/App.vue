@@ -1,10 +1,12 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { Clock } from "lucide-vue-next";
 import QueueModal from "./components/QueueModal.vue";
 import HeaderSegmented from "./components/HeaderSegmented.vue";
 import AddView from "./views/AddView.vue";
 import IncomeView from "./views/IncomeView.vue";
 import ReviewView from "./views/ReviewView.vue";
+import AnalyticsView from "./views/AnalyticsView.vue";
 import LLMView from "./views/LLMView.vue";
 import { useQueueStore } from "./stores/queue.js";
 import { useReceiptQueueStore } from "./stores/receiptQueue.js";
@@ -14,9 +16,6 @@ import { flushQueue } from "./composables/flushQueue.js";
 import { flushReceiptQueue } from "./composables/flushReceiptQueue.js";
 import { useOnline } from "./composables/useOnline.js";
 
-const APP_VERSION =
-  typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
-
 const isDev = import.meta.env.VITE_DEV_MODE === "true";
 
 const queue = useQueueStore();
@@ -25,7 +24,7 @@ const toast = useToastStore();
 const reviewStore = useReviewStore();
 
 const { isOnline } = useOnline();
-const tab = ref("add"); // 'add' | 'income' | 'review' | 'llm'
+const tab = ref("add"); // 'add' | 'review' | 'analytics' | 'income' | 'llm'
 
 const offlineMessage = computed(() => {
   if (tab.value === "add") return "Offline — expenses will be queued";
@@ -35,7 +34,6 @@ const offlineMessage = computed(() => {
 const queueModalOpen = ref(false);
 
 const queueCount = computed(() => queue.items.length + receiptQueue.items.length);
-const headerVersionLabel = computed(() => `v${APP_VERSION}`);
 const showReviewBadge = computed(() => {
   const q = reviewStore.receiptsQueue;
   return reviewStore.dirtyFlag
@@ -103,34 +101,32 @@ onBeforeUnmount(() => {
   <div v-if="isDev" class="dev-banner">DEV MODE</div>
   <header class="app-header" :class="{ 'below-banner': isDev }">
     <div class="header-row">
-      <div class="header-left">
-        <h1>
-          Dinary
-          <span class="header-version">{{ headerVersionLabel }}</span>
-        </h1>
-        <button
-          v-if="queueCount > 0"
-          type="button"
-          class="queue-badge"
-          :aria-label="`${queueCount} queued entries`"
-          data-testid="queue-badge"
-          @click="queueModalOpen = true"
-        >
-          {{ queueCount }} queued
-        </button>
-      </div>
+      <h1>Dinary</h1>
       <HeaderSegmented
         v-model:tab="tab"
         :show-badge="showReviewBadge"
       />
     </div>
+    <button
+      v-if="queueCount > 0"
+      type="button"
+      class="queue-strip"
+      :aria-label="`${queueCount} receipts queued`"
+      data-testid="queue-strip"
+      @click="queueModalOpen = true"
+    >
+      <Clock :size="13" aria-hidden="true" />
+      <span><b>{{ queueCount }}</b> receipts queued</span>
+      <span class="queue-strip-hint">tap to review →</span>
+    </button>
     <div v-if="!isOnline" class="offline-notice" role="status">{{ offlineMessage }}</div>
   </header>
 
   <main class="app-main">
     <AddView v-if="tab === 'add'" />
-    <IncomeView v-else-if="tab === 'income'" />
     <ReviewView v-else-if="tab === 'review'" />
+    <AnalyticsView v-else-if="tab === 'analytics'" />
+    <IncomeView v-else-if="tab === 'income'" />
     <LLMView v-else-if="tab === 'llm'" />
   </main>
 
@@ -190,39 +186,40 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 1rem 1.25rem;
+  padding: 0.9rem 1rem;
 }
 
 .app-header h1 {
   font-size: 1.25rem;
   font-weight: 600;
+  white-space: nowrap;
 }
 
-.header-version {
-  font-size: 0.7rem;
-  font-weight: 400;
-  color: var(--text-muted);
-  margin-left: 0.35rem;
-  cursor: pointer;
-}
-
-.header-left {
+.queue-strip {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
+  gap: 8px;
+  width: 100%;
+  padding: 0.5rem 1rem;
+  background: rgba(245, 158, 11, 0.12);
+  border: none;
+  border-top: 1px solid rgba(245, 158, 11, 0.25);
+  color: var(--warning);
+  font-size: 0.78rem;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
 }
 
-.queue-badge {
-  background: var(--warning);
-  color: #000;
-  border: none;
-  border-radius: 999px;
-  padding: 0.2rem 0.6rem;
-  font-size: 0.75rem;
+.queue-strip b {
+  font-variant-numeric: tabular-nums;
   font-weight: 700;
-  cursor: pointer;
-  width: auto;
+}
+
+.queue-strip-hint {
+  margin-left: auto;
+  font-size: 0.72rem;
+  opacity: 0.85;
 }
 
 .offline-notice {

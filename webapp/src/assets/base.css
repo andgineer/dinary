@@ -31,6 +31,16 @@
   --muted:         #94a3b8;
   --muted-2:       #64748b;
   --font-num:      "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Per-context nav colors */
+  --review: #60a5fa;
+  --income: #22c55e;
+  --stat:   #818cf8;
+  --llm:    #22d3ee;
+
+  /* Trend direction */
+  --up:   #f87171;
+  --down: #34d399;
 }
 
 * {

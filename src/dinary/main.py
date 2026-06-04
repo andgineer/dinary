@@ -16,6 +16,7 @@ from dinary import __version__
 from dinary.adapters.llm_storage import SqliteLLMBrokerStorage
 from dinary.adapters.llmbroker import LLMBroker
 from dinary.api import (
+    analytics,
     catalog,
     currencies,
     expense_corrections,
@@ -99,6 +100,7 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
+    app.include_router(analytics.router)
     app.include_router(expenses.router)
     app.include_router(expense_corrections.router)
     app.include_router(income.router)

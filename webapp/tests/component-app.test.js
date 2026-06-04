@@ -80,10 +80,10 @@ describe("App shell", () => {
     expect(wrapper.find('.toast').exists()).toBe(true);
   });
 
-  it("hides the queue badge when the queue is empty", async () => {
+  it("hides the queue strip when the queue is empty", async () => {
     const wrapper = mount(App, { global: { plugins: [createPinia()] } });
     await flushPromises();
-    expect(wrapper.find('[data-testid="queue-badge"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="queue-strip"]').exists()).toBe(false);
   });
 
   it("shows the offline hint when navigator.onLine is false", async () => {
@@ -105,7 +105,7 @@ describe("App shell", () => {
     }
   });
 
-  it("opens the queue modal when the badge is clicked", async () => {
+  it("opens the queue modal when the queue strip is clicked", async () => {
     // Seed an item directly via the queue store before mount so the badge appears.
     const { useQueueStore } = await import("../src/stores/queue.js");
     const pinia = createPinia();
@@ -119,8 +119,8 @@ describe("App shell", () => {
       date: "2026-05-04",
     });
     await flushPromises();
-    expect(wrapper.find('[data-testid="queue-badge"]').exists()).toBe(true);
-    await wrapper.find('[data-testid="queue-badge"]').trigger("click");
+    expect(wrapper.find('[data-testid="queue-strip"]').exists()).toBe(true);
+    await wrapper.find('[data-testid="queue-strip"]').trigger("click");
     await flushPromises();
     expect(wrapper.find(".modal").exists()).toBe(true);
   });

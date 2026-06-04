@@ -15,32 +15,35 @@ New FastAPI endpoints reading dinary SQLite directly. DuckDB is not used on the
 server (1 GB RAM constraint — see `architecture.md`). All queries are plain SQLite
 GROUP BY aggregations.
 
-## Default views (zero configuration)
+## The analytics page
 
-These views are always present regardless of whether analytics-ai has ever been run.
+See [design handoff](design_handoff_nav_and_analytics/README.md) — Part 2 (Sketch A)
+for pixel-level layout, component specs, and acceptance checklist.
 
-1. **Monthly trend** — total expenses per month for the selected year, broken down
-   by category group. Query: expenses JOIN categories JOIN category_groups,
-   GROUP BY year_month, group_name.
+A single `/analytics` page. No tabs. Two modes depending on whether a basket config
+has been pushed from `dinary-analytics`.
 
-2. **Events** — all events with total cost in accounting currency, sorted by date
-   descending. Query: expenses JOIN events, GROUP BY event_id.
+**Always shown:**
 
-## Config-driven basket views
+1. **Period cards** — YTD savings (hero card with savings rate as subtitle) + three
+   equal cards: current month total, last completed month total, year-to-date spent.
+   Savings rate = YTD savings / YTD income.
 
-When the user has run analytics-ai and saved one or more Analytics Views, those
-views appear as additional tabs in `/analytics`. The PWA has no view editor — the
-standalone app is the only configuration tool.
+2. **Events** — all events from the last 12 months (open and closed), sorted by
+   date_from descending, each showing its total cost in accounting currency. Open
+   events are visually distinguished from closed ones.
 
-Config is written by analytics-ai via `PUT /api/analytics/config` and stored in
-`analytics_pwa_config` as a JSON blob under key `views`. The server executes basket
-assignment on request using a parameterised SQLite query; no basket logic lives in
-Python. Basket assignment: for each expense, check event triggers first, then tag
-triggers, first match wins, unmatched go to the default basket.
+**Always shown when data is sufficient:**
 
-## Config table
+3. **Basket trends** — top-5 category groups and tags ranked by % change between
+   the last 3 months and the 3 months before that. Items with
+   `MAX(recent, prior) < AVG * 0.15` are excluded as noise (near-empty groups,
+   infrequently-used tags). Requires no configuration — generated automatically
+   from existing categories and tags.
 
-`analytics_pwa_config` in dinary SQLite:
+## Config mechanism
+
+`analytics_pwa_config` table in dinary SQLite:
 
 ```
 key        TEXT  PRIMARY KEY
@@ -48,31 +51,31 @@ value      JSON
 updated_at TIMESTAMP
 ```
 
-Only key in use: `views` — JSON array of view config objects (same schema as
-stored in analytics.db, see `analytics-ai.md`). The server never writes this
-table; only `PUT /api/analytics/config` does.
+Key `active_view` — the view config object from analytics-ai (same schema as
+`view:<uuid>` in analytics.db, see `analytics-ai.md`) that the server uses to
+assign expenses to baskets when computing trends. Written only by
+`PUT /api/analytics/config` from `dinary-analytics` when the user saves a view.
+The dinary server never writes this table.
 
 ## Implementation outline
 
 **Backend**
 
 - New FastAPI router `api/analytics.py`.
-- New migration: `analytics_pwa_config` table.
-- `GET /api/analytics/config` — returns current `analytics_pwa_config` rows as JSON.
-- `PUT /api/analytics/config` — replaces one or more keys; called by analytics-ai only.
-- `GET /api/analytics/monthly?year=<year>` — monthly trend data.
-- `GET /api/analytics/events` — events with totals.
-- `GET /api/analytics/view/<view_id>?year=<year>` — executes basket assignment for
-  the named view config stored in `analytics_pwa_config.views`, returns
-  (basket_name, year_month, group_name, amount) rows.
-- New SQL files: `db/sql/analytics_monthly.sql`, `db/sql/analytics_events.sql`,
-  `db/sql/analytics_view.sql` (parameterised basket assignment).
+- `GET /api/analytics/summary` — single endpoint, single page load. Response:
+  ```
+  summary: { this_month_total, last_month_total, ytd_total, ytd_savings,
+             savings_rate, currency }        # amounts preformatted "156 000"
+  events:  [{ id, name, date_range, total, currency, open }]  # date_range preformatted
+  trends:  [{ basket_name, direction, pct }] | null           # null when insufficient data
+  ```
+- New SQL files: `db/sql/analytics_summary.sql`, `db/sql/analytics_ytd_income.sql`,
+  `db/sql/analytics_events.sql`, `db/sql/analytics_auto_trends.sql`.
 
 **Frontend**
 
 - New Vue route `/analytics`, new `AnalyticsView.vue`.
-- On load: fetches config + default view data in parallel.
-- Tab bar: "Monthly" tab + "Events" tab always present; one tab per basket view
-  from config (if any).
-- Period selector (year) applies to all tabs.
+- On load: single fetch to `GET /api/analytics/summary`.
+- Renders basket trends row only when response includes trend data.
+- No tabs, no period selector.
 - Chart library: to be decided at implementation time — keep it lightweight.

@@ -1,40 +1,45 @@
 # Screen Anatomy
 
-The four top-level views, their layout, and how the segmented + overflow nav binds them together.
+The five top-level views, their layout, and how the header segmented control binds them together.
+
+See [design handoff](../plans/design_handoff_nav_and_analytics/README.md) — Part 1 (Draft C)
+for pixel-level header specs and acceptance checklist.
 
 ## Navigation
 
-A single **header segmented control** in `App.vue` switches between the four views. There is no bottom tab bar.
+A single **header segmented control** in `App.vue` switches between the five views. There is no bottom tab bar and no overflow menu.
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ Dinary v0.10  [⚠ 2 queued]               [+ ] [☰●5] [···]  │ sticky header
-├──────────────────────────────────────────────────────────────┤
-│ Offline — expenses will be queued                            │ optional, sticky
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│              active view body                                │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────┐
+│ Dinary        [+][≣][▩][↗][▦]              │  sticky header row
+├────────────────────────────────────────────┤
+│ ⏱ 2 receipts queued        tap to review → │  queue strip (amber), only when queued
+├────────────────────────────────────────────┤
+│ Offline — expenses will be queued          │  offline strip, only when offline
+├────────────────────────────────────────────┤
+│              active view body              │
+└────────────────────────────────────────────┘
 ```
 
 ### Tab inventory (`HeaderSegmented.vue`)
 
-| Tab | Glyph | Size | Inactive look | Active look | Where it lives |
-|---|---|---|---|---|---|
-| **Add** | Plus | 56×38 | `--expense` text on 12 %-alpha orange fill | Solid `--expense` fill + 0 4 12 orange glow | Inline (primary) |
-| **Review** | ListChecks | 56×38 | sky-blue `#60a5fa` on 12 %-alpha blue fill | Solid `#60a5fa` fill + 0 4 12 sky-blue glow | Inline (primary). Warning-amber count badge bottom-right when `doubtfulCount > 0` |
-| **•••** (overflow) | MoreHorizontal | 36×30 | Muted, transparent | `--accent` fill when any rare tab is current | Inline. On tap, opens a 200-px-wide dropdown listing every entry in the `RARE_TABS` const |
-| **Income** | TrendingUp | n/a | n/a — lives inside the dropdown menu only | menu row gets `--surface-2` background + bold | Behind `•••` |
-| **LLM providers** | Cpu | n/a | same | same | Behind `•••` |
+| Tab | key | Glyph (lucide) | Color token | Size |
+|---|---|---|---|---|
+| **Add** | `add` | `Plus` | `--expense` #f97316 | 40×36 |
+| **Review** | `review` | `ListChecks` | `--review` #60a5fa | 40×36 |
+| **Analytics** | `analytics` | `BarChart3` | `--stat` #818cf8 | 40×36 |
+| **Income** | `income` | `TrendingUp` | `--income` #22c55e | 40×36 |
+| **LLM providers** | `llm` | `Cpu` | `--muted` #94a3b8 | 40×36 |
 
-**Rule for the future:** when a rarely-used tab is added, append it to `RARE_TABS` — the header layout stays the same. When a *frequently* used tab is added, see "When to add a new screen" below.
+Each tab button: inactive = `color-mix(in srgb, <tabColor> 14%, transparent)` bg + tab color text. Active = solid tab color fill + `#fff` icon + `0 4px 12px <tabColor>66` glow.
+
+**Rule for the future:** all tabs are peers — no overflow menu. Every new top-level view gets an inline tab.
 
 ### Header chrome
 
-- **Brand + version** (`Dinary v0.10`) on the left.
-- **Queue badge** (`N queued`, warning-yellow pill) appears next to the brand when `queue.items.length + receiptQueue.items.length > 0`. Tap → `QueueModal`.
-- **Offline notice strip** (warning-color text on warning-tinted bg, 1-px border) slides in under the header row when `!isOnline`. Copy adapts by view: `Offline — expenses will be queued` on Add, `Offline — incomes can't be added or edited` on Income, generic `Offline — changes not available` elsewhere.
+- **Brand** (`Dinary`) on the left. Version string removed from header.
+- **Queue strip** — full-width amber strip below the header row, renders only when `queue.items.length + receiptQueue.items.length > 0`. Shows count + "tap to review →". Tap → `QueueModal`. Stacks above the offline strip when both present.
+- **Offline notice strip** — warning-color strip below the queue strip when `!isOnline`. Copy adapts by view: `Offline — expenses will be queued` on Add, `Offline — incomes can't be added or edited` on Income, generic `Offline — changes not available` elsewhere.
 
 ## Add view
 
@@ -111,9 +116,16 @@ Two ways to save:
 
 After save: the form resets but keeps the default group/category and currency. A toast confirms the saved amount.
 
+## Analytics view
+
+Read-only financial summary. Reached via the inline `analytics` tab. See
+[design handoff](../plans/design_handoff_nav_and_analytics/README.md) — Part 2
+(Sketch A) for full layout, component specs, tokens, and acceptance checklist.
+Implementation spec: `plans/analytics-pwa.md`.
+
 ## Income view
 
-The income-tracking view. New since v0.8 — accessed via the `•••` overflow menu.
+The income-tracking view. Accessed via the inline `income` tab.
 
 ```
 ┌──────────────────────────────────────┐
@@ -316,8 +328,7 @@ Each chip is a thin outlined pill. The strip is informational — no actions.
 
 ## When to add a new view
 
-Adding a fifth segment to the segmented control is a major change — two inline tabs is already a deliberate choice. If the new view is:
+All five tabs are inline peers — icon-only at 40 px, fits at 340 px. A sixth tab would need design review. If the new view is:
 
-- **Heavy, persistent, primary** — promote it inline next to Add + Review (and shrink them slightly). 3 × 56 px is the upper bound that still fits one-handed.
-- **Secondary or rare** — append to `RARE_TABS` in `HeaderSegmented.vue`. Nothing else changes. Pick a glyph the dropdown menu can render at 22 px and an obvious label.
+- **A new primary workflow** — add an inline tab with its own `--<context>` color token.
 - **An admin / settings panel** — push it into the LLM view's pattern (a dedicated screen reachable from elsewhere) or into a sheet, not a top-level slot.
