@@ -57,12 +57,13 @@ const activeGroups = computed(() => catalog.groups);
 const activeCategories = computed(() =>
   groupId.value ? catalog.categories(groupId.value) : [],
 );
-const activeEvents = computed(() => catalog.events(date.value || todayIso()));
+const activeEvents = computed(() => catalog.activeEventsLast());
 const inactiveGroupsList = computed(() => catalog.inactiveGroups);
 const inactiveCategoriesList = computed(() =>
   groupId.value ? catalog.inactiveCategories(groupId.value) : [],
 );
 const inactiveEventsList = computed(() => catalog.inactiveEventsLast());
+const manageActiveEventsList = computed(() => catalog.activeEventsLast());
 const allActiveTags = computed(() => catalog.tags);
 const allInactiveTags = computed(() => catalog.inactiveTags);
 
@@ -107,14 +108,6 @@ watch(groupId, (gid) => {
 });
 
 watch(date, () => {
-  if (eventId.value) {
-    const stillThere = activeEvents.value.some((e) => String(e.id) === String(eventId.value));
-    if (!stillThere) {
-      eventId.value = "";
-      userEventOverride.value = false;
-      toast.show("Selected event is outside the date range — cleared", "info");
-    }
-  }
   applyAutoAttachEventForDate();
 });
 
@@ -363,6 +356,7 @@ defineExpose({ save, reset });
           type="button"
           class="event-chip"
           :class="{ 'is-selected': eventId === String(ev.id) }"
+          :data-testid="`event-chip-${ev.id}`"
           @click="selectEvent(ev)"
         >
           {{ eventLabel(ev) }}
@@ -372,7 +366,7 @@ defineExpose({ save, reset });
       <ManageList
         v-if="manageMode.event"
         kind="event"
-        :active="activeEvents"
+        :active="manageActiveEventsList"
         :inactive="inactiveEventsList"
         :label="eventLabel"
         :pending-id="pendingManageId.event"

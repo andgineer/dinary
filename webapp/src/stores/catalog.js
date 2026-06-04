@@ -273,6 +273,19 @@ export const useCatalogStore = defineStore("catalog", () => {
     snapshot.value ? snapshot.value.tags.filter((t) => !isActive(t)) : [],
   );
 
+  function activeEventsLast(days = 365) {
+    if (!snapshot.value) return [];
+    const cutoff = new Date(toUtcMidnight(new Date()).getTime() - days * MS_PER_DAY);
+    return snapshot.value.events
+      .filter((e) => isActive(e) && parseIsoDate(e.date_to) >= cutoff)
+      .sort((a, b) => parseIsoDate(b.date_to) - parseIsoDate(a.date_to));
+  }
+
+  function findEventById(id) {
+    if (!snapshot.value || id == null) return null;
+    return snapshot.value.events.find((e) => e.id === Number(id)) ?? null;
+  }
+
   // ----- mutating actions ------------------------------------------------
 
   async function reactivate(kind, id) {
@@ -359,6 +372,8 @@ export const useCatalogStore = defineStore("catalog", () => {
     applyExpenseDefaults,
     applyFrequentCategories,
     events,
+    activeEventsLast,
+    findEventById,
     inactiveEventsInWindow,
     inactiveEventsLast,
     autoAttachEventsOn,

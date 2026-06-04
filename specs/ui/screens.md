@@ -90,6 +90,7 @@ The group is still tracked internally (for the group→category hierarchy logic)
 
 - Header row: `Event` label (muted uppercase) + `IconBtn` plus (accent) + `IconBtn` cog/x (muted).
 - Body: `event-chips` container (8-px-radius `--field` panel) with pill-shaped chips on `--surface` background. Selected chip fills `--expense`. Empty state: italic "no active events" text.
+- Chips show active events from the last 365 days, newest to oldest. The same scope applies to the active section of the manage panel and to the event selector in `ExpenseEditSheet`.
 - Plus opens an `InlineCreateEvent`. Cog opens a `ManageList` of active + inactive events. Both can be open simultaneously.
 
 ### Tags

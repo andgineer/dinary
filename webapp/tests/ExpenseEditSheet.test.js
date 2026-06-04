@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import { nextTick } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import ExpenseEditSheet from "../src/components/ExpenseEditSheet.vue";
@@ -30,10 +31,20 @@ const CATALOG = {
       is_active: true,
       auto_tags: [99],
     },
+    {
+      id: 6,
+      name: "OldEvent",
+      date_from: "2025-01-01",
+      date_to: "2025-12-31",
+      auto_attach_enabled: false,
+      is_active: false,
+      auto_tags: [],
+    },
   ],
   tags: [
     { id: 1, name: "food", is_active: true },
     { id: 2, name: "health", is_active: true },
+    { id: 3, name: "archived", is_active: false },
   ],
 };
 
@@ -125,6 +136,152 @@ describe("ExpenseEditSheet — event selection merges auto_tags", () => {
     expect(spy).toHaveBeenCalledTimes(1);
     const payload = spy.mock.calls[0][1];
     expect(payload.tag_ids).toContain(99);
+  });
+});
+
+describe("ExpenseEditSheet — inactive items visibility", () => {
+  it("shows inactive tag in toggle row when it is attached to the expense", () => {
+    const { wrapper } = mountSheet({
+      expense: { ...EXPENSE, tags: [{ id: 3, name: "archived" }] },
+    });
+    expect(wrapper.find('[data-testid="tag-toggle-3"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="tag-toggle-3"]').classes()).toContain("is-on");
+  });
+
+  it("does not show inactive tag when it is not attached to the expense", () => {
+    const { wrapper } = mountSheet();
+    expect(wrapper.find('[data-testid="tag-toggle-3"]').exists()).toBe(false);
+  });
+
+  it("shows inactive event option when it is attached to the expense", () => {
+    const { wrapper } = mountSheet({
+      expense: { ...EXPENSE, event_id: 6, event_name: "OldEvent" },
+    });
+    const options = wrapper.find('[data-testid="event-select"]').findAll("option");
+    expect(options.some((o) => o.element.value === "6")).toBe(true);
+  });
+
+  it("does not show inactive event option when it is not attached to the expense", () => {
+    const { wrapper } = mountSheet();
+    const options = wrapper.find('[data-testid="event-select"]').findAll("option");
+    expect(options.some((o) => o.element.value === "6")).toBe(false);
+  });
+});
+
+describe("ExpenseEditSheet — event removal clears auto_tags", () => {
+  async function mountWithSpy() {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const reviewStore = useReviewStore(pinia);
+    const spy = vi.spyOn(reviewStore, "updateExpense").mockResolvedValue();
+    const wrapper = mount(ExpenseEditSheet, {
+      props: { open: true, expense: EXPENSE, suggestions: [] },
+      global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB, CategorySheet: true } },
+    });
+    return { wrapper, spy };
+  }
+
+  it("removes event auto_tags when event is cleared", async () => {
+    const { wrapper, spy } = await mountWithSpy();
+    const select = wrapper.find('[data-testid="event-select"]');
+    await select.setValue("5");
+    await select.trigger("change");
+    await select.setValue("");
+    await select.trigger("change");
+    await wrapper.find('[data-testid="save-btn"]').trigger("click");
+    await flushPromises();
+    expect(spy.mock.calls[0][1].tag_ids).not.toContain(99);
+  });
+
+  it("removes previous event auto_tags when switching to another event", async () => {
+    const CATALOG_TWO_EVENTS = {
+      ...CATALOG,
+      events: [
+        { id: 5, name: "Trip", date_from: "2026-01-01", date_to: "2026-12-31", is_active: true, auto_tags: [99] },
+        { id: 7, name: "Other", date_from: "2026-01-01", date_to: "2026-12-31", is_active: true, auto_tags: [88] },
+      ],
+      tags: [...CATALOG.tags, { id: 88, name: "other-tag", is_active: true }],
+    };
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG_TWO_EVENTS);
+    const reviewStore = useReviewStore(pinia);
+    const spy = vi.spyOn(reviewStore, "updateExpense").mockResolvedValue();
+    const wrapper = mount(ExpenseEditSheet, {
+      props: { open: true, expense: EXPENSE, suggestions: [] },
+      global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB, CategorySheet: true } },
+    });
+    const select = wrapper.find('[data-testid="event-select"]');
+    await select.setValue("5");
+    await select.trigger("change");
+    await select.setValue("7");
+    await select.trigger("change");
+    await wrapper.find('[data-testid="save-btn"]').trigger("click");
+    await flushPromises();
+    const tag_ids = spy.mock.calls[0][1].tag_ids;
+    expect(tag_ids).not.toContain(99);
+    expect(tag_ids).toContain(88);
+  });
+});
+
+describe("ExpenseEditSheet — event selector reactivity after catalog changes", () => {
+  it("inactive event is not shown in selector when not attached to expense", () => {
+    const { wrapper } = mountSheet();
+    const options = wrapper.find('[data-testid="event-select"]').findAll("option");
+    expect(options.some((o) => o.element.value === "6")).toBe(false);
+  });
+
+  it("reactivated event (outside ±30d window) appears in selector without page reload", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const catalog = useCatalogStore(pinia);
+    catalog.replaceSnapshot(CATALOG);
+    const wrapper = mount(ExpenseEditSheet, {
+      props: { open: true, expense: EXPENSE, suggestions: [] },
+      global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB, CategorySheet: true } },
+    });
+
+    let options = wrapper.find('[data-testid="event-select"]').findAll("option");
+    expect(options.some((o) => o.element.value === "6")).toBe(false);
+
+    catalog.replaceSnapshot({
+      ...CATALOG,
+      events: [
+        CATALOG.events.find((e) => e.id === 5),
+        { id: 6, name: "OldEvent", date_from: "2025-01-01", date_to: "2025-12-31", auto_attach_enabled: false, is_active: true },
+      ],
+    });
+    await nextTick();
+
+    options = wrapper.find('[data-testid="event-select"]').findAll("option");
+    expect(options.some((o) => o.element.value === "6")).toBe(true);
+  });
+
+  it("deactivated event disappears from selector without page reload", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const catalog = useCatalogStore(pinia);
+    catalog.replaceSnapshot(CATALOG);
+    const wrapper = mount(ExpenseEditSheet, {
+      props: { open: true, expense: EXPENSE, suggestions: [] },
+      global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB, CategorySheet: true } },
+    });
+
+    let options = wrapper.find('[data-testid="event-select"]').findAll("option");
+    expect(options.some((o) => o.element.value === "5")).toBe(true);
+
+    catalog.replaceSnapshot({
+      ...CATALOG,
+      events: [
+        { id: 5, name: "Trip", date_from: "2026-01-01", date_to: "2026-12-31", auto_attach_enabled: false, is_active: false, auto_tags: [99] },
+        CATALOG.events.find((e) => e.id === 6),
+      ],
+    });
+    await nextTick();
+
+    options = wrapper.find('[data-testid="event-select"]').findAll("option");
+    expect(options.some((o) => o.element.value === "5")).toBe(false);
   });
 });
 

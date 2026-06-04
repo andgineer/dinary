@@ -33,6 +33,14 @@ const SAMPLE = {
       auto_attach_enabled: false,
       is_active: true,
     },
+    {
+      id: 101,
+      name: "old-conference",
+      date_from: "2025-01-01",
+      date_to: "2025-12-31",
+      auto_attach_enabled: false,
+      is_active: false,
+    },
   ],
   tags: [
     { id: 200, name: "vacation", is_active: true },
@@ -307,5 +315,52 @@ describe("ExpenseForm: offline init", () => {
     } finally {
       restore();
     }
+  });
+});
+
+describe("ExpenseForm: event chip reactivity after catalog changes", () => {
+  it("inactive event is not shown as chip", async () => {
+    seedCatalog();
+    const wrapper = mountForm();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="event-chip-101"]').exists()).toBe(false);
+  });
+
+  it("reactivated event (outside ±30d window) appears as chip without page reload", async () => {
+    seedCatalog();
+    const catalog = useCatalogStore();
+    const wrapper = mountForm();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="event-chip-101"]').exists()).toBe(false);
+
+    catalog.replaceSnapshot({
+      ...SAMPLE,
+      events: [
+        SAMPLE.events.find((e) => e.id === 100),
+        { id: 101, name: "old-conference", date_from: "2025-01-01", date_to: "2025-12-31", auto_attach_enabled: false, is_active: true },
+      ],
+    });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="event-chip-101"]').exists()).toBe(true);
+  });
+
+  it("deactivated event disappears from chips without page reload", async () => {
+    seedCatalog();
+    const catalog = useCatalogStore();
+    const wrapper = mountForm();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="event-chip-100"]').exists()).toBe(true);
+
+    catalog.replaceSnapshot({
+      ...SAMPLE,
+      events: [
+        { id: 100, name: "trip", date_from: "2026-04-01", date_to: "2026-12-31", auto_attach_enabled: false, is_active: false },
+        SAMPLE.events.find((e) => e.id === 101),
+      ],
+    });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="event-chip-100"]').exists()).toBe(false);
   });
 });

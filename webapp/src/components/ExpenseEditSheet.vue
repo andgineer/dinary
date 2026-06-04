@@ -89,8 +89,19 @@ const selectedCategory = computed(() =>
   selectedCategoryId.value ? catalog.findCategoryById(selectedCategoryId.value) : null,
 );
 
-const activeTags = computed(() => catalog.tags);
-const activeEvents = computed(() => catalog.events());
+const visibleTags = computed(() => {
+  const inactive = catalog.inactiveTags.filter((t) => selectedTagIds.value.has(Number(t.id)));
+  return [...catalog.tags, ...inactive];
+});
+
+const visibleEvents = computed(() => {
+  const active = catalog.activeEventsLast();
+  if (!selectedEventId.value) return active;
+  if (active.find((e) => e.id === selectedEventId.value)) return active;
+  const ev = catalog.findEventById(selectedEventId.value);
+  return ev ? [ev, ...active] : active;
+});
+
 const showScope = computed(() => props.expense?.receipt_id != null);
 const showUpdateRule = computed(
   () => props.expense?.receipt_id != null && props.expense?.has_rule === true,
@@ -106,20 +117,22 @@ function toggleTag(tagId) {
 
 function onEventSelect(eventId) {
   const id = eventId ? Number(eventId) : null;
+  const next = new Set(selectedTagIds.value);
+  if (selectedEventId.value) {
+    const prev = catalog.findEventById(selectedEventId.value);
+    for (const tid of prev?.auto_tags ?? []) next.delete(Number(tid));
+  }
   selectedEventId.value = id;
   if (id) {
-    const ev = activeEvents.value.find((e) => e.id === id);
-    if (ev?.auto_tags?.length) {
-      const next = new Set(selectedTagIds.value);
-      for (const tid of ev.auto_tags) next.add(Number(tid));
-      selectedTagIds.value = next;
-    }
+    const ev = catalog.findEventById(id);
+    for (const tid of ev?.auto_tags ?? []) next.add(Number(tid));
   }
+  selectedTagIds.value = next;
 }
 
 function _resolvedTags() {
   const ids = new Set([...selectedTagIds.value].map(Number));
-  return activeTags.value.filter((t) => ids.has(Number(t.id)));
+  return visibleTags.value.filter((t) => ids.has(Number(t.id)));
 }
 
 async function save() {
@@ -148,7 +161,7 @@ async function save() {
       }
       await reviewStore.updateExpense(props.expense.id, patch);
       const ev = selectedEventId.value
-        ? (activeEvents.value.find((e) => e.id === selectedEventId.value) ?? null)
+        ? (visibleEvents.value.find((e) => e.id === selectedEventId.value) ?? null)
         : null;
       reviewStore.patchExpense(props.expense.id, {
         category_id: selectedCategoryId.value,
@@ -229,11 +242,11 @@ function _formatDate(iso) {
       <div class="field-label">TAGS</div>
       <div class="tag-toggle-row">
         <button
-          v-for="tag in activeTags"
+          v-for="tag in visibleTags"
           :key="tag.id"
           type="button"
           class="tag-toggle"
-          :class="{ 'is-on': selectedTagIds.has(Number(tag.id)) }"
+          :class="{ 'is-on': selectedTagIds.has(Number(tag.id)), 'is-inactive': !tag.is_active }"
           :data-testid="`tag-toggle-${tag.id}`"
           @click="toggleTag(tag.id)"
         >
@@ -258,8 +271,8 @@ function _formatDate(iso) {
         @change="onEventSelect($event.target.value || null)"
       >
         <option value="">None</option>
-        <option v-for="ev in activeEvents" :key="ev.id" :value="ev.id">
-          {{ ev.name }}
+        <option v-for="ev in visibleEvents" :key="ev.id" :value="ev.id">
+          {{ ev.name }}{{ ev.is_active === false ? " (inactive)" : "" }}
         </option>
       </select>
     </div>
@@ -438,6 +451,11 @@ function _formatDate(iso) {
 .tag-toggle.is-on {
   border-color: var(--accent);
   color: var(--text);
+}
+
+.tag-toggle.is-inactive {
+  opacity: 0.6;
+  border-style: dashed;
 }
 
 .tag-check {
