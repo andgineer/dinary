@@ -46,7 +46,7 @@
 | src/dinary/background/sheet\_logging/sheet\_logging.py         |      221 |       39 |     82% |101-105, 119-126, 134, 200-201, 211, 216-218, 261-263, 286-287, 291-301, 376, 415-416, 427, 431, 458-459, 479-489 |
 | src/dinary/background/sheet\_logging/sheets\_write.py          |       65 |       35 |     46% |114-119, 124-127, 131-136, 158-192 |
 | src/dinary/background/sheet\_logging/task.py                   |       59 |       17 |     71% |46-59, 89-100 |
-| src/dinary/config.py                                           |      155 |       20 |     87% |38, 48, 111-113, 144, 150, 206-210, 212-216, 219-224, 227-231, 290, 294-296 |
+| src/dinary/config.py                                           |      155 |       19 |     88% |38, 48, 111-113, 144, 150, 206-210, 212-216, 219-224, 227-231, 294-296 |
 | src/dinary/db/catalog.py                                       |       44 |        0 |    100% |           |
 | src/dinary/db/classification\_rules.py                         |       37 |        2 |     95% |     66-67 |
 | src/dinary/db/currencies.py                                    |       34 |        5 |     85% |21-22, 59-64 |
@@ -65,7 +65,7 @@
 | src/dinary\_analytics/mcp\_server.py                           |       29 |       10 |     66% |32, 38, 42-54, 58 |
 | src/dinary\_analytics/notebooks/dashboard.py                   |      159 |      108 |     32% |9-23, 43-112, 124, 214, 226-295, 308-319, 324-353, 358-388, 400-413, 418-420, 425-505, 509 |
 | src/dinary\_analytics/settings.py                              |       22 |        0 |    100% |           |
-| **TOTAL**                                                      | **4466** |  **633** | **86%** |           |
+| **TOTAL**                                                      | **4466** |  **632** | **86%** |           |
 
 
 ## Setup coverage badge
