@@ -47,6 +47,12 @@ These are alpha-on-white, so they tint with the underlying surface. Never use a 
 | `--warning` | `#f59e0b` | Doubtful left-border (c2), rate-limit pill, queue badge, NEEDS REVIEW label, dev banner | Background fills (except low-alpha tints inside cards) |
 | `--error` / `--danger` | `#ef4444` / `#e94560` | Destructive confirm button, status-dot "error", inline error text, doubtful left-border (c1) | Anything that isn't an error or destructive action |
 | `--expense` | `#f97316` | **Add view's primary color** (Add tab, currency pill, Save & Scan buttons, selected event chip, selected category quick-pick) | Anything outside the expense-entry context |
+| `--review` | `#60a5fa` | **Review view's primary color** (Review tab fill, edit-sheet Save, sky-blue accent) | Anything outside the review context |
+| `--income` | `#22c55e` | **Income view's primary color** — alias for `--success` in nav context (Income tab fill) | Generic success states — use `--success` there |
+| `--stat` | `#818cf8` | **Analytics view's primary color** (Analytics tab fill, open-event accent, hero card gradient) | Anything outside the analytics context |
+| `--llm` | `#22d3ee` | **LLM view's primary color** (LLM tab fill) | Anything outside the LLM context |
+| `--up` | `#f87171` | Trend direction: spending increased (caution red) | General error states — use `--error` there |
+| `--down` | `#34d399` | Trend direction: spending decreased (good green) | General success states — use `--success` there |
 
 ### Per-context primary color — the rule
 
@@ -55,13 +61,12 @@ Every top-level view picks **one** primary color and uses it for its main commit
 | View | Primary | Where it shows |
 |---|---|---|
 | **Add** | `--expense` (orange) | Add tab fill, hero currency pill, bottom Save + Scan, KeyboardSaveBar, selected event chip, selected `CategoryQuickPicks` pill |
-| **Income** | `--success` (green) | Income overflow-menu icon, IncomeForm/IncomeEditSheet currency pill, hero amount focus underline, bottom Save bar, KeyboardSaveBar, IncomeRow left-border, year-total label, refresh focus, IncomeRow swipe-panel |
-| **Review** | dual: NEEDS REVIEW uses `--warning` + `--success` (approve chip); EXPENSES edit uses sky-blue `#60a5fa` for `ExpenseEditSheet`'s currency pill and Save button | Review tab fill (sky-blue), edit-sheet Save, Confirm-all button (green) |
-| **LLM** | `--accent` (red) for add, but the screen itself is mostly neutral | `HealthSummaryCard`'s `+`, refresh focus |
+| **Income** | `--income` / `--success` (green) | Income tab fill, IncomeForm currency pill, hero amount underline, bottom Save bar, KeyboardSaveBar, IncomeRow left-border, year-total label |
+| **Review** | `--review` (sky-blue) + `--success` (approve chip) | Review tab fill, edit-sheet Save, Confirm-all button (green) |
+| **Analytics** | `--stat` (indigo) | Analytics tab fill, open-event left-border + dot + OPEN pill, hero card gradient |
+| **LLM** | `--llm` (cyan) | LLM tab fill |
 
-**The Review edit-sheet sky-blue (`#60a5fa`)** is an inline literal (no token yet). If you find yourself needing it elsewhere, promote it to a `--review` token in `base.css` in the same PR.
-
-**Never invent a hue** beyond what's listed. If a new view needs a primary color, pick one of the four above and own it.
+**Never invent a hue** beyond what's listed. Each new view must pick one of the existing per-context tokens.
 
 ## Typography
 

@@ -34,16 +34,17 @@ Every shipped UI component, with its source file and one-line contract. The `.vu
 
 | Component | File | Contract |
 |---|---|---|
-| `HeaderSegmented` | `components/HeaderSegmented.vue` | Segmented control with two inline tabs and an overflow menu. **Inline**: Add (Plus, 56×38, `--expense` tint/fill) and Review (ListChecks, 56×38, sky-blue `#60a5fa` tint/fill, doubtful-count badge bottom-right). **Overflow `•••`** (MoreHorizontal, 36×30, muted; `--accent` fill when any rare tab is the current tab): on tap, drops a 200-px-wide menu listing every entry in the module-level `RARE_TABS` array — currently Income (TrendingUp) and LLM providers (Cpu). Esc / outside `pointerdown` closes the menu. `v-model:tab` with values `'add'`/`'income'`/`'review'`/`'llm'`. Future rare tabs: append to `RARE_TABS` only — no header restructure needed. |
+| `HeaderSegmented` | `components/HeaderSegmented.vue` | Five inline tabs, no overflow menu. Each tab is 40×36px, icon-only (20px lucide icon). Inactive: `color-mix(in srgb, <tabColor> 14%, transparent)` bg + tab color icon. Active: solid tab color fill + white icon + `0 4px 12px <tabColor>40` glow. Tabs in order: **Add** (Plus, `--expense`), **Review** (ListChecks, `--review`, doubtful-count badge bottom-right when `showBadge`), **Analytics** (BarChart3, `--stat`), **Income** (TrendingUp, `--income`), **LLM** (Cpu, `--llm`). `v-model:tab` with values `'add'`/`'review'`/`'analytics'`/`'income'`/`'llm'`. All five tabs are peers — no overflow menu. |
 
 ## App shell
 
 | Component | File | Contract |
 |---|---|---|
-| `App` | `App.vue` | Top-level shell — dev banner, sticky header (brand + version + queue badge + `HeaderSegmented` + offline notice strip), main view router by `tab`, queue modal, global toast. |
+| `App` | `App.vue` | Top-level shell — dev banner, sticky header (`Dinary` brand + `HeaderSegmented`), queue strip (amber full-width strip below header row, only when queue non-empty, tap → `QueueModal`), offline notice strip (below queue strip when offline), main view router by `tab`, `QueueModal`, global toast. Version string removed from header. |
 | `AddView` | `views/AddView.vue` | Mounts `ExpenseForm`, `QrScanner`, the sticky bottom action bar (Scan 48×48 orange + Save flex-1 48px orange), and `KeyboardSaveBar` (orange variant). |
 | `IncomeView` | `views/IncomeView.vue` | Mounts `IncomeForm` inline at top, `INCOMES` section grouped by year with year totals, `IncomeRow` list, scroll-sentinel pagination, edit sheet, sticky bottom Save bar (green), `KeyboardSaveBar` (green variant). |
 | `ReviewView` | `views/ReviewView.vue` | Two-section list (`NEEDS REVIEW` warning header + `EXPENSES` neutral header). Owns the scroll container, two `IntersectionObserver` sentinels, refresh control, Confirm-all bulk action, and `ExpenseEditSheet` open/close. |
+| `AnalyticsView` | `views/AnalyticsView.vue` | Read-only summary dashboard (see `specs/reference/pwa-analytics.md`). Hero savings card + 3 stat cards + auto trend chips (wrap, no scroll) + event list. Fetches from `GET /api/analytics/summary`; caches 24 h in localStorage. Skeleton on first load, graceful offline degradation. |
 | `LLMView` | `views/LLMView.vue` | Provider pool management. Renders `HealthSummaryCard`, an optional `RECEIPT QUEUE` chip strip, then `PROVIDER POOL` and a list of `ProviderCard`s. Owns the 30s polling refresh timer. |
 
 ## Add view

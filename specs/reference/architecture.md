@@ -198,6 +198,7 @@ For implementation detail on each subsystem see `specs/reference/`:
 | `timestamps.md` | Timezone storage policy |
 | `currencies.md` | PWA/server responsibility split |
 | `sql-tool.md` | `inv sql` design |
+| `pwa-analytics.md` | Analytics view: page content, API contract, cache policy |
 
 ---
 

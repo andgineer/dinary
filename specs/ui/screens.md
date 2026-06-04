@@ -2,9 +2,6 @@
 
 The five top-level views, their layout, and how the header segmented control binds them together.
 
-See [design handoff](../plans/design_handoff_nav_and_analytics/README.md) — Part 1 (Draft C)
-for pixel-level header specs and acceptance checklist.
-
 ## Navigation
 
 A single **header segmented control** in `App.vue` switches between the five views. There is no bottom tab bar and no overflow menu.
@@ -118,10 +115,8 @@ After save: the form resets but keeps the default group/category and currency. A
 
 ## Analytics view
 
-Read-only financial summary. Reached via the inline `analytics` tab. See
-[design handoff](../plans/design_handoff_nav_and_analytics/README.md) — Part 2
-(Sketch A) for full layout, component specs, tokens, and acceptance checklist.
-Implementation spec: `plans/analytics-pwa.md`.
+Read-only financial summary. Reached via the inline `analytics` tab.
+See `specs/reference/pwa-analytics.md` for content, API contract, and cache policy.
 
 ## Income view
 

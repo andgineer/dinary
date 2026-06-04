@@ -14,6 +14,35 @@ const toast = useToastStore();
 
 const doubtfulItems = computed(() => reviewStore.items.filter((i) => i.is_doubtful));
 
+const groupedExpenses = computed(() => {
+  const result = [];
+  const list = reviewStore.expenses;
+  let i = 0;
+  while (i < list.length) {
+    const e = list[i];
+    if (!e.receipt_id) {
+      result.push({ type: "single", expense: e });
+      i++;
+      continue;
+    }
+    const group = [e];
+    while (i + 1 < list.length && list[i + 1].receipt_id === e.receipt_id) {
+      i++;
+      group.push(list[i]);
+    }
+    if (group.length === 1) {
+      result.push({ type: "single", expense: group[0] });
+    } else {
+      const store = e.store_name ?? e.store ?? e.merchant ?? null;
+      const total = group.reduce((s, x) => s + (Number(x.amount_original) || 0), 0);
+      const currency = e.currency_original ?? "";
+      result.push({ type: "group", receipt_id: e.receipt_id, store, total, currency, expenses: group });
+    }
+    i++;
+  }
+  return result;
+});
+
 const expenseEditOpen = ref(false);
 const editingExpense = ref(null);
 const editingSuggestions = ref([]);
@@ -167,11 +196,29 @@ onBeforeUnmount(() => {
       <span class="section-label">EXPENSES</span>
     </div>
 
-    <template v-for="expense in reviewStore.expenses" :key="expense.id">
+    <template v-for="item in groupedExpenses" :key="item.type === 'single' ? item.expense.id : item.receipt_id">
       <ExpenseRow
-        :expense="expense"
-        @tap="openExpenseEdit(expense)"
+        v-if="item.type === 'single'"
+        :expense="item.expense"
+        @tap="openExpenseEdit(item.expense)"
       />
+      <div v-else class="receipt-group">
+        <div class="receipt-group-header">
+          <span class="receipt-group-store">{{ item.store }}</span>
+          <span class="receipt-group-total">
+            {{ item.total.toLocaleString(undefined, { maximumFractionDigits: 2 }) }}
+            <span class="receipt-group-currency">{{ item.currency }}</span>
+          </span>
+        </div>
+        <ExpenseRow
+          v-for="expense in item.expenses"
+          :key="expense.id"
+          :expense="expense"
+          :hide-store="true"
+          class="receipt-group-row"
+          @tap="openExpenseEdit(expense)"
+        />
+      </div>
     </template>
 
     <div v-if="reviewStore.expensesLoading" class="skeleton-rows" aria-label="Loading expenses">
@@ -346,5 +393,63 @@ onBeforeUnmount(() => {
 
 .confirm-all-btn:hover {
   background: rgba(96, 165, 250, 0.25);
+}
+
+/* ── Receipt groups ── */
+.receipt-group {
+  margin-bottom: 0.5rem;
+  border-radius: 10px;
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  overflow: hidden;
+}
+
+.receipt-group-header {
+  display: flex;
+  align-items: center;
+  padding: 0.35rem 0.75rem;
+  background: rgba(96, 165, 250, 0.1);
+  border-bottom: 1px solid rgba(96, 165, 250, 0.2);
+}
+
+.receipt-group-store {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.receipt-group-total {
+  font-family: var(--font-num);
+  font-size: 0.72rem;
+  color: var(--muted);
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+}
+
+.receipt-group-currency {
+  font-size: 0.65rem;
+  color: var(--muted-2);
+  margin-left: 2px;
+}
+
+.receipt-group :deep(.row-wrap) {
+  border: none;
+  border-radius: 0;
+  margin-bottom: 0;
+  border-top: 1px solid var(--border);
+}
+
+.receipt-group :deep(.row-wrap:first-child) {
+  border-top: none;
+}
+
+.receipt-group :deep(.row-wrap--warning) {
+  border-left: 4px solid var(--warning);
 }
 </style>

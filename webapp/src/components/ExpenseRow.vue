@@ -8,6 +8,7 @@ const PANEL_WIDTH = 84;
 
 const props = defineProps({
   expense: { type: Object, required: true },
+  hideStore: { type: Boolean, default: false },
 });
 const emit = defineEmits(["tap"]);
 
@@ -37,6 +38,7 @@ const primaryText = computed(() => {
 });
 
 const secondaryText = computed(() => {
+  if (props.hideStore) return null;
   const e = props.expense;
   if (e.item_name && (e.store_name ?? e.store)) return e.store_name ?? e.store;
   return null;
