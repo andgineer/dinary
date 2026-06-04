@@ -1,7 +1,19 @@
-"""Reusable chart builder for the analytics dashboard."""
+"""Reusable chart builders for the analytics dashboard."""
+
+from dataclasses import dataclass
 
 import altair as alt
 import polars as pl
+
+
+@dataclass
+class ChartSize:
+    width: int = 700
+    height: int = 400
+    year_width: int = 160
+
+
+_DEFAULT_CHART_SIZE = ChartSize()
 
 
 def make_chart_pair(
@@ -11,10 +23,9 @@ def make_chart_pair(
     total_income: float,
     category_order: list[str],
     period_title: str | None = None,
+    size: ChartSize = _DEFAULT_CHART_SIZE,
 ) -> alt.HConcatChart:
     """Return hconcat(stacked_area + saved_line, year_bars + saved_text)."""
-    chart_width, chart_height, year_width = 700, 400, 160
-
     total_expenses = float(year_df["total"].sum())
     annual_saved = total_income - total_expenses
     sign = "+" if annual_saved >= 0 else ""
@@ -130,12 +141,12 @@ def make_chart_pair(
         alt.Chart(pl.DataFrame({"t": [f"Saved {sign}{annual_saved:,.0f}€"]}))
         .mark_text(fontSize=13, fontWeight="bold", align="center", baseline="middle")
         .encode(
-            x=alt.value(year_width / 2),
+            x=alt.value(size.year_width / 2),
             y=alt.value(15),
             text="t:N",
             color=alt.value(savings_color),
         )
-        .properties(width=year_width, height=30)
+        .properties(width=size.year_width, height=30)
     )
 
     title_kwargs: dict[str, str] = {"title": period_title} if period_title else {}
@@ -145,16 +156,70 @@ def make_chart_pair(
             alt.layer(savings_line, savings_label),
         )
         .resolve_scale(y="independent")
-        .properties(width=chart_width, height=chart_height, **title_kwargs)
+        .properties(width=size.width, height=size.height, **title_kwargs)
         .interactive(),
         alt.vconcat(
             alt.layer(year_bars, year_text_bg, year_text_fg).properties(
-                width=year_width,
-                height=chart_height,
+                width=size.year_width,
+                height=size.height,
                 title="Year total",
             ),
             saved_text,
             spacing=4,
         ),
         spacing=10,
+    )
+
+
+def make_event_chart(
+    expense_df: pl.DataFrame,
+    title: str,
+    size: int = 280,
+) -> alt.FacetChart | alt.LayerChart:
+    """Return a donut chart of expense breakdown by category for an event.
+
+    Categories are derived from the event's own expenses (top 9 + Other).
+    Labels are rendered directly on segments; no separate legend.
+    """
+    _sorted = expense_df.sort("total", descending=True)
+    _top = _sorted.head(9)
+    _other_total = float(_sorted.slice(9)["total"].sum())
+    if _other_total > 0:
+        _chart_df = pl.concat(
+            [_top, pl.DataFrame({"category": ["Other"], "total": [_other_total]})],
+        )
+    else:
+        _chart_df = _top
+
+    total = float(_chart_df["total"].sum())
+    inner_r = size // 4
+    outer_r = size // 2 - 10
+    label_r = (inner_r + outer_r) // 2
+
+    _base = alt.Chart(_chart_df)
+    _theta = alt.Theta("total:Q", stack=True)
+    _donut = _base.mark_arc(innerRadius=inner_r, outerRadius=outer_r).encode(
+        theta=_theta,
+        color=alt.Color("category:N", scale=alt.Scale(scheme="tableau20"), legend=None),
+        tooltip=["category:N", alt.Tooltip("total:Q", format=".0f", title="EUR")],
+    )
+    _label_enc = {"theta": _theta, "text": alt.Text("category:N")}
+    _labels_bg = _base.mark_text(
+        radius=label_r,
+        fontSize=10,
+        fontWeight="bold",
+        fill="white",
+        stroke="white",
+        strokeWidth=4,
+    ).encode(**_label_enc)
+    _labels_fg = _base.mark_text(
+        radius=label_r,
+        fontSize=10,
+        fontWeight="bold",
+        fill="#333333",
+    ).encode(**_label_enc)
+    return alt.layer(_donut, _labels_bg, _labels_fg).properties(
+        width=size,
+        height=size,
+        title=alt.TitleParams(text=title, subtitle=f"€{total:,.0f}"),
     )

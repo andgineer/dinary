@@ -208,6 +208,13 @@ For implementation detail on each subsystem see `specs/reference/`:
 SFTP. Accessible via Cloudflare Tunnel or Tailscale. No Docker in production —
 saves RAM. See `docs/src/en/operations.md` for the ops runbook.
 
+**Dependency isolation:** The server is deployed with `uv sync --no-dev --no-group analytics`,
+keeping heavy analytics dependencies (DuckDB, Polars, LMDB, Marimo, LLM SDKs) off the VM.
+On a 1 GB RAM host these packages would materially increase resident memory and import time.
+CI enforces this boundary: server tests run without the `analytics` group installed; analytics
+tests run in a separate step after `uv sync --group analytics`. A test failure in the server
+step that is caused by a missing analytics import means the boundary has been violated.
+
 ---
 
 ## Build phases

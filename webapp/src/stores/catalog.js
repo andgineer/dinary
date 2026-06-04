@@ -237,6 +237,14 @@ export const useCatalogStore = defineStore("catalog", () => {
     });
   }
 
+  function inactiveEventsLast(days = 365) {
+    if (!snapshot.value) return [];
+    const cutoff = new Date(toUtcMidnight(new Date()).getTime() - days * MS_PER_DAY);
+    return snapshot.value.events.filter(
+      (e) => !isActive(e) && parseIsoDate(e.date_to) >= cutoff,
+    );
+  }
+
   function autoAttachEventsOn(anchor = new Date()) {
     if (!snapshot.value) return [];
     const anchorUtc = anchorToUtcDate(anchor);
@@ -352,6 +360,7 @@ export const useCatalogStore = defineStore("catalog", () => {
     applyFrequentCategories,
     events,
     inactiveEventsInWindow,
+    inactiveEventsLast,
     autoAttachEventsOn,
     catalogFetchedAt,
     load,

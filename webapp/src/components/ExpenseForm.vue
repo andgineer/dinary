@@ -62,9 +62,7 @@ const inactiveGroupsList = computed(() => catalog.inactiveGroups);
 const inactiveCategoriesList = computed(() =>
   groupId.value ? catalog.inactiveCategories(groupId.value) : [],
 );
-const inactiveEventsList = computed(() =>
-  catalog.inactiveEventsInWindow(date.value || todayIso()),
-);
+const inactiveEventsList = computed(() => catalog.inactiveEventsLast());
 const allActiveTags = computed(() => catalog.tags);
 const allInactiveTags = computed(() => catalog.inactiveTags);
 

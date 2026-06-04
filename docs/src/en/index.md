@@ -18,3 +18,4 @@ Dinary server is a FastAPI backend that:
       - [Your own computer](deploy-selfhost.md) — $0 (Tailscale Funnel or Cloudflare Tunnel)
 3. Set up HTTPS access — see deployment guides above.
 4. [Install the PWA](pwa-install.md) on your phone.
+5. Run `inv analytics` to talk to [your personal financial analyst](analytics.md).

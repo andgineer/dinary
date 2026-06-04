@@ -49,6 +49,7 @@ extra:
 
 nav:
   - index.md
+  - analytics.md
   - installation.md
   - google-sheets-setup.md
   - pwa-install.md

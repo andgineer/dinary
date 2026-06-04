@@ -1,13 +1,14 @@
 import marimo
 
 __generated_with = "0.10.0"
-app = marimo.App(width="wide", title="Dinary Analytics")
+app = marimo.App(width="wide", app_title="Dinary Analytics")
 
 
 @app.cell
 def _():
     import json
     import os
+    from datetime import date
 
     import altair as alt
     import marimo as mo
@@ -15,10 +16,26 @@ def _():
     from google import genai
     from google.genai import types
 
-    from dinary_analytics.charts import make_chart_pair
+    from dinary_analytics.charts import make_chart_pair, make_event_chart
     from dinary_analytics.connection import LEDGER_SCHEMA, open_ledger
+    from dinary_analytics.settings import get_config_json, set_config_json
 
-    return LEDGER_SCHEMA, alt, genai, json, make_chart_pair, mo, open_ledger, os, pl, types
+    return (
+        LEDGER_SCHEMA,
+        alt,
+        date,
+        genai,
+        get_config_json,
+        json,
+        make_chart_pair,
+        make_event_chart,
+        mo,
+        open_ledger,
+        os,
+        pl,
+        set_config_json,
+        types,
+    )
 
 
 @app.cell
@@ -114,7 +131,7 @@ def _(
 
 
 @app.cell
-def _(mo, open_ledger):
+def _(date, get_config_json, mo, open_ledger):
     _con = open_ledger()
     try:
         _year_rows = _con.execute("""
@@ -122,18 +139,86 @@ def _(mo, open_ledger):
             FROM ledger.expenses
             ORDER BY yr DESC
         """).fetchall()
+        _event_rows = _con.execute("""
+            SELECT id, name,
+                STRFTIME(date_from::DATE, '%Y-%m-%d'),
+                STRFTIME(date_to::DATE, '%Y-%m-%d'),
+                auto_attach_enabled
+            FROM ledger.events
+            ORDER BY date_to DESC
+        """).fetchall()
+        _tag_rows = _con.execute("""
+            SELECT id, name FROM ledger.tags
+            WHERE is_active = TRUE
+            ORDER BY name
+        """).fetchall()
     finally:
         _con.close()
 
-    _all_years = [str(r[0]) for r in _year_rows]
+    _today = str(date.today())
 
+    _all_years = [str(r[0]) for r in _year_rows]
+    _saved_years = get_config_json("dashboard.compare_years") or []
+    _valid_years = [y for y in _saved_years if y in _all_years]
     year_selector = mo.ui.multiselect(
         options=_all_years,
-        value=[],
+        value=_valid_years,
         label="Compare years:",
     )
+
+    all_events_info = {str(r[0]): r for r in _event_rows}
+    # marimo multiselect {label: value}: value= accepts labels (keys), .value returns IDs (values)
+    _event_select_opts = {f"{r[1]} ({r[2][:10]})": str(r[0]) for r in _event_rows if r[2]}
+    _last_completed_label = next(
+        (f"{r[1]} ({r[2][:10]})" for r in _event_rows if r[3] and r[3] < _today),
+        None,
+    )
+    event_selector = mo.ui.dropdown(
+        options=_event_select_opts,
+        value=_last_completed_label,
+        label="Event:",
+    )
+
+    tag_name_map = {str(r[0]): r[1] for r in _tag_rows}
+    _tag_opts = {r[1]: str(r[0]) for r in _tag_rows}
+    _saved_tag_id = get_config_json("dashboard.tag_id")
+    _tag_default_label = (
+        tag_name_map.get(_saved_tag_id)
+        if _saved_tag_id and _saved_tag_id in tag_name_map
+        else (_tag_rows[0][1] if _tag_rows else None)
+    )
+    tag_selector = mo.ui.dropdown(
+        options=_tag_opts,
+        value=_tag_default_label,
+        label="Tag:",
+    )
+
+    _current_year = _today[:4]
+    _saved_tag_year = get_config_json("dashboard.tag_year")
+    _tag_year_default = (
+        _saved_tag_year
+        if _saved_tag_year and _saved_tag_year in _all_years
+        else (
+            _current_year
+            if _current_year in _all_years
+            else (_all_years[0] if _all_years else None)
+        )
+    )
+    tag_year_selector = mo.ui.dropdown(
+        options=_all_years,
+        value=_tag_year_default,
+        label="Year:",
+    )
+
     year_selector
-    return (year_selector,)
+    return (
+        all_events_info,
+        event_selector,
+        tag_name_map,
+        tag_selector,
+        tag_year_selector,
+        year_selector,
+    )
 
 
 @app.cell
@@ -232,6 +317,107 @@ def _(
             period_title=_title,
         )
     _chart
+
+
+@app.cell
+def _(all_events_info, event_selector, make_event_chart, mo, open_ledger, pl):
+    _eid = event_selector.value
+    if not _eid:
+        event_chart = mo.md("*Select an event above.*")
+    else:
+        _con = open_ledger()
+        try:
+            _rows = _con.execute(
+                """
+                SELECT c.name AS category, CAST(SUM(e.amount) AS DOUBLE) AS total
+                FROM ledger.expenses e
+                JOIN ledger.categories c ON e.category_id = c.id
+                WHERE e.event_id = $1
+                GROUP BY c.name
+                ORDER BY total DESC
+                """,
+                [int(_eid)],
+            ).fetchall()
+        finally:
+            _con.close()
+        _expense_df = pl.DataFrame(
+            {"category": [r[0] for r in _rows], "total": [float(r[1]) for r in _rows]},
+        )
+        _ev = all_events_info.get(_eid)
+        _ev_title = _ev[1] if _ev else _eid
+        if _expense_df.is_empty():
+            event_chart = mo.md(f"*No expenses for {_ev_title}.*")
+        else:
+            event_chart = make_event_chart(_expense_df, _ev_title)
+
+    return (event_chart,)
+
+
+@app.cell
+def _(make_event_chart, mo, open_ledger, pl, tag_name_map, tag_selector, tag_year_selector):
+    _tid = tag_selector.value
+    _yr = tag_year_selector.value
+    if not _tid or not _yr:
+        tag_chart = mo.md("*No tags available.*")
+    else:
+        _con = open_ledger()
+        try:
+            _rows = _con.execute(
+                """
+                SELECT c.name AS category, CAST(SUM(e.amount) AS DOUBLE) AS total
+                FROM ledger.expenses e
+                JOIN ledger.categories c ON e.category_id = c.id
+                JOIN ledger.expense_tags et ON et.expense_id = e.id
+                WHERE et.tag_id = $1
+                  AND EXTRACT(YEAR FROM e.datetime::TIMESTAMP)::INT = $2
+                GROUP BY c.name
+                ORDER BY total DESC
+                """,
+                [int(_tid), int(_yr)],
+            ).fetchall()
+        finally:
+            _con.close()
+        _expense_df = pl.DataFrame(
+            {"category": [r[0] for r in _rows], "total": [float(r[1]) for r in _rows]},
+        )
+        if _expense_df.is_empty():
+            tag_chart = mo.md(f"*No expenses for this tag in {_yr}.*")
+        else:
+            tag_chart = make_event_chart(_expense_df, f"{tag_name_map.get(_tid, _tid)} {_yr}")
+
+    return (tag_chart,)
+
+
+@app.cell
+def _(
+    event_chart,
+    event_selector,
+    mo,
+    tag_chart,
+    tag_selector,
+    tag_year_selector,
+):
+    _card_style = {
+        "border": "1px solid rgba(255,255,255,0.1)",
+        "border-radius": "10px",
+        "padding": "1rem",
+    }
+    _event_card = mo.style(
+        mo.vstack([event_selector, event_chart]),
+        style=_card_style,
+    )
+    _tag_card = mo.style(
+        mo.vstack([mo.hstack([tag_selector, tag_year_selector], justify="start"), tag_chart]),
+        style=_card_style,
+    )
+    mo.hstack([_event_card, _tag_card], justify="start")
+
+
+@app.cell
+def _(set_config_json, tag_selector, tag_year_selector, year_selector):
+    set_config_json("dashboard.compare_years", year_selector.value)
+    set_config_json("dashboard.tag_id", tag_selector.value)
+    set_config_json("dashboard.tag_year", tag_year_selector.value)
 
 
 @app.cell
