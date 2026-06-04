@@ -16,6 +16,9 @@ import { flushQueue } from "./composables/flushQueue.js";
 import { flushReceiptQueue } from "./composables/flushReceiptQueue.js";
 import { useOnline } from "./composables/useOnline.js";
 
+const APP_VERSION =
+  typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
+
 const isDev = import.meta.env.VITE_DEV_MODE === "true";
 
 const queue = useQueueStore();
@@ -34,6 +37,7 @@ const offlineMessage = computed(() => {
 const queueModalOpen = ref(false);
 
 const queueCount = computed(() => queue.items.length + receiptQueue.items.length);
+const headerVersionLabel = computed(() => `v${APP_VERSION}`);
 const showReviewBadge = computed(() => {
   const q = reviewStore.receiptsQueue;
   return reviewStore.dirtyFlag
@@ -101,7 +105,10 @@ onBeforeUnmount(() => {
   <div v-if="isDev" class="dev-banner">DEV MODE</div>
   <header class="app-header" :class="{ 'below-banner': isDev }">
     <div class="header-row">
-      <h1>Dinary</h1>
+      <h1>
+        Dinary
+        <span class="header-version">{{ headerVersionLabel }}</span>
+      </h1>
       <HeaderSegmented
         v-model:tab="tab"
         :show-badge="showReviewBadge"
@@ -193,6 +200,14 @@ onBeforeUnmount(() => {
   font-size: 1.25rem;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.header-version {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 0.35rem;
+  cursor: pointer;
 }
 
 .queue-strip {
