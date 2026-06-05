@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { createIncome, deleteIncome, listIncomes, updateIncome } from "../api/income.js";
 import { useStaleCache } from "../composables/useStaleCache.js";
+import { useAnalyticsStore } from "./analytics.js";
 import { useToastStore } from "./toast.js";
 
 const CACHE_KEY = "dinary:income:v2";
@@ -59,6 +60,7 @@ export const useIncomeStore = defineStore("income", () => {
     const toast = useToastStore();
     try {
       await createIncome(payload);
+      useAnalyticsStore().invalidate();
       reset();
       await loadNextPage();
     } catch (err) {
@@ -71,6 +73,7 @@ export const useIncomeStore = defineStore("income", () => {
     const toast = useToastStore();
     try {
       await updateIncome(id, payload);
+      useAnalyticsStore().invalidate();
       reset();
       await loadNextPage();
     } catch (err) {
@@ -83,6 +86,7 @@ export const useIncomeStore = defineStore("income", () => {
     const toast = useToastStore();
     try {
       await deleteIncome(id);
+      useAnalyticsStore().invalidate();
       reset();
       await loadNextPage();
     } catch (err) {

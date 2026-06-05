@@ -45,5 +45,12 @@ export const useAnalyticsStore = defineStore("analytics", () => {
     }
   }
 
-  return { summary, events, trends, loading, lastFetched, fetchAll };
+  function invalidate() {
+    lastFetched.value = null;
+    try {
+      localStorage.removeItem(CACHE_KEY);
+    } catch {}
+  }
+
+  return { summary, events, trends, loading, lastFetched, fetchAll, invalidate };
 });

@@ -188,18 +188,25 @@ subset (a single broad template can only carry one visible subset):
 - `zero-based-envelope` → not a starter taxonomy (budgeting-method, includes
   income/savings/debt an expense tracker won't log); drop from onboarding.
 
-## Open items / next steps
-- DONE: `src/dinary/category_templates/` created — `categories.yml` (69 categories)
-  + `simple` / `active` / `family` / `freelancer`, each covering the full
-  vocabulary (validated); old `catalogs/` removed.
-- Confirm the onboarding template list and the four drafts' contents.
-- Schema migration: add `code` to groups/categories/tags, add `is_hidden` and
-  `is_retired`, backfill codes, index `expenses(category_id)`; do not touch
-  expenses/mapping.
-- Define the template-definition storage in the DB (per-template groups, renames,
-  visible/hidden membership), keyed by `code`, with an `origin` (factory|custom).
-  Add `app_metadata.active_template`.
-- Adopt-existing seed mode for the personal DB (one-off hand-mapping of existing
-  categories to factory codes, names kept; custom template from current state;
-  preserved across re-runs).
-- AI re-marking editor (later).
+## Implementation phases
+
+Done already: `src/dinary/category_templates/` created — `categories.yml`
+(69 categories) + `simple` / `active` / `family` / `freelancer`, each covering the
+full vocabulary (validated); old `catalogs/` removed.
+
+Detailed per-phase plans (each ends on the `inv pre` + `pytest` done gate):
+
+1. [Phase 1 — Schema, template storage & seed](category-templates-phase-1-schema-seed.md)
+   — migration (codes, `is_hidden`/`is_retired`, drop `name` UNIQUE, index,
+   `category_sets` + `category_translations`), YAML loader, clean idempotent seed,
+   one-off adopt-existing mode.
+2. [Phase 2 — Backend domain](category-templates-phase-2-domain.md) — `apply_template`,
+   visibility reads + the `(is_active OR used) AND NOT is_hidden AND NOT is_retired`
+   predicate, search/activate/hide/move, wire the visible set into classifier + POST.
+3. [Phase 3 — API layer](category-templates-phase-3-api.md) — REST for templates list,
+   active state, apply, categories list/search, activate/hide/move.
+4. [Phase 4 — PWA](category-templates-phase-4-pwa.md) — onboarding chooser (template +
+   language), search-activate picker, hide/unhide/move, switch set.
+
+Deferred (not a phase): AI re-marking editor — produces a `category_sets` row
+(`origin='custom'`) and reuses `apply_template`; no new primitives.
