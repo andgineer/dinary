@@ -65,12 +65,17 @@ CREATE TABLE expense_tags (
     PRIMARY KEY (expense_id, tag_id)
 );
 
--- income: monthly totals in accounting currency (EUR)
+-- income: monthly income entries
 CREATE TABLE income (
-    year   INTEGER NOT NULL,
-    month  INTEGER NOT NULL,
-    amount DECIMAL(12,2) NOT NULL,
-    PRIMARY KEY (year, month)
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    year             INTEGER NOT NULL,
+    month            INTEGER NOT NULL,
+    income_date      DATE NOT NULL,
+    amount           DECIMAL(12,2) NOT NULL,      -- accounting currency (EUR)
+    amount_original  DECIMAL(12,2) NOT NULL,      -- amount as entered by user
+    currency_original TEXT NOT NULL,
+    comment          TEXT,
+    CHECK (month BETWEEN 1 AND 12)
 );
 
 -- exchange_rates: daily rates to accounting currency (EUR)

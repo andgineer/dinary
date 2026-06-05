@@ -860,41 +860,37 @@ def _(ai_ledger_tools_pair, ai_view_tools_tuple):
 def _(mo):
     mo.accordion(
         {
-            "Connect external AI client (Claude Desktop / Claude Code)": mo.md(
-                """
-The MCP server runs at **`http://localhost:8765/sse`** while `inv analytics` is active.
-Only Claude Desktop and Claude Code support MCP. ChatGPT and Gemini do not.
-
----
-
-### Claude Desktop
-
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
-or `%APPDATA%\\Claude\\claude_desktop_config.json` (Windows):
-
-```json
-{
-  "mcpServers": {
-    "dinary-analytics": {
-      "url": "http://localhost:8765/sse"
-    }
-  }
-}
-```
-
-Restart Claude Desktop after saving. The server appears under **Search and tools**.
-
----
-
-### Claude Code (CLI)
-
-```bash
-claude mcp add --transport sse dinary-analytics http://localhost:8765/sse
-```
-
-Verify with `claude mcp list`. Tools available: `query`, `schema`, `list_views`,
-`get_view`, `save_view`, `delete_view`, `get_config`, `set_config`.
-""",
+            "Connect external AI client (Claude Desktop / Claude Code)": mo.vstack(
+                [
+                    mo.md(
+                        "MCP server runs at **`http://localhost:8765/mcp`** while `inv analytics` is active."
+                        " Only Claude Desktop and Claude Code support MCP.\n\n"
+                        "### Claude Desktop\n\n"
+                        "Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:",
+                    ),
+                    mo.plain_text(
+                        "{\n"
+                        '  "mcpServers": {\n'
+                        '    "dinary-analytics": {\n'
+                        '      "command": "npx",\n'
+                        '      "args": ["mcp-remote", "http://localhost:8765/mcp"]\n'
+                        "    }\n"
+                        "  }\n"
+                        "}",
+                    ),
+                    mo.md(
+                        "Restart Claude Desktop. The server appears under **Search and tools**.\n\n"
+                        "### Claude Code (CLI)",
+                    ),
+                    mo.plain_text(
+                        "claude mcp add --transport http dinary-analytics http://localhost:8765/mcp",
+                    ),
+                    mo.md(
+                        "Verify with `claude mcp list`. "
+                        "Tools: `query`, `schema`, `list_views`, `get_view`, `save_view`,"
+                        " `delete_view`, `get_config`, `set_config`.",
+                    ),
+                ],
             ),
         },
     )

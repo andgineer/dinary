@@ -164,6 +164,55 @@ def format_backup_status_line(verdict):
     )
 
 
+def check_identical_backup_sizes(snapshots):
+    """Detect a frozen Litestream replica from backup size patterns.
+
+    Exchange rates are written daily, so the DB always changes. Two consecutive
+    backups with the same compressed size mean the replica is frozen.
+    Fewer than two backups means comparison is impossible — treated as a failure
+    so a silently broken pipeline is never reported as healthy.
+
+    Status values: ``"ok"``, ``"frozen"`` (newest two match), ``"single"``
+    (fewer than two backups).  ``"frozen"`` carries ``newest``, ``prev``,
+    ``size_bytes``; ``"single"`` carries ``newest`` and ``size_bytes``
+    (or both ``None`` when the list is empty).
+    """
+    if len(snapshots) < 2:
+        name, size = snapshots[0] if snapshots else (None, None)
+        return {"status": "single", "newest": name, "size_bytes": size}
+    newest_name, newest_size = snapshots[-1]
+    prev_name, prev_size = snapshots[-2]
+    if newest_size == prev_size:
+        return {
+            "status": "frozen",
+            "newest": newest_name,
+            "prev": prev_name,
+            "size_bytes": newest_size,
+        }
+    return {"status": "ok"}
+
+
+def format_frozen_replica_line(result):
+    """Render the FAIL line for a frozen-replica verdict."""
+    size_kb = result["size_bytes"] / 1024
+    return (
+        f"FAIL: {result['newest']} and {result['prev']} are both {size_kb:.1f} KB"
+        " — Litestream replica appears frozen (exchange rates change daily)."
+        " Run `inv healthcheck --remote` to confirm, then `inv replica-resync` to fix."
+    )
+
+
+def format_single_backup_line(result):
+    """Render the FAIL line when fewer than two backups exist."""
+    if result["newest"] is None:
+        return "FAIL: no backups found — cannot verify replica is not frozen."
+    size_kb = result["size_bytes"] / 1024
+    return (
+        f"FAIL: only one backup found ({result['newest']}, {size_kb:.1f} KB)"
+        " — cannot verify replica is not frozen. Expected daily backups."
+    )
+
+
 def pick_snapshot(snapshots, key):
     """Resolve the ``--snapshot`` CLI arg to one inventory entry.
 

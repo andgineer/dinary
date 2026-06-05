@@ -102,7 +102,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.port is not None:
         mcp.settings.port = args.port
-        mcp.run(transport="sse")
+        mcp.run(transport="streamable-http")
     else:
         mcp.run()
 

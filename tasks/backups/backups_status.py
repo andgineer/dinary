@@ -17,7 +17,10 @@ from tasks.backups.backup_snapshots import (
     BACKUP_RCLONE_REMOTE,
     BACKUP_STALE_HOURS,
     check_backup_freshness,
+    check_identical_backup_sizes,
     format_backup_status_line,
+    format_frozen_replica_line,
+    format_single_backup_line,
     parse_snapshot_lsjson,
 )
 from tasks.ssh_utils import ssh_replica_capture_bytes
@@ -50,9 +53,14 @@ def backup_status(_c, max_age_hours=None, json_output=False):
     snapshots = replica_list_snapshots()
     now = datetime.now(tz=UTC)
     verdict = check_backup_freshness(snapshots, now, threshold)
+    frozen = check_identical_backup_sizes(snapshots)
     if json_output:
         print(json.dumps(verdict))
     else:
         print(format_backup_status_line(verdict))
-    if verdict["status"] != "ok":
+        if frozen["status"] == "frozen":
+            print(format_frozen_replica_line(frozen), file=sys.stderr)
+        elif frozen["status"] == "single":
+            print(format_single_backup_line(frozen), file=sys.stderr)
+    if verdict["status"] != "ok" or frozen["status"] in ("frozen", "single"):
         sys.exit(1)

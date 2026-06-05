@@ -19,7 +19,10 @@ from tasks.backups.backup_snapshots import (
     BACKUP_RCLONE_PATH,
     BACKUP_RCLONE_REMOTE,
     check_backup_freshness,
+    check_identical_backup_sizes,
     format_backup_status_line,
+    format_frozen_replica_line,
+    format_single_backup_line,
     parse_snapshot_timestamp,
 )
 
@@ -192,7 +195,10 @@ class TestBackupStatusTask:
         monkeypatch.setattr(
             tasks.backups.backups_status,
             "replica_list_snapshots",
-            lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
+            lambda: [
+                ("dinary-2026-04-21T0317Z.db.zst", 195),
+                ("dinary-2026-04-22T0317Z.db.zst", 200),
+            ],
         )
         tasks.backup_status.body(MagicMock())
         out = capsys.readouterr().out
@@ -231,7 +237,10 @@ class TestBackupStatusTask:
         monkeypatch.setattr(
             tasks.backups.backups_status,
             "replica_list_snapshots",
-            lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
+            lambda: [
+                ("dinary-2026-04-21T0317Z.db.zst", 195),
+                ("dinary-2026-04-22T0317Z.db.zst", 200),
+            ],
         )
         tasks.backup_status.body(MagicMock(), json_output=True)
         out = capsys.readouterr().out
@@ -249,10 +258,171 @@ class TestBackupStatusTask:
         monkeypatch.setattr(
             tasks.backups.backups_status,
             "replica_list_snapshots",
-            lambda: [("dinary-2026-04-22T0317Z.db.zst", 200)],
+            lambda: [
+                ("dinary-2026-04-21T0317Z.db.zst", 195),
+                ("dinary-2026-04-22T0317Z.db.zst", 200),
+            ],
         )
         with pytest.raises(SystemExit) as exc:
             tasks.backup_status.body(MagicMock(), max_age_hours=3)
         assert exc.value.code == 1
         out = capsys.readouterr().out
         assert out.startswith("STALE: ")
+
+    def test_frozen_replica_exits_one_and_prints_fail(self, monkeypatch, capsys, _mock_now):
+        """Two consecutive same-size backups must surface as FAIL and exit 1.
+
+        Exchange rates are written daily, so identical compressed sizes mean
+        the Litestream replica is frozen and all backups snapshot stale data.
+        """
+        monkeypatch.setattr(
+            tasks.backups.backups_status,
+            "replica_list_snapshots",
+            lambda: [
+                ("dinary-2026-04-21T0317Z.db.zst", 217498),
+                ("dinary-2026-04-22T0317Z.db.zst", 217498),
+            ],
+        )
+        with pytest.raises(SystemExit) as exc:
+            tasks.backup_status.body(MagicMock())
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "FAIL" in err
+        assert "frozen" in err.lower()
+
+    def test_different_sizes_does_not_trigger_frozen(self, monkeypatch, capsys, _mock_now):
+        """Different consecutive sizes → normal ok path, no frozen warning."""
+        monkeypatch.setattr(
+            tasks.backups.backups_status,
+            "replica_list_snapshots",
+            lambda: [
+                ("dinary-2026-04-21T0317Z.db.zst", 210000),
+                ("dinary-2026-04-22T0317Z.db.zst", 217498),
+            ],
+        )
+        tasks.backup_status.body(MagicMock())
+        out, err = capsys.readouterr().out, capsys.readouterr().err
+        assert "OK" in out
+        assert "frozen" not in err.lower()
+
+    def test_single_snapshot_exits_one_and_prints_fail(self, monkeypatch, capsys, _mock_now):
+        """A single backup means no comparison is possible — must FAIL so the pipeline
+        is never silently reported as healthy with only one data point.
+        """
+        monkeypatch.setattr(
+            tasks.backups.backups_status,
+            "replica_list_snapshots",
+            lambda: [("dinary-2026-04-22T0317Z.db.zst", 217498)],
+        )
+        with pytest.raises(SystemExit) as exc:
+            tasks.backup_status.body(MagicMock())
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "FAIL" in err
+        assert "one backup" in err
+
+
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Frozen replica detection")
+class TestCheckIdenticalBackupSizes:
+    def test_ok_when_sizes_differ(self):
+        snaps = [
+            ("dinary-2026-04-21T0317Z.db.zst", 210000),
+            ("dinary-2026-04-22T0317Z.db.zst", 217498),
+        ]
+        assert check_identical_backup_sizes(snaps)["status"] == "ok"
+
+    def test_frozen_when_sizes_match(self):
+        snaps = [
+            ("dinary-2026-04-21T0317Z.db.zst", 217498),
+            ("dinary-2026-04-22T0317Z.db.zst", 217498),
+        ]
+        result = check_identical_backup_sizes(snaps)
+        assert result["status"] == "frozen"
+        assert result["newest"] == "dinary-2026-04-22T0317Z.db.zst"
+        assert result["prev"] == "dinary-2026-04-21T0317Z.db.zst"
+        assert result["size_bytes"] == 217498
+
+    def test_single_when_one_snapshot(self):
+        result = check_identical_backup_sizes([("dinary-2026-04-22T0317Z.db.zst", 200)])
+        assert result["status"] == "single"
+        assert result["newest"] == "dinary-2026-04-22T0317Z.db.zst"
+        assert result["size_bytes"] == 200
+
+    def test_single_when_empty(self):
+        result = check_identical_backup_sizes([])
+        assert result["status"] == "single"
+        assert result["newest"] is None
+        assert result["size_bytes"] is None
+
+    def test_uses_last_two_not_first_two(self):
+        snaps = [
+            ("dinary-2026-04-20T0317Z.db.zst", 200),
+            ("dinary-2026-04-21T0317Z.db.zst", 200),
+            ("dinary-2026-04-22T0317Z.db.zst", 300),
+        ]
+        assert check_identical_backup_sizes(snaps)["status"] == "ok"
+
+
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Frozen replica detection")
+class TestFormatFrozenReplicaLine:
+    def test_contains_fail_prefix(self):
+        result = {
+            "status": "frozen",
+            "newest": "dinary-2026-04-22T0317Z.db.zst",
+            "prev": "dinary-2026-04-21T0317Z.db.zst",
+            "size_bytes": 217498,
+        }
+        line = format_frozen_replica_line(result)
+        assert line.startswith("FAIL: ")
+
+    def test_contains_both_filenames(self):
+        result = {
+            "status": "frozen",
+            "newest": "dinary-2026-04-22T0317Z.db.zst",
+            "prev": "dinary-2026-04-21T0317Z.db.zst",
+            "size_bytes": 217498,
+        }
+        line = format_frozen_replica_line(result)
+        assert "dinary-2026-04-22T0317Z.db.zst" in line
+        assert "dinary-2026-04-21T0317Z.db.zst" in line
+
+    def test_contains_size_in_kb(self):
+        result = {
+            "status": "frozen",
+            "newest": "dinary-2026-04-22T0317Z.db.zst",
+            "prev": "dinary-2026-04-21T0317Z.db.zst",
+            "size_bytes": 217498,
+        }
+        line = format_frozen_replica_line(result)
+        assert "212.4 KB" in line
+
+
+@allure.epic("Infrastructure")
+@allure.feature("Backup")
+@allure.story("Frozen replica detection")
+class TestFormatSingleBackupLine:
+    def test_contains_fail_prefix(self):
+        result = {
+            "status": "single",
+            "newest": "dinary-2026-04-22T0317Z.db.zst",
+            "size_bytes": 217498,
+        }
+        assert format_single_backup_line(result).startswith("FAIL: ")
+
+    def test_contains_filename(self):
+        result = {
+            "status": "single",
+            "newest": "dinary-2026-04-22T0317Z.db.zst",
+            "size_bytes": 217498,
+        }
+        assert "dinary-2026-04-22T0317Z.db.zst" in format_single_backup_line(result)
+
+    def test_empty_list_message(self):
+        result = {"status": "single", "newest": None, "size_bytes": None}
+        line = format_single_backup_line(result)
+        assert line.startswith("FAIL: ")
+        assert "no backups" in line

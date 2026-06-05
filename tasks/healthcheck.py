@@ -80,11 +80,11 @@ def _healthcheck_last_expense_info(results: dict[str, str]) -> None:
         print(f"OK: yesterday total {totals}")
 
 
-def _build_replica_page_count_script() -> str:
-    """Restore latest LTX snapshot on VM2 and output its page_count integer."""
+def _build_replica_sync_script() -> str:
+    """Restore latest LTX snapshot on VM2; output page_count then max exchange_rate date."""
     replica_path = f"{REPLICA_LITESTREAM_DIR}/{REPLICA_DB_NAME}"
     return (
-        "set -euo pipefail\n"
+        "set -euo pipefail\n"  # noqa: S608
         "WORKDIR=$(mktemp -d)\n"
         "trap 'rm -rf \"$WORKDIR\"' EXIT\n"
         'SNAP="$WORKDIR/hc.db"\n'
@@ -98,27 +98,57 @@ def _build_replica_page_count_script() -> str:
         "LSYAML\n"
         'litestream restore -config "$CFG" "$SNAP" >&2\n'
         'sqlite3 "$SNAP" "PRAGMA page_count;"\n'
+        'sqlite3 "$SNAP" "SELECT COALESCE(MAX(date), \'never\') FROM exchange_rates;"\n'
     )
 
 
-def _healthcheck_replica_page_count() -> None:
-    """Compare VM1 and VM2 SQLite page_count; exit non-zero if they diverge."""
+def _parse_sync_output(raw: bytes) -> tuple[str, str]:
+    """Parse 2-line sync output into (page_count, max_rate_date)."""
+    lines = raw.decode("utf-8", errors="replace").strip().splitlines()
+    page_count = lines[0] if lines else "?"
+    max_date = lines[1] if len(lines) > 1 else "?"
+    return page_count, max_date
+
+
+def _sync_divergence_messages(
+    primary: tuple[str, str],
+    replica: tuple[str, str],
+) -> list[str]:
+    """Return failure messages for each metric that diverges between primary and replica."""
+    msgs = []
+    p_pages, p_date = primary
+    r_pages, r_date = replica
+    if p_pages != r_pages:
+        msgs.append(
+            f"replica page_count ({r_pages}) != primary ({p_pages})",
+        )
+    if p_date != r_date:
+        msgs.append(
+            f"replica exchange_rates stale (primary: {p_date}, replica: {r_date})"
+            " — run `inv replica-resync` to fix",
+        )
+    return msgs
+
+
+def _healthcheck_replica_sync() -> None:
+    """Compare VM1 and VM2 page_count + exchange_rate date; exit non-zero if replica is stale."""
     if not _env().get("DINARY_REPLICA_HOST"):
         return
     primary_raw = ssh_capture_bytes(
-        sqlite_backup_prologue("dinary-hc-primary") + 'sqlite3 "$SNAP" "PRAGMA page_count;"',
+        sqlite_backup_prologue("dinary-hc-primary")  # noqa: S608
+        + 'sqlite3 "$SNAP" "PRAGMA page_count;" && '
+        + 'sqlite3 "$SNAP" "SELECT COALESCE(MAX(date), \'never\') FROM exchange_rates;"',
     )
-    replica_raw = ssh_replica_capture_bytes(_build_replica_page_count_script())
-    primary_pages = primary_raw.decode("utf-8", errors="replace").strip()
-    replica_pages = replica_raw.decode("utf-8", errors="replace").strip()
-    if primary_pages != replica_pages:
-        print(
-            f"FAIL: replica page_count ({replica_pages}) != primary ({primary_pages}). "
-            "Run `inv replica-resync` to fix.",
-            file=sys.stderr,
-        )
+    replica_raw = ssh_replica_capture_bytes(_build_replica_sync_script())
+    primary = _parse_sync_output(primary_raw)
+    replica = _parse_sync_output(replica_raw)
+    failures = _sync_divergence_messages(primary, replica)
+    if failures:
+        for msg in failures:
+            print(f"FAIL: {msg}", file=sys.stderr)
         sys.exit(1)
-    print(f"OK: replica page_count matches primary ({primary_pages})")
+    p_pages, p_date = primary
+    print(f"OK: replica in sync with primary (page_count={p_pages}, exchange_rates up to {p_date})")
 
 
 def _healthcheck_receipt_llm(results: dict[str, str]) -> bool:
@@ -199,7 +229,7 @@ def healthcheck(c, remote=False):  # noqa: ARG001
                 print(f"FAIL: service {svc} is {state!r}", file=sys.stderr)
                 sys.exit(1)
             print(f"OK: service {svc} active")
-        _healthcheck_replica_page_count()
+        _healthcheck_replica_sync()
 
     yesterday = (_date.today() - _timedelta(days=1)).isoformat()
     results = _healthcheck_run_queries(
