@@ -14,7 +14,7 @@ from pathlib import Path
 
 import lmdb
 
-from dinary_analytics.connection import ANALYTICS_DB_PATH
+from dinary_analytics.paths import ANALYTICS_DB_PATH
 
 FILENAME_PREFIX = "dinary-analytics-"
 FILENAME_SUFFIX = ".db.zst"

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from invoke import task
 
-from dinary_analytics.connection import REPLICA_PATH
+from dinary_analytics.paths import REPLICA_PATH
 from tasks.backups.backups_replica import _build_replica_restore_script
 from tasks.ssh_utils import ssh_replica_capture_bytes
 

@@ -5,13 +5,7 @@ from pathlib import Path
 
 import duckdb
 
-from dinary.config import settings
-
-QUERIES_DIR = Path(__file__).parent / "queries"
-
-_DATA_DIR = Path(settings.data_path).parent
-REPLICA_PATH = _DATA_DIR / "ledger-replica.db"
-ANALYTICS_DB_PATH = _DATA_DIR / "analytics.db"
+from dinary_analytics.paths import QUERIES_DIR, REPLICA_PATH
 
 LEDGER_SCHEMA = """\
 -- expenses: one row per expense; amount is in accounting currency (EUR)

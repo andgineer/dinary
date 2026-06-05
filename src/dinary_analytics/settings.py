@@ -6,7 +6,7 @@ from pathlib import Path
 
 import lmdb
 
-from dinary_analytics.connection import ANALYTICS_DB_PATH
+from dinary_analytics.paths import ANALYTICS_DB_PATH
 
 _MAP_SIZE = 10 * 1024 * 1024  # 10 MB
 
