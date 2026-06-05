@@ -3,16 +3,21 @@
 Tests call make_chart_pair and make_event_chart from dinary_analytics.charts directly —
 the same functions the notebook imports — so any invalid Altair params
 or broken imports are caught here before runtime.
+
+cell.run() tests execute the actual notebook cells against a real SQLite test DB so
+regressions in cell logic are caught without duplicating that logic in the tests.
 """
 
 import json
 import sqlite3
+from functools import partial
 
 import allure
 import polars as pl
 import pytest
 
-from dinary_analytics.charts import ChartSize, make_chart_pair, make_event_chart
+import dinary_analytics.notebooks.dashboard as _dash_module
+from dinary_analytics.charts import ChartSize, make_basket_chart, make_chart_pair, make_event_chart
 from dinary_analytics.connection import open_ledger
 
 
@@ -63,6 +68,13 @@ def ledger_db(tmp_path):
             tag_id INTEGER NOT NULL,
             PRIMARY KEY (expense_id, tag_id)
         );
+        CREATE TABLE category_groups (
+            id         INTEGER PRIMARY KEY,
+            name       TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_active  INTEGER NOT NULL DEFAULT 1
+        );
+        INSERT INTO category_groups VALUES (1, 'Питание', 0, 1);
         INSERT INTO categories VALUES (1, 'еда', 1, 1);
         INSERT INTO categories VALUES (2, 'аренда', 1, 1);
         INSERT INTO tags VALUES (1, 'путешествия', 1);
@@ -342,3 +354,478 @@ def test_make_event_chart_multi_event(ledger_db):
     chart = make_event_chart(expense_df, "combined")
     spec = chart.to_dict()
     assert spec["layer"][0]["mark"]["type"] == "arc"
+
+
+@pytest.fixture
+def basket_df():
+    return pl.DataFrame(
+        {
+            "basket_name": ["Travel", "Travel", "Food", "Food"],
+            "year_month": ["2025-01", "2025-02", "2025-01", "2025-02"],
+            "group_name": ["Transport", "Transport", "Groceries", "Groceries"],
+            "total_amount": [200.0, 150.0, 300.0, 280.0],
+        }
+    )
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_make_basket_chart_builds_valid_spec(basket_df):
+    chart = make_basket_chart(basket_df, "My View")
+    spec = chart.to_dict()
+    assert "vconcat" in spec
+    assert len(spec["vconcat"]) == 2
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_make_basket_chart_top_panel_is_bar(basket_df):
+    chart = make_basket_chart(basket_df)
+    spec = chart.to_dict()
+    top = spec["vconcat"][0]
+    mark = top.get("mark", {})
+    mark_type = mark.get("type") if isinstance(mark, dict) else mark
+    assert mark_type == "bar"
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_make_basket_chart_has_selection_param(basket_df):
+    chart = make_basket_chart(basket_df)
+    spec = chart.to_dict()
+    # Altair hoists params to the outermost vconcat level
+    all_params = spec.get("params", []) + spec["vconcat"][0].get("params", [])
+    assert any(p.get("select", {}).get("type") == "point" for p in all_params)
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_make_basket_chart_bottom_has_filter_transform(basket_df):
+    chart = make_basket_chart(basket_df)
+    spec = chart.to_dict()
+    bottom = spec["vconcat"][1]
+    transforms = bottom.get("transform", [])
+    assert any("filter" in t for t in transforms)
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_make_basket_chart_independent_color_scales(basket_df):
+    chart = make_basket_chart(basket_df)
+    spec = chart.to_dict()
+    resolve = spec.get("resolve", {})
+    assert resolve.get("scale", {}).get("color") == "independent"
+
+
+# ---------------------------------------------------------------------------
+# cell.run() integration tests — execute real notebook cells against test DB
+# ---------------------------------------------------------------------------
+
+
+class _DropdownStub:
+    """Minimal stand-in for mo.ui.dropdown inside cell.run() calls."""
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_period_selector_cell_runs():
+    """Period selector cell builds the dropdown with the default period."""
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    sel_cell = next(c for c in cells if "period_selector" in c.defs)
+
+    _, defs = sel_cell.run(mo=mo)
+
+    assert defs["period_selector"] is not None
+    assert defs["period_selector"].value == "Last 12 months"
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_chips_cell_builds_clickable_starters():
+    """The starter-suggestions cell builds clickable buttons (not plain prose)."""
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    chips_cell = next(c for c in cells if c.refs == {"mo", "send_message"})
+
+    output, _ = chips_cell.run(mo=mo, send_message=lambda _t: None)
+
+    assert output is not None
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_chat_input_cell_builds():
+    """The input cell builds a text area + send button without invalid marimo params."""
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    input_cell = next(c for c in cells if "msg_input" in c.defs)
+
+    output, defs = input_cell.run(
+        ai_status=mo.md(""),
+        input_ver=lambda: 0,
+        mo=mo,
+        send_message=lambda _t: None,
+    )
+
+    assert output is not None
+    assert defs["msg_input"] is not None
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_chat_log_cell_empty_and_populated():
+    """The chat log cell renders a hint when empty and bubbles when populated."""
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    log_cell = next(c for c in cells if "retry_last" in c.refs and "chat_history" in c.refs)
+
+    empty_out, _ = log_cell.run(
+        chat_history=lambda: [],
+        clear_chat=lambda: None,
+        mo=mo,
+        retry_last=lambda: None,
+    )
+    assert empty_out is not None
+
+    msgs = [{"role": "user", "content": "hi"}, {"role": "model", "content": "hello"}]
+    full_out, _ = log_cell.run(
+        chat_history=lambda: msgs,
+        clear_chat=lambda: None,
+        mo=mo,
+        retry_last=lambda: None,
+    )
+    assert full_out is not None
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_send_message_appends_user_and_reply():
+    """send_message runs one LLM turn and appends user + model messages to history."""
+    cells = list(_dash_module.app._cell_manager.cells())
+    send_cell = next(c for c in cells if "send_message" in c.defs)
+
+    history: list[dict] = []
+    captured: dict = {}
+
+    def _fake_turn(system_prompt, tools, hist, user_text):
+        captured["user_text"] = user_text
+        return "model reply"
+
+    _, defs = send_cell.run(
+        ai_system_prompt="system",
+        ai_tools=[],
+        bump_input=lambda _v: None,
+        chat_history=lambda: history,
+        input_ver=lambda: 0,
+        run_chat_turn=_fake_turn,
+        set_chat_history=lambda new: history.extend(new),
+    )
+
+    send_message = defs["send_message"]
+    send_message("  what did I spend on?  ")
+
+    assert captured["user_text"] == "what did I spend on?"
+    assert history == [
+        {"role": "user", "content": "what did I spend on?"},
+        {"role": "model", "content": "model reply"},
+    ]
+
+    # blank input is a no-op
+    history.clear()
+    send_message("   ")
+    assert history == []
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_retry_last_drops_failed_turn_and_resends():
+    """retry_last removes the previous user+model pair and re-runs the user message."""
+    cells = list(_dash_module.app._cell_manager.cells())
+    send_cell = next(c for c in cells if "retry_last" in c.defs)
+
+    # a failed turn already sits in history (model reply was an error)
+    history: list[dict] = [
+        {"role": "user", "content": "Merge all my trips into one basket"},
+        {"role": "model", "content": "**Rate limit reached.** Wait a moment and try again."},
+    ]
+    sent: dict = {}
+
+    def _fake_turn(system_prompt, tools, base, user_text):
+        sent["base"] = list(base)
+        sent["user_text"] = user_text
+        return "ok now"
+
+    def _set(new):
+        history.clear()
+        history.extend(new)
+
+    _, defs = send_cell.run(
+        ai_system_prompt="system",
+        ai_tools=[],
+        bump_input=lambda _v: None,
+        chat_history=lambda: history,
+        input_ver=lambda: 0,
+        run_chat_turn=_fake_turn,
+        set_chat_history=_set,
+    )
+
+    defs["retry_last"]()
+
+    assert sent["base"] == []  # failed pair dropped before re-running
+    assert sent["user_text"] == "Merge all my trips into one basket"
+    assert history == [
+        {"role": "user", "content": "Merge all my trips into one basket"},
+        {"role": "model", "content": "ok now"},
+    ]
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_clear_chat_empties_history():
+    """clear_chat resets the conversation to empty."""
+    cells = list(_dash_module.app._cell_manager.cells())
+    send_cell = next(c for c in cells if "clear_chat" in c.defs)
+
+    history: list[dict] = [{"role": "user", "content": "x"}]
+
+    _, defs = send_cell.run(
+        ai_system_prompt="system",
+        ai_tools=[],
+        bump_input=lambda _v: None,
+        chat_history=lambda: history,
+        input_ver=lambda: 0,
+        run_chat_turn=lambda *_a: "r",
+        set_chat_history=lambda new: history.__setitem__(slice(None), new),
+    )
+
+    defs["clear_chat"]()
+    assert history == []
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_view_data_cell_no_draft():
+    """View data cell returns an empty DataFrame when draft_view is None."""
+    from dinary_analytics.views import empty_view_frame
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    data_cell = next(c for c in cells if "view_data_df" in c.defs)
+
+    _, defs = data_cell.run(
+        draft_view=lambda: None,
+        empty_view_frame=empty_view_frame,
+        load_view_frame=lambda *_a, **_k: pytest.fail("load_view_frame called without draft"),
+        period_date_from=lambda _p: "2025-01-01",
+        period_selector=_DropdownStub("Last 12 months"),
+    )
+
+    df = defs["view_data_df"]
+    assert df.is_empty()
+    assert set(df.columns) == {"basket_name", "year_month", "group_name", "total_amount"}
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_view_data_cell_with_draft(ledger_db):
+    """View data cell runs view_data.sql against the real test DB and returns rows."""
+    from dinary_analytics.views import empty_view_frame, load_view_frame
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    data_cell = next(c for c in cells if "view_data_df" in c.defs)
+
+    draft = {
+        "baskets": [{"name": "Отпуск", "triggers": {"events": [1], "tags": []}}],
+        "default_basket": "Прочее",
+    }
+
+    _, defs = data_cell.run(
+        draft_view=lambda: draft,
+        empty_view_frame=empty_view_frame,
+        load_view_frame=partial(load_view_frame, replica_path=ledger_db),
+        period_date_from=lambda _p: "2020-01-01",
+        period_selector=_DropdownStub("Last 12 months"),
+    )
+
+    df = defs["view_data_df"]
+    assert not df.is_empty()
+    basket_names = set(df["basket_name"].to_list())
+    assert "Отпуск" in basket_names
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_basket_chart_cell_placeholder_when_no_draft(basket_df):
+    """Basket chart render cell outputs placeholder markdown when draft is None."""
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    render_cell = next(
+        c for c in cells if "view_data_df" in c.refs and "make_basket_chart" in c.refs
+    )
+
+    output, _ = render_cell.run(
+        draft_view=lambda: None,
+        make_basket_chart=make_basket_chart,
+        mo=mo,
+        view_data_df=basket_df,
+    )
+
+    assert output is not None
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_basket_chart_cell_renders_chart_with_data(basket_df):
+    """Basket chart render cell outputs an Altair chart when draft and data are present."""
+    import altair as alt
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    render_cell = next(
+        c for c in cells if "view_data_df" in c.refs and "make_basket_chart" in c.refs
+    )
+
+    draft = {"name": "Test View", "baskets": [], "default_basket": "Other"}
+
+    output, _ = render_cell.run(
+        draft_view=lambda: draft,
+        make_basket_chart=make_basket_chart,
+        mo=mo,
+        view_data_df=basket_df,
+    )
+
+    assert isinstance(output, alt.VConcatChart)
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_pin_controls_cell_hidden_without_draft():
+    """Pin controls cell renders nothing when there is no draft view."""
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    pin_cell = next(c for c in cells if "pin_controls" in c.defs)
+
+    output, defs = pin_cell.run(
+        bump_view_list=lambda _v: None,
+        draft_view=lambda: None,
+        mo=mo,
+        save_view=lambda _cfg: "id",
+        view_list_ver=lambda: 0,
+    )
+
+    assert defs["pin_controls"] is not None
+    assert output is not None
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_pin_controls_cell_shows_for_draft():
+    """Pin controls cell builds a name input + pin button when a draft view exists."""
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    pin_cell = next(c for c in cells if "pin_controls" in c.defs)
+
+    draft = {"name": "Draft", "baskets": [], "default_basket": "Other"}
+    output, defs = pin_cell.run(
+        bump_view_list=lambda _v: None,
+        draft_view=lambda: draft,
+        mo=mo,
+        save_view=lambda _cfg: "id",
+        view_list_ver=lambda: 0,
+    )
+
+    assert defs["pin_controls"] is not None
+    assert isinstance(output, mo.Html)
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_pinned_frames_cell_loads(ledger_db, tmp_path):
+    """The pinned-frames data cell loads (id, config, frame) tuples for saved views."""
+    from dinary_analytics.settings import save_view as _real_save_view
+    from dinary_analytics.views import load_pinned_view_frames
+
+    settings_db = tmp_path / "settings.db"
+    _real_save_view(
+        {
+            "name": "Отпуск",
+            "baskets": [{"name": "Отпуск", "triggers": {"events": [1], "tags": []}}],
+            "default_basket": "Прочее",
+        },
+        db_path=settings_db,
+    )
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    data_cell = next(c for c in cells if "pinned_frames" in c.defs)
+
+    _, defs = data_cell.run(
+        load_pinned_view_frames=partial(
+            load_pinned_view_frames, replica_path=ledger_db, db_path=settings_db
+        ),
+        period_date_from=lambda _p: "2020-01-01",
+        period_selector=_DropdownStub("Last 12 months"),
+        view_list_ver=lambda: 1,
+    )
+
+    frames = defs["pinned_frames"]
+    assert len(frames) == 1
+    _vid, cfg, df = frames[0]
+    assert cfg["name"] == "Отпуск"
+    assert "Отпуск" in set(df["basket_name"].to_list())
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_gallery_cell_empty():
+    """Saved-views gallery shows a placeholder when there are no pinned frames."""
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    gallery_cell = next(c for c in cells if "saved_gallery" in c.defs)
+
+    output, defs = gallery_cell.run(
+        bump_view_list=lambda _v: None,
+        delete_view=lambda _i: None,
+        make_basket_chart=make_basket_chart,
+        mo=mo,
+        pinned_frames=[],
+        set_draft_view=lambda _c: None,
+        view_list_ver=lambda: 0,
+    )
+
+    assert defs["saved_gallery"] is not None
+    assert output is not None
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_gallery_cell_with_saved_view(basket_df):
+    """Gallery renders a card per pinned frame."""
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    gallery_cell = next(c for c in cells if "saved_gallery" in c.defs)
+
+    frames = [("vid-1", {"name": "Travel"}, basket_df)]
+    output, defs = gallery_cell.run(
+        bump_view_list=lambda _v: None,
+        delete_view=lambda _i: None,
+        make_basket_chart=make_basket_chart,
+        mo=mo,
+        pinned_frames=frames,
+        set_draft_view=lambda _c: None,
+        view_list_ver=lambda: 1,
+    )
+
+    assert defs["saved_gallery"] is not None
+    assert output is not None

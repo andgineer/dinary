@@ -16,7 +16,8 @@ from urllib.parse import urlparse
 
 import aiosqlite
 
-from dinary.adapters.llmbroker import CallEvent, ProviderConfig
+from dinary.adapters.llm_chat import ProviderConfig
+from dinary.adapters.llmbroker import CallEvent
 from dinary.db import storage as db_storage
 
 logger = logging.getLogger(__name__)

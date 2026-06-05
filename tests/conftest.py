@@ -9,8 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from dinary.adapters import rate_helpers
+from dinary.adapters.llm_chat import ProviderConfig
 from dinary.adapters.llm_storage import SqliteLLMBrokerStorage
-from dinary.adapters.llmbroker import CallEvent, ProviderConfig
+from dinary.adapters.llmbroker import CallEvent
 from dinary.config import settings
 from dinary.db import db_migrations, storage
 from dinary.main import create_app

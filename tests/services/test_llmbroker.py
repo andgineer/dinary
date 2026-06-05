@@ -8,7 +8,8 @@ import allure
 import httpx
 
 from conftest import NullStorage
-from dinary.adapters.llmbroker import CallEvent, Execution, LLMBroker, ProviderConfig
+from dinary.adapters.llm_chat import ProviderConfig
+from dinary.adapters.llmbroker import CallEvent, Execution, LLMBroker
 
 
 def _make_provider(*, label: str = "P1", rate_limit_sec: int = 60) -> ProviderConfig:

@@ -14,17 +14,15 @@ from typing import Any, Protocol
 
 import httpx
 
+from dinary.adapters.llm_chat import (
+    ProviderConfig,
+    build_chat_request,
+    is_rate_limit,
+    message_from_response,
+    retry_after_seconds,
+)
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderConfig:
-    label: str
-    base_url: str
-    api_key: str
-    model: str
-    rate_limit_sec: int
-    rate_limited_until: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,8 +154,8 @@ class LLMBroker:
             except httpx.HTTPStatusError as exc:
                 code = exc.response.status_code
                 error_detail = exc.response.text[:300]
-                if code in (429, 503):
-                    delay = self._parse_retry_after(exc.response, provider.rate_limit_sec)
+                if is_rate_limit(code):
+                    delay = retry_after_seconds(exc.response.headers, provider.rate_limit_sec)
                     rate_limited_until = datetime.now(UTC) + timedelta(seconds=delay)
                     asyncio.get_running_loop().call_later(
                         float(delay),
@@ -210,21 +208,11 @@ class LLMBroker:
     # ------------------------------------------------------------------
 
     async def _call_provider(self, provider: ProviderConfig, messages: list[dict]) -> str:
+        url, headers, body = build_chat_request(provider, messages)
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{provider.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {provider.api_key}"},
-                json={"model": provider.model, "messages": messages},
-            )
+            resp = await client.post(url, headers=headers, json=body)
             resp.raise_for_status()
-        return str(resp.json()["choices"][0]["message"]["content"])
-
-    @staticmethod
-    def _parse_retry_after(resp: httpx.Response, default_sec: int) -> int:
-        try:
-            return int(resp.headers.get("Retry-After", default_sec))
-        except (ValueError, TypeError):
-            return default_sec
+        return str(message_from_response(resp.json()).get("content") or "")
 
     # ------------------------------------------------------------------
     # Storage callbacks

@@ -52,26 +52,26 @@ strategy, invariants, and Analytics Views design.
     and show a secondary stacked bar by group_name as a drill-down panel below.
     Use `alt.selection_point` on basket + month for the drill-down interaction.
 
-11. **View selector UI in `dashboard.py`** — `mo.ui.dropdown` populated from
-    `settings.list_view_ids()` + labels from stored configs; "New view" button
-    clears the draft and triggers the LLM with the `query_spending_summary()`
-    result plus instructions to propose baskets with chart. Period selector
-    (year / custom range) shown alongside the chart.
+11. **Unified chat surface in `dashboard.py`** — a single conversation driven by Marimo
+    state (`chat_history`), rendered as message bubbles, is the only AI area. Above it,
+    a row of clickable suggestion buttons sends a starter prompt straight into the
+    conversation (the obvious one rebuilds spending into baskets; others refine); a
+    free-text box handles the rest. `mo.ui.chat` is not used because its `prompts=` are
+    a slash-command menu, not visible buttons. A period selector (last 12 months / this
+    year / last year) drives both the draft and the saved-view gallery.
 
-12. **"New view" LLM prompt** — system prompt instructs the LLM: (a) call
-    `query_spending_summary()` first, (b) aim for 5–10 top-level baskets that reveal
-    non-obvious actionable patterns — not obvious dominant items like rent; start from
-    PWA category groups but reorganise freely, extracting cross-cutting baskets by
-    event or tag (e.g. travel tag → one basket, relocation event → one basket),
-    merging negligible items into the default basket; (c) produce a `propose_view()`
-    call immediately with a concrete basket set; (d) justify each basket with concrete
-    numbers from the summary; (e) call `update_suggestions()` with 3–5 follow-up
-    questions based on what the data shows; (f) invite the user to react — never ask
-    them to name categories or tags.
+12. **Chat system prompt** — instructs the LLM: (a) call `query_spending_summary()`
+    first, (b) aim for 5–10 top-level baskets that reveal non-obvious actionable
+    patterns — not obvious dominant items like rent; start from PWA category groups but
+    reorganise freely, extracting cross-cutting baskets by event or tag (e.g. travel tag
+    → one basket, relocation event → one basket), merging negligible items into the
+    default basket; (c) call `propose_view()` with a concrete basket set so the draft
+    chart renders live below the chat; (d) justify each basket with concrete numbers;
+    (e) end each turn with 3–5 follow-up questions; (f) to persist on request, call
+    `save_current_view(name)`; never ask the user to name categories or tags.
 
-13. **Suggested questions feature** — add `update_suggestions(questions: list[str])`
-    to in-session LLM tools: stores the list in a reactive Marimo state variable.
-    Dashboard renders a `mo.hstack` of `mo.ui.button` chips above the chat input;
-    clicking a chip sets the chat input value and submits. On dashboard load, after
-    `query_spending_summary()` completes, send a lightweight prompt to generate the
-    initial suggestion set.
+13. **Draft + pinned-views gallery** — the live draft renders below the chat with a Pin
+    control (name field + button) that persists it via `settings.save_view()`. Pinned
+    views render as a gallery of live cards (each re-executes `view_data.sql` for the
+    selected period via `make_basket_chart`), with per-card "open in draft" and "delete"
+    buttons.

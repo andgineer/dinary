@@ -6,6 +6,14 @@ import json
 from mcp.server.fastmcp import FastMCP
 
 from dinary_analytics.connection import LEDGER_SCHEMA, open_ledger
+from dinary_analytics.settings import (
+    delete_view,
+    get_config,
+    get_view,
+    list_view_ids,
+    save_view,
+    set_config,
+)
 
 mcp = FastMCP("dinary-analytics")
 
@@ -36,6 +44,51 @@ def query(sql: str) -> str:
 def schema() -> str:
     """Return the ledger database schema as SQL CREATE statements for LLM context."""
     return LEDGER_SCHEMA
+
+
+@mcp.tool()
+def get_config_tool(key: str) -> str:
+    """Read a config entry from analytics.db."""
+    val = get_config(key)
+    return val if val is not None else ""
+
+
+@mcp.tool()
+def set_config_tool(key: str, value: str) -> str:
+    """Write a config entry to analytics.db."""
+    set_config(key, value)
+    return "ok"
+
+
+@mcp.tool()
+def list_views() -> str:
+    """List all saved analytics view IDs and names as JSON."""
+    ids = list_view_ids()
+    result = []
+    for view_id in ids:
+        cfg = get_view(view_id)
+        result.append({"id": view_id, "name": cfg.get("name", "") if cfg else ""})
+    return json.dumps(result)
+
+
+@mcp.tool()
+def get_view_tool(view_id: str) -> str:
+    """Get a saved analytics view config as JSON."""
+    cfg = get_view(view_id)
+    return json.dumps(cfg) if cfg is not None else ""
+
+
+@mcp.tool()
+def save_view_tool(config: str) -> str:
+    """Save an analytics view config (JSON string). Returns the assigned ID."""
+    return save_view(json.loads(config))
+
+
+@mcp.tool()
+def delete_view_tool(view_id: str) -> str:
+    """Delete a saved analytics view by ID."""
+    delete_view(view_id)
+    return "ok"
 
 
 def main() -> None:

@@ -7,6 +7,8 @@ import duckdb
 
 from dinary.config import settings
 
+QUERIES_DIR = Path(__file__).parent / "queries"
+
 _DATA_DIR = Path(settings.data_path).parent
 REPLICA_PATH = _DATA_DIR / "ledger-replica.db"
 ANALYTICS_DB_PATH = _DATA_DIR / "analytics.db"
@@ -87,6 +89,11 @@ def open_ledger(replica_path: Path | None = None) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(":memory:")
     con.execute(f"ATTACH '{path}' AS ledger (TYPE sqlite, READ_ONLY)")  # noqa: S608
     return con
+
+
+def load_query(name: str) -> str:
+    """Return the SQL text of a named query file from the queries directory."""
+    return (QUERIES_DIR / f"{name}.sql").read_text()
 
 
 def sync_replica(source_path: Path, target_path: Path | None = None) -> None:

@@ -70,9 +70,13 @@ DuckDB-WASM without rewrite.
 
 ## LLM strategy
 
-**Default — Gemini Free API.** Built into the Marimo dashboard chat. User provides
-a Google AI Studio API key. The model receives the ledger schema and executes DuckDB
-queries via tool calls.
+**Default — shared provider pool.** The Marimo dashboard chat uses the same
+OpenAI-compatible providers as the receipt pipeline, read from
+`.deploy/llm_providers.toml` (path overridable via `DINARY_LLM_PROVIDERS_FILE`).
+Providers are tried in declaration order; a rate-limited (429/503) provider is
+skipped for the next. The request/response transport and tool-calling loop are
+shared with the server's LLM broker — analytics never calls the running server.
+The model receives the ledger schema and executes DuckDB queries via tool calls.
 
 **Power users — Claude Code / Claude Desktop via MCP.** User connects their Claude
 subscription to the `dinary-analytics` MCP server. Claude can answer arbitrary
@@ -176,26 +180,31 @@ View config stored in `analytics.db` under key `view:<uuid>`:
 
 ### LLM interaction model
 
-The LLM is the analyst; the user is the client who reacts to proposals.
+The LLM is the analyst; the user is the client who reacts to proposals. There is a
+single conversational surface: the dashboard chat. Everything — proposing, refining,
+and saving views — happens in that one conversation.
 
-**Suggested questions.** The dashboard shows a row of clickable question chips above
-the chat input. After every LLM turn the model emits an `update_suggestions` tool call
-with a new list — keeping chips that remain contextually relevant and replacing ones
-already answered or no longer useful. The initial set is generated immediately after
-`query_spending_summary()` loads.
+**Starting a dialogue.** Above the conversation sits a row of clickable suggestion
+buttons (the obvious entry point is rebuilding spending into baskets). Clicking a
+suggestion sends it straight into the same conversation — the user never copies or
+retypes a prompt. A free-text box below the log handles everything else. There is no
+separate one-shot area.
 
-**Creating a new view.** The LLM calls `query_spending_summary()` to examine actual
-spending patterns before saying anything. It then presents an initial basket proposal
-with a rendered chart and justifies each basket with concrete data: "Релокация —
-45k за 3 мес (40% квартала), выделил в отдельный блок." The user never has to name
-categories, events, or tags.
+**Creating a view.** The LLM calls `query_spending_summary()` to examine actual
+spending patterns before saying anything. It then presents an initial basket proposal,
+which renders as a live draft chart below the chat, and justifies each basket with
+concrete data: "Релокация — 45k за 3 мес (40% квартала), выделил в отдельный блок."
+Each turn ends with a few follow-up questions the user can explore. The user never has
+to name categories, events, or tags.
 
-**Refining a view.** The user expresses dissatisfaction about what they see in the
-chart ("поездки выглядят странно"). The LLM consults the data and proposes specific
-alternatives: "Могу объединить все поездки в один блок Путешествия — тогда видна
-общая сумма за год. Или оставить детализацию с итоговой строкой. Что ближе?" The
-user only approves or redirects; the LLM modifies the config via in-session tools
-and the chart re-renders immediately.
+**Refining a view.** The user reacts to what they see in the draft chart ("поездки
+выглядят странно"). The LLM consults the data, proposes specific alternatives, and on
+approval modifies the draft via in-session tools; the chart re-renders immediately.
+
+**Pinning a view.** The live draft becomes permanent either when the user presses the
+Pin control beneath the draft or when the LLM calls its save tool on request. Pinned
+views appear as a gallery of live cards on the dashboard; each card re-executes against
+current ledger data for the selected period and can be reopened as a draft or deleted.
 
 Users never compose basket definitions by naming categories or writing rules. The
 LLM does this from data.

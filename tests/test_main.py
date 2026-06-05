@@ -6,8 +6,8 @@ from unittest.mock import Mock, patch
 import allure
 import pytest
 
+from dinary.adapters.llm_chat import ProviderConfig
 from dinary.adapters.llm_storage import SqliteLLMBrokerStorage
-from dinary.adapters.llmbroker import ProviderConfig
 from dinary.config import settings
 from dinary.main import _lifespan, create_app
 from dinary.db import storage

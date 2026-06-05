@@ -1,0 +1,137 @@
+"""LLM chat turn for the analytics dashboard.
+
+Reuses the (soon-to-be-extracted) LLM broker for OpenAI-compatible completion
+with provider failover. Providers come from ``.deploy/llm_providers.toml`` — the
+same static config the server seeds from — so analytics never calls the running
+dinary server. Tool calling drives the draft view (propose_view, query_ledger, …).
+"""
+
+import inspect
+import os
+import tomllib
+import typing
+from collections.abc import Callable, Sequence
+from pathlib import Path
+
+from dinary.adapters.llm_chat import (
+    AllProvidersBusyError,
+    AllProvidersFailedError,
+    ProviderConfig,
+    complete_with_tools,
+)
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_PROVIDERS_FILE = _REPO_ROOT / ".deploy" / "llm_providers.toml"
+
+_NO_PROVIDERS_MESSAGE = "**No LLM providers configured.** Add them to `.deploy/llm_providers.toml`."
+
+_JSON_TYPES: dict[type, str] = {
+    str: "string",
+    int: "integer",
+    float: "number",
+    bool: "boolean",
+}
+
+
+def _providers_path() -> Path:
+    override = os.getenv("DINARY_LLM_PROVIDERS_FILE")
+    return Path(override) if override else _DEFAULT_PROVIDERS_FILE
+
+
+def load_providers() -> list[ProviderConfig]:
+    """Read provider configs from the TOML file, in declared priority order."""
+    path = _providers_path()
+    if not path.exists():
+        return []
+    data = tomllib.loads(path.read_text())
+    return [
+        ProviderConfig(
+            label=entry["label"],
+            base_url=entry["base_url"],
+            api_key=entry["api_key"],
+            model=entry["model"],
+            rate_limit_sec=int(entry.get("rate_limit_sec", 60)),
+            rate_limited_until=None,
+        )
+        for entry in data.get("providers", [])
+    ]
+
+
+def providers_available() -> bool:
+    """True if at least one provider is configured."""
+    return bool(load_providers())
+
+
+def tool_name(fn: Callable[..., object]) -> str:
+    """Clean a Python tool callable's name into an LLM-facing tool name."""
+    name = fn.__name__.strip("_")
+    return name[:-3] if name.endswith("_fn") else name
+
+
+def _json_type(annotation: object) -> dict:
+    origin = typing.get_origin(annotation)
+    if origin in (list, set, tuple):
+        return {"type": "array", "items": {}}
+    if origin is dict or annotation is dict:
+        return {"type": "object"}
+    if isinstance(annotation, type) and annotation in _JSON_TYPES:
+        return {"type": _JSON_TYPES[annotation]}
+    return {"type": "string"}
+
+
+def _tool_schema(fn: Callable[..., object]) -> dict:
+    properties: dict[str, dict] = {}
+    required: list[str] = []
+    for name, param in inspect.signature(fn).parameters.items():
+        properties[name] = _json_type(param.annotation)
+        if param.default is inspect.Parameter.empty:
+            required.append(name)
+    return {
+        "type": "function",
+        "function": {
+            "name": tool_name(fn),
+            "description": inspect.getdoc(fn) or "",
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+            },
+        },
+    }
+
+
+def run_chat_turn(
+    system_prompt: str,
+    tools: Sequence[Callable[..., object]],
+    history: Sequence[dict[str, str]],
+    user_text: str,
+) -> str:
+    """Send history + user_text to the first available provider and return the reply.
+
+    history items are {"role": "user"|"model", "content": str}. Provider/network
+    errors (including rate limits) are returned as user-facing text, not raised.
+    """
+    providers = load_providers()
+    if not providers:
+        return _NO_PROVIDERS_MESSAGE
+
+    schemas = [_tool_schema(fn) for fn in tools]
+    dispatch = {tool_name(fn): fn for fn in tools}
+
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    messages.extend(
+        {"role": "assistant" if m["role"] == "model" else "user", "content": m["content"]}
+        for m in history
+    )
+    messages.append({"role": "user", "content": user_text})
+
+    try:
+        reply = complete_with_tools(providers, messages, tools=schemas, dispatch=dispatch)
+    except AllProvidersBusyError:
+        return "**All providers are busy right now.** Press 🔁 Retry in a moment."
+    except AllProvidersFailedError:
+        return "**AI providers unavailable.** Check `.deploy/llm_providers.toml`."
+    except Exception as exc:  # noqa: BLE001 - surfaced to the user, not swallowed
+        return f"**AI error:** {str(exc)[:300]}"
+
+    return reply or "*(view updated — see the draft below)*"

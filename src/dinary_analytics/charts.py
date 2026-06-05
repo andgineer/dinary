@@ -223,3 +223,70 @@ def make_event_chart(
         height=size,
         title=alt.TitleParams(text=title, subtitle=f"€{total:,.0f}"),
     )
+
+
+def make_basket_chart(
+    df: pl.DataFrame,
+    title: str = "",
+    width: int = 700,
+    height: int = 350,
+) -> alt.VConcatChart:
+    """Return a two-panel vconcat chart.
+
+    Top panel: stacked bar by basket/month. Bottom panel: category group breakdown.
+    df columns: basket_name, year_month, group_name, total_amount.
+    Click a bar segment to filter the bottom panel to that basket/month combination.
+    """
+    sel = alt.selection_point(fields=["basket_name", "year_month"])
+
+    top = (
+        alt.Chart(df)
+        .transform_aggregate(
+            basket_total="sum(total_amount)",
+            groupby=["basket_name", "year_month"],
+        )
+        .mark_bar()
+        .encode(
+            x=alt.X("year_month:O", title=None),
+            y=alt.Y("basket_total:Q", stack=True, title="EUR", axis=alt.Axis(format="~s")),
+            color=alt.Color(
+                "basket_name:N",
+                scale=alt.Scale(scheme="tableau20"),
+                legend=alt.Legend(title="Basket"),
+            ),
+            opacity=alt.condition(sel, alt.value(1.0), alt.value(0.4)),
+            tooltip=[
+                alt.Tooltip("year_month:O", title="Month"),
+                alt.Tooltip("basket_name:N", title="Basket"),
+                alt.Tooltip("basket_total:Q", format=".0f", title="EUR"),
+            ],
+        )
+        .add_params(sel)
+        .properties(width=width, height=height, title=title)
+    )
+
+    bottom = (
+        alt.Chart(df)
+        .transform_filter(sel)
+        .transform_aggregate(
+            group_total="sum(total_amount)",
+            groupby=["group_name"],
+        )
+        .mark_bar()
+        .encode(
+            x=alt.X("group_total:Q", title="EUR", axis=alt.Axis(format="~s")),
+            y=alt.Y("group_name:N", sort="-x", title=None),
+            color=alt.Color(
+                "group_name:N",
+                scale=alt.Scale(scheme="tableau10"),
+                legend=None,
+            ),
+            tooltip=[
+                alt.Tooltip("group_name:N", title="Category group"),
+                alt.Tooltip("group_total:Q", format=".0f", title="EUR"),
+            ],
+        )
+        .properties(width=width, title="Category breakdown")
+    )
+
+    return alt.vconcat(top, bottom).resolve_scale(color="independent")

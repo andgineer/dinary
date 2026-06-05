@@ -5,8 +5,17 @@ import allure
 import pytest
 
 import dinary_analytics.connection as conn_module
+import dinary_analytics.settings as settings_module
 from dinary_analytics.connection import LEDGER_SCHEMA
-from dinary_analytics.mcp_server import _run_query
+from dinary_analytics.mcp_server import (
+    _run_query,
+    delete_view_tool,
+    get_config_tool,
+    get_view_tool,
+    list_views,
+    save_view_tool,
+    set_config_tool,
+)
 
 
 @pytest.fixture
@@ -73,3 +82,79 @@ def test_schema_contains_key_tables():
     assert "income" in LEDGER_SCHEMA
     assert "exchange_rates" in LEDGER_SCHEMA
     assert "ledger" not in LEDGER_SCHEMA
+
+
+@pytest.fixture
+def patched_analytics_db(tmp_path, monkeypatch):
+    db = tmp_path / "analytics.db"
+    monkeypatch.setattr(settings_module, "ANALYTICS_DB_PATH", db)
+    return db
+
+
+@allure.epic("Analytics")
+@allure.feature("MCP Server")
+def test_get_config_tool_missing_returns_empty(patched_analytics_db):
+    result = get_config_tool("nonexistent")
+    assert result == ""
+
+
+@allure.epic("Analytics")
+@allure.feature("MCP Server")
+def test_set_and_get_config_tool(patched_analytics_db):
+    result = set_config_tool("mykey", "myvalue")
+    assert result == "ok"
+    assert get_config_tool("mykey") == "myvalue"
+
+
+@allure.epic("Analytics")
+@allure.feature("MCP Server")
+def test_list_views_empty(patched_analytics_db):
+    result = json.loads(list_views())
+    assert result == []
+
+
+@allure.epic("Analytics")
+@allure.feature("MCP Server")
+def test_save_view_tool_assigns_id(patched_analytics_db):
+    config_json = json.dumps({"name": "Test View", "baskets": []})
+    view_id = save_view_tool(config_json)
+    assert view_id
+
+
+@allure.epic("Analytics")
+@allure.feature("MCP Server")
+def test_list_views_after_save(patched_analytics_db):
+    config_json = json.dumps({"name": "Listed View", "baskets": []})
+    view_id = save_view_tool(config_json)
+    views = json.loads(list_views())
+    assert any(v["id"] == view_id for v in views)
+    assert any(v["name"] == "Listed View" for v in views)
+
+
+@allure.epic("Analytics")
+@allure.feature("MCP Server")
+def test_get_view_tool_returns_config(patched_analytics_db):
+    config_json = json.dumps({"name": "GetMe", "baskets": []})
+    view_id = save_view_tool(config_json)
+    result = json.loads(get_view_tool(view_id))
+    assert result["name"] == "GetMe"
+    assert result["id"] == view_id
+
+
+@allure.epic("Analytics")
+@allure.feature("MCP Server")
+def test_get_view_tool_missing_returns_empty(patched_analytics_db):
+    result = get_view_tool("no-such-id")
+    assert result == ""
+
+
+@allure.epic("Analytics")
+@allure.feature("MCP Server")
+def test_delete_view_tool(patched_analytics_db):
+    config_json = json.dumps({"name": "ToDelete", "baskets": []})
+    view_id = save_view_tool(config_json)
+    result = delete_view_tool(view_id)
+    assert result == "ok"
+    assert get_view_tool(view_id) == ""
+    views = json.loads(list_views())
+    assert not any(v["id"] == view_id for v in views)
