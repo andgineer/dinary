@@ -62,10 +62,10 @@
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_c7809b5ac8a05298_mcp_server_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a id="nextFileLink" class="nav" href="z_c7809b5ac8a05298_settings_py.html">&#xbb; next</a>
+            <a id="nextFileLink" class="nav" href="z_c7809b5ac8a05298_paths_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.1">coverage.py v7.14.1</a>,
-            created at 2026-06-05 12:43 +0000
+            created at 2026-06-05 18:56 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -942,58 +942,54 @@
     <p class="run"><span class="n"><a id="t860" href="#t860">860</a></span><span class="t"><span class="key">def</span> <span class="nam">_</span><span class="op">(</span><span class="nam">mo</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t861" href="#t861">861</a></span><span class="t">    <span class="nam">mo</span><span class="op">.</span><span class="nam">accordion</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis mis2 show_mis"><span class="n"><a id="t862" href="#t862">862</a></span><span class="t">        <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t863" href="#t863">863</a></span><span class="t">            <span class="str">"Connect external AI client (Claude Desktop / Claude Code)"</span><span class="op">:</span> <span class="nam">mo</span><span class="op">.</span><span class="nam">md</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t864" href="#t864">864</a></span><span class="t">                <span class="str">"""</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t865" href="#t865">865</a></span><span class="t"><span class="str">The MCP server runs at **`http://localhost:8765/sse`** while `inv analytics` is active.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t866" href="#t866">866</a></span><span class="t"><span class="str">Only Claude Desktop and Claude Code support MCP. ChatGPT and Gemini do not.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t867" href="#t867">867</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t868" href="#t868">868</a></span><span class="t"><span class="str">---</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t869" href="#t869">869</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t870" href="#t870">870</a></span><span class="t"><span class="str">### Claude Desktop</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t871" href="#t871">871</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t872" href="#t872">872</a></span><span class="t"><span class="str">Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t873" href="#t873">873</a></span><span class="t"><span class="str">or `%APPDATA%\\Claude\\claude_desktop_config.json` (Windows):</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t874" href="#t874">874</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t875" href="#t875">875</a></span><span class="t"><span class="str">```json</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t876" href="#t876">876</a></span><span class="t"><span class="str">{</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t877" href="#t877">877</a></span><span class="t"><span class="str">  "mcpServers": {</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t878" href="#t878">878</a></span><span class="t"><span class="str">    "dinary-analytics": {</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t879" href="#t879">879</a></span><span class="t"><span class="str">      "url": "http://localhost:8765/sse"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t880" href="#t880">880</a></span><span class="t"><span class="str">    }</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t881" href="#t881">881</a></span><span class="t"><span class="str">  }</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t882" href="#t882">882</a></span><span class="t"><span class="str">}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t883" href="#t883">883</a></span><span class="t"><span class="str">```</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t884" href="#t884">884</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t885" href="#t885">885</a></span><span class="t"><span class="str">Restart Claude Desktop after saving. The server appears under **Search and tools**.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t886" href="#t886">886</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t887" href="#t887">887</a></span><span class="t"><span class="str">---</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t888" href="#t888">888</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t889" href="#t889">889</a></span><span class="t"><span class="str">### Claude Code (CLI)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t890" href="#t890">890</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t891" href="#t891">891</a></span><span class="t"><span class="str">```bash</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t892" href="#t892">892</a></span><span class="t"><span class="str">claude mcp add --transport sse dinary-analytics http://localhost:8765/sse</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t893" href="#t893">893</a></span><span class="t"><span class="str">```</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t894" href="#t894">894</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t895" href="#t895">895</a></span><span class="t"><span class="str">Verify with `claude mcp list`. Tools available: `query`, `schema`, `list_views`,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t896" href="#t896">896</a></span><span class="t"><span class="str">`get_view`, `save_view`, `delete_view`, `get_config`, `set_config`.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t897" href="#t897">897</a></span><span class="t"><span class="str">"""</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t898" href="#t898">898</a></span><span class="t">            <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t899" href="#t899">899</a></span><span class="t">        <span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t900" href="#t900">900</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t901" href="#t901">901</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t902" href="#t902">902</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t903" href="#t903">903</a></span><span class="t"><span class="key">if</span> <span class="nam">__name__</span> <span class="op">==</span> <span class="str">"__main__"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t904" href="#t904">904</a></span><span class="t">    <span class="nam">app</span><span class="op">.</span><span class="nam">run</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t863" href="#t863">863</a></span><span class="t">            <span class="str">"Connect external AI client (Claude Desktop / Claude Code)"</span><span class="op">:</span> <span class="nam">mo</span><span class="op">.</span><span class="nam">vstack</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t864" href="#t864">864</a></span><span class="t">                <span class="op">[</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t865" href="#t865">865</a></span><span class="t">                    <span class="nam">mo</span><span class="op">.</span><span class="nam">md</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t866" href="#t866">866</a></span><span class="t">                        <span class="str">"MCP server runs at **`http://localhost:8765/mcp`** while `inv analytics` is active."</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t867" href="#t867">867</a></span><span class="t">                        <span class="str">" Only Claude Desktop and Claude Code support MCP.\n\n"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t868" href="#t868">868</a></span><span class="t">                        <span class="str">"### Claude Desktop\n\n"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t869" href="#t869">869</a></span><span class="t">                        <span class="str">"Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t870" href="#t870">870</a></span><span class="t">                    <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t871" href="#t871">871</a></span><span class="t">                    <span class="nam">mo</span><span class="op">.</span><span class="nam">plain_text</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t872" href="#t872">872</a></span><span class="t">                        <span class="str">"{\n"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t873" href="#t873">873</a></span><span class="t">                        <span class="str">'  "mcpServers": {\n'</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t874" href="#t874">874</a></span><span class="t">                        <span class="str">'    "dinary-analytics": {\n'</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t875" href="#t875">875</a></span><span class="t">                        <span class="str">'      "command": "npx",\n'</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t876" href="#t876">876</a></span><span class="t">                        <span class="str">'      "args": ["mcp-remote", "http://localhost:8765/mcp"]\n'</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t877" href="#t877">877</a></span><span class="t">                        <span class="str">"    }\n"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t878" href="#t878">878</a></span><span class="t">                        <span class="str">"  }\n"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t879" href="#t879">879</a></span><span class="t">                        <span class="str">"}"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t880" href="#t880">880</a></span><span class="t">                    <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t881" href="#t881">881</a></span><span class="t">                    <span class="nam">mo</span><span class="op">.</span><span class="nam">md</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t882" href="#t882">882</a></span><span class="t">                        <span class="str">"Restart Claude Desktop. The server appears under **Search and tools**.\n\n"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t883" href="#t883">883</a></span><span class="t">                        <span class="str">"### Claude Code (CLI)"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t884" href="#t884">884</a></span><span class="t">                    <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t885" href="#t885">885</a></span><span class="t">                    <span class="nam">mo</span><span class="op">.</span><span class="nam">plain_text</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t886" href="#t886">886</a></span><span class="t">                        <span class="str">"claude mcp add --transport http dinary-analytics http://localhost:8765/mcp"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t887" href="#t887">887</a></span><span class="t">                    <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t888" href="#t888">888</a></span><span class="t">                    <span class="nam">mo</span><span class="op">.</span><span class="nam">md</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t889" href="#t889">889</a></span><span class="t">                        <span class="str">"Verify with `claude mcp list`. "</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t890" href="#t890">890</a></span><span class="t">                        <span class="str">"Tools: `query`, `schema`, `list_views`, `get_view`, `save_view`,"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t891" href="#t891">891</a></span><span class="t">                        <span class="str">" `delete_view`, `get_config`, `set_config`."</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t892" href="#t892">892</a></span><span class="t">                    <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t893" href="#t893">893</a></span><span class="t">                <span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t894" href="#t894">894</a></span><span class="t">            <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t895" href="#t895">895</a></span><span class="t">        <span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t896" href="#t896">896</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t897" href="#t897">897</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t898" href="#t898">898</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t899" href="#t899">899</a></span><span class="t"><span class="key">if</span> <span class="nam">__name__</span> <span class="op">==</span> <span class="str">"__main__"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t900" href="#t900">900</a></span><span class="t">    <span class="nam">app</span><span class="op">.</span><span class="nam">run</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
         <p>
             <a class="nav" href="z_c7809b5ac8a05298_mcp_server_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a class="nav" href="z_c7809b5ac8a05298_settings_py.html">&#xbb; next</a>
+            <a class="nav" href="z_c7809b5ac8a05298_paths_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.1">coverage.py v7.14.1</a>,
-            created at 2026-06-05 12:43 +0000
+            created at 2026-06-05 18:56 +0000
         </p>
     </div>
 </footer>
