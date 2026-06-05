@@ -1,0 +1,30 @@
+# Freelancer / sole proprietor — personal and business in one wallet. Detailed
+# work sphere; eating-out split into a group so business and personal coexist.
+id: freelancer
+names: { en: Freelancer, ru: Фрилансер }
+
+groups:
+  food:       { en: Food,           ru: Еда }
+  eating_out: { en: Eating out,     ru: Еда вне дома }
+  work:       { en: Work,           ru: Работа }
+  housing:    { en: Housing,        ru: Жильё }
+  life:       { en: Life,           ru: Жизнь }
+  taxes:      { en: Taxes and fees, ru: Налоги и сборы }
+
+visible:
+  food:       [groceries, delivery]
+  eating_out: [cafe, business_lunch]
+  work:       [software, equipment, coworking, advertising, contractors,
+               accounting, professional_training]
+  housing:    [rent, utilities, internet, mobile, household_goods]
+  life:       [transit, car, fuel, clothing, doctor, pharmacy, health_insurance,
+               hygiene, entertainment, subscriptions, education, productivity, travel]
+  taxes:      [tax, fines]
+
+hidden:
+  food:       [fruit, delicacies, sweets, alcohol, baby_food]
+  housing:    [mortgage, repairs, furniture, appliances, garden]
+  life:       [dental, wellness, cosmetics, haircut, sport, gym, cycling, skiing,
+               hobbies, gadgets, electronics, tools, taxi, car_service, daycare,
+               kids_activities, toys, kids_clothing, diapers, pediatrician, gifts,
+               pocket_money, charity, pet_food, vet, pet_supplies, flights, hotels]

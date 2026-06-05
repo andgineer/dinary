@@ -88,8 +88,17 @@ def run_tool_step(
             args = json.loads(call["function"].get("arguments") or "{}")
         except json.JSONDecodeError:
             args = {}
+        if not isinstance(args, dict):
+            # Some providers send "null" or a bare value for no-arg tools.
+            args = {}
         fn = dispatch.get(name)
-        output = fn(**args) if fn else f"Unknown tool {name}"
+        if fn is None:
+            output: object = f"Unknown tool {name}"
+        else:
+            try:
+                output = fn(**args)
+            except Exception as exc:  # noqa: BLE001 - report back to the model so it can retry
+                output = f"Tool {name} failed: {exc}"
         results.append({"role": "tool", "tool_call_id": call.get("id"), "content": str(output)})
     return None, results
 

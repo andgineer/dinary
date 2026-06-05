@@ -60,8 +60,11 @@ def ledger_db(tmp_path):
         INSERT INTO categories VALUES (1, 'еда', 1, 1);
         INSERT INTO categories VALUES (2, 'аренда', 1, 1);
         INSERT INTO events VALUES (1, 'отпуск', '2025-06-01', '2025-07-31', 1, 1);
+        INSERT INTO tags VALUES (1, 'путешествия', 1);
         INSERT INTO expenses VALUES (1, '2025-06-10 10:00:00', 500.0, 55000.0, 'RSD', 1, 1, NULL, NULL, NULL);
         INSERT INTO expenses VALUES (2, '2025-06-15 12:00:00', 300.0, 33000.0, 'RSD', 2, 1, NULL, NULL, NULL);
+        INSERT INTO expense_tags VALUES (1, 1);
+        INSERT INTO expense_tags VALUES (2, 1);
     """)
     con.commit()
     con.close()
@@ -86,6 +89,46 @@ def test_load_view_frame_assigns_baskets(ledger_db):
     df = load_view_frame(cfg, "2020-01-01", replica_path=ledger_db)
     assert not df.is_empty()
     assert "Отпуск" in set(df["basket_name"].to_list())
+
+
+@allure.epic("Analytics")
+@allure.feature("Views")
+def test_load_view_frame_empty_baskets_assigns_all_to_default(ledger_db):
+    """A view with no baskets must not crash (UINT64 0-1) and routes all to default."""
+    cfg = {"baskets": [], "default_basket": "Прочее"}
+    df = load_view_frame(cfg, "2020-01-01", replica_path=ledger_db)
+    assert not df.is_empty()
+    assert set(df["basket_name"].to_list()) == {"Прочее"}
+
+
+@allure.epic("Analytics")
+@allure.feature("Views")
+def test_load_view_frame_single_basket_first_match(ledger_db):
+    """First-match priority: an expense matching an earlier basket goes there, not default."""
+    cfg = {
+        "baskets": [
+            {"name": "Путешествия", "triggers": {"events": [], "tags": [1]}},
+            {"name": "Отпуск", "triggers": {"events": [1], "tags": []}},
+        ],
+        "default_basket": "Прочее",
+    }
+    df = load_view_frame(cfg, "2020-01-01", replica_path=ledger_db)
+    assert not df.is_empty()
+    # both tag-1 expenses (ids 1,2) are in event 1 too, but tag basket is listed first
+    assert "Путешествия" in set(df["basket_name"].to_list())
+
+
+@allure.epic("Analytics")
+@allure.feature("Views")
+def test_load_view_frame_runs_for_every_period(ledger_db):
+    """view_data.sql executes for each dashboard period label without SQL errors."""
+    cfg = {
+        "baskets": [{"name": "Отпуск", "triggers": {"events": [1], "tags": []}}],
+        "default_basket": "Прочее",
+    }
+    for date_from in ("2020-01-01", "2025-01-01", "2024-01-01"):
+        # must not raise a DuckDB/MarimoSQLError
+        load_view_frame(cfg, date_from, replica_path=ledger_db)
 
 
 @allure.epic("Analytics")

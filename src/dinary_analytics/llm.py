@@ -8,6 +8,7 @@ dinary server. Tool calling drives the draft view (propose_view, query_ledger, â
 
 import inspect
 import os
+import re
 import tomllib
 import typing
 from collections.abc import Callable, Sequence
@@ -62,9 +63,17 @@ def providers_available() -> bool:
     return bool(load_providers())
 
 
+# Functions defined inside Marimo cells get a `_cell_<id>_` prefix on __name__.
+_CELL_PREFIX = re.compile(r"^_cell_[A-Za-z0-9]+_")
+
+
 def tool_name(fn: Callable[..., object]) -> str:
-    """Clean a Python tool callable's name into an LLM-facing tool name."""
-    name = fn.__name__.strip("_")
+    """Clean a Python tool callable's name into a stable LLM-facing tool name.
+
+    Strips Marimo's cell prefix, leading/trailing underscores and a trailing `_fn`,
+    so the names match what the system prompt references (e.g. propose_view).
+    """
+    name = _CELL_PREFIX.sub("", fn.__name__).strip("_")
     return name[:-3] if name.endswith("_fn") else name
 
 

@@ -91,6 +91,36 @@ class TestPrimitives:
         assert content is None
         assert "Unknown tool ghost" in tool_msgs[0]["content"]
 
+    def test_run_tool_step_null_arguments_for_no_arg_tool(self):
+        # providers sometimes send "null" (or a bare value) as arguments
+        calls = []
+
+        def no_arg_tool():
+            calls.append(True)
+            return "summary"
+
+        for arguments in ("null", "", "[]"):
+            message = {
+                "tool_calls": [
+                    {"id": "c1", "function": {"name": "no_arg_tool", "arguments": arguments}},
+                ],
+            }
+            content, tool_msgs = run_tool_step(message, {"no_arg_tool": no_arg_tool})
+            assert content is None
+            assert tool_msgs[0]["content"] == "summary"
+        assert calls == [True, True, True]
+
+    def test_run_tool_step_tool_exception_reported_back(self):
+        def boom(**_kwargs):
+            raise ValueError("bad arg")
+
+        message = {
+            "tool_calls": [{"id": "c1", "function": {"name": "boom", "arguments": '{"x": 1}'}}],
+        }
+        content, tool_msgs = run_tool_step(message, {"boom": boom})
+        assert content is None
+        assert "Tool boom failed: bad arg" in tool_msgs[0]["content"]
+
 
 # --- sync client -----------------------------------------------------------
 

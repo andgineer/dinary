@@ -1,0 +1,46 @@
+# Active lifestyle — couple, no young kids, active. Detailed where they care
+# (sport, gear, self-growth), sparse elsewhere. Mirrors the current live catalog.
+id: active
+names: { en: Active lifestyle, ru: Активный образ жизни }
+
+groups:
+  food:       { en: Food,                   ru: Еда }
+  housing:    { en: Housing,                ru: Жильё }
+  utilities:  { en: Utilities and services, ru: ЖКХ и сервисы }
+  health:     { en: Health,                 ru: Медицина }
+  beauty:     { en: Beauty and wellness,    ru: Красота и ЗОЖ }
+  sport:      { en: Sport,                  ru: Спорт }
+  hobbies:    { en: Hobbies and leisure,    ru: Хобби и отдых }
+  transport:  { en: Transport,              ru: Транспорт }
+  growth:     { en: Knowledge,              ru: Знания и продуктивность }
+  personal:   { en: Family and personal,    ru: Семья и личное }
+  pets:       { en: Pets,                   ru: Питомцы }
+  government: { en: Government,              ru: Государство }
+
+visible:
+  food:       [groceries, fruit, delicacies, alcohol, cafe]
+  housing:    [rent, repairs, furniture, appliances, household_goods]
+  utilities:  [utilities, mobile, internet, subscriptions]
+  health:     [doctor, pharmacy]
+  beauty:     [hygiene, wellness]
+  sport:      [sport, cycling, skiing]
+  hobbies:    [entertainment, gadgets, electronics, tools]
+  transport:  [transit, car, fuel]
+  growth:     [education, productivity]
+  personal:   [clothing, gifts, pocket_money]
+  pets:       [pet_food, vet]
+  government: [tax, fines]
+
+hidden:
+  food:       [sweets, baby_food, business_lunch, delivery]
+  housing:    [mortgage, garden]
+  health:     [dental, health_insurance]
+  beauty:     [cosmetics, haircut]
+  sport:      [gym]
+  hobbies:    [hobbies, travel, flights, hotels]
+  transport:  [taxi, car_service]
+  growth:     [professional_training, software, equipment, coworking, advertising,
+               contractors, accounting]
+  personal:   [charity, daycare, kids_activities, toys, kids_clothing, diapers,
+               pediatrician]
+  pets:       [pet_supplies]

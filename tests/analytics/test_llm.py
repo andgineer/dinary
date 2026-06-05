@@ -65,6 +65,12 @@ def test_tool_name_cleans_python_names():
     assert tool_name(_query_ledger_fn) == "query_ledger"
     assert tool_name(_propose_view) == "propose_view"
 
+    # Marimo prefixes cell-defined functions with `_cell_<id>_`; it must be stripped.
+    _query_ledger_fn.__name__ = "_cell_nHfw_query_ledger_fn"
+    _propose_view.__name__ = "_cell_nHfw_propose_view"
+    assert tool_name(_query_ledger_fn) == "query_ledger"
+    assert tool_name(_propose_view) == "propose_view"
+
 
 @allure.epic("Analytics")
 @allure.feature("Chat")
@@ -137,6 +143,63 @@ def test_run_chat_turn_all_failed(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_module, "complete_with_tools", _raise)
     reply = run_chat_turn("system", [], [], "now")
     assert "unavailable" in reply.lower()
+
+
+@allure.epic("Analytics")
+@allure.feature("Chat")
+def test_run_chat_turn_executes_no_arg_tool_with_null_arguments(tmp_path, monkeypatch):
+    """End-to-end: model calls a no-arg tool with arguments 'null', then answers.
+
+    Regression for ``argument after ** must be a mapping, not NoneType``.
+    """
+    from unittest.mock import MagicMock, patch
+
+    _write_providers(tmp_path, monkeypatch)
+    ran: list = []
+
+    def _query_summary_fn() -> str:
+        """Return a spending summary."""
+        ran.append(True)
+        return "{}"
+
+    def _tool_resp():
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "c1",
+                                "function": {"name": "query_summary", "arguments": "null"},
+                            },
+                        ],
+                    },
+                },
+            ],
+        }
+        return resp
+
+    def _final_resp():
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"choices": [{"message": {"content": "here is your summary"}}]}
+        return resp
+
+    client = MagicMock()
+    client.post = MagicMock(side_effect=[_tool_resp(), _final_resp()])
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=client)
+    ctx.__exit__ = MagicMock(return_value=False)
+
+    with patch("dinary.adapters.llm_chat.httpx.Client", return_value=ctx):
+        reply = run_chat_turn("system", [_query_summary_fn], [], "summarise my spending")
+
+    assert ran == [True]
+    assert reply == "here is your summary"
 
 
 @allure.epic("Analytics")

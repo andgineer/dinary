@@ -1,0 +1,36 @@
+# Family with young kids — the child is the main axis. Fast entry, coarse
+# household, detailed kids sphere.
+id: family
+names: { en: Family with kids, ru: Семья с детьми }
+
+groups:
+  food:      { en: Food,      ru: Еда }
+  kids:      { en: Kids,      ru: Дети }
+  housing:   { en: Housing,   ru: Жильё }
+  health:    { en: Health,    ru: Здоровье }
+  transport: { en: Transport, ru: Транспорт }
+  pets:      { en: Pets,      ru: Питомцы }
+  personal:  { en: Personal,  ru: Личное }
+  other:     { en: Other,     ru: Прочее }
+
+visible:
+  food:      [groceries, baby_food, sweets, cafe, delivery]
+  kids:      [daycare, kids_activities, toys, kids_clothing, diapers, pediatrician]
+  housing:   [rent, mortgage, utilities, internet, mobile, household_goods,
+              furniture, appliances, repairs]
+  health:    [doctor, pharmacy, dental, health_insurance]
+  transport: [car, fuel, transit, taxi]
+  pets:      [pet_food, vet]
+  personal:  [clothing, gifts, haircut, hygiene, entertainment, subscriptions]
+  other:     [education, tax, fines]
+
+hidden:
+  food:      [fruit, delicacies, alcohol, business_lunch]
+  housing:   [garden]
+  health:    [wellness]
+  transport: [car_service]
+  pets:      [pet_supplies]
+  personal:  [cosmetics, sport, gym, cycling, skiing, hobbies, gadgets, electronics,
+              tools, pocket_money, charity, travel, flights, hotels]
+  other:     [productivity, professional_training, software, equipment, coworking,
+              advertising, contractors, accounting]

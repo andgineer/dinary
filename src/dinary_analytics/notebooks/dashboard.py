@@ -465,36 +465,29 @@ def _(mo):
 @app.cell
 def _(mo):
     chat_history, set_chat_history = mo.state([])
+    pending, set_pending = mo.state(None)  # text awaiting a reply, or None
+    suggestions, set_suggestions = mo.state([])  # clickable follow-up questions
     input_ver, bump_input = mo.state(0)
-    return bump_input, chat_history, input_ver, set_chat_history
+    return (
+        bump_input,
+        chat_history,
+        input_ver,
+        pending,
+        set_chat_history,
+        set_pending,
+        set_suggestions,
+        suggestions,
+    )
 
 
 @app.cell
-def _(
-    ai_system_prompt,
-    ai_tools,
-    bump_input,
-    chat_history,
-    input_ver,
-    run_chat_turn,
-    set_chat_history,
-):
-    def _run_turn(base: list[dict], text: str) -> None:
-        _reply = run_chat_turn(ai_system_prompt, ai_tools, base, text)
-        set_chat_history(
-            [
-                *base,
-                {"role": "user", "content": text},
-                {"role": "model", "content": _reply},
-            ],
-        )
-        bump_input(input_ver() + 1)
-
+def _(chat_history, set_chat_history, set_pending, set_suggestions):
     def send_message(text: str) -> None:
-        """Append the user's message, run one LLM turn, and append the reply."""
+        """Queue a user message for the analyst (the reply runs reactively)."""
         _text = (text or "").strip()
         if _text:
-            _run_turn(chat_history(), _text)
+            set_suggestions([])  # old follow-ups no longer apply
+            set_pending({"text": _text, "base": chat_history()})
 
     def retry_last() -> None:
         """Re-run the most recent user message, dropping the failed turn first."""
@@ -507,11 +500,15 @@ def _(
             _trimmed.pop()
         if _trimmed and _trimmed[-1]["role"] == "user":
             _trimmed.pop()
-        _run_turn(_trimmed, _last_user)
+        set_suggestions([])
+        set_chat_history(_trimmed)
+        set_pending({"text": _last_user, "base": _trimmed})
 
     def clear_chat() -> None:
         """Reset the conversation."""
         set_chat_history([])
+        set_pending(None)
+        set_suggestions([])
 
     return clear_chat, retry_last, send_message
 
@@ -529,43 +526,16 @@ def _(mo, send_message):
         justify="start",
         wrap=True,
     )
-    mo.vstack([mo.md("### Talk to the analyst"), _chips])
-
-
-@app.cell
-def _(chat_history, clear_chat, mo, retry_last):
-    _msgs = chat_history()
-    if not _msgs:
-        _log = mo.md("*Click a suggestion or type below to start.*")
-    else:
-        _bubbles = [
-            mo.callout(mo.md(_m["content"]), kind="neutral")
-            if _m["role"] == "user"
-            else mo.md(_m["content"])
-            for _m in _msgs
-        ]
-        _actions = mo.hstack(
-            [
-                mo.ui.button(label="🔁 Retry", on_click=lambda _v: retry_last()),
-                mo.ui.button(label="🗑 Clear", on_click=lambda _v: clear_chat()),
-            ],
-            justify="end",
-        )
-        _log = mo.vstack([*_bubbles, _actions])
-    _log
-
-
-@app.cell
-def _(ai_status, input_ver, mo, send_message):
-    _ = input_ver()  # recreate the input after each send to clear it
-    msg_input = mo.ui.text_area(placeholder="Ask the analyst…", full_width=True, rows=2)
-    _send_btn = mo.ui.button(
-        label="Send",
-        kind="success",
-        on_click=lambda _v: send_message(msg_input.value),
+    mo.vstack(
+        [
+            mo.md("### Talk to the analyst"),
+            mo.md(
+                "Click a suggestion or type a question. The analyst proposes a chart you "
+                "can pin — its explanation and next steps appear in the reply.",
+            ),
+            _chips,
+        ],
     )
-    mo.vstack([ai_status, mo.hstack([msg_input, _send_btn], widths=[8, 1], align="end")])
-    return (msg_input,)
 
 
 @app.cell
@@ -579,16 +549,101 @@ def _(draft_view, empty_view_frame, load_view_frame, period_date_from, period_se
 
 
 @app.cell
-def _(draft_view, make_basket_chart, mo, view_data_df):
-    _v = draft_view()
-    if _v is None or view_data_df.is_empty():
-        _chart_out = mo.md(
-            "*Talk to the analyst above and ask it to propose a view — the draft chart "
-            "appears here, then pin it below.*",
+def _(
+    chat_history,
+    clear_chat,
+    draft_view,
+    make_basket_chart,
+    mo,
+    pending,
+    retry_last,
+    view_data_df,
+):
+    _msgs = chat_history()
+    _job = pending()
+    _blocks: list = []
+    for _m in _msgs:
+        if _m["role"] == "user":
+            _blocks.append(mo.callout(mo.md(f"**You:** {_m['content']}"), kind="neutral"))
+        else:
+            _blocks.append(mo.md(f"**Analyst:** {_m['content']}"))
+
+    # Inline draft chart, right under the latest reply, with a caption tying it to the chat.
+    if _job is None and draft_view() is not None and not view_data_df.is_empty():
+        _blocks.append(mo.md("**Proposed view** — pin it below to keep it:"))
+        _blocks.append(make_basket_chart(view_data_df, draft_view().get("name", "Draft view")))
+
+    if _job is not None:
+        _blocks.append(mo.callout(mo.md(f"**You:** {_job['text']}"), kind="neutral"))
+        _blocks.append(mo.callout(mo.md("⏳ *Analyzing your spending…*"), kind="info"))
+
+    if _msgs:
+        _blocks.append(
+            mo.hstack(
+                [
+                    mo.ui.button(label="🔁 Retry", on_click=lambda _v: retry_last()),
+                    mo.ui.button(label="🗑 Clear", on_click=lambda _v: clear_chat()),
+                ],
+                justify="end",
+            ),
         )
+
+    if not _blocks:
+        _blocks = [mo.md("*The conversation will appear here.*")]
+    mo.vstack(_blocks)
+
+
+@app.cell
+def _(mo, pending, send_message, suggestions):
+    _next = suggestions() if pending() is None else []
+    if _next:
+        _chips = mo.hstack(
+            [mo.ui.button(label=_q, on_click=lambda _v, _t=_q: send_message(_t)) for _q in _next],
+            justify="start",
+            wrap=True,
+        )
+        _out = mo.vstack([mo.md("**Next steps to explore:**"), _chips])
     else:
-        _chart_out = make_basket_chart(view_data_df, _v.get("name", "Draft view"))
-    _chart_out
+        _out = mo.md("")
+    _out
+
+
+@app.cell
+def _(
+    ai_system_prompt,
+    ai_tools,
+    bump_input,
+    input_ver,
+    pending,
+    run_chat_turn,
+    set_chat_history,
+    set_pending,
+):
+    _job = pending()
+    if _job is not None:
+        _reply = run_chat_turn(ai_system_prompt, ai_tools, _job["base"], _job["text"])
+        set_chat_history(
+            [
+                *_job["base"],
+                {"role": "user", "content": _job["text"]},
+                {"role": "model", "content": _reply},
+            ],
+        )
+        set_pending(None)
+        bump_input(input_ver() + 1)
+
+
+@app.cell
+def _(ai_status, input_ver, mo, send_message):
+    _ = input_ver()  # recreate the input after each send to clear it
+    msg_input = mo.ui.text_area(placeholder="Ask the analyst…", full_width=True, rows=2)
+    _send_btn = mo.ui.button(
+        label="Send",
+        kind="success",
+        on_click=lambda _v: send_message(msg_input.value),
+    )
+    mo.vstack([ai_status, mo.hstack([msg_input, _send_btn], widths=[8, 1], align="end")])
+    return (msg_input,)
 
 
 @app.cell
@@ -702,8 +757,9 @@ def _(LEDGER_SCHEMA, category_order, mo, providers_available):
         "items like rent, use events for trips/projects and tags for themes, merge "
         "negligible items into the default basket. Justify each basket with concrete numbers "
         "(amount and share of total). Use set_chart_type/propose_view again to refine when "
-        "the user reacts. End each turn with 3–5 short follow-up questions the user can "
-        "explore next. The draft chart renders live below the chat. To pin the current "
+        "the user reacts. End every turn by calling suggest_next with 3–5 short follow-up "
+        "questions — do NOT list them in your text, they render as clickable buttons. "
+        "The draft chart renders live below the chat. To pin the current "
         "draft permanently call save_current_view(name) — or the user can press the Pin "
         "button. Never ask the user to name categories, events or tags; do it from data.\n\n"
         "Schema:\n" + LEDGER_SCHEMA
@@ -740,8 +796,16 @@ def _(json, load_query, open_ledger):
 
 
 @app.cell
-def _(bump_view_list, delete_view, save_view, set_draft_view, view_list_ver):
+def _(bump_view_list, delete_view, save_view, set_draft_view, set_suggestions, view_list_ver):
     _ts: dict = {"draft": None}
+
+    def _suggest_next(questions: list[str]) -> str:
+        """Offer up to 5 follow-up questions as clickable buttons.
+
+        Call this to propose next steps instead of listing them in your text reply.
+        """
+        set_suggestions([str(_q) for _q in questions][:5])
+        return f"Offered {len(questions)} follow-up questions."
 
     def _propose_view(
         baskets: list[dict],
@@ -781,6 +845,7 @@ def _(bump_view_list, delete_view, save_view, set_draft_view, view_list_ver):
         _set_chart_type,
         _save_current_view,
         _delete_view_fn,
+        _suggest_next,
     )
     return (ai_view_tools_tuple,)
 

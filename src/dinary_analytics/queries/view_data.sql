@@ -25,7 +25,7 @@ basket_index AS (
             AS INTEGER[]
         ) AS tag_ids
     FROM basket_cfg,
-         generate_series(0::BIGINT, (n_baskets - 1)::BIGINT) AS gs(idx)
+         generate_series(0::BIGINT, n_baskets::BIGINT - 1) AS gs(idx)
 ),
 expense_basket AS (
     SELECT

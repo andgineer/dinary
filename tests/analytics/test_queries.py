@@ -285,3 +285,18 @@ def test_view_data_aggregates_by_month(full_ledger_db):
     year_months = {r[1] for r in rows}
     assert "2026-01" in year_months
     assert "2026-02" in year_months
+
+
+@allure.epic("Analytics")
+@allure.feature("Queries")
+def test_view_data_empty_baskets_no_underflow(full_ledger_db):
+    """An empty baskets array must not trigger a UINT64 0-1 underflow in generate_series."""
+    sql = load_query("view_data")
+    basket_cfg = json.dumps({"baskets": [], "default_basket": "Misc"})
+    con = open_ledger(replica_path=full_ledger_db)
+    try:
+        rows = con.execute(sql, [basket_cfg, "2026-01-01"]).fetchall()
+    finally:
+        con.close()
+    assert rows  # every expense routed to the default basket
+    assert {r[0] for r in rows} == {"Misc"}

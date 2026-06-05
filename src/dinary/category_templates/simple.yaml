@@ -1,0 +1,29 @@
+# Simple — lean starter for "just let me start". Coarse groups, few visible
+# categories. Health/transport/etc. fold into a single Life group.
+id: simple
+names: { en: Simple, ru: Просто }
+
+groups:
+  food:    { en: Food,    ru: Еда }
+  housing: { en: Housing, ru: Жильё }
+  life:    { en: Life,    ru: Жизнь }
+  growth:  { en: Growth,  ru: Развитие }
+  leisure: { en: Leisure, ru: Досуг }
+
+visible:
+  food:    [groceries, cafe, delivery, alcohol]
+  housing: [rent, household_goods, utilities, mobile, internet]
+  life:    [pharmacy, doctor, hygiene, transit, taxi, clothing, subscriptions]
+  growth:  [education]
+  leisure: [entertainment, hobbies, sport, travel]
+
+hidden:
+  food:    [fruit, delicacies, sweets, baby_food, business_lunch]
+  housing: [mortgage, repairs, furniture, appliances, garden]
+  life:    [dental, health_insurance, wellness, cosmetics, haircut, car, fuel,
+            car_service, gifts, pocket_money, charity, pet_food, vet, pet_supplies,
+            daycare, kids_activities, toys, kids_clothing, diapers, pediatrician,
+            software, equipment, coworking, advertising, contractors, accounting,
+            tax, fines]
+  growth:  [productivity, professional_training]
+  leisure: [gym, cycling, skiing, gadgets, electronics, tools, flights, hotels]

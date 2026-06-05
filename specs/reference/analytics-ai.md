@@ -190,12 +190,16 @@ suggestion sends it straight into the same conversation — the user never copie
 retypes a prompt. A free-text box below the log handles everything else. There is no
 separate one-shot area.
 
-**Creating a view.** The LLM calls `query_spending_summary()` to examine actual
-spending patterns before saying anything. It then presents an initial basket proposal,
-which renders as a live draft chart below the chat, and justifies each basket with
-concrete data: "Релокация — 45k за 3 мес (40% квартала), выделил в отдельный блок."
-Each turn ends with a few follow-up questions the user can explore. The user never has
-to name categories, events, or tags.
+**Feedback.** Clicking a suggestion or pressing Send immediately echoes the user's
+message and shows an "analyzing" indicator while the reply is generated.
+
+**Creating a view.** The LLM calls `query_summary()` to examine actual
+spending patterns before saying anything. It then presents an initial basket proposal;
+the draft chart renders inline directly under that reply, captioned as a draft to pin,
+and the reply justifies each basket with concrete data: "Релокация — 45k за 3 мес
+(40% квартала), выделил в отдельный блок." Each reply offers 3–5 follow-up questions
+as clickable buttons (the LLM emits them via a tool, not as prose); clicking one sends
+it straight into the conversation. The user never has to name categories, events, or tags.
 
 **Refining a view.** The user reacts to what they see in the draft chart ("поездки
 выглядят странно"). The LLM consults the data, proposes specific alternatives, and on

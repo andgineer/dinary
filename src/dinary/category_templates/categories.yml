@@ -1,0 +1,102 @@
+# Category vocabulary — the full list of categories, nothing else.
+# code -> display names per language. No groups here (grouping is per-template).
+# Templates reference these codes; names may be overridden per template via `renames`.
+
+# --- Food & eating ---
+groceries:      { en: Groceries,      ru: продукты }
+fruit:          { en: Fruit,          ru: фрукты }
+delicacies:     { en: Delicacies,     ru: деликатесы }
+sweets:         { en: Sweets,         ru: сладости }
+alcohol:        { en: Alcohol,        ru: алкоголь }
+baby_food:      { en: Baby food,      ru: детское питание }
+cafe:           { en: Cafe,           ru: кафе }
+business_lunch: { en: Business lunch, ru: деловой обед }
+delivery:       { en: Food delivery,  ru: доставка еды }
+
+# --- Housing ---
+rent:           { en: Rent,           ru: аренда }
+mortgage:       { en: Mortgage,       ru: ипотека }
+household_goods: { en: Household goods, ru: хозтовары }
+repairs:        { en: Repairs,        ru: ремонт }
+furniture:      { en: Furniture,      ru: мебель }
+appliances:     { en: Appliances,     ru: бытовая техника }
+garden:         { en: Garden,         ru: сад и огород }
+
+# --- Utilities & communications ---
+utilities:      { en: Utilities,      ru: коммунальные }
+mobile:         { en: Mobile,         ru: мобильная связь }
+internet:       { en: Internet,       ru: интернет }
+subscriptions:  { en: Subscriptions,  ru: подписки }
+
+# --- Health ---
+doctor:         { en: Doctor,         ru: врач }
+pharmacy:       { en: Pharmacy,       ru: лекарства }
+dental:         { en: Dental,         ru: стоматология }
+health_insurance: { en: Health insurance, ru: медстраховка }
+wellness:       { en: Wellness,       ru: ЗОЖ }
+
+# --- Beauty & personal care ---
+hygiene:        { en: Hygiene,        ru: гигиена }
+cosmetics:      { en: Cosmetics,      ru: косметика }
+haircut:        { en: Haircut,        ru: парикмахерская }
+
+# --- Sport ---
+sport:          { en: Sport,          ru: спорт }
+gym:            { en: Gym,            ru: фитнес }
+cycling:        { en: Cycling,        ru: велосипед }
+skiing:         { en: Skiing,         ru: лыжи }
+
+# --- Hobbies & leisure ---
+entertainment:  { en: Entertainment,  ru: развлечения }
+hobbies:        { en: Hobbies,        ru: хобби }
+gadgets:        { en: Gadgets,        ru: гаджеты }
+electronics:    { en: Electronics,    ru: электроника }
+tools:          { en: Tools,          ru: инструменты }
+
+# --- Transport ---
+transit:        { en: Transit,        ru: общественный транспорт }
+taxi:           { en: Taxi,           ru: такси }
+car:            { en: Car,            ru: машина }
+fuel:           { en: Fuel,           ru: топливо }
+car_service:    { en: Car service,    ru: обслуживание авто }
+
+# --- Kids ---
+daycare:        { en: Daycare,        ru: садик и няня }
+kids_activities: { en: Kids activities, ru: кружки и секции }
+toys:           { en: Toys,           ru: игрушки }
+kids_clothing:  { en: Kids clothing,  ru: детская одежда }
+diapers:        { en: Diapers,        ru: подгузники }
+pediatrician:   { en: Pediatrician,   ru: педиатр }
+
+# --- Education & growth ---
+education:      { en: Education,      ru: обучение }
+productivity:   { en: Productivity,   ru: продуктивность }
+professional_training: { en: Professional training, ru: профессиональное обучение }
+
+# --- Work ---
+software:       { en: Software,       ru: софт и подписки }
+equipment:      { en: Equipment,      ru: оборудование }
+coworking:      { en: Coworking,      ru: коворкинг }
+advertising:    { en: Advertising,    ru: реклама }
+contractors:    { en: Contractors,    ru: подрядчики }
+accounting:     { en: Accounting,     ru: бухгалтерия }
+
+# --- Personal & family ---
+clothing:       { en: Clothing,       ru: одежда }
+gifts:          { en: Gifts,          ru: подарки }
+pocket_money:   { en: Pocket money,   ru: карманные }
+charity:        { en: Charity,        ru: благотворительность }
+
+# --- Pets ---
+pet_food:       { en: Pet food,       ru: корм для питомца }
+vet:            { en: Vet,            ru: ветеринар }
+pet_supplies:   { en: Pet supplies,   ru: зоотовары }
+
+# --- Travel ---
+travel:         { en: Travel,         ru: путешествия }
+flights:        { en: Flights,        ru: авиабилеты }
+hotels:         { en: Hotels,         ru: отели }
+
+# --- Government ---
+tax:            { en: Tax,            ru: налог }
+fines:          { en: Fines,          ru: штрафы }

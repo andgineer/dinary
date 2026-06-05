@@ -446,6 +446,56 @@ def test_period_selector_cell_runs():
 
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
+def test_followups_cell_renders_clickable_buttons_and_hides_while_pending():
+    """Follow-up suggestions render as clickable buttons; hidden while a reply is pending."""
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    cell = next(c for c in cells if c.refs == {"mo", "pending", "send_message", "suggestions"})
+
+    shown, _ = cell.run(
+        mo=mo,
+        pending=lambda: None,
+        send_message=lambda _t: None,
+        suggestions=lambda: ["Break down rent", "Compare to last year"],
+    )
+    assert shown is not None
+
+    # while a reply is pending, stale follow-ups are not shown
+    hidden, _ = cell.run(
+        mo=mo,
+        pending=lambda: {"text": "x"},
+        send_message=lambda _t: None,
+        suggestions=lambda: ["Break down rent"],
+    )
+    assert hidden is not None
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_suggest_next_tool_sets_suggestions():
+    """The suggest_next LLM tool stores up to 5 follow-up questions in state."""
+    cells = list(_dash_module.app._cell_manager.cells())
+    tools_cell = next(c for c in cells if "ai_view_tools_tuple" in c.defs)
+
+    stored: dict = {}
+    _, defs = tools_cell.run(
+        bump_view_list=lambda _v: None,
+        delete_view=lambda _i: None,
+        save_view=lambda _cfg: "id",
+        set_draft_view=lambda _c: None,
+        set_suggestions=lambda s: stored.__setitem__("s", s),
+        view_list_ver=lambda: 0,
+    )
+
+    tools = defs["ai_view_tools_tuple"]
+    suggest = next(fn for fn in tools if "suggest_next" in fn.__name__)
+    suggest(["a", "b", "c", "d", "e", "f"])
+    assert stored["s"] == ["a", "b", "c", "d", "e"]  # capped at 5
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
 def test_chips_cell_builds_clickable_starters():
     """The starter-suggestions cell builds clickable buttons (not plain prose)."""
     import marimo as mo
@@ -478,136 +528,169 @@ def test_chat_input_cell_builds():
     assert defs["msg_input"] is not None
 
 
-@allure.epic("Analytics")
-@allure.feature("Dashboard")
-def test_chat_log_cell_empty_and_populated():
-    """The chat log cell renders a hint when empty and bubbles when populated."""
+def _log_cell():
+    cells = list(_dash_module.app._cell_manager.cells())
+    return next(c for c in cells if "pending" in c.refs and "retry_last" in c.refs)
+
+
+def _actions_cell():
+    cells = list(_dash_module.app._cell_manager.cells())
+    return next(c for c in cells if "send_message" in c.defs)
+
+
+def _runner_cell():
+    cells = list(_dash_module.app._cell_manager.cells())
+    return next(c for c in cells if "run_chat_turn" in c.refs and not c.defs)
+
+
+def _run_log(*, chat_history, pending, view_data_df):
     import marimo as mo
 
-    cells = list(_dash_module.app._cell_manager.cells())
-    log_cell = next(c for c in cells if "retry_last" in c.refs and "chat_history" in c.refs)
+    from dinary_analytics.charts import make_basket_chart
 
-    empty_out, _ = log_cell.run(
-        chat_history=lambda: [],
+    output, _ = _log_cell().run(
+        chat_history=lambda: chat_history,
         clear_chat=lambda: None,
+        draft_view=lambda: None,
+        make_basket_chart=make_basket_chart,
         mo=mo,
+        pending=lambda: pending,
         retry_last=lambda: None,
+        view_data_df=view_data_df,
     )
-    assert empty_out is not None
+    return output
 
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_chat_log_cell_empty_pending_and_populated():
+    """Log cell: placeholder when empty, thinking bubble when pending, bubbles when populated."""
+    from dinary_analytics.views import empty_view_frame
+
+    empty_df = empty_view_frame()
+    assert _run_log(chat_history=[], pending=None, view_data_df=empty_df) is not None
+    assert _run_log(chat_history=[], pending={"text": "hi"}, view_data_df=empty_df) is not None
     msgs = [{"role": "user", "content": "hi"}, {"role": "model", "content": "hello"}]
-    full_out, _ = log_cell.run(
-        chat_history=lambda: msgs,
-        clear_chat=lambda: None,
-        mo=mo,
-        retry_last=lambda: None,
-    )
-    assert full_out is not None
+    assert _run_log(chat_history=msgs, pending=None, view_data_df=empty_df) is not None
 
 
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
-def test_send_message_appends_user_and_reply():
-    """send_message runs one LLM turn and appends user + model messages to history."""
-    cells = list(_dash_module.app._cell_manager.cells())
-    send_cell = next(c for c in cells if "send_message" in c.defs)
+def test_send_message_queues_pending_job():
+    """send_message stores a pending job (text + base history); blank input is a no-op."""
+    history = [{"role": "user", "content": "old"}, {"role": "model", "content": "ans"}]
+    box: dict = {}
 
-    history: list[dict] = []
-    captured: dict = {}
-
-    def _fake_turn(system_prompt, tools, hist, user_text):
-        captured["user_text"] = user_text
-        return "model reply"
-
-    _, defs = send_cell.run(
-        ai_system_prompt="system",
-        ai_tools=[],
-        bump_input=lambda _v: None,
+    cleared: list = []
+    _, defs = _actions_cell().run(
         chat_history=lambda: history,
-        input_ver=lambda: 0,
-        run_chat_turn=_fake_turn,
-        set_chat_history=lambda new: history.extend(new),
+        set_chat_history=lambda _new: None,
+        set_pending=lambda job: box.__setitem__("job", job),
+        set_suggestions=lambda s: cleared.append(s),
     )
 
-    send_message = defs["send_message"]
-    send_message("  what did I spend on?  ")
+    defs["send_message"]("  what did I spend on?  ")
+    assert box["job"] == {"text": "what did I spend on?", "base": history}
+    assert cleared == [[]]  # stale follow-ups cleared on a new turn
 
-    assert captured["user_text"] == "what did I spend on?"
-    assert history == [
-        {"role": "user", "content": "what did I spend on?"},
-        {"role": "model", "content": "model reply"},
-    ]
-
-    # blank input is a no-op
-    history.clear()
-    send_message("   ")
-    assert history == []
+    box.clear()
+    defs["send_message"]("   ")
+    assert box == {}
 
 
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
-def test_retry_last_drops_failed_turn_and_resends():
-    """retry_last removes the previous user+model pair and re-runs the user message."""
-    cells = list(_dash_module.app._cell_manager.cells())
-    send_cell = next(c for c in cells if "retry_last" in c.defs)
-
-    # a failed turn already sits in history (model reply was an error)
-    history: list[dict] = [
+def test_retry_last_trims_failed_turn_and_requeues():
+    """retry_last drops the failed user+model pair and re-queues the user message."""
+    history = [
         {"role": "user", "content": "Merge all my trips into one basket"},
         {"role": "model", "content": "**Rate limit reached.** Wait a moment and try again."},
     ]
-    sent: dict = {}
+    set_calls: dict = {}
 
-    def _fake_turn(system_prompt, tools, base, user_text):
-        sent["base"] = list(base)
-        sent["user_text"] = user_text
-        return "ok now"
-
-    def _set(new):
-        history.clear()
-        history.extend(new)
-
-    _, defs = send_cell.run(
-        ai_system_prompt="system",
-        ai_tools=[],
-        bump_input=lambda _v: None,
+    _, defs = _actions_cell().run(
         chat_history=lambda: history,
-        input_ver=lambda: 0,
-        run_chat_turn=_fake_turn,
-        set_chat_history=_set,
+        set_chat_history=lambda new: set_calls.__setitem__("history", new),
+        set_pending=lambda job: set_calls.__setitem__("pending", job),
+        set_suggestions=lambda _s: None,
     )
 
     defs["retry_last"]()
 
-    assert sent["base"] == []  # failed pair dropped before re-running
-    assert sent["user_text"] == "Merge all my trips into one basket"
-    assert history == [
-        {"role": "user", "content": "Merge all my trips into one basket"},
-        {"role": "model", "content": "ok now"},
-    ]
+    assert set_calls["history"] == []  # failed pair dropped
+    assert set_calls["pending"] == {"text": "Merge all my trips into one basket", "base": []}
 
 
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
-def test_clear_chat_empties_history():
-    """clear_chat resets the conversation to empty."""
-    cells = list(_dash_module.app._cell_manager.cells())
-    send_cell = next(c for c in cells if "clear_chat" in c.defs)
+def test_clear_chat_resets_history_and_pending():
+    """clear_chat empties history and clears any pending job."""
+    set_calls: dict = {}
 
-    history: list[dict] = [{"role": "user", "content": "x"}]
-
-    _, defs = send_cell.run(
-        ai_system_prompt="system",
-        ai_tools=[],
-        bump_input=lambda _v: None,
-        chat_history=lambda: history,
-        input_ver=lambda: 0,
-        run_chat_turn=lambda *_a: "r",
-        set_chat_history=lambda new: history.__setitem__(slice(None), new),
+    _, defs = _actions_cell().run(
+        chat_history=lambda: [{"role": "user", "content": "x"}],
+        set_chat_history=lambda new: set_calls.__setitem__("history", new),
+        set_pending=lambda job: set_calls.__setitem__("pending", job),
+        set_suggestions=lambda s: set_calls.__setitem__("suggestions", s),
     )
 
     defs["clear_chat"]()
-    assert history == []
+    assert set_calls["history"] == []
+    assert set_calls["pending"] is None
+    assert set_calls["suggestions"] == []
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_llm_runner_cell_runs_pending_turn():
+    """The runner cell consumes a pending job, runs the turn, appends it and clears pending."""
+    base = [{"role": "user", "content": "earlier"}, {"role": "model", "content": "ok"}]
+    captured: dict = {}
+    set_calls: dict = {}
+
+    def _fake_turn(system_prompt, tools, hist, user_text):
+        captured["hist"] = hist
+        captured["user_text"] = user_text
+        return "the reply"
+
+    _runner_cell().run(
+        ai_system_prompt="system",
+        ai_tools=[],
+        bump_input=lambda _v: None,
+        input_ver=lambda: 0,
+        pending=lambda: {"text": "now", "base": base},
+        run_chat_turn=_fake_turn,
+        set_chat_history=lambda new: set_calls.__setitem__("history", new),
+        set_pending=lambda job: set_calls.__setitem__("pending", job),
+    )
+
+    assert captured == {"hist": base, "user_text": "now"}
+    assert set_calls["history"] == [
+        *base,
+        {"role": "user", "content": "now"},
+        {"role": "model", "content": "the reply"},
+    ]
+    assert set_calls["pending"] is None
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_llm_runner_cell_idle_when_no_pending():
+    """The runner cell does nothing when there is no pending job."""
+    set_calls: dict = {}
+
+    _runner_cell().run(
+        ai_system_prompt="system",
+        ai_tools=[],
+        bump_input=lambda _v: None,
+        input_ver=lambda: 0,
+        pending=lambda: None,
+        run_chat_turn=lambda *_a: pytest.fail("run_chat_turn must not be called when idle"),
+        set_chat_history=lambda new: set_calls.__setitem__("history", new),
+        set_pending=lambda job: set_calls.__setitem__("pending", job),
+    )
+
+    assert set_calls == {}
 
 
 @allure.epic("Analytics")
@@ -662,47 +745,23 @@ def test_view_data_cell_with_draft(ledger_db):
 
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
-def test_basket_chart_cell_placeholder_when_no_draft(basket_df):
-    """Basket chart render cell outputs placeholder markdown when draft is None."""
+def test_chat_log_renders_inline_draft_chart(basket_df):
+    """The log cell renders the proposed-view chart inline when a draft exists."""
     import marimo as mo
 
-    cells = list(_dash_module.app._cell_manager.cells())
-    render_cell = next(
-        c for c in cells if "view_data_df" in c.refs and "make_basket_chart" in c.refs
-    )
-
-    output, _ = render_cell.run(
-        draft_view=lambda: None,
+    draft = {"name": "Test View", "baskets": [], "default_basket": "Other"}
+    output, _ = _log_cell().run(
+        chat_history=lambda: [{"role": "model", "content": "here is a view"}],
+        clear_chat=lambda: None,
+        draft_view=lambda: draft,
         make_basket_chart=make_basket_chart,
         mo=mo,
+        pending=lambda: None,
+        retry_last=lambda: None,
         view_data_df=basket_df,
     )
 
     assert output is not None
-
-
-@allure.epic("Analytics")
-@allure.feature("Dashboard")
-def test_basket_chart_cell_renders_chart_with_data(basket_df):
-    """Basket chart render cell outputs an Altair chart when draft and data are present."""
-    import altair as alt
-    import marimo as mo
-
-    cells = list(_dash_module.app._cell_manager.cells())
-    render_cell = next(
-        c for c in cells if "view_data_df" in c.refs and "make_basket_chart" in c.refs
-    )
-
-    draft = {"name": "Test View", "baskets": [], "default_basket": "Other"}
-
-    output, _ = render_cell.run(
-        draft_view=lambda: draft,
-        make_basket_chart=make_basket_chart,
-        mo=mo,
-        view_data_df=basket_df,
-    )
-
-    assert isinstance(output, alt.VConcatChart)
 
 
 @allure.epic("Analytics")
