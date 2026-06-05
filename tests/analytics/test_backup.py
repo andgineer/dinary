@@ -4,7 +4,7 @@ import allure
 import pytest
 
 import dinary_analytics.backup as backup_module
-import dinary_analytics.connection as conn_module
+import dinary_analytics.paths as paths_module
 import dinary_analytics.settings as settings_module
 from dinary_analytics.backup import backup_to_file, restore_from_file
 from dinary_analytics.settings import get_config, set_config
@@ -18,7 +18,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 def analytics_db(tmp_path, monkeypatch):
     db = tmp_path / "analytics.db"
-    monkeypatch.setattr(conn_module, "ANALYTICS_DB_PATH", db)
+    monkeypatch.setattr(paths_module, "ANALYTICS_DB_PATH", db)
     monkeypatch.setattr(settings_module, "ANALYTICS_DB_PATH", db)
     monkeypatch.setattr(backup_module, "ANALYTICS_DB_PATH", db)
     set_config("test_key", "hello", db_path=db)
