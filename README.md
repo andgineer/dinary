@@ -6,7 +6,7 @@
 |--------------------------------------------------------------- | -------: | -------: | ------: | --------: |
 | src/dinary/\_\_about\_\_.py                                    |        1 |        0 |    100% |           |
 | src/dinary/adapters/exchange\_rates.py                         |       38 |        1 |     97% |        39 |
-| src/dinary/adapters/llm\_chat.py                               |       69 |        6 |     91% |89-90, 131-133, 155 |
+| src/dinary/adapters/llm\_chat.py                               |       76 |        6 |     92% |89-90, 140-142, 164 |
 | src/dinary/adapters/llm\_storage.py                            |      137 |       18 |     87% |74-76, 114-117, 174, 203-206, 219, 227, 231, 254, 258-259 |
 | src/dinary/adapters/llmbroker.py                               |      112 |        8 |     93% |110-111, 244-245, 257-260 |
 | src/dinary/adapters/nbp.py                                     |       37 |        0 |    100% |           |
@@ -63,12 +63,12 @@
 | src/dinary\_analytics/backup.py                                |       66 |       21 |     68% |24-25, 43-44, 62-63, 77-95, 99 |
 | src/dinary\_analytics/charts.py                                |       57 |        0 |    100% |           |
 | src/dinary\_analytics/connection.py                            |       20 |        0 |    100% |           |
-| src/dinary\_analytics/llm.py                                   |       60 |        4 |     93% |76, 79, 134-135 |
+| src/dinary\_analytics/llm.py                                   |       62 |        4 |     94% |85, 88, 143-144 |
 | src/dinary\_analytics/mcp\_server.py                           |       57 |       10 |     82% |40, 46, 95-107, 111 |
-| src/dinary\_analytics/notebooks/dashboard.py                   |      306 |      152 |     50% |9-27, 54-123, 135, 225, 237-306, 319-330, 335-364, 369-399, 411-424, 429-431, 436-438, 443-451, 462, 467-469, 504, 516, 568, 607-609, 676-711, 716-739, 744-785, 790-791, 796, 839 |
+| src/dinary\_analytics/notebooks/dashboard.py                   |      332 |      147 |     56% |9-27, 54-123, 135, 225, 237-306, 319-330, 335-364, 369-399, 411-424, 429-431, 436-438, 443-451, 462, 467-471, 497, 513, 646, 662-664, 731-767, 772-795, 816-819, 823-827, 831-835, 839-841, 855-856, 861, 904 |
 | src/dinary\_analytics/settings.py                              |       49 |        1 |     98% |        56 |
 | src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        65 |
-| **TOTAL**                                                      | **4823** |  **686** | **86%** |           |
+| **TOTAL**                                                      | **4858** |  **681** | **86%** |           |
 
 
 ## Setup coverage badge
