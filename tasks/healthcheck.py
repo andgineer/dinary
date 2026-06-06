@@ -80,6 +80,16 @@ def _healthcheck_last_expense_info(results: dict[str, str]) -> None:
         print(f"OK: yesterday total {totals}")
 
 
+def _litestream_error_check_command() -> str:
+    return (
+        "journalctl -u litestream --since '24 hours ago' -p err --no-pager -q 2>/dev/null || true"
+    )
+
+
+def _parse_litestream_errors(output: str) -> list[str]:
+    return output.strip().splitlines() if output.strip() else []
+
+
 def _build_replica_sync_script() -> str:
     """Restore latest LTX snapshot on VM2; output page_count then max exchange_rate date."""
     replica_path = f"{REPLICA_LITESTREAM_DIR}/{REPLICA_DB_NAME}"
@@ -229,6 +239,16 @@ def healthcheck(c, remote=False):  # noqa: ARG001
                 print(f"FAIL: service {svc} is {state!r}", file=sys.stderr)
                 sys.exit(1)
             print(f"OK: service {svc} active")
+        ltx_errors = _parse_litestream_errors(
+            ssh_capture(c, _litestream_error_check_command()),
+        )
+        if ltx_errors:
+            print(
+                f"FAIL: litestream logged {len(ltx_errors)} error(s) in last 24h: {ltx_errors[-1]}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print("OK: no litestream errors in last 24h")
         _healthcheck_replica_sync()
 
     yesterday = (_date.today() - _timedelta(days=1)).isoformat()

@@ -1,7 +1,8 @@
-"""inv analytics — sync ledger replica, start MCP server, open Marimo dashboard."""
+"""inv analytics — sync ledger replica, start Marimo dashboard."""
 
-import subprocess
 import tomllib
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from invoke import task
@@ -36,42 +37,35 @@ def _gemini_api_key() -> str | None:
     return None
 
 
+def _dinary_ai_running(mcp_port: int) -> bool:
+    try:
+        urllib.request.urlopen(f"http://localhost:{mcp_port}/mcp", timeout=2)
+        return True
+    except (urllib.error.URLError, OSError):
+        return False
+
+
 @task(
     help={
         "port": f"Marimo dashboard port (default {_DEFAULT_MARIMO_PORT}).",
-        "mcp-port": f"MCP server port (default {_DEFAULT_MCP_PORT}).",
+        "mcp-port": f"dinary-ai MCP port (default {_DEFAULT_MCP_PORT}).",
     },
 )
 def analytics(c, port=_DEFAULT_MARIMO_PORT, mcp_port=_DEFAULT_MCP_PORT):
-    """Sync ledger replica from VM2, start MCP server, and open Marimo dashboard."""
-    _sync_replica()
+    """Ensure dinary-ai is running, then open Marimo dashboard."""
+    if _dinary_ai_running(mcp_port):
+        print(f"OK: dinary-ai reachable on port {mcp_port}")
+    else:
+        print(f"dinary-ai not running on port {mcp_port} — running setup-dinary-ai")
+        c.run("uv run inv setup-dinary-ai", pty=True)
     extra_env: dict[str, str] = {}
     gemini_key = _gemini_api_key()
     if gemini_key:
         extra_env["GOOGLE_AI_STUDIO_API_KEY"] = gemini_key
     else:
         print("Warning: no Gemini provider found in .deploy/llm_providers.toml — AI chat disabled.")
-    mcp_proc = subprocess.Popen(
-        [
-            "uv",
-            "run",
-            "python",
-            "-m",
-            "dinary_analytics.mcp_server",
-            "--port",
-            str(mcp_port),
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+    c.run(
+        f"uv run marimo run {_NOTEBOOKS_DIR / 'dashboard.py'} --port {port} --no-token",
+        pty=True,
+        env=extra_env,
     )
-    print(f"MCP server started on http://localhost:{mcp_port}/mcp (PID {mcp_proc.pid})")
-    try:
-        c.run(
-            f"uv run marimo run {_NOTEBOOKS_DIR / 'dashboard.py'} --port {port} --no-token",
-            pty=True,
-            env=extra_env,
-        )
-    finally:
-        mcp_proc.terminate()
-        mcp_proc.wait()
-        print("MCP server stopped.")

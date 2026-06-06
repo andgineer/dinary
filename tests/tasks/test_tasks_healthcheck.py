@@ -5,6 +5,8 @@ import allure
 from tasks.devtools.constants import REPLICA_DB_NAME, REPLICA_LITESTREAM_DIR
 from tasks.healthcheck import (
     _build_replica_sync_script,
+    _litestream_error_check_command,
+    _parse_litestream_errors,
     _parse_sync_output,
     _sync_divergence_messages,
 )
@@ -90,3 +92,43 @@ class TestSyncDivergenceMessages:
         msgs = _sync_divergence_messages(("242", "2026-06-05"), ("242", "never"))
         assert len(msgs) == 1
         assert "never" in msgs[0]
+
+
+@allure.epic("Infrastructure")
+@allure.feature("Healthcheck")
+@allure.story("Litestream errors")
+class TestLitestreamErrorCheckCommand:
+    def test_targets_litestream_service(self):
+        assert "litestream" in _litestream_error_check_command()
+
+    def test_filters_error_priority(self):
+        assert "-p err" in _litestream_error_check_command()
+
+    def test_covers_24h_window(self):
+        assert "24 hours ago" in _litestream_error_check_command()
+
+
+@allure.epic("Infrastructure")
+@allure.feature("Healthcheck")
+@allure.story("Litestream errors")
+class TestParseLitestreamErrors:
+    def test_empty_output_returns_empty_list(self):
+        assert _parse_litestream_errors("") == []
+
+    def test_whitespace_only_returns_empty_list(self):
+        assert _parse_litestream_errors("  \n  ") == []
+
+    def test_single_error_line(self):
+        out = "Jun 06 10:00:00 vm1 litestream[1]: non-contiguous transaction files"
+        assert len(_parse_litestream_errors(out)) == 1
+
+    def test_multiple_error_lines(self):
+        out = (
+            "Jun 06 10:00:00 vm1 litestream[1]: error A\nJun 06 10:01:00 vm1 litestream[1]: error B"
+        )
+        assert len(_parse_litestream_errors(out)) == 2
+
+    def test_last_line_is_last_error(self):
+        out = "error A\nerror B"
+        errors = _parse_litestream_errors(out)
+        assert errors[-1] == "error B"
