@@ -16,17 +16,20 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
 ## 2. Onboarding (no active set → chooser)
 - On app start (or first time the category picker is needed),
   `stores/catalog.js` calls `getActiveTemplate()`. If `null` → route to an
-  onboarding view.
+  onboarding view. Cache the result in the Pinia store (persist via `localStorage`)
+  so subsequent app starts skip the round-trip; invalidate the cache on
+  `applyTemplate` or when `catalog_version` changes.
 - `src/views/OnboardingTemplate.vue` (new): lists наборы from `listTemplates()`
-  showing each set's localized name + a short "this is you if…" line; a language
+  showing each set's localized name (`names[ui_lang]`) and tagline
+  (`taglines[ui_lang]`) as the "this is you if…" descriptor; a language
   selector; one tap → `applyTemplate(code, lang)` → continue into the app.
   Keep it fast: pick-and-go, no mandatory tweaking (the design's "just start").
 
 ## 3. Category picker with search-activate
 - `CategorySheet.vue` / `CatalogSelectField.vue`: render the visible grouped list
   from `getCategories()` (group headers + categories, by `group_sort_order`).
-- Add a search box: on input call `searchCategories(q)` (includes hidden /
-  not-in-set, excludes retired). Selecting a result that isn't visible calls
+- Add a search box: on input call `searchCategories(q)` with a ~300 ms debounce
+  (includes hidden / not-in-set, excludes retired). Selecting a result that isn't visible calls
   `activateCategory(code)` then selects it — the "find anything, auto-activate"
   flow. The classifier/quick-picks keep using the visible set.
 - `stores/catalog.js`: hold visible categories keyed by code; refresh on
@@ -39,7 +42,8 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
   - move a category to another group (`moveCategory`);
   - rename stays the existing per-category label edit (label only; code stable).
 - Migrate existing id-based add/delete UI to the code-based endpoints; "delete"
-  becomes "hide" (categories are never deleted).
+  becomes "hide" (categories are never deleted). Once migrated, remove the
+  id-based add/delete endpoints from `catalog_writer_categories.py`.
 
 ## 5. Switch / apply another set ("сменить набор")
 - A "наборы категорий" screen reachable from settings: lists templates (reuse
@@ -52,6 +56,8 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
 - Picker renders visible grouped; search surfaces a hidden category; selecting it
   activates and selects it.
 - Hide removes from picker; unhide restores; move changes group.
+- Delete-UI migration: the old "delete" action calls `hideCategory`; category
+  disappears from the picker but its expense history is intact.
 - Switching sets updates the visible grouping.
 
 ## Out of scope (later, not a phase)

@@ -18,6 +18,9 @@ Write logic in clean modules, run mutations under `storage.transaction`.
      (fallback to the `ru` default, then the code itself);
    - **leave `is_hidden` and `is_retired` untouched.**
    Single `UPDATE ... WHERE code = ?` per category (FK-safe; `id` untouched).
+   User-created categories (`code` starting `u_`) are absent from every template's
+   `visible ∪ hidden` and are therefore skipped by apply — their `is_active`,
+   `group_id`, and `name` remain unchanged.
 4. `set_catalog_version(con, get_catalog_version(con) + 1)` (reuse
    `db/catalog.py`) and `UPDATE/INSERT app_metadata.active_template = set_code`.
 - Whole thing in one `storage.transaction`. Bumping `catalog_version` invalidates
@@ -43,8 +46,8 @@ Predicate (decided): **shown = `(is_active OR used) AND NOT is_hidden AND NOT is
         AND (c.is_active OR u.category_id IS NOT NULL)
   ORDER BY g.sort_order, c.name
   ```
-  New dataclass `CategoryListRow` gains `code` (update the existing one in
-  `db/storage.py` and any consumers, or add `VisibleCategoryRow`).
+  Add a new `VisibleCategoryRow` dataclass in `db/storage.py` (do not modify
+  `CategoryListRow` — updating it would require changing all existing consumers).
 - `sql/search_categories.sql` — for activation, search across ALL non-retired
   (incl. hidden / not-in-set):
   ```sql
@@ -60,8 +63,10 @@ Predicate (decided): **shown = `(is_active OR used) AND NOT is_hidden AND NOT is
   - `search_categories(con, query) -> list[...]`
   - `get_active_template(con) -> str | None` (reads `app_metadata.active_template`)
   - `activate_category(con, code)` — `is_active=1, is_hidden=0`; if `group_id`
-    is NULL, place it using the active set's definition (its group for that code),
-    falling back to a default group.
+    is NULL, place it using the active set's definition (its group for that code);
+    if there is no active template or the code is absent from the definition, leave
+    `group_id=NULL` — the category stays invisible in grouped views until apply or
+    a manual move.
   - `hide_category(con, code)` / `unhide_category(con, code)` — toggle `is_hidden`.
   - `move_category(con, code, group_code)` — set `group_id` (manual override).
 
@@ -71,9 +76,10 @@ Enumerate and update callers of today's `db/catalog.list_categories`:
 - `src/dinary/background/classification/*` (the classifier's allowed category
   list) → use `list_visible_categories`.
 - POST `/api/expenses` category validation (find in `api/controllers/expenses.py`)
-  → accept any non-retired category the client picked; activation-on-use: if the
-  posted category is hidden/inactive, treat first use as `activate_category`
-  (a used category must stay visible per the predicate).
+  → if `is_retired`, return 400; if `is_hidden`, return 400 (hidden categories are
+  not pickable — guard against stale client sessions); if inactive-but-not-hidden-
+  and-not-retired, call `activate_category` — activation-on-use keeps a used
+  category visible per the predicate.
 - `frequent_categories` flow (`api/controllers/catalog.py`,
   `stores/frequentCategories.js`) → restrict to visible.
 - Grep: `rg "list_categories\b"` to find every reference; update each + its test.

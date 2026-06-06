@@ -27,11 +27,12 @@ Run inside the migration's own transaction; `PRAGMA foreign_keys` is ON.
 `name` becomes a per-template baked label and may legitimately repeat (e.g. a
 custom category vs a hidden factory one). The inline `name TEXT UNIQUE` on
 `categories` and `category_groups` must go. SQLite can't drop an inline
-constraint in place → 12-step table rebuild **inside the migration**, preserving
+constraint in place → table rebuild **inside the migration**, preserving
 `id` so all FKs (`expenses.category_id`, `import_mapping.category_id`,
 `sheet_mapping.category_id`) stay valid:
-1. `PRAGMA foreign_keys=OFF;` (yoyo runs one statement at a time; set within the
-   migration file).
+1. `PRAGMA foreign_keys=OFF;` — write this migration as a Python yoyo function (not
+   a raw SQL file) so all statements share one connection and the PRAGMA persists
+   for the full rebuild.
 2. `CREATE TABLE categories_new (... same cols incl. new ones, name TEXT NOT NULL
    without UNIQUE ...);`
 3. `INSERT INTO categories_new SELECT ... FROM categories;`
@@ -54,8 +55,9 @@ constraint in place → 12-step table rebuild **inside the migration**, preservi
      sort_order INTEGER NOT NULL DEFAULT 0,
      definition_json TEXT NOT NULL
    );`
-  `definition_json` holds the parsed YAML for that set: `names`, `groups`
-  (code→names), optional `renames`, `visible`, `hidden`. Rationale: definitions
+  `definition_json` holds the parsed YAML for that set: `names`, `taglines`
+  (per-lang short onboarding blurb), `groups` (code→names), optional `renames`,
+  `visible`, `hidden`. Rationale: definitions
   are read only at apply time, never at render time (Phase 2 renders from baked
   live rows), so a JSON blob per set is faithful and far simpler than decomposing
   into 5 relational tables. The custom "My setup" set is just another row with
@@ -78,8 +80,8 @@ constraint in place → 12-step table rebuild **inside the migration**, preservi
 - `load_vocabulary() -> dict[str, dict[str, str]]` — parse `categories.yml`
   (`code → {lang: name}`).
 - `load_templates() -> list[Template]` — parse every `*.yaml` except
-  `categories.yml`; return frozen dataclasses (`id`, `names`, `groups`,
-  `renames`, `visible`, `hidden`).
+  `categories.yml`; return frozen dataclasses (`code` (filename slug), `names`,
+  `taglines`, `groups`, `renames`, `visible`, `hidden`).
 - `validate(vocabulary, templates)` — port the coverage check already run by hand:
   every template's `visible`+`hidden` equals the vocabulary key set exactly (no
   dupes/missing/unknown), every referenced group is declared. Raise on failure.
@@ -101,43 +103,84 @@ All functions take an open `sqlite3.Connection`, run under `storage.transaction`
      `group_id` = NULL (assigned on apply). Update `code`/restore `is_retired=0`
      for re-appearing codes. Never touch rows whose `code` starts `u_`.
   3. Ensure a `category_groups` row per group code used across templates (union);
-     `name` = default-language name; `code` set.
+     `name` = name from the first template in `load_templates()` order that declares
+     this group (groups have no canonical name outside template files; `apply`
+     re-bakes the correct per-template name anyway); `code` set.
   4. Upsert `category_sets` (one row per factory template) with
      `origin='factory'`, `definition_json` = the parsed template.
   5. **Retire vanished factory codes:** any `categories` row with a non-`u_`
      `code` absent from the current vocabulary → `is_active=0, is_retired=1`
      (kept for history; see Phase 2 visibility). Same idea for factory
      `category_sets` rows whose file disappeared → delete the set row (no FK to
-     expenses).
+     expenses); if the deleted set's code equals `app_metadata.active_template`,
+     also clear `active_template` so the PWA falls back to the onboarding chooser.
   6. Do **not** set `app_metadata.active_template`.
   - "default language" = a module constant (start with `ru`, the app's primary
     UI language); apply re-bakes visible names for the chosen language anyway.
 
-- `adopt_existing_db(con, mapping: dict[str|int, str])` — one-off, the personal
-  DB. `mapping` is a hand-authored existing-category → factory-code table.
-  1. Backfill `categories.code`: for each existing row, set the mapped factory
-     code; existing **names are kept** (no rename). Unmapped existing rows get a
-     `u_`-prefixed custom code derived from the name.
-  2. Backfill `category_groups.code` with `u_`-prefixed codes; keep groups as-is.
-  3. Run `seed_category_templates(con)` so the factory vocabulary + templates load
-     as inactive library (existing rows already carry factory codes, so they are
-     reused, not duplicated).
-  4. Build the custom set definition from current state: existing groups as the
-     set's groups, every current category `visible` under its current group, the
-     kept names carried as the set's `renames`. Insert
-     `category_sets(code='u_mine', origin='custom', definition_json=...)`.
-  5. Set `app_metadata.active_template='u_mine'` and ensure existing categories'
-     `is_active` reflects their current visibility (all currently-active stay
-     active).
-  - Custom rows/sets are never reconciled by `seed_category_templates` (guarded by
-    the `u_` namespace + `origin='custom'`).
+- `migrate_personal_catalog(con)` — in `db/category_seed.py` alongside
+  `seed_category_templates`. One-off personal function; hardcoded maps specific
+  to the current live DB. **Called automatically by bootstrap** (see section 5) —
+  no manual invocation needed. Guard: if any `categories.code IS NOT NULL` exists,
+  return immediately — already done.
+  Steps:
+  1. Backfill `categories.code` by name. Raise `ValueError` listing every
+     unrecognised name before touching the DB (no partial state):
+     ```python
+     CATEGORY_MAP = {
+         "алкоголь": "alcohol",      "деликатесы": "delicacies",
+         "еда": "groceries",          "фрукты": "fruit",          "кафе": "cafe",
+         "интернет": "internet",      "коммунальные": "utilities",
+         "мобильник": "mobile",       "сервисы": "subscriptions",
+         "аренда": "rent",            "бытовая техника": "appliances",
+         "мебель": "furniture",       "ремонт": "repairs",        "хозтовары": "household_goods",
+         "обучение": "education",     "продуктивность": "productivity",
+         "ЗОЖ": "wellness",           "гигиена": "hygiene",
+         "лекарства": "pharmacy",     "медицина": "doctor",
+         "карманные": "pocket_money", "одежда": "clothing",       "подарки": "gifts",
+         "велосипед": "cycling",      "лыжи": "skiing",           "спорт": "sport",
+         "машина": "car",             "топливо": "fuel",          "транспорт": "transit",
+         "гаджеты": "gadgets",        "инструменты": "tools",
+         "развлечения": "entertainment", "электроника": "electronics",
+         "налог": "tax",              "штрафы": "fines",
+     }
+     ```
+  2. Backfill `category_groups.code` by name. Raise `ValueError` on any
+     unrecognised group name:
+     ```python
+     GROUP_MAP = {
+         "Государство": "government", "Еда": "food",
+         "ЖКХ и сервисы": "utilities", "Жильё": "housing",
+         "Знания и продуктивность": "growth", "Красота и ЗОЖ": "beauty",
+         "Медицина": "health",        "Семья и личное": "personal",
+         "Спорт": "sport",            "Транспорт": "transport",
+         "Хобби и отдых": "hobbies",
+     }
+     ```
+  3. Call `seed_category_templates(con)` — loads full factory vocabulary + all four
+     templates; existing rows (now with factory codes) are reused, not duplicated.
+  4. Call `apply_template(con, "active", "ru")` — bakes Russian names from
+     `active.yaml` onto categories and groups; sets `active_template = "active"`.
+     Group names in the result: Еда, Жильё, ЖКХ и сервисы, Медицина,
+     Красота и ЗОЖ, Спорт, Хобби и отдых, Транспорт, Знания и продуктивность,
+     Семья и личное, Государство, Питомцы (новая).
 
 ## 5. Invoke tasks
 - Add to `tasks/` (mirror existing `inv` tasks): `inv seed-categories` →
-  `init_db()` then `seed_category_templates`; `inv adopt-existing-categories`
-  (reads the hand mapping from a small local file, runs `adopt_existing_db`).
-- Call `seed_category_templates` from the deploy/bootstrap path that today calls
-  `bootstrap_catalog` (replacing it for new installs).
+  `init_db()` then `bootstrap_categories`.
+- Replace `bootstrap_catalog` in the deploy/startup path with
+  `bootstrap_categories(con)`, which selects the right branch automatically:
+  ```python
+  def bootstrap_categories(con):
+      has_rows = con.execute("SELECT 1 FROM categories LIMIT 1").fetchone()
+      all_coded = con.execute("SELECT 1 FROM categories WHERE code IS NULL LIMIT 1").fetchone() is None
+      if has_rows and not all_coded:
+          migrate_personal_catalog(con)   # non-empty DB without codes → personal migration
+      else:
+          seed_category_templates(con)    # empty DB → fresh seed
+  ```
+  After `migrate_personal_catalog` the DB has codes and `active_template = "active"`,
+  so re-runs hit the guard in `migrate_personal_catalog` and exit immediately.
 
 ## 6. Tests (`tests/...`, same session)
 - `tests/category_templates/test_loader.py` — parse + the coverage validator
@@ -146,10 +189,19 @@ All functions take an open `sqlite3.Connection`, run under `storage.transaction`
   4 sets, no active template; re-run is a no-op; removing a code from a fixture
   vocabulary retires (not deletes) its row and keeps an expense FK valid; `u_`
   rows survive a reconcile.
-- `tests/category_templates/test_adopt_existing.py` — seed a legacy-shaped DB
-  (rows without codes + an expense), run `adopt_existing_db` with a mapping,
-  assert codes backfilled, names unchanged, `u_mine` active, factory library
-  present and inactive, re-run preserves `u_mine`.
+- `tests/category_templates/test_migrate_personal_catalog.py` — uses a test DB
+  seeded with exactly the current personal categories and groups (without codes,
+  mirroring the real DB state before the migration):
+  - All 35 categories in `CATEGORY_MAP` get the correct factory code after migration.
+  - All 11 groups in `GROUP_MAP` get the correct factory code after migration.
+  - `app_metadata.active_template = "active"` after migration.
+  - Group names are Russian (spot-check: "Еда", "ЖКХ и сервисы", "Спорт").
+  - Guard: second call to `migrate_personal_catalog` returns without DB changes.
+  - `bootstrap_categories` on the same pre-migration fixture calls
+    `migrate_personal_catalog` (not `seed_category_templates`); on a fresh empty
+    DB it calls `seed_category_templates` instead.
+  - Validation: a DB with an unknown category name raises `ValueError` before any
+    writes (no partial state left).
 - Migration test alongside `tests/ledger/test_migrations.py`: 0006 applies and
   rolls back cleanly; FKs intact (`PRAGMA foreign_key_check`).
 

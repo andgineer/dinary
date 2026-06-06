@@ -11,28 +11,28 @@ Controller logic + Pydantic models in
 
 Endpoints:
 - `GET /api/category-templates` → list available sets for the chooser:
-  `[{code, names: {lang: name}, origin}]` from `category_sets` (parse
-  `definition_json` names; include `origin` so custom "My setup" shows too),
-  ordered by `sort_order`.
+  `[{code, names: {lang: name}, taglines: {lang: tagline}, origin}]` from
+  `category_sets` (parse `definition_json`; include `origin` so custom "My setup"
+  shows too), ordered by `sort_order`.
 - `GET /api/category-templates/active` → `{active_template: str | null}` via
   `get_active_template`. `null` is the onboarding signal for the PWA.
 - `POST /api/category-templates/apply` `{code, lang}` → `apply_template`;
-  return the new visible category snapshot + set `ETag` from the bumped
-  `catalog_version` (reuse `etag_for`). 409/400 on unknown code.
+  return `{active_template: str, catalog_version: int}` + set `ETag` from the
+  bumped `catalog_version` (reuse `etag_for`); the PWA re-fetches
+  `GET /api/categories` via the standard ETag mechanism. 409/400 on unknown code.
 - `GET /api/categories` → visible grouped list from `list_visible_categories`
-  (this can replace/augment the categories section of the existing
-  `/api/catalog` snapshot; keep `catalog_version` ETag + `If-None-Match`
-  handling like `get_catalog`).
+  — new independent endpoint with its own `If-None-Match` / `catalog_version` ETag
+  handling. `GET /api/catalog` is left unchanged during Phase 3; the PWA migrates
+  to `GET /api/categories` in Phase 4.
 - `GET /api/categories/search?q=` → `search_categories` (includes hidden /
   not-in-set; excludes retired).
 - `POST /api/categories/{code}/activate` → `activate_category`; bump version.
 - `POST /api/categories/{code}/hide` / `POST /api/categories/{code}/unhide` →
   toggle `is_hidden`; bump version.
-- `PATCH /api/categories/{code}` `{group_code}` → `move_category`; bump version.
-- Keep the existing `/api/catalog/*` admin writers working during transition;
-  reconcile the two surfaces (the new code-based category ops vs the old
-  id-based ones in `catalog_writer_categories.py`) — prefer the code-based ones,
-  deprecate id-based add/delete once the PWA migrates (Phase 4).
+- `POST /api/categories/{code}/move` `{"group_code": "..."}` → `move_category`; bump version.
+- Keep the existing `/api/catalog/*` admin writers working during Phase 3;
+  id-based add/delete endpoints in `catalog_writer_categories.py` are removed
+  in Phase 4 step 4 once the PWA has migrated to code-based ops.
 
 ## 2. Wiring & cache
 - `main.py`: `app.include_router(category_templates.router)`.
