@@ -8,7 +8,7 @@ Background service: MCP server + SQLite replica pulled from VM2 by a background 
 ## Architecture summary
 
 - `dinary-ai` serves FastMCP on HTTP.
-- Background daemon pulls snapshot + WAL segments from VM2 via SSH (`litestream restore`) immediately on startup, then every 10 minutes — independently of MCP requests.
+- Background daemon pulls snapshot + WAL segments from VM2 via SSH (`litestream restore`) immediately on startup, then every 10 minutes — independently of MCP requests. (VM1 = dinary server, runs the app and litestream; VM2 = storage server where litestream writes replicas; `dinary-ai` restores from VM2.)
 - MCP tool handlers query the local replica directly (zero added latency). If the daemon has not yet produced a local DB, they return a FastMCP error immediately.
 - `inv analytics` checks if `dinary-ai` is reachable; if not, runs `setup-dinary-ai` idempotently before opening Marimo.
 - Cross-platform: macOS (launchd) and Windows (Task Scheduler).
@@ -33,29 +33,29 @@ import urllib.request
 from dinary_analytics.ai_service import MCP_PORT
 ```
 
-Add function:
+Add function (port is always `MCP_PORT` — no parameter):
 ```python
-def _ensure_dinary_ai(c, mcp_port: int) -> None:
+def _ensure_dinary_ai(c) -> None:
     try:
-        urllib.request.urlopen(f"http://localhost:{mcp_port}/health", timeout=2)
-        print(f"OK: dinary-ai reachable on port {mcp_port}")
+        urllib.request.urlopen(f"http://localhost:{MCP_PORT}/health", timeout=2)
+        print(f"OK: dinary-ai reachable on port {MCP_PORT}")
         return
     except (urllib.error.URLError, OSError):
         pass
-    print(f"dinary-ai not running on port {mcp_port} — running setup-dinary-ai")
-    c.run("uv run inv setup-dinary-ai", pty=True)
+    print(f"dinary-ai not running on port {MCP_PORT} — running setup-dinary-ai")
+    c.run("uv run inv setup-dinary-ai")
     for _ in range(10):
         time.sleep(1)
         try:
-            urllib.request.urlopen(f"http://localhost:{mcp_port}/health", timeout=2)
-            print(f"OK: dinary-ai reachable on port {mcp_port}")
+            urllib.request.urlopen(f"http://localhost:{MCP_PORT}/health", timeout=2)
+            print(f"OK: dinary-ai reachable on port {MCP_PORT}")
             return
         except (urllib.error.URLError, OSError):
             pass
-    raise SystemExit(f"dinary-ai did not start on port {mcp_port} after setup")
+    raise SystemExit(f"dinary-ai did not start on port {MCP_PORT} after setup")
 ```
 
-`analytics` calls `_ensure_dinary_ai(c, MCP_PORT)` before opening Marimo. Replica-readiness is not checked here — if the replica is not yet ready when Marimo opens, the notebook's top-cell health check (Step 5a) surfaces the error.
+`analytics` calls `_ensure_dinary_ai(c)` before opening Marimo. `pty=False` (default) — `setup-dinary-ai` is non-interactive. Replica-readiness is not checked here — if the replica is not yet ready when Marimo opens, the notebook's top-cell health check (Step 5a) surfaces the error.
 
 `analytics` task signature loses `--mcp-port`; keeps `--port` for Marimo only.
 
@@ -70,11 +70,11 @@ Platform DB paths (in `src/dinary_analytics/paths.py`):
 - Windows: `Path(os.environ["LOCALAPPDATA"]) / "dinary" / "dinary-ai.db"` — wrap missing key in `RuntimeError("LOCALAPPDATA not set; cannot determine DB path on Windows")`
 
 `restore_replica() -> Path`:
-- Runs `litestream restore` with VM2 as SFTP source (snapshot + WAL segments). Reads `DINARY_REPLICA_HOST` (e.g. `ubuntu@hostname`) from `.deploy/.env` via `dotenv_values`. Splits the value into `user` and `host` fields. Reads optional `DINARY_SSH_KEY_PATH` from `.deploy/.env` alongside `DINARY_REPLICA_HOST`. Writes a temporary litestream YAML config (via `tempfile.NamedTemporaryFile`) with `type: sftp`, `host`, `user`, `path: /var/lib/litestream/dinary`; includes `key-path` only if `DINARY_SSH_KEY_PATH` is set — otherwise litestream falls back to the SSH agent and default key discovery. Runs `litestream restore -config <tempfile> <db_path>` via `subprocess.run`. Deletes the temp file in a `finally` block. Add to top-level imports: `import subprocess`, `import tempfile`; `from dotenv import dotenv_values`.
-- Returns path to local SQLite.
+- At function entry, checks `shutil.which("litestream")`; if missing, prints install instructions and raises `RestoreError` (not `SystemExit` — the caller decides whether to abort).
+- Resolves `db_path` from `get_db_platform_path()` in `dinary_analytics.paths` (platform-specific path defined above). This is both the restore target and the return value.
+- Reads `DINARY_REPLICA_HOST` (e.g. `ubuntu@hostname`) from `.deploy/.env` via `dotenv_values`. Splits the value into `user` and `host` fields. Reads optional `DINARY_SSH_KEY_PATH` from `.deploy/.env` alongside `DINARY_REPLICA_HOST`. Writes a temporary litestream YAML config via `tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False)` (`delete=False` is required on Windows — a `NamedTemporaryFile` open for writing cannot be opened by a child process on Windows unless the handle is released first; the file is deleted in the `finally` block instead). Config contains `type: sftp`, `host`, `user`, `path: /var/lib/litestream/dinary`; includes `key-path` only if `DINARY_SSH_KEY_PATH` is set — otherwise litestream falls back to the SSH agent and default key discovery. Runs `litestream restore -config <tempfile> <db_path>` via `subprocess.run`. Deletes the temp file in a `finally` block. Add to top-level imports: `import subprocess`, `import tempfile`; `from dotenv import dotenv_values`.
+- Returns `db_path`.
 - Raises `RestoreError` on failure; caller logs warning and serves stale data.
-
-Litestream binary check: `shutil.which("litestream")` at startup; if missing, print install instructions and exit.
 
 All of the following lives in `src/dinary_analytics/restore.py` (same file as `restore_replica()`).
 
@@ -120,6 +120,8 @@ Tests in `tests/analytics/test_restore.py`:
 - `test_restore_loop_keeps_stale_path_on_error` — after a successful restore followed by `RestoreError`, `get_db_path()` returns the previous (stale) path, not `None`
 - `test_restore_loop_retries_after_failure` — loop calls `restore_replica()` again after a failed attempt
 - `test_start_restore_daemon_spawns_daemon_thread` — `start_restore_daemon()` creates a thread with `daemon=True` and starts it
+- `test_get_last_restore_returns_timestamp` — after a successful restore, `get_last_restore()` returns the `time.time()` value set during that restore
+- `test_get_last_restore_error_returns_message` — after a `RestoreError`, `get_last_restore_error()` returns the error string; after a subsequent success it returns `None`
 
 ---
 
@@ -141,6 +143,17 @@ shutdown (SIGTERM):
 MCP tool handlers do not trigger any restore. Each handler calls `get_db_path()` from `dinary_analytics.restore`; if `None`, returns a FastMCP error immediately (replica not yet available). Do not let `sqlite3` raise an unhandled exception to the client.
 
 `GET /health` is registered via `@mcp.custom_route("/health", methods=["GET"])`. The handler is `async`, accepts a `starlette.requests.Request`, and returns a `starlette.responses.JSONResponse`. Add `from starlette.requests import Request` and `from starlette.responses import JSONResponse` to module-level imports. The handler calls `get_db_path()`, `get_last_restore()`, and `get_last_restore_error()` from `dinary_analytics.restore`. Returns `{"ok": bool, "last_restore": "ISO8601" | null, "error": "..." | null}`. `ok` is `true` when `get_db_path() is not None` (replica available, even if the most recent sync failed and stale data is being served); `false` when no restore has ever succeeded. `last_restore` is `null` when no restore has completed; otherwise `datetime.datetime.fromtimestamp(get_last_restore(), tz=datetime.timezone.utc).isoformat()`.
+
+`main()` is defined in `ai_service.py`:
+```python
+def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=MCP_PORT)
+    args = parser.parse_args()
+    start_restore_daemon()
+    mcp.run(transport="streamable-http", host="127.0.0.1", port=args.port)
+```
 
 `ai_service.py` must end with:
 ```python
@@ -167,9 +180,9 @@ Tests in `tests/analytics/test_ai_service.py`:
 - `inv uninstall-dinary-ai` — stops and removes service entry.
 
 launchd plist: `~/Library/LaunchAgents/dev.dinary.ai.plist`, `KeepAlive: true`, `RunAtLoad: true`.
-`ProgramArguments`: `[<uv_path>, "run", "python", "-m", "dinary_analytics.ai_service", "--port", str(MCP_PORT)]` where `<uv_path>` is the absolute path resolved at install time via `shutil.which("uv")` (raises `RuntimeError` if not found). `MCP_PORT` is imported from `dinary_analytics.ai_service` at install time — do not hardcode `8765`.
+`ProgramArguments`: `[<uv_path>, "run", "python", "-m", "dinary_analytics.ai_service", "--port", str(MCP_PORT)]` where `<uv_path>` is the absolute path resolved at install time via `shutil.which("uv")` (raises `RuntimeError` if not found). Using the absolute path is required because launchd runs agents with a restricted `PATH` that typically does not include `~/.local/bin` or Homebrew prefixes where `uv` lives. `MCP_PORT` is imported from `dinary_analytics.ai_service` at install time — do not hardcode `8765`.
 
-Windows: Task Scheduler, trigger `AtLogon`, restart on failure 3×.
+Windows: Task Scheduler, trigger `AtLogon`, restart on failure 3×. The XML config is written to a `tempfile.NamedTemporaryFile(suffix=".xml", delete=False)`, passed to `schtasks /create /xml <tempfile>`, then deleted. The task definition is stored in the Windows Task Scheduler database — the XML file itself is not kept. Permanent task name: `dinary-ai`.
 
 Tests in `tests/tasks/test_dinary_ai.py`:
 - `test_setup_dinary_ai_idempotent` — calling twice does not raise and plist still exists with correct content on macOS
@@ -205,7 +218,7 @@ def _parse_litestream_config_errors(output: str) -> list[str]:
     return output.strip().splitlines() if output.strip() else []
 ```
 
-Called in `healthcheck --remote` after existing LTX error check. Message: `"litestream config error: {last_line}"`.
+Called in `healthcheck --remote` after existing LTX error check. Message: `"litestream config error: {first_line}"` (first line is the root cause; subsequent lines are usually stack context).
 
 Tests: `TestLitestreamConfigErrorCheckCommand` — same pattern as existing `TestLitestreamErrorCheckCommand`.
 

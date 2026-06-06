@@ -16,18 +16,21 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
 ## 2. Onboarding (no active set → chooser)
 - On app start (or first time the category picker is needed),
   `stores/catalog.js` calls `getActiveTemplate()`. If `null` → route to an
-  onboarding view. Cache the result in the Pinia store (persist via `localStorage`)
-  so subsequent app starts skip the round-trip; invalidate the cache on
-  `applyTemplate` or when `catalog_version` changes.
+  onboarding view. Cache `active_template` in `localStorage` directly (read on
+  store init, written on every `applyTemplate` call); invalidate (clear) the
+  cached value whenever `catalog_version` changes so a stale value doesn't
+  survive a re-seed.
 - Add a Vue Router `beforeEach` guard: if `active_template` is `null` and the
   target route is not `/onboarding`, redirect to `/onboarding`. This covers
   deep-link entry — the user is always funnelled through the chooser before
   accessing any category-dependent view.
 - `src/views/OnboardingTemplate.vue` (new): lists наборы from `listTemplates()`
   showing each set's localized name (`names[ui_lang]`) and tagline
-  (`taglines[ui_lang]`) as the "this is you if…" descriptor; a language
-  selector (available languages = the key set of `names` from the first
-  template in the list — all factory templates share the same language set);
+  (`taglines[ui_lang]`) as the "this is you if…" descriptor (`ui_lang` = the
+  app's current UI locale, falling back to `ru` if the locale is absent from
+  the template's language set); a language selector (available languages = the
+  key set of `names` from the first template in the list — all factory templates
+  are guaranteed to share the same language set by `validate()`);
   one tap → `applyTemplate(code, lang)` → continue into the app. Keep it
   fast: pick-and-go, no mandatory tweaking (the design's "just start").
 
@@ -63,7 +66,9 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
   the set's categories; your used categories stay; hidden ones stay hidden.
 
 ## 6. Tests (`webapp`, `npm test`)
-- Onboarding shows when active is `null`, hidden after apply.
+- Onboarding shows when active is `null`, hidden after apply. Vue Router
+  `beforeEach` guard redirects any non-onboarding deep-link to `/onboarding`
+  when `active_template` is `null`.
 - Picker renders visible grouped; search surfaces a hidden category; selecting it
   activates and selects it.
 - Hide removes from picker; unhide restores; move changes group.

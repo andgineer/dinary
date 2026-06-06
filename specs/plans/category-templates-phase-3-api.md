@@ -17,9 +17,10 @@ Endpoints:
 - `GET /api/category-templates/active` → `{active_template: str | null}` via
   `get_active_template`. `null` is the onboarding signal for the PWA.
 - `POST /api/category-templates/apply` `{code, lang}` → `apply_template`;
-  return `{active_template: str, catalog_version: int}` + set `ETag` from the
-  bumped `catalog_version` (reuse `etag_for`); the PWA re-fetches
-  `GET /api/categories` via the standard ETag mechanism. 404 on unknown code.
+  return `{active_template: str, catalog_version: int}`; the PWA compares the
+  returned `catalog_version` against its cached value and re-fetches
+  `GET /api/categories` (which will return a new ETag via the standard
+  `If-None-Match` mechanism). 404 on unknown code.
 - `GET /api/categories` → visible grouped list from `list_visible_categories`
   — new independent endpoint with its own `If-None-Match` / `catalog_version` ETag
   handling. `GET /api/catalog` is left unchanged during Phase 3; the PWA migrates

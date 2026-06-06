@@ -6,7 +6,7 @@ See `category-templates.md` for the decided model. **Do not** touch
 `tasks/imports/seed_config.py` (`seed_classification_catalog`) — that is
 import-only legacy.
 
-## 1. Migration `0006_category_templates.sql` (+ `.rollback.sql`)
+## 1. Migration `0006_category_templates.sql`
 
 yoyo migration under `src/dinary/db/migrations/` (next free number is 0006).
 Run inside the migration's own transaction; `PRAGMA foreign_keys` is ON.
@@ -40,8 +40,10 @@ constraint in place → table rebuild **inside the migration**, preserving
 5. recreate indexes (`ux_categories_code`, the partial visibility helpers below).
 6. repeat for `category_groups`.
 7. `PRAGMA foreign_key_check;` then `PRAGMA foreign_keys=ON;`
-- Rollback: rebuild the tables back **with** the `name UNIQUE` constraint and drop
-  the new columns/tables.
+- No rollback migration: once `apply_template` has run, `categories.name` may
+  contain duplicates (different templates can bake identical labels for different
+  codes), so restoring the `name UNIQUE` constraint would fail. Roll back by
+  restoring from a DB backup taken before the migration.
 
 ### 1c. Index for the `used` predicate
 `CREATE INDEX ix_expenses_category_id ON expenses(category_id);` — makes the
@@ -55,7 +57,8 @@ constraint in place → table rebuild **inside the migration**, preserving
      sort_order INTEGER NOT NULL DEFAULT 0,
      definition_json TEXT NOT NULL
    );`
-  `definition_json` holds the parsed YAML for that set: `names`, `taglines`
+  `definition_json` holds the parsed YAML for that set serialized via
+  `json.dumps(sort_keys=True)`: `names`, `taglines`
   (per-lang short onboarding blurb), `groups` (code→names), optional `renames`,
   `visible`, `hidden`. Rationale: definitions
   are read only at apply time, never at render time (Phase 2 renders from baked
@@ -82,13 +85,16 @@ constraint in place → table rebuild **inside the migration**, preserving
   globs `*.yaml` and the vocabulary is never matched.
 - `load_vocabulary() -> dict[str, dict[str, str]]` — parse `categories.yml`
   (`code → {lang: name}`).
-- `load_templates() -> list[Template]` — parse every `*.yaml` (all template
-  files; `categories.yml` uses `.yml` so it is never matched); return frozen
-  dataclasses (`code` (filename slug), `names`, `taglines`, `groups`, `renames`,
-  `visible`, `hidden`).
+- `load_templates() -> list[Template]` — parse every `*.yaml` sorted
+  alphabetically by filename (all template files; `categories.yml` uses `.yml`
+  so it is never matched); return frozen dataclasses (`code` (filename slug),
+  `names`, `taglines`, `groups`, `renames`, `visible`, `hidden`).
 - `validate(vocabulary, templates)` — port the coverage check already run by hand:
   every template's `visible`+`hidden` equals the vocabulary key set exactly (no
-  dupes/missing/unknown), every referenced group is declared. Raise on failure.
+  dupes/missing/unknown), every referenced group is declared; all templates share
+  the same set of language keys in `names` (Phase 4 derives the available language
+  list from the first template's key set — any mismatch would silently break the
+  onboarding language selector). Raise on failure.
 
 ## 3. Code namespaces
 - Factory codes = the YAML slugs (e.g. `groceries`).

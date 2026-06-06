@@ -46,6 +46,10 @@ Predicate (decided): **shown = `(is_active OR used) AND NOT is_hidden AND NOT is
         AND (c.is_active OR u.category_id IS NOT NULL)
   ORDER BY g.sort_order, c.name
   ```
+  The `JOIN category_groups` is intentionally INNER: a category with
+  `group_id=NULL` (activated without an active template, per the edge case in
+  `activate_category`) satisfies `is_active=1` but is excluded from this query
+  and appears only in search results — handled by Phase 4.
   Add a new `VisibleCategoryRow` dataclass in `db/storage.py` (do not modify
   `CategoryListRow` — updating it would require changing all existing consumers).
 - `sql/search_categories.sql` — for activation, search across ALL non-retired
@@ -69,7 +73,9 @@ Predicate (decided): **shown = `(is_active OR used) AND NOT is_hidden AND NOT is
     `group_id=NULL` — the category stays invisible in grouped views until apply or
     a manual move; bump `catalog_version`.
   - `hide_category(con, code)` / `unhide_category(con, code)` — toggle `is_hidden`;
-    bump `catalog_version`.
+    bump `catalog_version`. `unhide` does not set `is_active`; if the category is
+    also inactive and has no expenses it remains invisible in
+    `list_visible_categories` — the user must activate it explicitly.
   - `move_category(con, code, group_code)` — set `group_id` (manual override);
     bump `catalog_version`.
 
@@ -86,6 +92,9 @@ Enumerate and update callers of today's `db/catalog.list_categories`:
 - `frequent_categories` flow (`api/controllers/catalog.py`,
   `stores/frequentCategories.js`) → restrict to visible.
 - Grep: `rg "list_categories\b"` to find every reference; update each + its test.
+  Exception: `GET /api/catalog` (`api/catalog.py`) is intentionally left on the
+  old query — it will be removed in Phase 4 once the PWA migrates to
+  `GET /api/categories`; do not update it here.
 
 ## 4. Tests (same session)
 - `tests/category_templates/test_apply.py` — applying a set bakes names
