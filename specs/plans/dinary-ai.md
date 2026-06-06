@@ -21,7 +21,7 @@ Background service: MCP server + SQLite replica pulled from VM2 on demand via SS
 
 Remove: `subprocess`, `mcp_proc`, `_DEFAULT_MCP_PORT`, try/finally MCP start/stop block.
 
-Add before opening Marimo:
+Add before opening Marimo (imports at module top level):
 ```python
 import urllib.error
 import urllib.request
@@ -30,7 +30,7 @@ _DEFAULT_AI_PORT = 8765
 
 def _ensure_dinary_ai(c, mcp_port: int) -> None:
     try:
-        urllib.request.urlopen(f"http://localhost:{mcp_port}/mcp", timeout=2)
+        urllib.request.urlopen(f"http://localhost:{mcp_port}/health", timeout=2)
         print(f"OK: dinary-ai reachable on port {mcp_port}")
     except (urllib.error.URLError, OSError):
         print(f"dinary-ai not running on port {mcp_port} — running setup-dinary-ai")
@@ -47,7 +47,7 @@ def _ensure_dinary_ai(c, mcp_port: int) -> None:
 
 Define `RestoreError` in `src/dinary_analytics/exceptions.py`.
 
-Platform DB paths (in `dinary_analytics/paths.py`):
+Platform DB paths (in `src/dinary_analytics/paths.py`):
 - macOS: `~/.local/share/dinary/dinary-ai.db`
 - Windows: `%LOCALAPPDATA%/dinary/dinary-ai.db`
 
@@ -58,9 +58,15 @@ Platform DB paths (in `dinary_analytics/paths.py`):
 
 Litestream binary check: `shutil.which("litestream")` at startup; if missing, print install instructions and exit.
 
-Module-level `_last_restore: float = 0.0`, `RESTORE_COOLDOWN_SECONDS = 5`.
+Module-level state (imports at top level: `import threading`, `import time`):
+```python
+_restore_lock = threading.Lock()
+_last_restore: float = 0.0
+RESTORE_COOLDOWN_SECONDS = 5
+```
 
 `maybe_restore() -> None`:
+- Acquires `_restore_lock` before checking and updating `_last_restore` to avoid concurrent restores under parallel MCP requests.
 - Runs `restore_replica()` only if `time.monotonic() - _last_restore > RESTORE_COOLDOWN_SECONDS`.
 - On `RestoreError`: logs warning, does not raise (service continues with stale data).
 
@@ -69,6 +75,7 @@ Tests in `tests/analytics/test_restore.py`:
 - `test_restore_replica_raises_on_failure` — raises `RestoreError` when litestream fails
 - `test_maybe_restore_cooldown` — second call within 5 s skips restore; call after 5 s triggers it
 - `test_maybe_restore_logs_on_error` — `RestoreError` logged, not re-raised
+- `test_maybe_restore_no_concurrent_restores` — concurrent calls trigger only one restore
 
 ---
 
@@ -78,7 +85,7 @@ Replaces `mcp_server.py` as the primary entry point. Delete `mcp_server.py`; upd
 
 ```
 startup:
-  1. restore_replica()          # initial pull from VM2
+  1. maybe_restore()          # initial pull from VM2; RestoreError logged, not re-raised
   2. start FastMCP on --port (default 8765)
 
 shutdown (SIGTERM):
@@ -87,9 +94,14 @@ shutdown (SIGTERM):
 
 Each MCP tool handler calls `maybe_restore()` before querying the DB.
 
+`ai_service.py` tracks last restore result: timestamp + error message (or `None` on success).
+Exposed as `GET /health` returning JSON `{"ok": bool, "last_restore": "ISO8601", "error": "..." | null}`.
+
 Tests in `tests/analytics/test_ai_service.py`:
 - `test_startup_restore_failure_still_starts` — `RestoreError` on startup is logged; service starts with no local DB
 - `test_tool_handler_calls_maybe_restore` — each MCP tool calls `maybe_restore()` before querying
+- `test_health_ok` — returns `{"ok": true}` after successful restore
+- `test_health_degraded` — returns `{"ok": false, "error": "..."}` after `RestoreError`
 
 ---
 
@@ -100,11 +112,14 @@ Tests in `tests/analytics/test_ai_service.py`:
 - `inv uninstall-dinary-ai` — stops and removes service entry.
 
 launchd plist: `~/Library/LaunchAgents/dev.dinary.ai.plist`, `KeepAlive: true`, `RunAtLoad: true`.
+`ProgramArguments`: `["uv", "run", "python", "-m", "dinary_analytics.ai_service", "--port", "8765"]` with the absolute path to `uv` resolved at install time via `shutil.which("uv")`.
 
 Windows: Task Scheduler, trigger `AtLogon`, restart on failure 3×.
 
 Tests in `tests/tasks/test_dinary_ai.py`:
 - `test_setup_dinary_ai_idempotent` — calling twice does not raise
+- `test_install_writes_plist` — plist file written to correct path with expected keys on macOS
+- `test_uninstall_removes_plist` — plist file removed and service stopped on macOS
 
 ---
 
@@ -112,19 +127,11 @@ Tests in `tests/tasks/test_dinary_ai.py`:
 
 Litestream on VM1 is the single replication path for `dinary-ai`. Failures must be maximally visible.
 
-### 5a — Health endpoint in `dinary-ai`
+### 5a — Marimo notebook blocks on replica error
 
-`ai_service.py` tracks last restore result: timestamp + error message (or `None` on success). Exposed as `GET /health` returning JSON `{"ok": bool, "last_restore": "ISO8601", "error": "..." | null}`.
+Top cell of `src/dinary_analytics/notebooks/dashboard.py` calls `GET http://localhost:8765/health`. On `ok: false` — calls `mo.stop(True, mo.callout(mo.md(f"**Replica error:** {error}"), kind="danger"))`, halting all subsequent cells. The notebook shows only the error; nothing else renders until the replica is fixed.
 
-### 5b — Marimo notebook blocks on replica error
-
-Top cell of the analytics notebook calls `GET http://localhost:8765/health`. On `ok: false` — calls `mo.stop(True, mo.callout(mo.md(f"**Replica error:** {error}"), kind="danger"))`, halting all subsequent cells. The notebook shows only the error; nothing else renders until the replica is fixed.
-
-Tests in `tests/analytics/test_health_endpoint.py`:
-- `test_health_ok` — returns `{"ok": true}` after successful restore
-- `test_health_degraded` — returns `{"ok": false, "error": "..."}` after `RestoreError`
-
-### 5c — Healthcheck: Litestream config errors
+### 5b — Healthcheck: Litestream config errors
 
 **File**: `tasks/healthcheck.py`
 
