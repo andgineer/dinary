@@ -63,12 +63,15 @@ Predicate (decided): **shown = `(is_active OR used) AND NOT is_hidden AND NOT is
   - `search_categories(con, query) -> list[...]`
   - `get_active_template(con) -> str | None` (reads `app_metadata.active_template`)
   - `activate_category(con, code)` — `is_active=1, is_hidden=0`; if `group_id`
-    is NULL, place it using the active set's definition (its group for that code);
+    is NULL, place it using the active set's definition (read `app_metadata.active_template`,
+    load `category_sets.definition_json` for that code, resolve to a `category_groups.id`);
     if there is no active template or the code is absent from the definition, leave
     `group_id=NULL` — the category stays invisible in grouped views until apply or
-    a manual move.
-  - `hide_category(con, code)` / `unhide_category(con, code)` — toggle `is_hidden`.
-  - `move_category(con, code, group_code)` — set `group_id` (manual override).
+    a manual move; bump `catalog_version`.
+  - `hide_category(con, code)` / `unhide_category(con, code)` — toggle `is_hidden`;
+    bump `catalog_version`.
+  - `move_category(con, code, group_code)` — set `group_id` (manual override);
+    bump `catalog_version`.
 
 ## 3. Wire visibility into existing consumers
 The LLM classifier and POST validation must use the **visible** set (decided).

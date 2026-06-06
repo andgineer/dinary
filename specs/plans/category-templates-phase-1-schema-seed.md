@@ -77,11 +77,15 @@ constraint in place → table rebuild **inside the migration**, preserving
 ## 2. YAML loader — `src/dinary/category_templates/loader.py`
 - Read package resources via `importlib.resources.files("dinary.category_templates")`
   (mirror `db/sql_loader.load_sql`). `pyyaml` is already a dependency.
+- File extension convention: `categories.yml` (`.yml`) is the vocabulary;
+  template files use `.yaml`. The difference is intentional — `load_templates`
+  globs `*.yaml` and the vocabulary is never matched.
 - `load_vocabulary() -> dict[str, dict[str, str]]` — parse `categories.yml`
   (`code → {lang: name}`).
-- `load_templates() -> list[Template]` — parse every `*.yaml` except
-  `categories.yml`; return frozen dataclasses (`code` (filename slug), `names`,
-  `taglines`, `groups`, `renames`, `visible`, `hidden`).
+- `load_templates() -> list[Template]` — parse every `*.yaml` (all template
+  files; `categories.yml` uses `.yml` so it is never matched); return frozen
+  dataclasses (`code` (filename slug), `names`, `taglines`, `groups`, `renames`,
+  `visible`, `hidden`).
 - `validate(vocabulary, templates)` — port the coverage check already run by hand:
   every template's `visible`+`hidden` equals the vocabulary key set exactly (no
   dupes/missing/unknown), every referenced group is declared. Raise on failure.
@@ -173,11 +177,11 @@ All functions take an open `sqlite3.Connection`, run under `storage.transaction`
   ```python
   def bootstrap_categories(con):
       has_rows = con.execute("SELECT 1 FROM categories LIMIT 1").fetchone()
-      all_coded = con.execute("SELECT 1 FROM categories WHERE code IS NULL LIMIT 1").fetchone() is None
-      if has_rows and not all_coded:
-          migrate_personal_catalog(con)   # non-empty DB without codes → personal migration
+      no_uncoded = con.execute("SELECT 1 FROM categories WHERE code IS NULL LIMIT 1").fetchone() is None
+      if has_rows and not no_uncoded:
+          migrate_personal_catalog(con)   # non-empty DB with at least one NULL code → personal migration
       else:
-          seed_category_templates(con)    # empty DB → fresh seed
+          seed_category_templates(con)    # empty DB → fresh seed; or all codes present → reconcile
   ```
   After `migrate_personal_catalog` the DB has codes and `active_template = "active"`,
   so re-runs hit the guard in `migrate_personal_catalog` and exit immediately.

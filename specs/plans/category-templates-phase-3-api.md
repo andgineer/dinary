@@ -19,7 +19,7 @@ Endpoints:
 - `POST /api/category-templates/apply` `{code, lang}` → `apply_template`;
   return `{active_template: str, catalog_version: int}` + set `ETag` from the
   bumped `catalog_version` (reuse `etag_for`); the PWA re-fetches
-  `GET /api/categories` via the standard ETag mechanism. 409/400 on unknown code.
+  `GET /api/categories` via the standard ETag mechanism. 404 on unknown code.
 - `GET /api/categories` → visible grouped list from `list_visible_categories`
   — new independent endpoint with its own `If-None-Match` / `catalog_version` ETag
   handling. `GET /api/catalog` is left unchanged during Phase 3; the PWA migrates

@@ -20,37 +20,25 @@ Background service: MCP server + SQLite replica pulled from VM2 by a background 
 
 **File**: `tasks/analytics.py`
 
-Remove: `subprocess`, `mcp_proc`, `_DEFAULT_MCP_PORT`, try/finally MCP start/stop block.
+Remove:
+- `_DEFAULT_MCP_PORT` constant, `mcp_port` task parameter and its `@task(help=...)` entry, `_dinary_ai_running` function
+- `_sync_replica` function
+- Imports that become unused: `REPLICA_PATH`, `_build_replica_restore_script`, `ssh_replica_capture_bytes`
 
-Add before opening Marimo (imports at module top level):
+Add at module top level (new imports):
 ```python
-import json
 import time
 import urllib.error
 import urllib.request
 from dinary_analytics.ai_service import MCP_PORT
+```
 
-def _wait_replica_ready(mcp_port: int, timeout: int = 30) -> None:
-    for i in range(timeout):
-        try:
-            with urllib.request.urlopen(f"http://localhost:{mcp_port}/health", timeout=2) as resp:
-                data = json.loads(resp.read())
-            if data.get("ok"):
-                return
-            if i == 0:
-                print("dinary-ai is up but replica not yet ready — waiting …")
-        except (urllib.error.URLError, OSError, ValueError):
-            pass
-        time.sleep(1)
-    raise SystemExit(
-        f"dinary-ai replica not ready after {timeout}s — check `inv healthcheck` for errors"
-    )
-
+Add function:
+```python
 def _ensure_dinary_ai(c, mcp_port: int) -> None:
     try:
         urllib.request.urlopen(f"http://localhost:{mcp_port}/health", timeout=2)
         print(f"OK: dinary-ai reachable on port {mcp_port}")
-        _wait_replica_ready(mcp_port)
         return
     except (urllib.error.URLError, OSError):
         pass
@@ -61,14 +49,13 @@ def _ensure_dinary_ai(c, mcp_port: int) -> None:
         try:
             urllib.request.urlopen(f"http://localhost:{mcp_port}/health", timeout=2)
             print(f"OK: dinary-ai reachable on port {mcp_port}")
-            _wait_replica_ready(mcp_port)
             return
         except (urllib.error.URLError, OSError):
             pass
     raise SystemExit(f"dinary-ai did not start on port {mcp_port} after setup")
 ```
 
-`analytics` calls `_ensure_dinary_ai(c, MCP_PORT)` before opening Marimo.
+`analytics` calls `_ensure_dinary_ai(c, MCP_PORT)` before opening Marimo. Replica-readiness is not checked here — if the replica is not yet ready when Marimo opens, the notebook's top-cell health check (Step 5a) surfaces the error.
 
 `analytics` task signature loses `--mcp-port`; keeps `--port` for Marimo only.
 
@@ -76,14 +63,14 @@ def _ensure_dinary_ai(c, mcp_port: int) -> None:
 
 ## Step 2 — Local SQLite restore from VM2
 
-Define `RestoreError` in `src/dinary_analytics/exceptions.py`.
+Create new file `src/dinary_analytics/exceptions.py` and define `RestoreError`.
 
 Platform DB paths (in `src/dinary_analytics/paths.py`):
-- macOS: `~/.local/share/dinary/dinary-ai.db`
+- macOS: `~/Library/Application Support/dinary/dinary-ai.db`
 - Windows: `Path(os.environ["LOCALAPPDATA"]) / "dinary" / "dinary-ai.db"` — wrap missing key in `RuntimeError("LOCALAPPDATA not set; cannot determine DB path on Windows")`
 
 `restore_replica() -> Path`:
-- Runs `litestream restore` with VM2 as SFTP source (snapshot + WAL segments). Reads `DINARY_REPLICA_HOST` (e.g. `ubuntu@hostname`) from `.deploy/.env` via `dotenv_values`. Splits the value into `user` and `host` fields. Writes a temporary litestream YAML config (via `tempfile.NamedTemporaryFile`) with `type: sftp`, `host`, `user`, `key-path: ~/.ssh/id_ed25519`, `path: /var/lib/litestream/dinary`. Runs `litestream restore -config <tempfile> <db_path>` via `subprocess.run`. Deletes the temp file in a `finally` block. Add to top-level imports: `import subprocess`, `import tempfile`; `from dotenv import dotenv_values`.
+- Runs `litestream restore` with VM2 as SFTP source (snapshot + WAL segments). Reads `DINARY_REPLICA_HOST` (e.g. `ubuntu@hostname`) from `.deploy/.env` via `dotenv_values`. Splits the value into `user` and `host` fields. Reads optional `DINARY_SSH_KEY_PATH` from `.deploy/.env` alongside `DINARY_REPLICA_HOST`. Writes a temporary litestream YAML config (via `tempfile.NamedTemporaryFile`) with `type: sftp`, `host`, `user`, `path: /var/lib/litestream/dinary`; includes `key-path` only if `DINARY_SSH_KEY_PATH` is set — otherwise litestream falls back to the SSH agent and default key discovery. Runs `litestream restore -config <tempfile> <db_path>` via `subprocess.run`. Deletes the temp file in a `finally` block. Add to top-level imports: `import subprocess`, `import tempfile`; `from dotenv import dotenv_values`.
 - Returns path to local SQLite.
 - Raises `RestoreError` on failure; caller logs warning and serves stale data.
 
@@ -153,7 +140,14 @@ shutdown (SIGTERM):
 
 MCP tool handlers do not trigger any restore. Each handler calls `get_db_path()` from `dinary_analytics.restore`; if `None`, returns a FastMCP error immediately (replica not yet available). Do not let `sqlite3` raise an unhandled exception to the client.
 
-`GET /health` calls `get_db_path()`, `get_last_restore()`, and `get_last_restore_error()` from `dinary_analytics.restore`. Returns `{"ok": bool, "last_restore": "ISO8601" | null, "error": "..." | null}`. `ok` is `true` when `get_db_path() is not None` (replica available, even if the most recent sync failed and stale data is being served); `false` when no restore has ever succeeded. `last_restore` is `null` when no restore has completed; otherwise `datetime.datetime.fromtimestamp(get_last_restore(), tz=datetime.timezone.utc).isoformat()`.
+`GET /health` is registered via `@mcp.custom_route("/health", methods=["GET"])`. The handler is `async`, accepts a `starlette.requests.Request`, and returns a `starlette.responses.JSONResponse`. Add `from starlette.requests import Request` and `from starlette.responses import JSONResponse` to module-level imports. The handler calls `get_db_path()`, `get_last_restore()`, and `get_last_restore_error()` from `dinary_analytics.restore`. Returns `{"ok": bool, "last_restore": "ISO8601" | null, "error": "..." | null}`. `ok` is `true` when `get_db_path() is not None` (replica available, even if the most recent sync failed and stale data is being served); `false` when no restore has ever succeeded. `last_restore` is `null` when no restore has completed; otherwise `datetime.datetime.fromtimestamp(get_last_restore(), tz=datetime.timezone.utc).isoformat()`.
+
+`ai_service.py` must end with:
+```python
+if __name__ == "__main__":
+    main()
+```
+so that `python -m dinary_analytics.ai_service` works (required by the launchd plist and Task Scheduler XML in Step 4).
 
 `_ensure_dinary_ai` (Step 1) waits only for HTTP reachability, not replica readiness — the service responds to `/health` before the first restore completes. If `get_db_path()` is still `None` when Marimo opens, the notebook's top-cell health check shows the "replica not ready" error (Step 5a) and halts rendering. No special handling is needed in `_ensure_dinary_ai`.
 

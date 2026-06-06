@@ -19,19 +19,30 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
   onboarding view. Cache the result in the Pinia store (persist via `localStorage`)
   so subsequent app starts skip the round-trip; invalidate the cache on
   `applyTemplate` or when `catalog_version` changes.
+- Add a Vue Router `beforeEach` guard: if `active_template` is `null` and the
+  target route is not `/onboarding`, redirect to `/onboarding`. This covers
+  deep-link entry — the user is always funnelled through the chooser before
+  accessing any category-dependent view.
 - `src/views/OnboardingTemplate.vue` (new): lists наборы from `listTemplates()`
   showing each set's localized name (`names[ui_lang]`) and tagline
   (`taglines[ui_lang]`) as the "this is you if…" descriptor; a language
-  selector; one tap → `applyTemplate(code, lang)` → continue into the app.
-  Keep it fast: pick-and-go, no mandatory tweaking (the design's "just start").
+  selector (available languages = the key set of `names` from the first
+  template in the list — all factory templates share the same language set);
+  one tap → `applyTemplate(code, lang)` → continue into the app. Keep it
+  fast: pick-and-go, no mandatory tweaking (the design's "just start").
 
 ## 3. Category picker with search-activate
 - `CategorySheet.vue` / `CatalogSelectField.vue`: render the visible grouped list
   from `getCategories()` (group headers + categories, by `group_sort_order`).
 - Add a search box: on input call `searchCategories(q)` with a ~300 ms debounce
-  (includes hidden / not-in-set, excludes retired). Selecting a result that isn't visible calls
-  `activateCategory(code)` then selects it — the "find anything, auto-activate"
-  flow. The classifier/quick-picks keep using the visible set.
+  (includes hidden / not-in-set, excludes retired). Selecting a result that isn't
+  visible calls `activateCategory(code)` then selects it — the "find anything,
+  auto-activate" flow. The classifier/quick-picks keep using the visible set.
+- Edge case: after `activateCategory` a category whose `group_id` is still NULL
+  (no active template or code absent from its definition) cannot appear in the
+  grouped picker. In this case, display it inline in the search results with a
+  label "(без группы / ungrouped)" and allow selection directly from the search
+  result — do not rely on it appearing in the grouped list after activation.
 - `stores/catalog.js`: hold visible categories keyed by code; refresh on
   `catalog_version` change (existing ETag-driven refresh).
 

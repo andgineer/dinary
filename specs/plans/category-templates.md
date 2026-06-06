@@ -136,7 +136,10 @@ losing history, and have analytics stay continuous across switches.
   needed. Backfills factory `code` onto existing categories and groups via a
   hardcoded name→code table specific to the current live data, calls
   `seed_category_templates`, then applies the `active` template in Russian.
-  Guarded: returns immediately if any code is already set.
+  Guarded: returns immediately if any code is already set (checked at function
+  entry; the guard is for direct calls — `bootstrap_categories` itself never
+  calls `migrate_personal_catalog` on a re-run because by then all codes are set
+  and it takes the `else` branch to `seed_category_templates`).
 - **Origin marks what seed may touch:** template definitions and codes carry an
   origin (`factory` vs `custom`/user). A normal re-run reconciles only
   factory-origin rows by code (insert/update/retire); user-created categories
@@ -158,6 +161,13 @@ losing history, and have analytics stay continuous across switches.
 - Rename (label changes, `code` stays), add (new user-code or reuse existing by
   search → activation), hide (`is_hidden`), move between groups (`group_id`),
   plus the new "apply another template" action.
+- User-created (`u_`-prefixed) categories are absent from every template's
+  `visible ∪ hidden` and are skipped by apply. Their `group_id` is unchanged
+  across template switches, but apply rebakes `category_groups.name` for the
+  active template — so a user category keeps its group placement, but that
+  group's display name may change meaning. Accepted: categories the user created
+  stay in whatever group they were assigned; the user can `move_category` if
+  needed.
 
 ## Onboarding templates (proposed — pending confirmation)
 
@@ -180,6 +190,11 @@ subset (a single broad template can only carry one visible subset):
   income/savings/debt an expense tracker won't log); drop from onboarding.
 
 ## Implementation phases
+
+**Single installation, all phases implemented together.** There is exactly one
+deployment of this app. Phases are an analytical breakdown of the work only —
+they are not staged rollouts. No temporary endpoints, no backward-compatibility
+shims between phases. All four phases land as one complete change.
 
 Done already: `src/dinary/category_templates/` created — `categories.yml`
 (69 categories) + `simple` / `active` / `family` / `freelancer`, each covering the

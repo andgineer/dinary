@@ -65,7 +65,7 @@ its limitations.
 ## Failover strategy
 
 On 429 or 503: move immediately to the next provider without waiting. The drain
-processes jobs at a steady personal-tracker pace; at normal load the pool is
+processes jobs at a steady low-volume pace; at normal load the pool is
 never exhausted. Rate-limit cooldown is tracked per provider so the primary is
 preferred again as soon as its window resets.
 

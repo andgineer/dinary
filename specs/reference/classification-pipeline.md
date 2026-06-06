@@ -111,9 +111,9 @@ the operator to dig through server logs.
 
 ## Parallelism cap
 
-No cap on concurrent job processing. For a personal expense tracker the realistic
-backlog is tens of jobs; a bounded semaphore would add complexity without
-providing meaningful protection.
+No cap on concurrent job processing. At typical load the realistic backlog is
+tens of jobs; a bounded semaphore would add complexity without providing
+meaningful protection.
 
 ## Auto-attach events
 

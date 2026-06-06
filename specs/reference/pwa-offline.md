@@ -29,9 +29,9 @@ most 30 minutes old) or unavailable (no rate was loaded yet offline).
 
 `registerType: 'autoUpdate'` with `skipWaiting` and `clientsClaim` means a
 newly deployed build takes effect on the next page reload without requiring the
-user to manually dismiss an update prompt. For a single-operator personal
-finance tool, silent auto-update is the right trade-off — there is no
-multi-tab coordination concern and no risk of disrupting concurrent sessions.
+user to manually dismiss an update prompt. Silent auto-update is the right
+trade-off — there is no multi-tab coordination concern and no risk of
+disrupting concurrent sessions.
 
 ## Rollback is image-level
 

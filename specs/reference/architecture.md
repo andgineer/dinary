@@ -2,7 +2,7 @@
 
 ## What this system is
 
-A personal expense tracker for a single user in Serbia. Fiscal receipts are
+An expense tracker for Serbia. Fiscal receipts are
 scanned via QR code, line items are classified with an LLM, and the result
 optionally syncs to Google Sheets for familiar pivot-table views. The system
 prioritises clean data, scriptability, and low hosting cost over UI polish.
@@ -86,7 +86,7 @@ Evaluation criteria (a tool was disqualified if it failed any):
 | 1 | Offline operation — data persisted locally, synced on reconnect; loss is unacceptable |
 | 2 | Cross-platform — Android and iOS |
 | 3 | Custom REST API — POST to a FastAPI backend |
-| 4 | Free for single-user load |
+| 4 | Free for low-traffic load |
 | 5 | QR scanning — camera access for Serbian fiscal QR codes |
 
 | Candidate | Offline (#1) | QR (#5) | Verdict |
