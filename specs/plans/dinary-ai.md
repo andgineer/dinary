@@ -23,6 +23,7 @@ Remove: `subprocess`, `mcp_proc`, `_DEFAULT_MCP_PORT`, try/finally MCP start/sto
 
 Add before opening Marimo (imports at module top level):
 ```python
+import time
 import urllib.error
 import urllib.request
 
@@ -32,9 +33,17 @@ def _ensure_dinary_ai(c, mcp_port: int) -> None:
     try:
         urllib.request.urlopen(f"http://localhost:{mcp_port}/health", timeout=2)
         print(f"OK: dinary-ai reachable on port {mcp_port}")
+        return
     except (urllib.error.URLError, OSError):
-        print(f"dinary-ai not running on port {mcp_port} — running setup-dinary-ai")
-        c.run("uv run inv setup-dinary-ai", pty=True)
+        pass
+    print(f"dinary-ai not running on port {mcp_port} — running setup-dinary-ai")
+    c.run("uv run inv setup-dinary-ai", pty=True)
+    time.sleep(3)
+    try:
+        urllib.request.urlopen(f"http://localhost:{mcp_port}/health", timeout=5)
+        print(f"OK: dinary-ai reachable on port {mcp_port}")
+    except (urllib.error.URLError, OSError):
+        raise SystemExit(f"dinary-ai did not start on port {mcp_port} after setup")
 ```
 
 `analytics` calls `_ensure_dinary_ai(c, _DEFAULT_AI_PORT)` before opening Marimo.
@@ -49,39 +58,43 @@ Define `RestoreError` in `src/dinary_analytics/exceptions.py`.
 
 Platform DB paths (in `src/dinary_analytics/paths.py`):
 - macOS: `~/.local/share/dinary/dinary-ai.db`
-- Windows: `%LOCALAPPDATA%/dinary/dinary-ai.db`
+- Windows: `Path(os.environ["LOCALAPPDATA"]) / "dinary" / "dinary-ai.db"` (raises `KeyError` if env var missing — acceptable, Windows-only path)
 
 `restore_replica() -> Path`:
-- Runs `litestream restore` with VM2 as SFTP source (snapshot + WAL segments), reusing connection params from `_sync_replica()` infrastructure.
+- Runs `litestream restore` with VM2 as SFTP source (snapshot + WAL segments); connection params (host, SSH key) read from `.deploy/.env` (same source as `_sync_replica()`, `DINARY_DEPLOY_HOST`).
 - Returns path to local SQLite.
 - Raises `RestoreError` on failure; caller logs warning and serves stale data.
 
 Litestream binary check: `shutil.which("litestream")` at startup; if missing, print install instructions and exit.
 
+All of the following lives in `src/dinary_analytics/restore.py` (same file as `restore_replica()`).
+
 Module-level state (imports at top level: `import threading`, `import time`):
 ```python
 _restore_lock = threading.Lock()
 _last_restore: float = 0.0
+_last_restore_error: str | None = None
 RESTORE_COOLDOWN_SECONDS = 5
 ```
 
 `maybe_restore() -> None`:
 - Acquires `_restore_lock` before checking and updating `_last_restore` to avoid concurrent restores under parallel MCP requests.
 - Runs `restore_replica()` only if `time.monotonic() - _last_restore > RESTORE_COOLDOWN_SECONDS`.
-- On `RestoreError`: logs warning, does not raise (service continues with stale data).
+- On success: sets `_last_restore_error = None`.
+- On `RestoreError`: logs warning, sets `_last_restore_error` to the error message, does not raise (service continues with stale data).
 
 Tests in `tests/analytics/test_restore.py`:
 - `test_restore_replica_returns_path` — returns `Path` on successful restore
 - `test_restore_replica_raises_on_failure` — raises `RestoreError` when litestream fails
 - `test_maybe_restore_cooldown` — second call within 5 s skips restore; call after 5 s triggers it
-- `test_maybe_restore_logs_on_error` — `RestoreError` logged, not re-raised
+- `test_maybe_restore_logs_on_error` — `RestoreError` logged, not re-raised; `_last_restore_error` set to message
 - `test_maybe_restore_no_concurrent_restores` — concurrent calls trigger only one restore
 
 ---
 
 ## Step 3 — `src/dinary_analytics/ai_service.py`
 
-Replaces `mcp_server.py` as the primary entry point. Delete `mcp_server.py`; update any existing tests to import directly from `dinary_analytics.ai_service`.
+Replaces `mcp_server.py` as the primary entry point. Delete `mcp_server.py`; update `tests/analytics/test_mcp_server.py` (if it exists) to import from `dinary_analytics.ai_service`. Retain all MCP tools from `mcp_server.py` — only the module structure and startup sequence change.
 
 ```
 startup:
@@ -94,8 +107,9 @@ shutdown (SIGTERM):
 
 Each MCP tool handler calls `maybe_restore()` before querying the DB.
 
-`ai_service.py` tracks last restore result: timestamp + error message (or `None` on success).
-Exposed as `GET /health` returning JSON `{"ok": bool, "last_restore": "ISO8601", "error": "..." | null}`.
+`GET /health` reads `_last_restore` and `_last_restore_error` from `dinary_analytics.restore` and returns `{"ok": bool, "last_restore": "ISO8601", "error": "..." | null}`.
+
+If `maybe_restore()` has never succeeded (no local DB exists), MCP tool handlers must return a FastMCP error response — do not let `sqlite3` raise an unhandled exception to the client.
 
 Tests in `tests/analytics/test_ai_service.py`:
 - `test_startup_restore_failure_still_starts` — `RestoreError` on startup is logged; service starts with no local DB
@@ -112,12 +126,12 @@ Tests in `tests/analytics/test_ai_service.py`:
 - `inv uninstall-dinary-ai` — stops and removes service entry.
 
 launchd plist: `~/Library/LaunchAgents/dev.dinary.ai.plist`, `KeepAlive: true`, `RunAtLoad: true`.
-`ProgramArguments`: `["uv", "run", "python", "-m", "dinary_analytics.ai_service", "--port", "8765"]` with the absolute path to `uv` resolved at install time via `shutil.which("uv")`.
+`ProgramArguments`: `[<uv_path>, "run", "python", "-m", "dinary_analytics.ai_service", "--port", "8765"]` where `<uv_path>` is the absolute path resolved at install time via `shutil.which("uv")` (raises `RuntimeError` if not found).
 
 Windows: Task Scheduler, trigger `AtLogon`, restart on failure 3×.
 
 Tests in `tests/tasks/test_dinary_ai.py`:
-- `test_setup_dinary_ai_idempotent` — calling twice does not raise
+- `test_setup_dinary_ai_idempotent` — calling twice does not raise and plist still exists with correct content on macOS
 - `test_install_writes_plist` — plist file written to correct path with expected keys on macOS
 - `test_uninstall_removes_plist` — plist file removed and service stopped on macOS
 
