@@ -11,7 +11,7 @@ Background service: MCP server + live DB replica from VM1 via Litestream.
 - `dinary-ai` serves FastMCP on HTTP and keeps a local SQLite replica fresh via periodic `litestream restore` from local LTX files.
 - On first start (no local LTX files): SSH restore from VM2 for immediate availability, same as `_sync_replica()`.
 - On startup: `dinary-ai` self-registers on VM1 (adds itself to Litestream config, removes stale entries, restarts Litestream if changed, verifies via journalctl).
-- `inv analytics` checks if `dinary-ai` is reachable; if not, runs `setup-ai-replica` idempotently before opening Marimo.
+- `inv analytics` checks if `dinary-ai` is reachable; if not, runs `setup-dinary-ai` idempotently before opening Marimo.
 - Cross-platform: macOS (launchd) and Windows (Task Scheduler).
 
 ---
@@ -24,9 +24,12 @@ Remove: `subprocess`, `mcp_proc`, `_DEFAULT_MCP_PORT`, try/finally MCP start/sto
 
 Add before opening Marimo:
 ```python
+import urllib.error
+import urllib.request
+
+_DEFAULT_AI_PORT = 8765
+
 def _ensure_dinary_ai(c, mcp_port: int) -> None:
-    """Start dinary-ai via setup-ai-replica if not reachable on mcp_port."""
-    import urllib.request, urllib.error
     try:
         urllib.request.urlopen(f"http://localhost:{mcp_port}/mcp", timeout=2)
         print(f"OK: dinary-ai reachable on port {mcp_port}")
@@ -34,6 +37,8 @@ def _ensure_dinary_ai(c, mcp_port: int) -> None:
         print(f"dinary-ai not running on port {mcp_port} — running setup-dinary-ai")
         c.run("uv run inv setup-dinary-ai", pty=True)
 ```
+
+`analytics` calls `_ensure_dinary_ai(c, _DEFAULT_AI_PORT)` before opening Marimo.
 
 `analytics` task signature loses `--mcp-port`; keeps `--port` for Marimo only.
 
@@ -44,7 +49,7 @@ def _ensure_dinary_ai(c, mcp_port: int) -> None:
 **File**: `tasks/backups/backups_replica.py` → `_build_litestream_config()`
 
 Change `replica:` (single) → `replicas:` (list). VM2 is always first, permanent.
-Accept optional `ai_replicas: list[dict]` parameter (default empty list).
+Accept optional `ai_replicas: list[dict] | None = None` parameter; treat `None` as empty list inside the function.
 
 ```yaml
 dbs:
@@ -108,6 +113,10 @@ Tests in `tests/analytics/test_ai_replica.py`:
 
 ## Step 5 — SSH key exchange during registration
 
+Tests in `tests/analytics/test_ai_setup.py`:
+- `test_authorized_keys_append` — pubkey is appended to `~/.ssh/authorized_keys`
+- `test_authorized_keys_no_duplicate` — re-running does not add duplicate line
+
 VM1 pushes to machine via SFTP → VM1 needs a keypair that machine's SFTP trusts.
 
 During `dinary-ai` startup:
@@ -123,6 +132,8 @@ Machine SFTP:
 
 ## Step 6 — Local LTX directory and restore
 
+Define `LitestreamRestoreError` in `src/dinary_analytics/exceptions.py`.
+
 Platform paths (in `dinary_analytics/paths.py`):
 - macOS: `~/.local/share/dinary/litestream/dinary.db/`
 - Windows: `%LOCALAPPDATA%/dinary/litestream/dinary.db/`
@@ -132,15 +143,20 @@ Platform paths (in `dinary_analytics/paths.py`):
 - Runs `litestream restore`
 - Raises `LitestreamRestoreError` if no valid snapshot
 
-Fallback: `LitestreamRestoreError` → `_sync_replica()` (SSH restore from VM2). Logs warning.
+Fallback: `LitestreamRestoreError` → `_sync_replica()` (SSH restore from VM2). Logs warning. Import `_sync_replica` from `tasks.backups.backups_replica`.
 
 Litestream binary check: `shutil.which("litestream")` at startup; if missing, print install instructions and exit.
+
+Tests in `tests/analytics/test_restore.py`:
+- `test_restore_local_replica_returns_path` — returns `Path` on successful `litestream restore`
+- `test_restore_local_replica_raises_on_missing_snapshot` — raises `LitestreamRestoreError` when no valid snapshot exists
+- `test_fallback_calls_sync_replica` — `LitestreamRestoreError` triggers `_sync_replica()` call
 
 ---
 
 ## Step 7 — `src/dinary_analytics/ai_service.py`
 
-Replaces `mcp_server.py` as the primary entry point. `mcp_server.py` kept for import compatibility (re-exports `mcp` object only if needed by tests).
+Replaces `mcp_server.py` as the primary entry point. Delete `mcp_server.py`; update any existing tests to import directly from `dinary_analytics.ai_service`.
 
 ```
 startup:
@@ -156,6 +172,10 @@ shutdown (SIGTERM):
 
 `DINARY_AI_SYNC_INTERVAL_MINUTES`: env var, default 30.
 
+Tests in `tests/analytics/test_ai_service.py`:
+- `test_sync_interval_env_var` — `DINARY_AI_SYNC_INTERVAL_MINUTES` sets background thread interval
+- `test_startup_fallback_on_restore_error` — `LitestreamRestoreError` triggers `_sync_replica()`, service still starts
+
 ---
 
 ## Step 8 — `tasks/dinary_ai.py`
@@ -169,6 +189,10 @@ shutdown (SIGTERM):
 launchd plist: `~/Library/LaunchAgents/dev.dinary.ai.plist`, `KeepAlive: true`, `RunAtLoad: true`.
 
 Windows: Task Scheduler, trigger `AtLogon`, restart on failure 3×.
+
+Tests in `tests/tasks/test_dinary_ai.py`:
+- `test_setup_dinary_ai_idempotent` — calling twice does not raise
+- `test_list_replicas_parses_json` — correctly parses `*.json` registry listing
 
 ---
 
@@ -199,4 +223,4 @@ Tests: `TestLitestreamConfigErrorCheckCommand` — same pattern as existing `Tes
 
 - `uv run inv pre` → 0 errors
 - `uv run pytest` → 0 failures
-- Manual: `inv analytics` on clean machine auto-runs `setup-ai-replica`, `dinary-ai` starts, MCP reachable, Marimo opens.
+- Manual: `inv analytics` on clean machine auto-runs `setup-dinary-ai`, `dinary-ai` starts, MCP reachable, Marimo opens.
