@@ -16,8 +16,8 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
 ## 2. Onboarding (no active set → chooser)
 - `stores/catalog.js` exposes a `templateReady` promise that resolves once
   `active_template` is known. Init sequence: call `getActiveTemplate()`, store
-  the result, then resolve `templateReady`. No localStorage fast-path — the router
-  guard awaits the promise before any navigation, so there is no UI flash; and
+  the result, then resolve `templateReady`. No localStorage fast-path — `App.vue`
+  awaits the promise before deciding what to render, so there is no UI flash; and
   always fetching from the server avoids stale local state after a server reset or
   re-seed (localStorage would cache a non-null value even when the server has reset
   `active_template` to absent).
@@ -27,12 +27,17 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
   mechanism in `api/catalog.js`). On a 200 response (version changed), it calls
   `getActiveTemplate()` again and updates the stored value. This covers
   apply-from-another-device and re-seed scenarios.
-- Add a Vue Router `beforeEach` guard: **await `store.templateReady`** first, then
-  if `active_template` is `null` and the target route is not `/onboarding`,
-  redirect to `/onboarding`. Awaiting the promise prevents a flash of the wrong
-  route on first launch before the API response arrives. This covers deep-link
-  entry — the user is always funnelled through the chooser before accessing any
-  category-dependent view.
+- **No Vue Router exists in this app** — `webapp/` has no `vue-router` dependency
+  and no `router/`; navigation is a flat tab switch in `App.vue`
+  (`tab = ref("add")` plus a `v-if`/`v-else-if` chain over view components), so
+  there are no routes or deep links to guard. Gate onboarding the same way the app
+  already gates top-level state (cf. its `v-if="isDev"` banner): in `App.vue`'s
+  `init()`, `await catalogStore.templateReady` before the first render decision,
+  then wrap the existing `<header>…</header><main>…</main>` in
+  `v-if="catalogStore.activeTemplate !== null"` / `v-else` renders
+  `OnboardingTemplate`. Because the whole app is one view with no routes, this
+  single conditional is the complete equivalent of "funnel every entry through the
+  chooser" — there is no separate deep-link case to cover.
 - `src/views/OnboardingTemplate.vue` (new): lists наборы from `listTemplates()`
   showing each set's localized name (`names[ui_lang]`) and tagline
   (`taglines[ui_lang]`) as the "this is you if…" descriptor (`ui_lang` = the
@@ -44,6 +49,10 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
   fast: pick-and-go, no mandatory tweaking (the design's "just start").
 
 ## 3. Category picker with search-activate
+- Visual design is already finalized — see `specs/plans/design_handoff_not_in_set/README.md`
+  (Variant B: search results split into in-set rows and a fenced "Not in your
+  set · add with one tap" section with one-tap activate-then-select). No further
+  design work needed — implement per that handoff.
 - `CategorySheet.vue` / `CatalogSelectField.vue`: render the visible grouped list
   from `getCategories()` (group headers + categories, by `group_sort_order`).
 - Add a search box: on input call `searchCategories(q)` with a ~300 ms debounce
@@ -75,10 +84,12 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
   the set's categories; your used categories stay; hidden ones stay hidden.
 
 ## 6. Tests (`webapp`, `npm test`)
-- Onboarding shows when active is `null`, hidden after apply. Vue Router
-  `beforeEach` guard awaits `templateReady` before checking — no flash of the
-  wrong route on first launch. Guard redirects any non-onboarding deep-link to
-  `/onboarding` when `active_template` is `null`.
+- Onboarding shows when active is `null`, hidden after apply. `App.vue` awaits
+  `templateReady` before its first render decision — no flash of the normal tabs
+  before the API response arrives. There are no routes/deep-links in this app, so
+  the only case to cover is the top-level conditional itself:
+  `active_template === null` ⇒ `OnboardingTemplate` renders in place of the
+  header+tabs; non-null ⇒ the normal app renders.
 - Picker renders visible grouped; search surfaces a hidden category; selecting it
   activates and selects it.
 - Hide removes from picker; unhide restores; move changes group.

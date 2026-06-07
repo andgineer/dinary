@@ -1,6 +1,7 @@
 # dinary-ai — implementation plan
 
-Background service: MCP server + SQLite replica pulled from VM2 by a background daemon via SSH.
+Background service: MCP server + SQLite replica refreshed by a background daemon via periodic
+HTTP snapshot downloads from the dinary server.
 `inv analytics` detects whether `dinary-ai` is running and auto-configures it via `setup-dinary-ai`.
 
 ---
@@ -8,92 +9,133 @@ Background service: MCP server + SQLite replica pulled from VM2 by a background 
 ## Architecture summary
 
 - `dinary-ai` serves FastMCP on HTTP.
-- Background daemon restores the ledger replica by running `litestream restore` **locally** over SFTP against VM2's archive, immediately on startup and then every 30 minutes — independently of MCP requests. The dashboard's "Refresh now" button (Step 5a) can wake it early, so the interval only has to bound staleness for users who never click it. (VM1 = dinary server, runs the app and litestream; VM2 = storage server where litestream writes replicas; `dinary-ai` restores from VM2.)
-- Restoring locally rather than reusing the existing `_build_replica_restore_script` / `ssh_replica_capture_bytes` pattern (which runs `litestream restore` *on VM2* and streams the resulting bytes back over SSH) is a deliberate choice: that pattern would put restore CPU/disk/bandwidth load on the small storage VM on every poll, multiplied across every user's laptop and the polling interval. Running `litestream` locally keeps VM2 in a passive file-serving role and moves that cost to the machine that benefits from it. The trade-off — accepted here — is a new local dependency (`litestream` binary, validated at setup time, Step 3) and a dedicated SFTP key path (`DINARY_SSH_KEY_PATH`).
-- MCP tool handlers query the local replica directly (zero added latency) by resolving the path via `get_db_path()`. If the daemon has not yet produced a local DB, they return a FastMCP error immediately. The dashboard surfaces replication status (last-sync time, manual refresh) on every load — see Step 5a.
-- `inv analytics` checks if `dinary-ai` is reachable; if not, runs `setup-dinary-ai` idempotently before opening Marimo.
+- Background daemon refreshes the local ledger replica by downloading a consistent snapshot over
+  HTTP from the dinary server's `GET /api/analytics/db-snapshot` (Step 1) — immediately on startup
+  and then every 30 minutes, independently of MCP requests. The dashboard's "Refresh now" button
+  (Step 5) can wake it early, so the interval only has to bound staleness for users who never
+  click it.
+- This is a deliberately simpler replacement for a litestream-over-SFTP-from-VM2 design considered
+  earlier: the ledger is small (currently ~1 MB; item-level receipt scanning grows it an estimated
+  2–3 MB/year — see Step 1's sizing note) and stays small for years, so a periodic full-snapshot
+  download costs about the same as an incremental WAL pull would, with none of the extra moving
+  parts. It also needs nothing beyond what a laptop already has to use the app at all — the same
+  Cloudflare Access / Tailscale perimeter the PWA already crosses — whereas the SFTP design would
+  have meant minting and managing a `litestream` binary, an SSH key, and `.deploy/.env` secrets
+  *per laptop*. That distinction matters because `dinary-ai` is meant to run on more than one
+  family member's machine against the same shared ledger (Step 1).
+- MCP tool handlers query the local replica directly (zero added latency) by resolving the path
+  via `get_db_path()`. If the daemon has not yet produced a local DB, they return a FastMCP error
+  immediately. The dashboard surfaces refresh status (last-sync time, manual refresh) on every
+  load — see Step 5.
+- `inv analytics` checks if `dinary-ai` is reachable; if not, runs `setup-dinary-ai` idempotently
+  before opening Marimo.
 - Cross-platform: macOS (launchd) and Windows (Task Scheduler).
-- Litestream on VM1 is the single replication path — enhanced diagnostics to maximise visibility of failures.
 
 ---
 
-## Step 1 — Local SQLite restore from VM2
+## Step 1 — Snapshot endpoint and background refresh daemon
 
-Create new file `src/dinary_analytics/exceptions.py` and define `RestoreError`.
+### Server: `GET /api/analytics/db-snapshot`
+
+Add to `src/dinary/api/analytics.py` (the same router that already serves `GET /api/analytics/summary`) a read-only route that hands out a consistent point-in-time copy of the live ledger:
+
+`get_db_snapshot() -> FileResponse`:
+- Defined as a plain `def`, not `async def` — Starlette runs sync route handlers in its threadpool automatically, so the blocking backup I/O below never touches the event loop; no explicit `run_in_threadpool` call is needed.
+- Opens a fresh read connection via `get_connection()` (`dinary.db.storage`), creates `tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)`, closes it immediately (only its path, `tmp_path = Path(tmp.name)`, is needed — the file must not be open when SQLite writes to it), opens `target = sqlite3.connect(tmp_path)`, and calls `source.backup(target)` — Python's wrapper around SQLite's Online Backup API. This produces a fully consistent standalone copy of the live database without holding any lock for longer than a single internal page-copy step; the API is explicitly designed to run concurrently with WAL-mode writers (`dinary/db/storage.py` already sets `journal_mode=WAL`). Closes `target` then `source` in `finally` blocks, in that order.
+- Returns `FileResponse(tmp_path, media_type="application/octet-stream", filename="dinary-snapshot.db", background=BackgroundTask(lambda: tmp_path.unlink(missing_ok=True)))`. Starlette runs the `BackgroundTask` only after the response body has been fully streamed to the client, so the temp file is cleaned up whether the download completed or the client disconnected early.
+- Add to `analytics.py`'s imports: `import sqlite3` (already present), `import tempfile`, `from fastapi.responses import FileResponse`, `from starlette.background import BackgroundTask`, `from dinary.db.storage import get_connection`.
+
+No new authorization is added: this route is read-only and sits behind the same network perimeter (Cloudflare Access / Tailscale — see `specs/reference/architecture.md`'s "Single user. No in-app auth layer") that already fronts every route in this app, including ones that *mutate* the ledger with no token check at all. A read-only snapshot is strictly less sensitive than those — adding a bespoke auth scheme here would be new surface for no corresponding safety gain, and the architecture deliberately keeps the perimeter, not in-app auth, as the boundary.
+
+**Sizing**: the live `dinary.db` is currently ~1 MB (4 000 `expenses` rows at ~125 bytes/row including indexes). Item-level receipt classification writes one `expenses` row *and* one `receipt_items` row per scanned line item (`persist.py:_write_single_item`), so an actively-scanning household adds roughly 3 500–4 000 such rows/year — an estimated 2–3 MB/year of growth. At that rate the ledger stays in the tens-of-MB range for years; a full-snapshot download every 30 minutes (or on demand) costs a few seconds of bandwidth at most, comparable to an incremental WAL pull, so there is nothing to gain from chasing incrementality here.
+
+Tests, alongside the existing `get_analytics_summary` tests:
+- `test_db_snapshot_returns_valid_sqlite_file` — the response body, written to a temp path, opens with `sqlite3.connect` and reports the same `expenses` row count as the live DB
+- `test_db_snapshot_cleans_up_temp_file` — the server-side temp file no longer exists once the response has been fully consumed
+- `test_db_snapshot_consistent_under_concurrent_write` — a write committed during the request either is or isn't present in the snapshot (both acceptable); the assertion is that the snapshot opens cleanly and is never torn
+
+### Client: background refresh daemon
+
+Create new file `src/dinary_analytics/exceptions.py` and define `RefreshError`.
 
 Redefine `REPLICA_PATH` in `src/dinary_analytics/paths.py` to be platform-specific — it stops being server-relative (`_DATA_DIR / "ledger-replica.db"`), because `dinary-ai` runs on the user's machine, independent of the repo and of `settings.data_path`:
 - macOS: `~/Library/Application Support/dinary/dinary-ai.db`
 - Windows: `Path(os.environ["LOCALAPPDATA"]) / "dinary" / "dinary-ai.db"` — wrap missing key in `RuntimeError("LOCALAPPDATA not set; cannot determine DB path on Windows")`
 
-This is the only path consumers need to know about: `open_ledger()`'s existing `replica_path or REPLICA_PATH` default now resolves to the daemon-restored file, so every existing call site — dashboard cells, `tags.py`, `events.py`, `views.py`, and the MCP `query` handler — keeps working unchanged (Step 2 covers the readiness gate that MCP handlers add on top). `sync_replica()` in `connection.py` and its only caller, `_sync_replica` in `tasks/analytics.py` (removed in Step 4), become dead code — delete `sync_replica()` and its tests in `tests/analytics/test_connection.py`.
+This is the only path consumers need to know about: `open_ledger()`'s existing `replica_path or REPLICA_PATH` default now resolves to the daemon-refreshed file, so every existing call site — dashboard cells, `tags.py`, `events.py`, `views.py`, and the MCP `query` handler — keeps working unchanged (Step 2 covers the readiness gate that MCP handlers add on top). `sync_replica()` in `connection.py` and its only caller, `_sync_replica` in `tasks/analytics.py` (removed in Step 4), become dead code — delete `sync_replica()` and its tests in `tests/analytics/test_connection.py`.
 
-`restore_replica() -> Path`:
-- At function entry, checks `shutil.which("litestream")`; if missing, prints install instructions and raises `RestoreError` (not `SystemExit` — the caller decides whether to abort). `setup-dinary-ai` (Step 3) performs the same check *before* installing the service, so this branch only fires for a `litestream` binary removed after setup — the common "not installed yet" case is caught up front with actionable instructions instead of failing silently in the background.
-- `db_path = REPLICA_PATH` (platform-specific path defined above). This is both the restore target and the return value.
-- Resolves `.deploy/.env` relative to the repo root, not CWD: `_REPO_ROOT = Path(__file__).resolve().parents[2]`, `_ENV_PATH = _REPO_ROOT / ".deploy" / ".env"`. This mirrors the anchoring `dinary.config` already uses for the same reason — "so cron, systemd, and interactive `uv run` all agree regardless of CWD" — which matters here because launchd/Task Scheduler start the daemon with an unpredictable working directory. Reads `DINARY_REPLICA_HOST` (e.g. `ubuntu@hostname`) via `dotenv_values(_ENV_PATH)`. Splits the value on `"@"` via `split("@", 1)`; raises `RestoreError("DINARY_REPLICA_HOST must be in user@host format")` if the result does not yield exactly two non-empty parts. (`tasks.devtools.env.replica_host()` already reads and validates the same variable — the parsing is intentionally re-implemented here rather than imported, because `dinary_analytics` must not depend on `tasks`.) Reads optional `DINARY_SSH_KEY_PATH` from the same file. Writes a temporary litestream YAML config via `tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False)` (`delete=False` is required on Windows — a `NamedTemporaryFile` open for writing cannot be opened by a child process on Windows unless the handle is released first; the file is deleted in the `finally` block instead). Config contains `type: sftp`, `host`, `user`, `path: /var/lib/litestream/dinary` — a literal that mirrors `REPLICA_LITESTREAM_DIR` / `REPLICA_DB_NAME` in `tasks/devtools/constants.py`; add a comment naming those two constants so a future change to VM2's layout is easy to find from this side too. Includes `key-path` only if `DINARY_SSH_KEY_PATH` is set — otherwise litestream falls back to the SSH agent and default key discovery. Runs `litestream restore -config <tempfile> <db_path>` via `subprocess.run`. Deletes the temp file in a `finally` block. Add to top-level imports: `import os`, `import shutil`, `import subprocess`, `import tempfile`; `from dotenv import dotenv_values`.
+`refresh_replica() -> Path`:
+- `db_path = REPLICA_PATH` (platform-specific path defined above). This is both the refresh target and the return value.
+- Resolves `.deploy/.env` relative to the repo root, not CWD: `_REPO_ROOT = Path(__file__).resolve().parents[2]`, `_ENV_PATH = _REPO_ROOT / ".deploy" / ".env"`. This mirrors the anchoring `dinary.config` already uses for the same reason — "so cron, systemd, and interactive `uv run` all agree regardless of CWD" — which matters here because launchd/Task Scheduler start the daemon with an unpredictable working directory. Reads `DINARY_APP_URL` (e.g. `https://dinary-host.tailxxxx.ts.net` — the same Tailscale-served origin the PWA already crosses) via `dotenv_values(_ENV_PATH)`; raises `RefreshError("DINARY_APP_URL not set in .deploy/.env")` if absent or empty. New optional variable — document it in `.deploy.example/.env` next to `DINARY_REPLICA_HOST`, with a comment that it is the base URL `dinary-ai` downloads snapshots from and must be reachable from the laptop (Tailscale MagicDNS / `tailscale serve` origin, not the bare `user@host` of `DINARY_DEPLOY_HOST`).
+- Downloads via `urllib.request.urlopen(f"{DINARY_APP_URL}/api/analytics/db-snapshot", timeout=60)` — the generous timeout leaves headroom as the snapshot grows over the years (currently well under 1 MB; see the sizing note above).
+- Streams the response body in chunks to a sibling temp path, `tmp_path = db_path.with_suffix(".tmp")`, then `os.replace(tmp_path, db_path)` — atomic on both POSIX and Windows, so a reader (DuckDB via `open_ledger()`) opening `db_path` mid-download always sees either the previous complete file or the new complete one, never a partial write.
 - Returns `db_path`.
-- Raises `RestoreError` on failure; caller logs warning and serves stale data.
+- Raises `RefreshError` on `urllib.error.URLError`, `OSError`, or a non-200 response status; caller logs a warning and keeps serving the stale local copy.
+- Add to top-level imports: `import os`, `import urllib.error`, `import urllib.request`; `from dotenv import dotenv_values`.
 
-All of the following lives in `src/dinary_analytics/restore.py` (same file as `restore_replica()`).
+**Why a plain HTTP download instead of litestream-over-SFTP-from-VM2** (the design considered and rejected): that design would have required `dinary-ai` to ship a `litestream` binary, generate and manage a per-laptop SSH key, and read `DINARY_REPLICA_HOST`/`DINARY_SSH_KEY_PATH` from `.deploy/.env` — secrets that, critically, would need to be *minted and handed to* every machine that runs `dinary-ai`. That is a reasonable ask of the repo owner's own laptop, but `dinary-ai` is meant to run on more than one family member's machine against the same shared ledger — and asking a non-developer user to generate an SSH key and join a Tailscale tailnet is not realistic. A plain HTTP download needs nothing a laptop doesn't already have to use the PWA at all: the same Cloudflare Access / Tailscale perimeter, plus one URL. Combined with the sizing note above — the ledger is small enough that a full download costs about what an incremental pull would — the simpler mechanism wins outright, with no functional trade-off.
+
+All of the following lives in `src/dinary_analytics/refresh.py` (same file as `refresh_replica()`).
 
 Imports at top level: `import datetime`, `import threading`, `import time`.
 
 Constants:
 ```python
-RESTORE_INTERVAL_SECONDS = 1800  # 30 minutes — normal poll interval after success; manual "Refresh now" (Step 2/5a) wakes the loop early, so this only needs to bound staleness for users who never click it
-RESTORE_RETRY_BASE_SECONDS = 30  # first retry after error; doubles each failure, capped at RESTORE_INTERVAL_SECONDS
+REFRESH_INTERVAL_SECONDS = 1800  # 30 minutes — normal poll interval after success; manual "Refresh now" (Step 2/5) wakes the loop early, so this only needs to bound staleness for users who never click it
+REFRESH_RETRY_BASE_SECONDS = 30  # first retry after error; doubles each failure, capped at REFRESH_INTERVAL_SECONDS
 ```
 
-Module-level state (`_db_path`, `_last_restore`, `_last_restore_error` mutated only inside `_restore_loop`; `_daemon_thread` mutated only in `start_restore_daemon()`; `_wake_event` set from `trigger_restore_now()` and cleared inside `_restore_loop`; all read only via accessors):
+Module-level state (`_db_path`, `_last_refresh`, `_last_refresh_error` mutated only inside `_refresh_loop`; `_daemon_thread` mutated only in `start_refresh_daemon()`; `_wake_event` set from `trigger_refresh_now()` and cleared inside `_refresh_loop`; all read only via accessors):
 ```python
 _lock: threading.Lock = threading.Lock()
-_db_path: Path | None = None        # None = no successful restore yet
-_last_restore: float | None = None  # time.time() timestamp
-_last_restore_error: str | None = None
+_db_path: Path | None = None        # None = no successful refresh yet
+_last_refresh: float | None = None  # time.time() timestamp
+_last_refresh_error: str | None = None
 _daemon_thread: threading.Thread | None = None
-_wake_event: threading.Event = threading.Event()  # set by trigger_restore_now() to cut the current wait short
+_wake_event: threading.Event = threading.Event()  # set by trigger_refresh_now() to cut the current wait short
 ```
 
-`_restore_loop() -> None`:
-- Declares `global _db_path, _last_restore, _last_restore_error` at function top.
-- Tracks a local `retry_delay: int` initialised to `RESTORE_RETRY_BASE_SECONDS`.
-- Runs forever: calls `restore_replica()`.
-  - **Success**: acquires `_lock` to update `_db_path`, `_last_restore`, and set `_last_restore_error = None` atomically; resets `retry_delay = RESTORE_RETRY_BASE_SECONDS`; waits `_wake_event.wait(timeout=RESTORE_INTERVAL_SECONDS)` then `_wake_event.clear()`.
-  - **`RestoreError`**: logs warning; acquires `_lock` to set `_last_restore_error` and leave `_db_path` unchanged (stale or `None`); waits `_wake_event.wait(timeout=retry_delay)` then `_wake_event.clear()`; then doubles `retry_delay` capped at `RESTORE_INTERVAL_SECONDS`.
-- Both branches wait via `_wake_event` rather than `time.sleep` so `trigger_restore_now()` can cut either one short — the loop doesn't care whether `wait()` returned because of the timeout or because the event was set; either way it proceeds straight to the next `restore_replica()` call. Always `clear()` immediately after waking, so a stale "set" from a previous trigger can't cause a busy-loop.
+`_refresh_loop() -> None`:
+- Declares `global _db_path, _last_refresh, _last_refresh_error` at function top.
+- Tracks a local `retry_delay: int` initialised to `REFRESH_RETRY_BASE_SECONDS`.
+- Runs forever: calls `refresh_replica()`.
+  - **Success**: acquires `_lock` to update `_db_path`, `_last_refresh`, and set `_last_refresh_error = None` atomically; resets `retry_delay = REFRESH_RETRY_BASE_SECONDS`; waits `_wake_event.wait(timeout=REFRESH_INTERVAL_SECONDS)` then `_wake_event.clear()`.
+  - **`RefreshError`**: logs warning; acquires `_lock` to set `_last_refresh_error` and leave `_db_path` unchanged (stale or `None`); waits `_wake_event.wait(timeout=retry_delay)` then `_wake_event.clear()`; then doubles `retry_delay` capped at `REFRESH_INTERVAL_SECONDS`.
+- Both branches wait via `_wake_event` rather than `time.sleep` so `trigger_refresh_now()` can cut either one short — the loop doesn't care whether `wait()` returned because of the timeout or because the event was set; either way it proceeds straight to the next `refresh_replica()` call. Always `clear()` immediately after waking, so a stale "set" from a previous trigger can't cause a busy-loop.
 
-`trigger_restore_now() -> None`:
-- Sets `_wake_event`. Idempotent and safe to call while a restore is already running in `restore_replica()`: the event is only consulted (and cleared) inside the wait, so a `set()` that arrives mid-restore simply makes the *next* wait return immediately — i.e. "restore again right away once this one finishes," which is the desired behaviour for a user mashing the refresh button, not a bug to guard against.
+`trigger_refresh_now() -> None`:
+- Sets `_wake_event`. Idempotent and safe to call while a refresh is already running in `refresh_replica()`: the event is only consulted (and cleared) inside the wait, so a `set()` that arrives mid-refresh simply makes the *next* wait return immediately — i.e. "refresh again right away once this one finishes," which is the desired behaviour for a user mashing the refresh button, not a bug to guard against.
 
 `get_db_path() -> Path | None`:
 - Acquires `_lock` and returns `_db_path`. Used by MCP tool handlers and `/health` — avoids capturing `None` at import time.
 
-`get_last_restore() -> float | None`:
-- Acquires `_lock` and returns `_last_restore`.
+`get_last_refresh() -> float | None`:
+- Acquires `_lock` and returns `_last_refresh`.
 
-`get_last_restore_error() -> str | None`:
-- Acquires `_lock` and returns `_last_restore_error`.
+`get_last_refresh_error() -> str | None`:
+- Acquires `_lock` and returns `_last_refresh_error`.
 
-`start_restore_daemon() -> None`:
+`start_refresh_daemon() -> None`:
 - Declares `global _daemon_thread` at function top.
-- Guard: if `_daemon_thread is not None and _daemon_thread.is_alive()`, returns immediately — prevents two concurrent restore loops if called twice.
-- Spawns `threading.Thread(target=_restore_loop, daemon=True)`, assigns to `_daemon_thread`, and starts it. The first restore runs immediately (before the first sleep).
+- Guard: if `_daemon_thread is not None and _daemon_thread.is_alive()`, returns immediately — prevents two concurrent refresh loops if called twice.
+- Spawns `threading.Thread(target=_refresh_loop, daemon=True)`, assigns to `_daemon_thread`, and starts it. The first refresh runs immediately (before the first wait).
 
-MCP tool handlers call `get_db_path()`; no restore is triggered inside a handler.
+MCP tool handlers call `get_db_path()`; no refresh is triggered inside a handler.
 
-Tests in `tests/analytics/test_restore.py`:
-- `test_restore_replica_returns_path` — returns `Path` on successful restore
-- `test_restore_replica_raises_on_failure` — raises `RestoreError` when litestream fails
-- `test_restore_loop_sets_db_path` — after one iteration `_db_path` is set to the returned path
-- `test_restore_loop_logs_on_error` — `RestoreError` on first iteration logged; `_db_path` stays `None`; loop continues
-- `test_restore_loop_keeps_stale_path_on_error` — after a successful restore followed by `RestoreError`, `get_db_path()` returns the previous (stale) path, not `None`
-- `test_restore_loop_retries_after_failure` — loop calls `restore_replica()` again after a failed attempt
-- `test_restore_loop_backoff_doubles_on_repeated_errors` — sleep intervals double on consecutive `RestoreError`s (30 → 60 → 120 …), capped at `RESTORE_INTERVAL_SECONDS`
-- `test_restore_loop_resets_delay_after_success` — after a sequence of errors followed by a success, the next sleep is `RESTORE_INTERVAL_SECONDS`, not the accumulated backoff value
-- `test_trigger_restore_now_wakes_loop_immediately` — calling `trigger_restore_now()` while `_restore_loop` is waiting (either the normal interval or a retry backoff) causes the next `restore_replica()` call without waiting out the full timeout
-- `test_start_restore_daemon_spawns_daemon_thread` — `start_restore_daemon()` creates a thread with `daemon=True` and starts it
-- `test_get_last_restore_returns_timestamp` — after a successful restore, `get_last_restore()` returns the `time.time()` value set during that restore
-- `test_get_last_restore_error_returns_message` — after a `RestoreError`, `get_last_restore_error()` returns the error string; after a subsequent success it returns `None`
+Tests in `tests/analytics/test_refresh.py`:
+- `test_refresh_replica_returns_path` — returns `Path` on a successful download
+- `test_refresh_replica_raises_on_failure` — raises `RefreshError` on `URLError` / non-200 status
+- `test_refresh_replica_writes_atomically` — patch `urlopen` to return a slow/chunked body and assert `db_path` is only ever observable as the previous complete file or the new complete one (`os.replace`, never a partial write)
+- `test_refresh_loop_sets_db_path` — after one iteration `_db_path` is set to the returned path
+- `test_refresh_loop_logs_on_error` — `RefreshError` on first iteration logged; `_db_path` stays `None`; loop continues
+- `test_refresh_loop_keeps_stale_path_on_error` — after a successful refresh followed by `RefreshError`, `get_db_path()` returns the previous (stale) path, not `None`
+- `test_refresh_loop_retries_after_failure` — loop calls `refresh_replica()` again after a failed attempt
+- `test_refresh_loop_backoff_doubles_on_repeated_errors` — wait intervals double on consecutive `RefreshError`s (30 → 60 → 120 …), capped at `REFRESH_INTERVAL_SECONDS`
+- `test_refresh_loop_resets_delay_after_success` — after a sequence of errors followed by a success, the next wait is `REFRESH_INTERVAL_SECONDS`, not the accumulated backoff value
+- `test_trigger_refresh_now_wakes_loop_immediately` — calling `trigger_refresh_now()` while `_refresh_loop` is waiting (either the normal interval or a retry backoff) causes the next `refresh_replica()` call without waiting out the full timeout
+- `test_start_refresh_daemon_spawns_daemon_thread` — `start_refresh_daemon()` creates a thread with `daemon=True` and starts it
+- `test_get_last_refresh_returns_timestamp` — after a successful refresh, `get_last_refresh()` returns the `time.time()` value set during that refresh
+- `test_get_last_refresh_error_returns_message` — after a `RefreshError`, `get_last_refresh_error()` returns the error string; after a subsequent success it returns `None`
 
 ---
 
@@ -105,18 +147,18 @@ Replaces `mcp_server.py` as the primary entry point. Delete `mcp_server.py`; ren
 
 ```
 startup:
-  1. start_restore_daemon()   # spawns background thread; first restore runs immediately
+  1. start_refresh_daemon()   # spawns background thread; first refresh runs immediately
   2. start FastMCP on --port (default 8765)
 
 shutdown (SIGTERM):
   3. stop FastMCP
 ```
 
-MCP tool handlers do not trigger any restore. `_run_query` (and any future ledger-reading tool) calls `get_db_path()` from `dinary_analytics.restore` first; if `None`, returns a FastMCP error immediately (replica not yet available) — *before* touching `open_ledger`. When `get_db_path()` returns a `Path`, the handler passes it explicitly to `open_ledger(path)`. (The zero-arg `open_ledger()` still works for notebooks and other non-MCP callers — its `REPLICA_PATH` default now resolves to the same daemon-restored file, see Step 1 — but MCP handlers go through `get_db_path()` because only it carries the "has a restore ever succeeded" signal they need to gate on.) Do not let `sqlite3` raise an unhandled exception to the client.
+MCP tool handlers do not trigger any refresh. `_run_query` (and any future ledger-reading tool) calls `get_db_path()` from `dinary_analytics.refresh` first; if `None`, returns a FastMCP error immediately (replica not yet available) — *before* touching `open_ledger`. When `get_db_path()` returns a `Path`, the handler passes it explicitly to `open_ledger(path)`. (The zero-arg `open_ledger()` still works for notebooks and other non-MCP callers — its `REPLICA_PATH` default now resolves to the same daemon-refreshed file, see Step 1 — but MCP handlers go through `get_db_path()` because only it carries the "has a refresh ever succeeded" signal they need to gate on.) Do not let `sqlite3` raise an unhandled exception to the client.
 
-`GET /health` is registered via `@mcp.custom_route("/health", methods=["GET"])`. The handler is `async`, accepts a `starlette.requests.Request`, and returns a `starlette.responses.JSONResponse`. Add `import argparse`, `import datetime`, `from starlette.requests import Request`, and `from starlette.responses import JSONResponse` to module-level imports. The handler calls `get_db_path()`, `get_last_restore()`, and `get_last_restore_error()` from `dinary_analytics.restore`. Returns `{"ok": bool, "last_restore": "ISO8601" | null, "error": "..." | null}`. `ok` is `true` when `get_db_path() is not None` (replica available and queries can be served, even if data is stale); `false` when no restore has ever succeeded and the service cannot serve any data. Clients check `ok` for query-ability; `error` is diagnostic only and does not flip `ok` to `false`. `last_restore` is `null` when no restore has completed; otherwise `datetime.datetime.fromtimestamp(get_last_restore(), tz=datetime.timezone.utc).isoformat()`.
+`GET /health` is registered via `@mcp.custom_route("/health", methods=["GET"])`. The handler is `async`, accepts a `starlette.requests.Request`, and returns a `starlette.responses.JSONResponse`. Add `import argparse`, `import datetime`, `from starlette.requests import Request`, and `from starlette.responses import JSONResponse` to module-level imports. The handler calls `get_db_path()`, `get_last_refresh()`, and `get_last_refresh_error()` from `dinary_analytics.refresh`. Returns `{"ok": bool, "last_refresh": "ISO8601" | null, "error": "..." | null}`. `ok` is `true` when `get_db_path() is not None` (replica available and queries can be served, even if data is stale); `false` when no refresh has ever succeeded and the service cannot serve any data. Clients check `ok` for query-ability; `error` is diagnostic only and does not flip `ok` to `false`. `last_refresh` is `null` when no refresh has completed; otherwise `datetime.datetime.fromtimestamp(get_last_refresh(), tz=datetime.timezone.utc).isoformat()`.
 
-`POST /restore/now` is registered via `@mcp.custom_route("/restore/now", methods=["POST"])` — the "Refresh now" button in the dashboard (Step 5a) calls it to force an immediate restore instead of waiting for the next scheduled poll (now `RESTORE_INTERVAL_SECONDS = 1800`, Step 1). The handler is `async`, calls `trigger_restore_now()` from `dinary_analytics.restore`, and returns `JSONResponse({"triggered": True})` immediately — it does not wait for the restore to finish. The caller polls `GET /health` for the updated `last_restore`.
+`POST /refresh/now` is registered via `@mcp.custom_route("/refresh/now", methods=["POST"])` — the "Refresh now" button in the dashboard (Step 5) calls it to force an immediate refresh instead of waiting for the next scheduled poll (now `REFRESH_INTERVAL_SECONDS = 1800`, Step 1). The handler is `async`, calls `trigger_refresh_now()` from `dinary_analytics.refresh`, and returns `JSONResponse({"triggered": True})` immediately — it does not wait for the refresh to finish. The caller polls `GET /health` for the updated `last_refresh`.
 
 `main()` is defined in `ai_service.py`:
 ```python
@@ -124,7 +166,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=MCP_PORT)
     args = parser.parse_args()
-    start_restore_daemon()
+    start_refresh_daemon()
     mcp.run(transport="streamable-http", host="127.0.0.1", port=args.port)
 ```
 
@@ -135,21 +177,21 @@ if __name__ == "__main__":
 ```
 so that `python -m dinary_analytics.ai_service` works (required by the launchd plist and Task Scheduler XML in Step 3).
 
-`_ensure_dinary_ai` (Step 4) waits only for HTTP reachability, not replica readiness — the service responds to `/health` before the first restore completes. If `get_db_path()` is still `None` when Marimo opens, the notebook's top-cell health check (Step 5a) shows the "replica not ready" error and halts rendering. No special handling is needed in `_ensure_dinary_ai`.
+`_ensure_dinary_ai` (Step 4) waits only for HTTP reachability, not replica readiness — the service responds to `/health` before the first refresh completes. If `get_db_path()` is still `None` when Marimo opens, the notebook's top-cell health check (Step 5) shows the "replica not ready" error and halts rendering. No special handling is needed in `_ensure_dinary_ai`.
 
 Tests in `tests/analytics/test_ai_service.py`:
-- `test_startup_restore_failure_still_starts` — `RestoreError` on startup is logged; service starts with `get_db_path() == None`
+- `test_startup_refresh_failure_still_starts` — `RefreshError` on startup is logged; service starts with `get_db_path() == None`
 - `test_tool_handler_returns_error_when_no_db` — handler returns FastMCP error when `get_db_path()` returns `None`
-- `test_health_ok` — returns `{"ok": true}` after successful restore
-- `test_health_degraded_no_db` — returns `{"ok": false}` when no restore has ever succeeded
-- `test_health_ok_with_stale_data` — returns `{"ok": true, "error": "..."}` when `_db_path` is set but last sync failed
-- `test_restore_now_triggers_loop` — `POST /restore/now` calls `trigger_restore_now()` and returns `{"triggered": true}` without blocking for the restore to finish
+- `test_health_ok` — returns `{"ok": true}` after successful refresh
+- `test_health_degraded_no_db` — returns `{"ok": false}` when no refresh has ever succeeded
+- `test_health_ok_with_stale_data` — returns `{"ok": true, "error": "..."}` when `_db_path` is set but last refresh failed
+- `test_refresh_now_triggers_loop` — `POST /refresh/now` calls `trigger_refresh_now()` and returns `{"triggered": true}` without blocking for the refresh to finish
 
 ---
 
 ## Step 3 — `tasks/dinary_ai.py`
 
-- `inv setup-dinary-ai` — idempotent: first checks `shutil.which("litestream")` and aborts with install instructions if it's missing (without this, the daemon would install and start successfully, then fail silently in its background thread — see Step 1). Then calls `install-dinary-ai` if the plist/task does not already exist (macOS: check plist file presence; Windows: `schtasks /query /tn dinary-ai` exit code 0 = exists). Finally ensures the service is actually running:
+- `inv setup-dinary-ai` — idempotent: calls `install-dinary-ai` if the plist/task does not already exist (macOS: check plist file presence; Windows: `schtasks /query /tn dinary-ai` exit code 0 = exists). Finally ensures the service is actually running:
   - macOS: `launchctl kickstart -k gui/$(id -u)/dev.dinary.ai` — works whether the agent is freshly loaded, loaded-but-stopped, or already running (`-k` restarts a running instance, so a freshly-written plist's changes take effect too).
   - Windows: `schtasks /query /tn dinary-ai /fo csv` to read the `Status` column; runs `schtasks /run /tn dinary-ai` only when it reads anything other than `Running`.
 
@@ -163,7 +205,6 @@ launchd plist: `~/Library/LaunchAgents/dev.dinary.ai.plist`, `KeepAlive: true`, 
 Windows: Task Scheduler, trigger `AtLogon`, restart on failure 3×, `<WorkingDirectory>` set to `<repo_root>` (same value, same reasoning as the plist's `WorkingDirectory` — `uv run` needs cwd to resolve the project). The XML config is written to a `tempfile.NamedTemporaryFile(suffix=".xml", delete=False)`, passed to `schtasks /create /xml <tempfile>`, then deleted. The task definition is stored in the Windows Task Scheduler database — the XML file itself is not kept. Permanent task name: `dinary-ai`.
 
 Tests in `tests/tasks/test_dinary_ai.py`:
-- `test_setup_dinary_ai_aborts_without_litestream` — `setup-dinary-ai` aborts with install instructions when `shutil.which("litestream")` is `None`, and writes no plist / starts nothing
 - `test_setup_dinary_ai_idempotent` — calling twice does not raise and plist still exists with correct content on macOS
 - `test_install_writes_plist` — plist file written to correct path with expected keys, including `WorkingDirectory`, on macOS
 - `test_uninstall_removes_plist` — plist file removed and service stopped on macOS
@@ -211,57 +252,33 @@ def _ensure_dinary_ai(c) -> None:
     raise SystemExit(f"dinary-ai did not start on port {MCP_PORT} after setup")
 ```
 
-`analytics` calls `_ensure_dinary_ai(c)` before opening Marimo. `pty=False` (default) — `setup-dinary-ai` is non-interactive. Replica-readiness is not checked here — if the replica is not yet ready when Marimo opens, the notebook's top-cell health check (Step 5a) surfaces the error.
+`analytics` calls `_ensure_dinary_ai(c)` before opening Marimo. `pty=False` (default) — `setup-dinary-ai` is non-interactive. Replica-readiness is not checked here — if the replica is not yet ready when Marimo opens, the notebook's top-cell health check (Step 5) surfaces the error.
 
 `analytics` task signature loses `--mcp-port`; keeps `--port` for Marimo only.
 
 ---
 
-## Step 5 — Litestream diagnostics
+## Step 5 — Marimo notebook shows snapshot status and blocks on refresh error
 
-Litestream on VM1 is the single replication path for `dinary-ai`. Failures must be maximally visible.
+Top cell of `src/dinary_analytics/notebooks/dashboard.py` becomes a visible **snapshot-status banner** that stays at the top of the dashboard: it still halts everything below it on error, but in the healthy case it renders something the user sees on every load — last-refresh time plus a manual refresh control — and lets the rest of the notebook render beneath it.
 
-### 5a — Marimo notebook shows replication status and blocks on replica error
+Detecting "the DB updated after I clicked refresh" must never block the kernel — Marimo's idiom for periodic, non-blocking re-execution is `mo.ui.refresh`, a UI element whose value changes on a timer and whose readers re-run automatically when it does. Declare, alongside the notebook's other top-level UI elements: `refresh_ticker = mo.ui.refresh(default_interval="5s")` and, alongside the other `mo.state` calls (e.g. near `draft_view`/`view_list_ver`): `refresh_requested, set_refresh_requested = mo.state(False)`.
 
-Top cell of `src/dinary_analytics/notebooks/dashboard.py` becomes a visible **replication-status banner** that stays at the top of the dashboard, not just a silent gate: it still halts everything below it on error, but in the healthy case it renders something the user sees on every load — last-sync time plus a manual refresh control — and lets the rest of the notebook render beneath it.
+The status cell reads both `refresh_ticker` and `refresh_requested` — so it re-runs every 5 seconds *and* immediately when the button below is clicked — and on each run:
+1. Imports `MCP_PORT` from `dinary_analytics.paths`; reads `refresh_ticker.value` (the read creates the periodic dependency — the value itself is unused) and `refresh_requested()`.
+2. If `refresh_requested()` is `True`: `POST`s to `http://localhost:{MCP_PORT}/refresh/now` (fire-and-forget — `trigger_refresh_now()` wakes the daemon and the route returns immediately, Step 2), then immediately calls `set_refresh_requested(False)` so the trigger fires once per click, not on every following tick.
+3. Calls `GET http://localhost:{MCP_PORT}/health` via `urllib.request.urlopen` — the same client as `_ensure_dinary_ai`, one quick request, no waiting loop — and parses the body with `json.loads` (already imported in the notebook's top cell).
+4. `urllib.error.URLError` (service not running) halts everything below: `mo.stop(True, mo.callout(mo.md("**dinary-ai not running** — run `inv analytics`"), kind="danger"))`.
+5. `ok: false` in the parsed response (no refresh ever succeeded) also halts everything below: reads `error` from the same payload and calls `mo.stop(True, mo.callout(mo.md(f"**Replica not ready:** {error}"), kind="danger"))`.
+6. Otherwise renders the banner and lets the notebook continue — e.g. `mo.hstack([mo.md(f"🔄 Snapshot refreshed **{_format_ago(last_refresh)}**"), mo.ui.button(label="Refresh now", on_click=lambda _: set_refresh_requested(True))])`. `_format_ago` is a small helper near the notebook's other formatting helpers that turns the ISO 8601 `last_refresh` into "just now" / "5 minutes ago" / "2 hours ago" relative to `datetime.datetime.now(tz=datetime.timezone.utc)`.
 
-State (declared alongside the notebook's other `mo.state` calls, e.g. near `draft_view`/`view_list_ver`): `refresh_tick, bump_refresh = mo.state(0)`.
+End to end: clicking "Refresh now" sets `refresh_requested`, the cell re-runs immediately, fires the trigger, and renders the *previous* `last_refresh` (the daemon hasn't refreshed yet); `refresh_ticker` then re-runs the same cell every ~5 seconds, and as soon as one of those runs observes a new `last_refresh`, the banner updates on its own. No cell ever waits on the refresh — the periodic re-run **is** the background check.
 
-The cell, on every run:
-1. Imports `MCP_PORT` from `dinary_analytics.paths`; reads `refresh_tick()`.
-2. If `refresh_tick() > 0` — i.e. this run was triggered by the "Refresh now" button in step 5 below, not the initial load — first calls `urllib.request.urlopen(f"http://localhost:{MCP_PORT}/health")` to capture the *current* `last_restore` value, then `POST`s to `http://localhost:{MCP_PORT}/restore/now` (fire-and-forget — `trigger_restore_now()` wakes the daemon and the route returns immediately, Step 2), then polls `GET /health` once a second up to 30 times — the same bound and `urllib.request.urlopen` client as `_ensure_dinary_ai` — until the freshly-fetched `last_restore` differs from the captured value, or the loop is exhausted. Whichever `/health` payload was fetched last (the polled one on a refresh run, a single fresh `GET` otherwise) feeds steps 3–5; `json.loads` parses it (already imported in the notebook's top cell).
-3. `urllib.error.URLError` (service not running) halts everything below: `mo.stop(True, mo.callout(mo.md("**dinary-ai not running** — run `inv analytics`"), kind="danger"))`.
-4. `ok: false` in the parsed response (no restore ever succeeded) also halts everything below: reads `error` from the same payload and calls `mo.stop(True, mo.callout(mo.md(f"**Replica not ready:** {error}"), kind="danger"))`.
-5. Otherwise renders the banner and lets the notebook continue — e.g. `mo.hstack([mo.md(f"🔄 Replica synced **{_format_ago(last_restore)}**"), mo.ui.button(label="Refresh now", on_click=lambda _: bump_refresh(refresh_tick() + 1))])`. `_format_ago` is a small helper near the notebook's other formatting helpers that turns the ISO 8601 `last_restore` into "just now" / "5 minutes ago" / "2 hours ago" relative to `datetime.datetime.now(tz=datetime.timezone.utc)`.
-
-Clicking "Refresh now" bumps `refresh_tick`, which re-runs this cell from step 1 with the new value — triggering an immediate restore and updating the banner once the poll in step 2 sees a fresh `last_restore` (or once its 30-second bound is hit, whichever comes first; on a timeout the banner simply keeps showing the latest known value, which by then may already have moved).
-
-Once this gate passes for the first time, `get_db_path()` is guaranteed non-`None` for the rest of the notebook's lifetime — `_db_path` is only ever replaced with a fresher path or left stale, never reset to `None` (Step 1). Cell bodies elsewhere in the dashboard need no changes for this step: their existing zero-arg `open_ledger()` / `load_view_frame(...)` calls resolve `REPLICA_PATH` to the daemon-restored file (Step 1).
+Once this gate passes for the first time, `get_db_path()` is guaranteed non-`None` for the rest of the notebook's lifetime — `_db_path` is only ever replaced with a fresher path or left stale, never reset to `None` (Step 1). Cell bodies elsewhere in the dashboard need no changes for this step: their existing zero-arg `open_ledger()` / `load_view_frame(...)` calls resolve `REPLICA_PATH` to the daemon-refreshed file (Step 1).
 
 In the normal flow `_ensure_dinary_ai` (Step 4) guarantees the service is running before Marimo opens; the `URLError` branch is a safety net for notebooks opened manually.
 
-Because the user can now force a sync on demand, the background poll only has to bound staleness for people who never click the button — hence `RESTORE_INTERVAL_SECONDS` moves from 10 minutes to 30 (`1800`, Step 1).
-
-### 5b — Healthcheck: Litestream config errors
-
-**File**: `tasks/healthcheck.py`
-
-Add alongside existing `_litestream_error_check_command()`, reusing its `'24 hours ago'` window rather than a shorter one: `healthcheck --remote` is run on demand (see the existing check immediately above and the "catches a missed run within hours" reasoning behind `inv backup-cloud-status`'s cadence in the operations docs), so a 10-minute window would risk missing a config error that fired between two manual runs.
-
-```python
-def _litestream_config_error_check_command() -> str:
-    return (
-        "journalctl -u litestream --since '24 hours ago' --no-pager -q "
-        "| grep -i 'cannot open config\\|failed to parse\\|error loading' || true"
-    )
-
-def _parse_litestream_config_errors(output: str) -> list[str]:
-    return output.strip().splitlines() if output.strip() else []
-```
-
-Called in `healthcheck --remote` after existing LTX error check. Follows the same surfacing pattern as the existing LTX check: if `_parse_litestream_config_errors(output)` returns a non-empty list, surface `"litestream config error: {first_line}"` via the same error-reporting path used by the existing check. First line is the root cause; subsequent lines are stack context.
-
-Tests: `TestLitestreamConfigErrorCheckCommand` — same pattern as existing `TestLitestreamErrorCheckCommand`.
+Because the user can now force a sync on demand, the background poll only has to bound staleness for people who never click the button — hence `REFRESH_INTERVAL_SECONDS` moves from 10 minutes to 30 (`1800`, Step 1).
 
 ---
 
@@ -269,8 +286,8 @@ Tests: `TestLitestreamConfigErrorCheckCommand` — same pattern as existing `Tes
 
 The spec currently documents the architecture this plan replaces: `mcp_server.py` as the entry point, `ledger-replica.db` synced into `.analytics/` "on every `inv analytics` run", and the flow "1. Sync replica → 2. Start MCP server → 3. Open dashboard". Update it to describe the new architecture as current state only (no before/after — see spec conventions):
 - Package structure: `mcp_server.py` → `ai_service.py`
-- Storage: the replica lives at the platform-specific path the background daemon restores into (Step 1), refreshed independently of `inv analytics` on its own schedule (and on demand via the dashboard's refresh control, Step 5a) — not synced once per run into `.analytics/`
-- `## inv analytics`: ensures `dinary-ai` is reachable (auto-installing it via `setup-dinary-ai` when it isn't) and opens the dashboard; replication is the daemon's responsibility, not a step of this flow
+- Storage: the replica lives at the platform-specific path the background daemon refreshes into (Step 1) by periodically downloading a consistent snapshot over HTTP from the dinary server, independently of `inv analytics` on its own schedule (and on demand via the dashboard's refresh control, Step 5) — not synced once per run into `.analytics/`
+- `## inv analytics`: ensures `dinary-ai` is reachable (auto-installing it via `setup-dinary-ai` when it isn't) and opens the dashboard; refreshing the replica is the daemon's responsibility, not a step of this flow
 - `## MCP server`: tool list is unchanged — just confirm the section no longer names `mcp_server.py`
 
 ---

@@ -91,13 +91,25 @@ The LLM classifier and POST validation must use the **visible** set (decided).
 Enumerate and update callers of today's `db/catalog.list_categories`:
 - `src/dinary/background/classification/*` (the classifier's allowed category
   list) → use `list_visible_categories`.
-- POST `/api/expenses` category validation (find in `api/controllers/expenses.py`)
-  → if `is_retired`, return 400; if `is_hidden`, return 400 (hidden categories are
-  not pickable — guard against stale client sessions); if inactive-but-not-hidden-
-  and-not-retired, call `activate_category` — activation-on-use keeps a used
-  category visible per the predicate.
+- POST `/api/expenses` category validation — rewrite `_resolve_category_for_write`
+  (`api/controllers/expenses.py:423-434`) using **422**, matching the convention
+  its siblings `_validate_event` / `_validate_tags` already use in the same file
+  (not 400): if `is_retired` or `is_hidden`, raise 422 (`Retired category_id: …` /
+  `Hidden category_id: …`) **unless `_is_replay`** — keep the existing replay
+  exception so an idempotent resubmission of a previously-accepted expense isn't
+  rejected just because its category was hidden/retired in the meantime; if
+  inactive-but-not-hidden-and-not-retired, call `activate_category` —
+  activation-on-use keeps a used category visible per the predicate (this also
+  subsumes today's bare-inactive-category replay branch, since activation always
+  succeeds for a non-hidden, non-retired code).
 - `frequent_categories` flow (`api/controllers/catalog.py`,
-  `stores/frequentCategories.js`) → restrict to visible.
+  `stores/frequentCategories.js`) → restrict to visible, and drop the
+  `WHERE g.is_active = 1` filter in the query at `catalog.py:245`: `apply_template`
+  rewrites every category's `group_id` to a group the active template declares, so
+  a visible category can never resolve to a group outside it —
+  `category_groups.is_active` becomes vestigial for this flow. Leave the column
+  itself alone; it still backs the existing admin group CRUD in
+  `catalog_writer_groups.py`, which is untouched and out of scope here.
 - Grep: `rg "list_categories\b"` to find every reference; update each + its test.
   Exception: `GET /api/catalog` (`api/catalog.py`) is intentionally left on the
   old query — it will be removed in Phase 4 once the PWA migrates to

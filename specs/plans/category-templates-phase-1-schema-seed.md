@@ -32,7 +32,18 @@ constraint in place → table rebuild **inside the migration**, preserving
 `sheet_mapping.category_id`) stay valid:
 1. `PRAGMA foreign_keys=OFF;` — write this migration as a Python yoyo function (not
    a raw SQL file) so all statements share one connection and the PRAGMA persists
-   for the full rebuild.
+   for the full rebuild. This is the project's first Python migration (0001-0005
+   are raw `.sql`/`.rollback.sql` pairs) — a deliberate one-off: it is applied
+   once, manually, to the single personal dev DB (no other installation exists
+   yet, and the migration stream will likely be squashed into one before any
+   public release), so it doesn't need to fit the unattended-startup mould the
+   SQL convention serves elsewhere.
+   Verify early that the PRAGMA toggle actually takes effect: SQLite treats
+   `PRAGMA foreign_keys` as a no-op inside an open transaction, and the project's
+   custom yoyo backend (`SQLiteBackend.begin()` in `db/db_migrations.py`) opens
+   one with `BEGIN IMMEDIATE` before running migration steps. If the toggle turns
+   out to be a no-op here, mark the step `transactional = False` and wrap the
+   rebuild in an explicit `BEGIN`/`COMMIT` placed around the PRAGMA instead.
 2. `CREATE TABLE categories_new (... same cols incl. new ones, name TEXT NOT NULL
    without UNIQUE ...);`
 3. `INSERT INTO categories_new SELECT ... FROM categories;`
@@ -43,7 +54,11 @@ constraint in place → table rebuild **inside the migration**, preserving
 - No rollback migration: once `apply_template` has run, `categories.name` may
   contain duplicates (different templates can bake identical labels for different
   codes), so restoring the `name UNIQUE` constraint would fail. Roll back by
-  restoring from a DB backup taken before the migration.
+  restoring from a DB backup taken before the migration. There is exactly one
+  installation — the personal dev DB — so `tasks/deploy.py:_downgrade_if_needed`'s
+  automated `yoyo rollback` path (which every prior migration feeds with a
+  `.rollback.sql`) is never exercised for 0006; its absence here is intentional,
+  not an oversight.
 
 ### 1c. Index for the `used` predicate
 `CREATE INDEX ix_expenses_category_id ON expenses(category_id);` — makes the
@@ -89,8 +104,12 @@ constraint in place → table rebuild **inside the migration**, preserving
   (`code → {lang: name}`).
 - `load_templates() -> list[Template]` — parse every `*.yaml` sorted
   alphabetically by filename (all template files; `categories.yml` uses `.yml`
-  so it is never matched); return frozen dataclasses (`code` (filename slug),
-  `names`, `taglines`, `groups`, `renames`, `visible`, `hidden`).
+  so it is never matched); return frozen dataclasses (`code` — read from the
+  file's `id:` field, already present in all four shipped templates and matching
+  their filenames — `names`, `taglines`, `groups`, `renames`, `visible`, `hidden`).
+  Prerequisite: none of the four shipped files has a `taglines:` key yet — add a
+  per-language tagline (same language set as `names`) to each before this loader
+  can parse them as planned.
 - `validate(vocabulary, templates)` — port the coverage check already run by hand:
   every template's `visible`+`hidden` equals the vocabulary key set exactly (no
   dupes/missing/unknown), every referenced group is declared; all templates share
@@ -105,7 +124,9 @@ constraint in place → table rebuild **inside the migration**, preserving
   boundary.
 
 ## 4. Seed — `src/dinary/db/category_seed.py` (clean, new)
-All functions take an open `sqlite3.Connection`, run under `storage.transaction`.
+All functions take an open `sqlite3.Connection`, run under `storage.transaction` —
+except `migrate_personal_catalog`, which wraps only its own backfill SQL to avoid
+nesting when it calls the other two (see its transaction-boundary note below).
 
 - `seed_category_templates(con)` — fresh / reconcile (idempotent when files
   unchanged):
@@ -140,6 +161,14 @@ All functions take an open `sqlite3.Connection`, run under `storage.transaction`
   to the current live DB. **Called automatically by bootstrap** (see section 5) —
   no manual invocation needed. Guard: if any `categories.code IS NOT NULL` exists,
   return immediately — already done.
+  Transaction boundary: `storage.transaction` is a bare `BEGIN IMMEDIATE` /
+  `COMMIT` with no savepoint nesting (`storage.py:322-331`), so this function must
+  not wrap its whole body — that would nest inside the transactions opened by
+  steps 3 and 4 below and raise "cannot start a transaction within a transaction".
+  Wrap only steps 1-2 (the name backfill, where the `ValueError` must fire before
+  any write — that is the real no-partial-state boundary) in one
+  `storage.transaction`; steps 3 and 4 each open and commit their own via
+  `seed_category_templates` / `apply_template` and run sequentially afterward.
   Steps:
   1. Backfill `categories.code` by name. Raise `ValueError` listing every
      unrecognised name before touching the DB (no partial state):
