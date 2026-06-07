@@ -102,14 +102,33 @@ Enumerate and update callers of today's `db/catalog.list_categories`:
   activation-on-use keeps a used category visible per the predicate (this also
   subsumes today's bare-inactive-category replay branch, since activation always
   succeeds for a non-hidden, non-retired code).
-- `frequent_categories` flow (`api/controllers/catalog.py`,
-  `stores/frequentCategories.js`) → restrict to visible, and drop the
-  `WHERE g.is_active = 1` filter in the query at `catalog.py:245`: `apply_template`
-  rewrites every category's `group_id` to a group the active template declares, so
-  a visible category can never resolve to a group outside it —
-  `category_groups.is_active` becomes vestigial for this flow. Leave the column
-  itself alone; it still backs the existing admin group CRUD in
-  `catalog_writer_groups.py`, which is untouched and out of scope here.
+- `frequent_categories` / category-defaults flow — three `c.is_active = 1`
+  /`g.is_active = 1` filters in `api/controllers/catalog.py` all need to move to
+  the visibility predicate (`(is_active OR used) AND NOT is_hidden AND NOT is_retired`),
+  not just one:
+  - `_SQL_CAT_DEFAULTS` (`catalog.py:237`, `c.is_active = 1`) — feeds
+    `most_used_category_per_group`, wired into POST `/api/expenses` defaults via
+    `api/controllers/expenses.py:181`.
+  - `_SQL_GROUP_DEFAULT` (`catalog.py:245`, `WHERE g.is_active = 1`) — drop this
+    filter outright: `apply_template` rewrites every category's `group_id` to a
+    group the active template declares, so a visible category can never resolve
+    to a group outside it — `category_groups.is_active` becomes vestigial for
+    this flow. Leave the column itself alone; it still backs the existing admin
+    group CRUD in `catalog_writer_groups.py`, which is untouched and out of scope
+    here.
+  - `frequent_categories_sync` (`catalog.py:254`, `c.is_active = 1`) — same
+    predicate swap; also used by `stores/frequentCategories.js` on the PWA side.
+- `analytics_auto_trends.sql` (`db/sql/analytics_auto_trends.sql:15,18`) — drop
+  the `c.is_active = 1` / `cg.is_active = 1` filters entirely. They join
+  `categories`/`category_groups` onto real `expenses` rows from the last six
+  months to compute spending trends; under the repurposed `is_active`
+  ("in the active template's visible subset"), a category that fell out of the
+  active template but still has fresh expenses (`used = true`) would silently
+  vanish from trend analytics the moment the user switches templates — directly
+  contradicting the decided rule that "analytics / history read expenses
+  directly … regardless of any flag" (`category-templates.md`). The join already
+  scopes to categories that actually have matching expenses; no replacement
+  filter is needed.
 - Grep: `rg "list_categories\b"` to find every reference; update each + its test.
   Exception: `GET /api/catalog` (`api/catalog.py`) is intentionally left on the
   old query — it will be removed in Phase 4 once the PWA migrates to
@@ -128,6 +147,11 @@ Enumerate and update callers of today's `db/catalog.list_categories`:
   category; activate makes it visible and places it in a group.
 - Update classifier / expenses / frequent-categories tests for the visible-set
   restriction and activation-on-use.
+- `tests/api/test_api_analytics.py` (`get_analytics_summary` /
+  `analytics_auto_trends.sql`, loaded at `api/analytics.py:59`) — add a case: a
+  category with recent expenses but `is_active = 0` after a template switch must
+  still surface in trends; this is the regression the dropped filter guards
+  against.
 
 ## Done gate
 `uv run inv pre` + `uv run pytest` green.

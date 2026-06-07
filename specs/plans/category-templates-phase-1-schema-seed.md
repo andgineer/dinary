@@ -3,8 +3,10 @@
 Foundation: DB schema for codes/visibility/templates, the YAML loader, and a
 clean idempotent seed (fresh + reconcile + the one-off adopt-existing mode).
 See `category-templates.md` for the decided model. **Do not** touch
-`tasks/imports/seed_config.py` (`seed_classification_catalog`) — that is
-import-only legacy.
+`seed_classification_catalog`'s logic in `tasks/imports/seed_config.py` — it
+stays exactly as it is, a manual recovery/import toolkit for the rare future
+"forgot to import X from the Sheets" case. What *does* change is which function
+gets invoked to populate a fresh catalog — see §5.
 
 ## 1. Migration `0006_category_templates.py`
 
@@ -211,11 +213,38 @@ nesting when it calls the other two (see its transaction-boundary note below).
      Красота и ЗОЖ, Спорт, Хобби и отдых, Транспорт, Знания и продуктивность,
      Семья и личное, Государство, Питомцы (новая).
 
-## 5. Invoke tasks
+## 5. Startup wiring & invoke tasks
+- **`bootstrap_categories(con)` runs on every app boot** — call it from
+  `main.py:_lifespan`, right after `storage.init_db()`. Nothing seeds the catalog
+  automatically at startup today (the only catalog-population paths are the
+  manual `inv bootstrap-catalog` and `inv dev --reset`), so without this wiring a
+  genuinely fresh production DB would boot with empty `categories` /
+  `category_sets` tables and the Phase 4 onboarding chooser would have nothing to
+  show. Running it on every boot also covers the reconcile branch automatically
+  whenever a `categories.yml` / template file changes — mirroring how migrations
+  already run on every startup (`db/migrations/README.md`).
 - Add to `tasks/` (mirror existing `inv` tasks): `inv seed-categories` →
-  `init_db()` then `bootstrap_categories`.
-- Replace `bootstrap_catalog` in the deploy/startup path with
-  `bootstrap_categories(con)`, which selects the right branch automatically:
+  `init_db()` then `bootstrap_categories` — a manual entry point for ad-hoc
+  reseed/reconcile without restarting the service (mirrors `inv migrate`).
+- **Replace the `bootstrap_catalog()` call in `inv dev --reset`**
+  (`tasks/devtools/dev.py:140-144`, currently
+  `from tasks.imports.seed_config import bootstrap_catalog`) with
+  `bootstrap_categories` — a freshly reset local DB now gets only the category
+  catalog (vocabulary + factory template definitions), matching what a fresh
+  production boot gets.
+- **Tags and events are no longer auto-seeded — intentional.**
+  `seed_classification_catalog` / `bootstrap_catalog`
+  (`tasks/imports/seed_config.py:316-475`) populates `category_groups` +
+  `categories` + `tags` + `events` together as one hardcoded taxonomy — that
+  bundling exists because the Google-Sheets import needed the whole runtime
+  vocabulary in place before `_rebuild_import_mapping` could resolve names to
+  ids. That import job is done; `seed_classification_catalog` stays untouched as
+  a manual recovery tool for the rare future "forgot to import X" case
+  (`inv bootstrap-catalog --yes`, `inv import-catalog --yes`), but it drops out of
+  the standard fresh-DB path. A fresh install now gets its category catalog from
+  the chosen template (onboarding + `apply_template`) and starts with **empty**
+  `tags` / `events` tables — the user grows those organically.
+- `bootstrap_categories(con)` selects the right branch automatically:
   ```python
   def bootstrap_categories(con):
       has_rows = con.execute("SELECT 1 FROM categories LIMIT 1").fetchone()

@@ -47,7 +47,7 @@ Add to `src/dinary/api/analytics.py` (the same router that already serves `GET /
 
 No new authorization is added: this route is read-only and sits behind the same network perimeter (Cloudflare Access / Tailscale — see `specs/reference/architecture.md`'s "Single user. No in-app auth layer") that already fronts every route in this app, including ones that *mutate* the ledger with no token check at all. A read-only snapshot is strictly less sensitive than those — adding a bespoke auth scheme here would be new surface for no corresponding safety gain, and the architecture deliberately keeps the perimeter, not in-app auth, as the boundary.
 
-**Sizing**: the live `dinary.db` is currently ~1 MB (4 000 `expenses` rows at ~125 bytes/row including indexes). Item-level receipt classification writes one `expenses` row *and* one `receipt_items` row per scanned line item (`persist.py:_write_single_item`), so an actively-scanning household adds roughly 3 500–4 000 such rows/year — an estimated 2–3 MB/year of growth. At that rate the ledger stays in the tens-of-MB range for years; a full-snapshot download every 30 minutes (or on demand) costs a few seconds of bandwidth at most, comparable to an incremental WAL pull, so there is nothing to gain from chasing incrementality here.
+**Sizing**: the live `dinary.db` is currently ~1 MB across `expenses` (~4 000 rows), `receipts`, `receipt_items`, and their indexes. Each scanned receipt line item adds one `receipt_items` row at ingestion (`db/receipts.py`, carrying `name_raw`/`name_normalized`/`tax_label` text columns) and one `expenses` row at classification time (`persist.py:_write_single_item`); an actively-scanning household adds roughly 3 500–4 000 such item-pairs/year — an estimated 2–3 MB/year of growth, with `receipt_items` rows running larger than `expenses` rows because of those text columns. At that rate the ledger stays in the tens-of-MB range for years; a full-snapshot download every 30 minutes (or on demand) costs a few seconds of bandwidth at most, comparable to an incremental WAL pull, so there is nothing to gain from chasing incrementality here.
 
 Tests, alongside the existing `get_analytics_summary` tests:
 - `test_db_snapshot_returns_valid_sqlite_file` — the response body, written to a temp path, opens with `sqlite3.connect` and reports the same `expenses` row count as the live DB
@@ -62,7 +62,7 @@ Redefine `REPLICA_PATH` in `src/dinary_analytics/paths.py` to be platform-specif
 - macOS: `~/Library/Application Support/dinary/dinary-ai.db`
 - Windows: `Path(os.environ["LOCALAPPDATA"]) / "dinary" / "dinary-ai.db"` — wrap missing key in `RuntimeError("LOCALAPPDATA not set; cannot determine DB path on Windows")`
 
-This is the only path consumers need to know about: `open_ledger()`'s existing `replica_path or REPLICA_PATH` default now resolves to the daemon-refreshed file, so every existing call site — dashboard cells, `tags.py`, `events.py`, `views.py`, and the MCP `query` handler — keeps working unchanged (Step 2 covers the readiness gate that MCP handlers add on top). `sync_replica()` in `connection.py` and its only caller, `_sync_replica` in `tasks/analytics.py` (removed in Step 4), become dead code — delete `sync_replica()` and its tests in `tests/analytics/test_connection.py`.
+This is the only path consumers need to know about: `open_ledger()`'s existing `replica_path or REPLICA_PATH` default now resolves to the daemon-refreshed file, so every existing call site — dashboard cells, `tags.py`, `events.py`, `views.py`, and the MCP `query` handler — keeps working unchanged (Step 2 covers the readiness gate that MCP handlers add on top). `sync_replica()` in `connection.py` has no production caller today — only `tests/analytics/test_connection.py` exercises it — so delete it and those tests outright. (`tasks/analytics.py` has its own, differently-implemented `_sync_replica()` that captures the DB over SSH; it is unrelated to `connection.py`'s function — neither calls the other — and is itself already unused by the current `analytics` task body. Step 4 removes it as part of retiring the SSH-sync approach this plan replaces.)
 
 `refresh_replica() -> Path`:
 - `db_path = REPLICA_PATH` (platform-specific path defined above). This is both the refresh target and the return value.
@@ -73,7 +73,7 @@ This is the only path consumers need to know about: `open_ledger()`'s existing `
 - Raises `RefreshError` on `urllib.error.URLError`, `OSError`, or a non-200 response status; caller logs a warning and keeps serving the stale local copy.
 - Add to top-level imports: `import os`, `import urllib.error`, `import urllib.request`; `from dotenv import dotenv_values`.
 
-**Why a plain HTTP download instead of litestream-over-SFTP-from-VM2** (the design considered and rejected): that design would have required `dinary-ai` to ship a `litestream` binary, generate and manage a per-laptop SSH key, and read `DINARY_REPLICA_HOST`/`DINARY_SSH_KEY_PATH` from `.deploy/.env` — secrets that, critically, would need to be *minted and handed to* every machine that runs `dinary-ai`. That is a reasonable ask of the repo owner's own laptop, but `dinary-ai` is meant to run on more than one family member's machine against the same shared ledger — and asking a non-developer user to generate an SSH key and join a Tailscale tailnet is not realistic. A plain HTTP download needs nothing a laptop doesn't already have to use the PWA at all: the same Cloudflare Access / Tailscale perimeter, plus one URL. Combined with the sizing note above — the ledger is small enough that a full download costs about what an incremental pull would — the simpler mechanism wins outright, with no functional trade-off.
+**Why a plain HTTP download instead of litestream-over-SFTP-from-VM2** (the design considered and rejected): that design would have required `dinary-ai` to ship a `litestream` binary and generate and manage a per-laptop SSH key (its path read from `.deploy/.env`, alongside the existing `DINARY_REPLICA_HOST`) — secrets that, critically, would need to be *minted and handed to* every machine that runs `dinary-ai`. That is a reasonable ask of the repo owner's own laptop, but `dinary-ai` is meant to run on more than one family member's machine against the same shared ledger — and asking a non-developer user to generate an SSH key and join a Tailscale tailnet is not realistic. A plain HTTP download needs nothing a laptop doesn't already have to use the PWA at all: the same Cloudflare Access / Tailscale perimeter, plus one URL. Combined with the sizing note above — the ledger is small enough that a full download costs about what an incremental pull would — the simpler mechanism wins outright, with no functional trade-off.
 
 All of the following lives in `src/dinary_analytics/refresh.py` (same file as `refresh_replica()`).
 
@@ -167,7 +167,9 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=MCP_PORT)
     args = parser.parse_args()
     start_refresh_daemon()
-    mcp.run(transport="streamable-http", host="127.0.0.1", port=args.port)
+    mcp.settings.host = "127.0.0.1"
+    mcp.settings.port = args.port
+    mcp.run(transport="streamable-http")
 ```
 
 `ai_service.py` must end with:
