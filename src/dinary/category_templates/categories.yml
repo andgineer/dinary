@@ -3,100 +3,100 @@
 # Templates reference these codes; names may be overridden per template via `renames`.
 
 # --- Food & eating ---
-groceries:      { en: Groceries,      ru: продукты }
-fruit:          { en: Fruit,          ru: фрукты }
-delicacies:     { en: Delicacies,     ru: деликатесы }
-sweets:         { en: Sweets,         ru: сладости }
-alcohol:        { en: Alcohol,        ru: алкоголь }
-baby_food:      { en: Baby food,      ru: детское питание }
-cafe:           { en: Cafe,           ru: кафе }
-business_lunch: { en: Business lunch, ru: деловой обед }
-delivery:       { en: Food delivery,  ru: доставка еды }
+groceries:      { en: Groceries,      ru: продукты, sr: Namirnice }
+fruit:          { en: Fruit,          ru: фрукты, sr: Voće }
+delicacies:     { en: Delicacies,     ru: деликатесы, sr: Delicije }
+sweets:         { en: Sweets,         ru: сладости, sr: Slatkiši }
+alcohol:        { en: Alcohol,        ru: алкоголь, sr: Alkohol }
+baby_food:      { en: Baby food,      ru: детское питание, sr: Hrana za bebe }
+cafe:           { en: Cafe,           ru: кафе, sr: Kafić }
+business_lunch: { en: Business lunch, ru: деловой обед, sr: Poslovni ručak }
+delivery:       { en: Food delivery,  ru: доставка еды, sr: Dostava hrane }
 
 # --- Housing ---
-rent:           { en: Rent,           ru: аренда }
-mortgage:       { en: Mortgage,       ru: ипотека }
-household_goods: { en: Household goods, ru: хозтовары }
-repairs:        { en: Repairs,        ru: ремонт }
-furniture:      { en: Furniture,      ru: мебель }
-appliances:     { en: Appliances,     ru: бытовая техника }
-garden:         { en: Garden,         ru: сад и огород }
+rent:           { en: Rent,           ru: аренда, sr: Kirija }
+mortgage:       { en: Mortgage,       ru: ипотека, sr: Hipoteka }
+household_goods: { en: Household goods, ru: хозтовары, sr: Kućne potrepštine }
+repairs:        { en: Repairs,        ru: ремонт, sr: Popravke }
+furniture:      { en: Furniture,      ru: мебель, sr: Nameštaj }
+appliances:     { en: Appliances,     ru: бытовая техника, sr: Kućni aparati }
+garden:         { en: Garden,         ru: сад и огород, sr: Bašta }
 
 # --- Utilities & communications ---
-utilities:      { en: Utilities,      ru: коммунальные }
-mobile:         { en: Mobile,         ru: мобильная связь }
-internet:       { en: Internet,       ru: интернет }
-subscriptions:  { en: Subscriptions,  ru: подписки }
+utilities:      { en: Utilities,      ru: коммунальные, sr: Komunalije }
+mobile:         { en: Mobile,         ru: мобильная связь, sr: Mobilni telefon }
+internet:       { en: Internet,       ru: интернет, sr: Internet }
+subscriptions:  { en: Subscriptions,  ru: подписки, sr: Pretplate }
 
 # --- Health ---
-doctor:         { en: Doctor,         ru: врач }
-pharmacy:       { en: Pharmacy,       ru: лекарства }
-dental:         { en: Dental,         ru: стоматология }
-health_insurance: { en: Health insurance, ru: медстраховка }
-wellness:       { en: Wellness,       ru: ЗОЖ }
+doctor:         { en: Doctor,         ru: врач, sr: Lekar }
+pharmacy:       { en: Pharmacy,       ru: лекарства, sr: Lekovi }
+dental:         { en: Dental,         ru: стоматология, sr: Stomatologija }
+health_insurance: { en: Health insurance, ru: медстраховка, sr: Zdravstveno osiguranje }
+wellness:       { en: Wellness,       ru: ЗОЖ, sr: Zdrav život }
 
 # --- Beauty & personal care ---
-hygiene:        { en: Hygiene,        ru: гигиена }
-cosmetics:      { en: Cosmetics,      ru: косметика }
-haircut:        { en: Haircut,        ru: парикмахерская }
+hygiene:        { en: Hygiene,        ru: гигиена, sr: Higijena }
+cosmetics:      { en: Cosmetics,      ru: косметика, sr: Kozmetika }
+haircut:        { en: Haircut,        ru: парикмахерская, sr: Frizer }
 
 # --- Sport ---
-sport:          { en: Sport,          ru: спорт }
-gym:            { en: Gym,            ru: фитнес }
-cycling:        { en: Cycling,        ru: велосипед }
-skiing:         { en: Skiing,         ru: лыжи }
+sport:          { en: Sport,          ru: спорт, sr: Sport }
+gym:            { en: Gym,            ru: фитнес, sr: Teretana }
+cycling:        { en: Cycling,        ru: велосипед, sr: Biciklizam }
+skiing:         { en: Skiing,         ru: лыжи, sr: Skijanje }
 
 # --- Hobbies & leisure ---
-entertainment:  { en: Entertainment,  ru: развлечения }
-hobbies:        { en: Hobbies,        ru: хобби }
-gadgets:        { en: Gadgets,        ru: гаджеты }
-electronics:    { en: Electronics,    ru: электроника }
-tools:          { en: Tools,          ru: инструменты }
+entertainment:  { en: Entertainment,  ru: развлечения, sr: Zabava }
+hobbies:        { en: Hobbies,        ru: хобби, sr: Hobiji }
+gadgets:        { en: Gadgets,        ru: гаджеты, sr: Gedžeti }
+electronics:    { en: Electronics,    ru: электроника, sr: Elektronika }
+tools:          { en: Tools,          ru: инструменты, sr: Alati }
 
 # --- Transport ---
-transit:        { en: Transit,        ru: общественный транспорт }
-taxi:           { en: Taxi,           ru: такси }
-car:            { en: Car,            ru: машина }
-fuel:           { en: Fuel,           ru: топливо }
-car_service:    { en: Car service,    ru: обслуживание авто }
+transit:        { en: Transit,        ru: общественный транспорт, sr: Javni prevoz }
+taxi:           { en: Taxi,           ru: такси, sr: Taksi }
+car:            { en: Car,            ru: машина, sr: Automobil }
+fuel:           { en: Fuel,           ru: топливо, sr: Gorivo }
+car_service:    { en: Car service,    ru: обслуживание авто, sr: Servis automobila }
 
 # --- Kids ---
-daycare:        { en: Daycare,        ru: садик и няня }
-kids_activities: { en: Kids activities, ru: кружки и секции }
-toys:           { en: Toys,           ru: игрушки }
-kids_clothing:  { en: Kids clothing,  ru: детская одежда }
-diapers:        { en: Diapers,        ru: подгузники }
-pediatrician:   { en: Pediatrician,   ru: педиатр }
+daycare:        { en: Daycare,        ru: садик и няня, sr: Vrtić i dadilja }
+kids_activities: { en: Kids activities, ru: кружки и секции, sr: Aktivnosti za decu }
+toys:           { en: Toys,           ru: игрушки, sr: Igračke }
+kids_clothing:  { en: Kids clothing,  ru: детская одежда, sr: Dečija odeća }
+diapers:        { en: Diapers,        ru: подгузники, sr: Pelene }
+pediatrician:   { en: Pediatrician,   ru: педиатр, sr: Pedijatar }
 
 # --- Education & growth ---
-education:      { en: Education,      ru: обучение }
-productivity:   { en: Productivity,   ru: продуктивность }
-professional_training: { en: Professional training, ru: профессиональное обучение }
+education:      { en: Education,      ru: обучение, sr: Obrazovanje }
+productivity:   { en: Productivity,   ru: продуктивность, sr: Produktivnost }
+professional_training: { en: Professional training, ru: профессиональное обучение, sr: Stručno usavršavanje }
 
 # --- Work ---
-software:       { en: Software,       ru: софт и подписки }
-equipment:      { en: Equipment,      ru: оборудование }
-coworking:      { en: Coworking,      ru: коворкинг }
-advertising:    { en: Advertising,    ru: реклама }
-contractors:    { en: Contractors,    ru: подрядчики }
-accounting:     { en: Accounting,     ru: бухгалтерия }
+software:       { en: Software,       ru: софт и подписки, sr: Softver }
+equipment:      { en: Equipment,      ru: оборудование, sr: Oprema }
+coworking:      { en: Coworking,      ru: коворкинг, sr: Kovorking }
+advertising:    { en: Advertising,    ru: реклама, sr: Oglašavanje }
+contractors:    { en: Contractors,    ru: подрядчики, sr: Izvođači }
+accounting:     { en: Accounting,     ru: бухгалтерия, sr: Računovodstvo }
 
 # --- Personal & family ---
-clothing:       { en: Clothing,       ru: одежда }
-gifts:          { en: Gifts,          ru: подарки }
-pocket_money:   { en: Pocket money,   ru: карманные }
-charity:        { en: Charity,        ru: благотворительность }
+clothing:       { en: Clothing,       ru: одежда, sr: Odeća }
+gifts:          { en: Gifts,          ru: подарки, sr: Pokloni }
+pocket_money:   { en: Pocket money,   ru: карманные, sr: Džeparac }
+charity:        { en: Charity,        ru: благотворительность, sr: Donacije }
 
 # --- Pets ---
-pet_food:       { en: Pet food,       ru: корм для питомца }
-vet:            { en: Vet,            ru: ветеринар }
-pet_supplies:   { en: Pet supplies,   ru: зоотовары }
+pet_food:       { en: Pet food,       ru: корм для питомца, sr: Hrana za ljubimce }
+vet:            { en: Vet,            ru: ветеринар, sr: Veterinar }
+pet_supplies:   { en: Pet supplies,   ru: зоотовары, sr: Oprema za ljubimce }
 
 # --- Travel ---
-travel:         { en: Travel,         ru: путешествия }
-flights:        { en: Flights,        ru: авиабилеты }
-hotels:         { en: Hotels,         ru: отели }
+travel:         { en: Travel,         ru: путешествия, sr: Putovanja }
+flights:        { en: Flights,        ru: авиабилеты, sr: Avionske karte }
+hotels:         { en: Hotels,         ru: отели, sr: Hoteli }
 
 # --- Government ---
-tax:            { en: Tax,            ru: налог }
-fines:          { en: Fines,          ru: штрафы }
+tax:            { en: Tax,            ru: налог, sr: Porez }
+fines:          { en: Fines,          ru: штрафы, sr: Kazne }

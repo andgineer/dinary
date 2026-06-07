@@ -1,17 +1,17 @@
 # Family with young kids — the child is the main axis. Fast entry, coarse
 # household, detailed kids sphere.
 id: family
-names: { en: Family with kids, ru: Семья с детьми }
+names: { en: Family with kids, ru: Семья с детьми, sr: Porodica sa decom }
 
 groups:
-  food:      { en: Food,      ru: Еда }
-  kids:      { en: Kids,      ru: Дети }
-  housing:   { en: Housing,   ru: Жильё }
-  health:    { en: Health,    ru: Здоровье }
-  transport: { en: Transport, ru: Транспорт }
-  pets:      { en: Pets,      ru: Питомцы }
-  personal:  { en: Personal,  ru: Личное }
-  other:     { en: Other,     ru: Прочее }
+  food:      { en: Food,      ru: Еда, sr: Hrana }
+  kids:      { en: Kids,      ru: Дети, sr: Deca }
+  housing:   { en: Housing,   ru: Жильё, sr: Stanovanje }
+  health:    { en: Health,    ru: Здоровье, sr: Zdravlje }
+  transport: { en: Transport, ru: Транспорт, sr: Prevoz }
+  pets:      { en: Pets,      ru: Питомцы, sr: Ljubimci }
+  personal:  { en: Personal,  ru: Личное, sr: Lično }
+  other:     { en: Other,     ru: Прочее, sr: Ostalo }
 
 visible:
   food:      [groceries, baby_food, sweets, cafe, delivery]

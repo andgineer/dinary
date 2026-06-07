@@ -132,8 +132,8 @@ losing history, and have analytics stay continuous across switches.
   chooser (template + language); the user's pick is the first `apply`.
 - **One-off personal migration (`migrate_personal_catalog` in `db/category_seed.py`):**
   for the pre-existing personal DB. Called automatically by `bootstrap_categories`
-  when it detects a non-empty categories table with no codes set — no manual step
-  needed. Backfills factory `code` onto existing categories and groups via a
+  when it detects a non-empty categories table with at least one NULL code — no
+  manual step needed. Backfills factory `code` onto existing categories and groups via a
   hardcoded name→code table specific to the current live data, calls
   `seed_category_templates`, then applies the `active` template in Russian.
   Guarded: returns immediately if any code is already set (checked at function
@@ -205,7 +205,7 @@ Detailed per-phase plans (each ends on the `inv pre` + `pytest` done gate):
 1. [Phase 1 — Schema, template storage & seed](category-templates-phase-1-schema-seed.md)
    — migration (codes, `is_hidden`/`is_retired`, drop `name` UNIQUE, index,
    `category_sets` + `category_translations`), YAML loader, clean idempotent seed,
-   one-off personal migration script (`tasks/imports/migrate_personal_catalog.py`).
+   one-off personal migration script (in `db/category_seed.py`).
 2. [Phase 2 — Backend domain](category-templates-phase-2-domain.md) — `apply_template`,
    visibility reads + the `(is_active OR used) AND NOT is_hidden AND NOT is_retired`
    predicate, search/activate/hide/move, wire the visible set into classifier + POST.

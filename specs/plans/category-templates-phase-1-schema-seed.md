@@ -6,7 +6,7 @@ See `category-templates.md` for the decided model. **Do not** touch
 `tasks/imports/seed_config.py` (`seed_classification_catalog`) — that is
 import-only legacy.
 
-## 1. Migration `0006_category_templates.sql`
+## 1. Migration `0006_category_templates.py`
 
 yoyo migration under `src/dinary/db/migrations/` (next free number is 0006).
 Run inside the migration's own transaction; `PRAGMA foreign_keys` is ON.
@@ -71,6 +71,8 @@ constraint in place → table rebuild **inside the migration**, preserving
    );`
   Default per-language category names from `categories.yml`. Used to bake
   `categories.name` at apply / language change without re-reading files.
+  No FK to `categories.code` — intentional: orphaned rows for retired codes are
+  never read and harmless, avoiding cascade complexity.
 
 ### 1e. Onboarding state
 - `active_template` lives in `app_metadata` (key/value). The migration does **not**
@@ -120,13 +122,18 @@ All functions take an open `sqlite3.Connection`, run under `storage.transaction`
      `origin='factory'`, `definition_json` = the parsed template.
   5. **Retire vanished factory codes:** any `categories` row with a non-`u_`
      `code` absent from the current vocabulary → `is_active=0, is_retired=1`
-     (kept for history; see Phase 2 visibility). Same idea for factory
+     (kept for history; see Phase 2 visibility). SQL filter must be explicit:
+     `WHERE code IS NOT NULL AND code NOT LIKE 'u_%' AND code NOT IN (...)` —
+     rows with `code IS NULL` must be excluded (SQLite `NOT IN` with NULL returns
+     NULL rather than FALSE, but the explicit guard makes the intent clear).
+     Same idea for factory
      `category_sets` rows whose file disappeared → delete the set row (no FK to
      expenses); if the deleted set's code equals `app_metadata.active_template`,
      also clear `active_template` so the PWA falls back to the onboarding chooser.
   6. Do **not** set `app_metadata.active_template`.
-  - "default language" = a module constant (start with `ru`, the app's primary
-    UI language); apply re-bakes visible names for the chosen language anyway.
+  - "default language" = a module constant (start with `ru`, matching the
+    existing personal data); apply re-bakes visible names for the chosen
+    language anyway.
 
 - `migrate_personal_catalog(con)` — in `db/category_seed.py` alongside
   `seed_category_templates`. One-off personal function; hardcoded maps specific
@@ -183,8 +190,8 @@ All functions take an open `sqlite3.Connection`, run under `storage.transaction`
   ```python
   def bootstrap_categories(con):
       has_rows = con.execute("SELECT 1 FROM categories LIMIT 1").fetchone()
-      no_uncoded = con.execute("SELECT 1 FROM categories WHERE code IS NULL LIMIT 1").fetchone() is None
-      if has_rows and not no_uncoded:
+      has_null_code = con.execute("SELECT 1 FROM categories WHERE code IS NULL LIMIT 1").fetchone()
+      if has_rows and has_null_code:
           migrate_personal_catalog(con)   # non-empty DB with at least one NULL code → personal migration
       else:
           seed_category_templates(con)    # empty DB → fresh seed; or all codes present → reconcile
@@ -201,7 +208,10 @@ All functions take an open `sqlite3.Connection`, run under `storage.transaction`
   rows survive a reconcile.
 - `tests/category_templates/test_migrate_personal_catalog.py` — uses a test DB
   seeded with exactly the current personal categories and groups (without codes,
-  mirroring the real DB state before the migration):
+  mirroring the real DB state before the migration). Note: these tests require
+  `apply_template` from `db/category_apply.py` (Phase 2), because
+  `migrate_personal_catalog` calls it in step 4. Both modules are implemented in
+  the same change.
   - All 35 categories in `CATEGORY_MAP` get the correct factory code after migration.
   - All 11 groups in `GROUP_MAP` get the correct factory code after migration.
   - `app_metadata.active_template = "active"` after migration.
@@ -212,8 +222,9 @@ All functions take an open `sqlite3.Connection`, run under `storage.transaction`
     DB it calls `seed_category_templates` instead.
   - Validation: a DB with an unknown category name raises `ValueError` before any
     writes (no partial state left).
-- Migration test alongside `tests/ledger/test_migrations.py`: 0006 applies and
-  rolls back cleanly; FKs intact (`PRAGMA foreign_key_check`).
+- Migration test alongside `tests/ledger/test_migrations.py`: 0006 applies cleanly;
+  FKs intact (`PRAGMA foreign_key_check`). No rollback step is implemented — to
+  revert, restore from a pre-migration DB backup (see section 1b).
 
 ## Done gate
 `uv run inv pre` (0 pyrefly errors) + `uv run pytest` green before moving on.

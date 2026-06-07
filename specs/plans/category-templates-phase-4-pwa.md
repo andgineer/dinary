@@ -14,16 +14,25 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
 `unhideCategory(code)`, `moveCategory(code, groupCode)`.
 
 ## 2. Onboarding (no active set → chooser)
-- On app start (or first time the category picker is needed),
-  `stores/catalog.js` calls `getActiveTemplate()`. If `null` → route to an
-  onboarding view. Cache `active_template` in `localStorage` directly (read on
-  store init, written on every `applyTemplate` call); invalidate (clear) the
-  cached value whenever `catalog_version` changes so a stale value doesn't
-  survive a re-seed.
-- Add a Vue Router `beforeEach` guard: if `active_template` is `null` and the
-  target route is not `/onboarding`, redirect to `/onboarding`. This covers
-  deep-link entry — the user is always funnelled through the chooser before
-  accessing any category-dependent view.
+- `stores/catalog.js` exposes a `templateReady` promise that resolves once
+  `active_template` is known. Init sequence: call `getActiveTemplate()`, store
+  the result, then resolve `templateReady`. No localStorage fast-path — the router
+  guard awaits the promise before any navigation, so there is no UI flash; and
+  always fetching from the server avoids stale local state after a server reset or
+  re-seed (localStorage would cache a non-null value even when the server has reset
+  `active_template` to absent).
+  Updated on every `applyTemplate` call (store's in-memory value; no localStorage).
+- Invalidation: on every `GET /api/categories` response the store compares the
+  returned `catalog_version` against its cached value (existing `If-None-Match`
+  mechanism in `api/catalog.js`). On a 200 response (version changed), it calls
+  `getActiveTemplate()` again and updates the stored value. This covers
+  apply-from-another-device and re-seed scenarios.
+- Add a Vue Router `beforeEach` guard: **await `store.templateReady`** first, then
+  if `active_template` is `null` and the target route is not `/onboarding`,
+  redirect to `/onboarding`. Awaiting the promise prevents a flash of the wrong
+  route on first launch before the API response arrives. This covers deep-link
+  entry — the user is always funnelled through the chooser before accessing any
+  category-dependent view.
 - `src/views/OnboardingTemplate.vue` (new): lists наборы from `listTemplates()`
   showing each set's localized name (`names[ui_lang]`) and tagline
   (`taglines[ui_lang]`) as the "this is you if…" descriptor (`ui_lang` = the
@@ -67,8 +76,9 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
 
 ## 6. Tests (`webapp`, `npm test`)
 - Onboarding shows when active is `null`, hidden after apply. Vue Router
-  `beforeEach` guard redirects any non-onboarding deep-link to `/onboarding`
-  when `active_template` is `null`.
+  `beforeEach` guard awaits `templateReady` before checking — no flash of the
+  wrong route on first launch. Guard redirects any non-onboarding deep-link to
+  `/onboarding` when `active_template` is `null`.
 - Picker renders visible grouped; search surfaces a hidden category; selecting it
   activates and selects it.
 - Hide removes from picker; unhide restores; move changes group.

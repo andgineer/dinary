@@ -1,21 +1,21 @@
 # Active lifestyle — couple, no young kids, active. Detailed where they care
 # (sport, gear, self-growth), sparse elsewhere. Mirrors the current live catalog.
 id: active
-names: { en: Active lifestyle, ru: Активный образ жизни }
+names: { en: Active lifestyle, ru: Активный образ жизни, sr: Aktivan način života }
 
 groups:
-  food:       { en: Food,                   ru: Еда }
-  housing:    { en: Housing,                ru: Жильё }
-  utilities:  { en: Utilities and services, ru: ЖКХ и сервисы }
-  health:     { en: Health,                 ru: Медицина }
-  beauty:     { en: Beauty and wellness,    ru: Красота и ЗОЖ }
-  sport:      { en: Sport,                  ru: Спорт }
-  hobbies:    { en: Hobbies and leisure,    ru: Хобби и отдых }
-  transport:  { en: Transport,              ru: Транспорт }
-  growth:     { en: Knowledge,              ru: Знания и продуктивность }
-  personal:   { en: Family and personal,    ru: Семья и личное }
-  pets:       { en: Pets,                   ru: Питомцы }
-  government: { en: Government,              ru: Государство }
+  food:       { en: Food,                   ru: Еда, sr: Hrana }
+  housing:    { en: Housing,                ru: Жильё, sr: Stanovanje }
+  utilities:  { en: Utilities,              ru: ЖКХ и сервисы, sr: Komunalije }
+  health:     { en: Health,                 ru: Медицина, sr: Zdravlje }
+  beauty:     { en: Beauty and care,        ru: Красота и ЗОЖ, sr: Lepota i nega }
+  sport:      { en: Sport,                  ru: Спорт, sr: Sport }
+  hobbies:    { en: Leisure,                ru: Хобби и отдых, sr: Slobodno vreme }
+  transport:  { en: Transport,              ru: Транспорт, sr: Prevoz }
+  growth:     { en: Growth,                 ru: Развитие, sr: Razvoj }
+  personal:   { en: Personal,               ru: Семья и личное, sr: Lično }
+  pets:       { en: Pets,                   ru: Питомцы, sr: Ljubimci }
+  government: { en: Government,              ru: Государство, sr: Država }
 
 visible:
   food:       [groceries, fruit, delicacies, alcohol, cafe]

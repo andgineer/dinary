@@ -46,10 +46,16 @@ Predicate (decided): **shown = `(is_active OR used) AND NOT is_hidden AND NOT is
         AND (c.is_active OR u.category_id IS NOT NULL)
   ORDER BY g.sort_order, c.name
   ```
+  Intra-group ordering is alphabetical by `c.name` — intentional; `categories`
+  has no per-category `sort_order` column.
   The `JOIN category_groups` is intentionally INNER: a category with
   `group_id=NULL` (activated without an active template, per the edge case in
   `activate_category`) satisfies `is_active=1` but is excluded from this query
-  and appears only in search results — handled by Phase 4.
+  and appears only in search results — handled by Phase 4. The same applies
+  before any `apply_template` is called: on a fresh seed all categories have
+  `group_id=NULL` and `is_active=0`, so this query returns an empty list; the
+  Phase 4 onboarding guard ensures the chooser runs before any category-dependent
+  view is reachable.
   Add a new `VisibleCategoryRow` dataclass in `db/storage.py` (do not modify
   `CategoryListRow` — updating it would require changing all existing consumers).
 - `sql/search_categories.sql` — for activation, search across ALL non-retired
@@ -68,7 +74,7 @@ Predicate (decided): **shown = `(is_active OR used) AND NOT is_hidden AND NOT is
   - `get_active_template(con) -> str | None` (reads `app_metadata.active_template`)
   - `activate_category(con, code)` — `is_active=1, is_hidden=0`; if `group_id`
     is NULL, place it using the active set's definition (read `app_metadata.active_template`,
-    load `category_sets.definition_json` for that code, resolve to a `category_groups.id`);
+    load `category_sets.definition_json` for the active template's code, resolve to a `category_groups.id`);
     if there is no active template or the code is absent from the definition, leave
     `group_id=NULL` — the category stays invisible in grouped views until apply or
     a manual move; bump `catalog_version`.
@@ -77,7 +83,8 @@ Predicate (decided): **shown = `(is_active OR used) AND NOT is_hidden AND NOT is
     also inactive and has no expenses it remains invisible in
     `list_visible_categories` — the user must activate it explicitly.
   - `move_category(con, code, group_code)` — set `group_id` (manual override);
-    bump `catalog_version`.
+    bump `catalog_version`. Raise `ValueError` if `group_code` not found in
+    `category_groups`.
 
 ## 3. Wire visibility into existing consumers
 The LLM classifier and POST validation must use the **visible** set (decided).
@@ -103,7 +110,8 @@ Enumerate and update callers of today's `db/catalog.list_categories`:
   second set re-themes; a `used` category not in the new set stays visible; a
   `is_hidden` category stays hidden across apply.
 - `tests/category_templates/test_visibility.py` — the predicate truth table
-  (active/used/hidden/retired combinations) via the SQL.
+  (active/used/hidden/retired combinations) via the SQL; fresh seed before any
+  apply returns an empty list from `list_visible_categories`.
 - `tests/category_templates/test_search_activate.py` — search finds a hidden
   category; activate makes it visible and places it in a group.
 - Update classifier / expenses / frequent-categories tests for the visible-set

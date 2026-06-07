@@ -1,15 +1,15 @@
 # Freelancer / sole proprietor — personal and business in one wallet. Detailed
 # work sphere; eating-out split into a group so business and personal coexist.
 id: freelancer
-names: { en: Freelancer, ru: Фрилансер }
+names: { en: Freelancer, ru: Фрилансер, sr: Frilenser }
 
 groups:
-  food:       { en: Food,           ru: Еда }
-  eating_out: { en: Eating out,     ru: Еда вне дома }
-  work:       { en: Work,           ru: Работа }
-  housing:    { en: Housing,        ru: Жильё }
-  life:       { en: Life,           ru: Жизнь }
-  taxes:      { en: Taxes and fees, ru: Налоги и сборы }
+  food:       { en: Food,           ru: Еда, sr: Hrana }
+  eating_out: { en: Eating out,     ru: Еда вне дома, sr: Izlasci }
+  work:       { en: Work,           ru: Работа, sr: Posao }
+  housing:    { en: Housing,        ru: Жильё, sr: Stanovanje }
+  life:       { en: Life,           ru: Жизнь, sr: Život }
+  taxes:      { en: Taxes,          ru: Налоги и сборы, sr: Porezi }
 
 visible:
   food:       [groceries, delivery]

@@ -1,14 +1,14 @@
 # Simple — lean starter for "just let me start". Coarse groups, few visible
 # categories. Health/transport/etc. fold into a single Life group.
 id: simple
-names: { en: Simple, ru: Просто }
+names: { en: Simple, ru: Просто, sr: Jednostavno }
 
 groups:
-  food:    { en: Food,    ru: Еда }
-  housing: { en: Housing, ru: Жильё }
-  life:    { en: Life,    ru: Жизнь }
-  growth:  { en: Growth,  ru: Развитие }
-  leisure: { en: Leisure, ru: Досуг }
+  food:    { en: Food,    ru: Еда, sr: Hrana }
+  housing: { en: Housing, ru: Жильё, sr: Stanovanje }
+  life:    { en: Life,    ru: Жизнь, sr: Život }
+  growth:  { en: Growth,  ru: Развитие, sr: Razvoj }
+  leisure: { en: Leisure, ru: Досуг, sr: Razonoda }
 
 visible:
   food:    [groceries, cafe, delivery, alcohol]
