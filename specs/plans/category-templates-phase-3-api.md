@@ -11,7 +11,7 @@ Controller logic + Pydantic models in
 
 Endpoints:
 - `GET /api/category-templates` → **200** `[{code, names: {lang: name}, taglines: {lang: tagline}, origin}]`
-  from `category_sets` (parse `definition_json`; include `origin` so custom "My setup"
+  from `category_templates` (parse `definition_json`; include `origin` so custom "My setup"
   shows too), ordered by `sort_order`.
 - `GET /api/category-templates/active` → **200** `{active_template: str | null}` via
   `get_active_template`. `null` is the onboarding signal for the PWA.

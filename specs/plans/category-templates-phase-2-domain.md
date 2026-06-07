@@ -6,13 +6,13 @@ Depends on Phase 1 (schema, seed, definitions). All query SQL goes in
 Write logic in clean modules, run mutations under `storage.transaction`.
 
 ## 1. Apply a template — `src/dinary/db/category_apply.py`
-`apply_template(con, set_code: str, lang: str) -> None`:
-1. Load the set: `SELECT definition_json FROM category_sets WHERE code = ?`; parse.
-2. Resolve each group code in the set's `groups` to a `category_groups.id`
-   (created in Phase 1 seed); bake `category_groups.name` = set group name[lang]
-   and set `sort_order` from the set's group order.
+`apply_template(con, template_code: str, lang: str) -> None`:
+1. Load the template: `SELECT definition_json FROM category_templates WHERE code = ?`; parse.
+2. Resolve each group code in the template's `groups` to a `category_groups.id`
+   (created in Phase 1 seed); bake `category_groups.name` = template's group
+   name[lang] and set `sort_order` from the template's group order.
 3. For **every** category in `visible` ∪ `hidden`:
-   - `group_id` = the resolved group it sits in for this set;
+   - `group_id` = the resolved group it sits in for this template;
    - `is_active` = 1 if in `visible` else 0;
    - `name` = `renames[code][lang]` if present else `category_translations[code][lang]`
      (fallback to the `ru` default, then the code itself);
@@ -22,7 +22,7 @@ Write logic in clean modules, run mutations under `storage.transaction`.
    `visible ∪ hidden` and are therefore skipped by apply — their `is_active`,
    `group_id`, and `name` remain unchanged.
 4. `set_catalog_version(con, get_catalog_version(con) + 1)` (reuse
-   `db/catalog.py`) and `UPDATE/INSERT app_metadata.active_template = set_code`.
+   `db/catalog.py`) and `UPDATE/INSERT app_metadata.active_template = template_code`.
 - Whole thing in one `storage.transaction`. Bumping `catalog_version` invalidates
   the PWA cache (existing ETag mechanism in `api/catalog.py`).
 - Note: apply rewrites `is_active`/`group_id` wholesale, so switching templates
@@ -72,9 +72,19 @@ Predicate (decided): **shown = `(is_active OR used) AND NOT is_hidden AND NOT is
   - `list_visible_categories(con) -> list[...]`
   - `search_categories(con, query) -> list[...]`
   - `get_active_template(con) -> str | None` (reads `app_metadata.active_template`)
-  - `activate_category(con, code)` — `is_active=1, is_hidden=0`; if `group_id`
-    is NULL, place it using the active set's definition (read `app_metadata.active_template`,
-    load `category_sets.definition_json` for the active template's code, resolve to a `category_groups.id`);
+  - `activate_category(con, code)` — `is_active=1, is_hidden=0`. **Deliberately
+    clears `is_hidden`, in tension with — but not violating — the "sticky,
+    user-owned, apply never touches it" framing in `category-templates.md`:**
+    that framing constrains *automatic* writers (`apply_template`, seed); a
+    direct, explicit user action ("find this and turn it on") is the one case
+    where overriding a stale hide is the expected outcome — mirroring how
+    Phase 4 §3 routes "select a hidden result from search" through this exact
+    function (one tap = un-hide + activate + select). `unhide_category` stays
+    the no-side-effect primitive for "just bring it back without selecting it".
+    If `group_id`
+    is NULL, place it using the active template's definition (read
+    `app_metadata.active_template`, load `category_templates.definition_json`
+    for that code, resolve to a `category_groups.id`);
     if there is no active template or the code is absent from the definition, leave
     `group_id=NULL` — the category stays invisible in grouped views until apply or
     a manual move; bump `catalog_version`.
@@ -88,13 +98,84 @@ Predicate (decided): **shown = `(is_active OR used) AND NOT is_hidden AND NOT is
 
 ## 3. Wire visibility into existing consumers
 The LLM classifier and POST validation must use the **visible** set (decided).
-Enumerate and update callers of today's `db/catalog.list_categories`:
-- `src/dinary/background/classification/*` (the classifier's allowed category
-  list) → use `list_visible_categories`.
+
+**Correction to the discovery method:** `db.catalog.list_categories`
+(`db/catalog.py:22`) has exactly **one** production caller today —
+`tasks/receipt.py:41` (the `inv classify-receipt` operator tool). Neither the
+classifier nor `GET /api/catalog` goes through it; both run their *own* inline
+`… WHERE c.is_active = 1` SQL. So a grep for `list_categories\b` will **not**
+surface the two places that most need the predicate swap, and **will** surface
+a real caller (`tasks/receipt.py`) that's easy to forget.
+
+**This cuts both ways — don't trust any single grep pattern to be exhaustive.**
+Run `rg "is_active" | grep -i categor` (or equivalent) across `src/` *and*
+`tasks/` (not just `src/`) before starting; it surfaces several more inline
+`categories.is_active` / `category_groups.is_active` reads that belong on this
+list and are easy to miss because none of them go through `list_categories` or
+`load_categories` either:
+- `background/classification/task.py:384,409` —
+  `_load_top_fallback_categories` (`SELECT COUNT(*) … WHERE is_active = 1` for
+  the `InsufficientCategoriesError` threshold, and `SELECT id FROM categories
+  WHERE is_active = 1 …` to pad the LLM's fallback category list when rule hits
+  run short). This **is** the LLM classifier's category source for the fallback
+  path — squarely inside "the LLM classifier … must use the visible set" —
+  yet it's a separate inline query from `receipt_classifier.load_categories`
+  and must get the same predicate swap.
+- `sheets/sheet_mapping.py:585` (`ensure_default_map_tab`) —
+  `WHERE c.is_active AND g.is_active` when generating the default Google-Sheets
+  mapping-tab template (the list of category names offered for the user to map
+  sheet rows onto). Swap to the visibility predicate so the generated tab
+  reflects the active template's set, not a stale "globally active" notion.
+  While there, revisit `_load_catalog`'s docstring in the same file
+  (`sheet_mapping.py:266-275`) — it explicitly documents the *old* meaning of
+  `is_active` ("purely a 'hide from the ручной пикер' affordance … must not
+  break the mapping reload"); that statement becomes wrong once `is_active`
+  means "in the active template's visible subset" and should be corrected to
+  describe the new predicate (the underlying behaviour — load every row by name
+  regardless of flags — stays correct and still doesn't need to change).
+- `api/controllers/expense_corrections.py:101` —
+  `SELECT id FROM categories WHERE id = ? AND is_active = 1` validates
+  `category_id` for expense corrections (422 "Unknown or inactive category_id"
+  otherwise). This is the direct sibling of `_resolve_category_for_write`
+  below and needs the same treatment — retired/hidden → 422, `used`-but-
+  currently-inactive → activate-on-use — otherwise correcting an expense onto a
+  category that fell out of the active template (but has history) is rejected,
+  contradicting the decided "history stays editable" intent.
+- `api/controllers/rules.py:154` —
+  `SELECT id FROM categories WHERE id = ? AND is_active = 1` validates
+  `category_id` when creating/editing a classification rule. Swap to the
+  visibility predicate (`(is_active OR used) AND NOT is_hidden AND NOT
+  is_retired`) so a rule can still reference a `used` category that the current
+  template hides — otherwise switching templates would make existing rules
+  un-editable (and new rules for legitimately-used-but-hidden categories
+  impossible to create).
+
+Update each of the following directly — do not rely on the grep alone:
+- `background/classification/receipt_classifier.load_categories`
+  (`receipt_classifier.py:52-59` — its own inline
+  `SELECT c.id, cg.name, c.name FROM categories c LEFT JOIN category_groups cg …
+  WHERE c.is_active = 1`, *not* a call to `db.catalog.list_categories`) — the
+  classifier's allowed category list; replace the `WHERE` clause with the
+  visibility predicate (or rewrite `load_categories` to call
+  `list_visible_categories` and reshape its rows into the same
+  `dict[int, str]` it returns today).
+- `tasks/receipt.py:41` (`inv classify-receipt`, the operator debug tool and
+  the *only* current production caller of `db.catalog.list_categories` — it
+  builds the same `{id: "group: name"}` map fed to the LLM as the production
+  classifier) — switch it to `list_visible_categories` so the manual debug path
+  matches what production classification actually sees. Once this caller is
+  migrated, `db.catalog.list_categories` (and `sql/list_categories.sql`) has no
+  remaining production callers — remove both as dead code along with their
+  tests (`tests/ledger/test_ledger_repo_catalog.py`,
+  `tests/ledger/test_ledger_repo_logging_projection.py`, and the
+  `"list_categories.sql"` case in `tests/services/test_sql_loader.py`) rather
+  than leaving an unused wrapper around the superseded `is_active = 1` query.
 - POST `/api/expenses` category validation — rewrite `_resolve_category_for_write`
-  (`api/controllers/expenses.py:423-434`) using **422**, matching the convention
-  its siblings `_validate_event` / `_validate_tags` already use in the same file
-  (not 400): if `is_retired` or `is_hidden`, raise 422 (`Retired category_id: …` /
+  (`api/controllers/expenses.py:423-434`, **already** 422 for both its existing
+  "Unknown" / "Inactive" branches — the change is the *conditions* that trigger
+  which response, not the status code, and the result keeps matching the
+  convention its siblings `_validate_event` / `_validate_tags` already use in
+  the same file): if `is_retired` or `is_hidden`, raise 422 (`Retired category_id: …` /
   `Hidden category_id: …`) **unless `_is_replay`** — keep the existing replay
   exception so an idempotent resubmission of a previously-accepted expense isn't
   rejected just because its category was hidden/retired in the meantime; if
@@ -115,7 +196,12 @@ Enumerate and update callers of today's `db/catalog.list_categories`:
     to a group outside it — `category_groups.is_active` becomes vestigial for
     this flow. Leave the column itself alone; it still backs the existing admin
     group CRUD in `catalog_writer_groups.py`, which is untouched and out of scope
-    here.
+    here. Before relying on "vestigial except for admin CRUD", grep
+    `rg "category_groups\.is_active|cg\.is_active|g\.is_active"` to confirm —
+    `build_catalog_snapshot` (`api/controllers/catalog.py:283-306`) also reads
+    and returns `category_groups.is_active` for the admin snapshot; that read
+    is fine to leave (same "leave `GET /api/catalog` as-is" reasoning below),
+    but it should be accounted for explicitly rather than assumed away.
   - `frequent_categories_sync` (`catalog.py:254`, `c.is_active = 1`) — same
     predicate swap; also used by `stores/frequentCategories.js` on the PWA side.
 - `analytics_auto_trends.sql` (`db/sql/analytics_auto_trends.sql:15,18`) — drop
@@ -129,17 +215,20 @@ Enumerate and update callers of today's `db/catalog.list_categories`:
   directly … regardless of any flag" (`category-templates.md`). The join already
   scopes to categories that actually have matching expenses; no replacement
   filter is needed.
-- Grep: `rg "list_categories\b"` to find every reference; update each + its test.
-  Exception: `GET /api/catalog` (`api/catalog.py`) is intentionally left on the
-  old query — it will be removed in Phase 4 once the PWA migrates to
-  `GET /api/categories`; do not update it here.
+- `GET /api/catalog` (`api/controllers/catalog.py:build_catalog_snapshot`,
+  lines 277-289) — runs its own inline
+  `SELECT c.id, c.name, c.group_id, g.name, c.is_active FROM categories c
+  JOIN category_groups g …` query for the admin snapshot (again, *not*
+  `list_categories` — there is no `list_categories` call to except here).
+  Leave it untouched: it is removed in Phase 4 once the PWA migrates to
+  `GET /api/categories`.
 
 ## 4. Tests (same session)
-- `tests/category_templates/test_apply.py` — applying a set bakes names
+- `tests/category_templates/test_apply.py` — applying a template bakes names
   (incl. a `renames` case), sets `is_active` per `visible`, sets group_id, leaves
   `is_hidden`, sets `active_template`, bumps `catalog_version`; switching to a
-  second set re-themes; a `used` category not in the new set stays visible; a
-  `is_hidden` category stays hidden across apply.
+  second template re-themes; a `used` category not in the new template stays
+  visible; a `is_hidden` category stays hidden across apply.
 - `tests/category_templates/test_visibility.py` — the predicate truth table
   (active/used/hidden/retired combinations) via the SQL; fresh seed before any
   apply returns an empty list from `list_visible_categories`.

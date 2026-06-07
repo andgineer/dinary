@@ -77,11 +77,22 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
   becomes "hide" (categories are never deleted). Once migrated, remove the
   id-based add/delete endpoints from `catalog_writer_categories.py`.
 
-## 5. Switch / apply another set ("сменить набор")
-- A "наборы категорий" screen reachable from settings: lists templates (reuse
-  the onboarding component), shows the active one, and applies a different one
-  (`applyTemplate`). Copy must set expectations: switching re-themes groups for
-  the set's categories; your used categories stay; hidden ones stay hidden.
+## 5. Switch / apply another template ("сменить набор")
+- A "наборы категорий" screen: lists templates (reuse the onboarding component),
+  shows the active one, and applies a different one (`applyTemplate`). Copy must
+  set expectations: switching re-themes groups for the template's categories;
+  your used categories stay; hidden ones stay hidden.
+- **Entry point — needs a decision, not assumed:** this app has **no
+  settings/menu surface today** (`webapp/src/views/` holds only
+  `AddView`/`ReviewView`/`AnalyticsView`/`IncomeView`/`LLMView`, switched via a
+  flat `tab = ref("add")` chain in `App.vue`; category management currently
+  lives inside `ExpenseForm.vue` via `composables/catalogManage.js`, which has
+  no standalone screen either). Pick one before implementing: (a) add a new
+  top-level tab/entry point for catalog management (covering both this screen
+  and §4's manage surface), or (b) nest "сменить набор" next to the existing
+  hide/unhide/move actions wherever §4 ends up placing them. Document the
+  choice in this plan once made — "reachable from settings" is not an existing
+  concept in this codebase.
 
 ## 6. Tests (`webapp`, `npm test`)
 - Onboarding shows when active is `null`, hidden after apply. `App.vue` awaits
@@ -99,7 +110,7 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
 
 ## Out of scope (later, not a phase)
 - AI re-marking editor (generate/re-arrange a набор from an existing one with AI).
-  It produces a `category_sets` row (origin custom) and reuses `apply_template`;
+  It produces a `category_templates` row (origin custom) and reuses `apply_template`;
   no new domain primitives — schedule after the four phases land.
 
 ## Done gate

@@ -2,11 +2,13 @@
 
 Foundation: DB schema for codes/visibility/templates, the YAML loader, and a
 clean idempotent seed (fresh + reconcile + the one-off adopt-existing mode).
-See `category-templates.md` for the decided model. **Do not** touch
-`seed_classification_catalog`'s logic in `tasks/imports/seed_config.py` — it
-stays exactly as it is, a manual recovery/import toolkit for the rare future
-"forgot to import X from the Sheets" case. What *does* change is which function
-gets invoked to populate a fresh catalog — see §5.
+See `category-templates.md` for the decided model.
+
+**Decision: the Sheets/hardcoded-taxonomy seed pipeline
+(`seed_classification_catalog` and the `inv` tasks built on it) retires with
+this change — it cannot safely coexist with the new schema, and the chosen
+templates fully replace what it was for. See §5 for why and exactly what to
+remove.**
 
 ## 1. Migration `0006_category_templates.py`
 
@@ -28,7 +30,11 @@ Run inside the migration's own transaction; `PRAGMA foreign_keys` is ON.
 ### 1b. Drop the `name` UNIQUE constraints
 `name` becomes a per-template baked label and may legitimately repeat (e.g. a
 custom category vs a hidden factory one). The inline `name TEXT UNIQUE` on
-`categories` and `category_groups` must go. SQLite can't drop an inline
+`categories` and `category_groups` must go. In passing: `db/sql/get_category_by_name.sql`
+(`SELECT id, is_active FROM categories WHERE name = ?`) has zero callers
+anywhere in the repo today — delete it as dead code rather than leave a
+`WHERE name = ?` lookup on disk that quietly assumes uniqueness this migration
+removes. SQLite can't drop an inline
 constraint in place → table rebuild **inside the migration**, preserving
 `id` so all FKs (`expenses.category_id`, `import_mapping.category_id`,
 `sheet_mapping.category_id`) stay valid:
@@ -46,6 +52,18 @@ constraint in place → table rebuild **inside the migration**, preserving
    one with `BEGIN IMMEDIATE` before running migration steps. If the toggle turns
    out to be a no-op here, mark the step `transactional = False` and wrap the
    rebuild in an explicit `BEGIN`/`COMMIT` placed around the PRAGMA instead.
+   Note this is genuinely open territory: `0005_income_logging.sql` hit the same
+   underlying wall ("SQLite 3.26+ enforces FK constraints on DROP TABLE when
+   child rows exist") rebuilding `tags`/`events`, and solved it *without*
+   touching the PRAGMA — stage the child rows in `CREATE TEMP TABLE … AS SELECT`,
+   `DELETE` them, drop/rebuild the parent, then `INSERT` them back (all inside
+   yoyo's surrounding transaction). That precedent is the proven-working
+   fallback if the PRAGMA route stalls — but `categories`'s child set includes
+   `expenses`, which the personal DB already has thousands of rows in, so
+   staging-and-restoring it is far costlier than staging `tags`/`events` ever
+   was; that cost is *why* this plan reaches for the PRAGMA route first rather
+   than reusing 0005's pattern outright. Resolve which approach actually works
+   empirically before writing the rest of the migration around it.
 2. `CREATE TABLE categories_new (... same cols incl. new ones, name TEXT NOT NULL
    without UNIQUE ...);`
 3. `INSERT INTO categories_new SELECT ... FROM categories;`
@@ -67,21 +85,25 @@ constraint in place → table rebuild **inside the migration**, preserving
 `LEFT JOIN (SELECT DISTINCT category_id FROM expenses)` in Phase 2 cheap.
 
 ### 1d. Template-definition storage
-- `CREATE TABLE category_sets (
+- `CREATE TABLE category_templates (
      id INTEGER PRIMARY KEY,
      code TEXT NOT NULL UNIQUE,
      origin TEXT NOT NULL CHECK (origin IN ('factory','custom')),
      sort_order INTEGER NOT NULL DEFAULT 0,
      definition_json TEXT NOT NULL
    );`
-  `definition_json` holds the parsed YAML for that set serialized via
+  (Naming note: `category-templates.md` explicitly drops "category set" as an
+  invented term in favour of "category template" — the table is named
+  `category_templates`, not `category_sets`, to stay consistent with that
+  decision; "набор категорий" remains the RU **UI** label only.)
+  `definition_json` holds the parsed YAML for that template serialized via
   `json.dumps(sort_keys=True)`: `names`, `taglines`
   (per-lang short onboarding blurb), `groups` (code→names), optional `renames`,
   `visible`, `hidden`. Rationale: definitions
   are read only at apply time, never at render time (Phase 2 renders from baked
-  live rows), so a JSON blob per set is faithful and far simpler than decomposing
-  into 5 relational tables. The custom "My setup" set is just another row with
-  `origin='custom'`.
+  live rows), so a JSON blob per template is faithful and far simpler than
+  decomposing into 5 relational tables. The custom "My setup" template is just
+  another row with `origin='custom'`.
 - `CREATE TABLE category_translations (
      code TEXT NOT NULL, lang TEXT NOT NULL, name TEXT NOT NULL,
      PRIMARY KEY (code, lang)
@@ -97,6 +119,14 @@ constraint in place → table rebuild **inside the migration**, preserving
   PWA chooser. Seed (fresh) leaves it absent; apply (Phase 2) sets it.
 
 ## 2. YAML loader — `src/dinary/category_templates/loader.py`
+
+**Prerequisite — add `taglines` to the four shipped template files first:**
+none of `simple.yaml` / `active.yaml` / `family.yaml` / `freelancer.yaml` has a
+`taglines:` key yet. Add a per-language tagline (same language keys as `names`)
+to each before writing the loader below — `load_templates` treats `taglines`
+as a required field, so the loader cannot be implemented (or its tests written)
+until this is done.
+
 - Read package resources via `importlib.resources.files("dinary.category_templates")`
   (mirror `db/sql_loader.load_sql`). `pyyaml` is already a dependency.
 - File extension convention: `categories.yml` (`.yml`) is the vocabulary;
@@ -109,15 +139,17 @@ constraint in place → table rebuild **inside the migration**, preserving
   so it is never matched); return frozen dataclasses (`code` — read from the
   file's `id:` field, already present in all four shipped templates and matching
   their filenames — `names`, `taglines`, `groups`, `renames`, `visible`, `hidden`).
-  Prerequisite: none of the four shipped files has a `taglines:` key yet — add a
-  per-language tagline (same language set as `names`) to each before this loader
-  can parse them as planned.
 - `validate(vocabulary, templates)` — port the coverage check already run by hand:
   every template's `visible`+`hidden` equals the vocabulary key set exactly (no
   dupes/missing/unknown), every referenced group is declared; all templates share
-  the same set of language keys in `names` (Phase 4 derives the available language
-  list from the first template's key set — any mismatch would silently break the
-  onboarding language selector). Raise on failure.
+  the same set of language keys in `names`/`taglines` (Phase 4 derives the
+  available language list from the first template's key set — any mismatch would
+  silently break the onboarding language selector); **every vocabulary code has a
+  `categories.yml` translation for each of those languages** (closes the gap that
+  would otherwise let `apply_template`'s name resolution, Phase 2 §1 step 3, fall
+  through to its `ru`/bare-code fallback for an untranslated entry — that chain
+  stays as a defensive last resort, but `validate` should make it unreachable in
+  practice). Raise on failure.
 
 ## 3. Code namespaces
 - Factory codes = the YAML slugs (e.g. `groceries`).
@@ -141,7 +173,7 @@ nesting when it calls the other two (see its transaction-boundary note below).
      `name` = name from the first template in `load_templates()` order that declares
      this group (groups have no canonical name outside template files; `apply`
      re-bakes the correct per-template name anyway); `code` set.
-  4. Upsert `category_sets` (one row per factory template) with
+  4. Upsert `category_templates` (one row per factory template) with
      `origin='factory'`, `definition_json` = the parsed template.
   5. **Retire vanished factory codes:** any `categories` row with a non-`u_`
      `code` absent from the current vocabulary → `is_active=0, is_retired=1`
@@ -150,9 +182,10 @@ nesting when it calls the other two (see its transaction-boundary note below).
      rows with `code IS NULL` must be excluded (SQLite `NOT IN` with NULL returns
      NULL rather than FALSE, but the explicit guard makes the intent clear).
      Same idea for factory
-     `category_sets` rows whose file disappeared → delete the set row (no FK to
-     expenses); if the deleted set's code equals `app_metadata.active_template`,
-     also clear `active_template` so the PWA falls back to the onboarding chooser.
+     `category_templates` rows whose file disappeared → delete the template row
+     (no FK to expenses); if the deleted template's code equals
+     `app_metadata.active_template`, also clear `active_template` so the PWA
+     falls back to the onboarding chooser.
   6. Do **not** set `app_metadata.active_template`.
   - "default language" = a module constant (start with `ru`, matching the
     existing personal data); apply re-bakes visible names for the chosen
@@ -219,31 +252,74 @@ nesting when it calls the other two (see its transaction-boundary note below).
   automatically at startup today (the only catalog-population paths are the
   manual `inv bootstrap-catalog` and `inv dev --reset`), so without this wiring a
   genuinely fresh production DB would boot with empty `categories` /
-  `category_sets` tables and the Phase 4 onboarding chooser would have nothing to
-  show. Running it on every boot also covers the reconcile branch automatically
-  whenever a `categories.yml` / template file changes — mirroring how migrations
-  already run on every startup (`db/migrations/README.md`).
+  `category_templates` tables and the Phase 4 onboarding chooser would have
+  nothing to show. Running it on every boot also covers the reconcile branch
+  automatically whenever a `categories.yml` / template file changes — mirroring
+  how migrations already run on every startup (`db/migrations/README.md`).
 - Add to `tasks/` (mirror existing `inv` tasks): `inv seed-categories` →
   `init_db()` then `bootstrap_categories` — a manual entry point for ad-hoc
   reseed/reconcile without restarting the service (mirrors `inv migrate`).
+  **Signature note:** `bootstrap_categories(con)` needs an *open connection*,
+  unlike `bootstrap_catalog()` (which is a no-arg function that opens and closes
+  its own). The `inv migrate` one-liner pattern (`tasks/db.py:38-41`,
+  `uv run python -c 'from dinary.db import storage; storage.init_db(); ...'`)
+  doesn't open a connection either, so this task's one-liner needs an extra
+  step, e.g. `... ; from dinary.db import storage, category_seed; storage.init_db();
+  \nwith storage.connection() as con: category_seed.bootstrap_categories(con)`
+  (mirroring the `with storage.connection() as con:` context manager already
+  used in `api/catalog.py`).
 - **Replace the `bootstrap_catalog()` call in `inv dev --reset`**
-  (`tasks/devtools/dev.py:140-144`, currently
-  `from tasks.imports.seed_config import bootstrap_catalog`) with
-  `bootstrap_categories` — a freshly reset local DB now gets only the category
-  catalog (vocabulary + factory template definitions), matching what a fresh
-  production boot gets.
+  (`tasks/devtools/dev.py:140-144` — the `c.run("uv run python -c '...
+  import bootstrap_catalog; ... bootstrap_catalog())'")` block, not a top-level
+  Python import: it's a one-liner shell string) with `bootstrap_categories` —
+  a freshly reset local DB now gets only the category catalog (vocabulary +
+  factory template definitions), matching what a fresh production boot gets.
+  The same signature mismatch applies here: the replacement one-liner string
+  must obtain its own connection (`with storage.connection() as con: ...`)
+  before calling `bootstrap_categories(con)`, since `bootstrap_catalog()`'s
+  no-arg, self-managed-connection, dict-returning shape is not a drop-in match.
 - **Tags and events are no longer auto-seeded — intentional.**
   `seed_classification_catalog` / `bootstrap_catalog`
   (`tasks/imports/seed_config.py:316-475`) populates `category_groups` +
   `categories` + `tags` + `events` together as one hardcoded taxonomy — that
   bundling exists because the Google-Sheets import needed the whole runtime
   vocabulary in place before `_rebuild_import_mapping` could resolve names to
-  ids. That import job is done; `seed_classification_catalog` stays untouched as
-  a manual recovery tool for the rare future "forgot to import X" case
-  (`inv bootstrap-catalog --yes`, `inv import-catalog --yes`), but it drops out of
-  the standard fresh-DB path. A fresh install now gets its category catalog from
-  the chosen template (onboarding + `apply_template`) and starts with **empty**
-  `tags` / `events` tables — the user grows those organically.
+  ids. That import job is done. A fresh install now gets its category catalog
+  from the chosen template (onboarding + `apply_template`) and starts with
+  **empty** `tags` / `events` tables — the user grows those organically.
+- **Retire the catalog-seeding `inv` tasks — they become unsafe on this schema
+  and must never be invoked again:**
+  `bootstrap-catalog` (`tasks/deploy.py:226`, drives `seed_config.bootstrap_catalog`
+  → `seed_classification_catalog`), `import-catalog`
+  (`tasks/imports/import_tasks.py:62`, drives `seed.rebuild_config_from_sheets`
+  → `seed_from_sheet` → `seed_classification_catalog`), and `import-config`
+  (`tasks/deploy.py:246`, drives `seed.seed_from_sheet` →
+  `seed_classification_catalog` directly). All three funnel into
+  `seed_classification_catalog`, whose `_upsert_category` /
+  `_upsert_category_group` (`seed_config.py:195-254`) resolve rows
+  `WHERE name = ?` on the documented assumption that `name` is a "natural key",
+  and whose first step is an unconditional
+  `UPDATE categories/category_groups SET is_active = FALSE` before
+  re-activating everything from its own hardcoded taxonomy. Both assumptions
+  are invalidated by this very migration: §1b drops the `name` UNIQUE
+  constraint (template-baked labels legitimately repeat, so `WHERE name = ?`
+  can silently match — and overwrite — the wrong row), and `is_active` is
+  repurposed to mean "in the active template's visible subset", not "globally
+  usable" — a wholesale deactivate-and-retaxonomize would clobber the active
+  template's curation, `code` assignments, and `group_id` placement with no
+  error or warning. Delete the three `@task`-decorated wrapper functions
+  (`bootstrap_catalog` in `tasks/deploy.py`, `import_catalog` and `import_config`
+  — note `import_config` is also in `tasks/deploy.py`, not `import_tasks.py`)
+  and their `tasks/__init__.py` imports/exports; none of the three may appear in
+  `inv --list` afterwards. Leave `seed_classification_catalog`, the
+  `seed_config.bootstrap_catalog` function, `seed_from_sheet`,
+  `rebuild_config_from_sheets` and their existing tests
+  (`tests/imports/test_seed_config.py`) exactly as they are in
+  `tasks/imports/` — unregistered, uninvoked, kept solely as inspectable code
+  for the unlikely future need to study how the old Sheets-derived taxonomy was
+  assembled. Do **not** adapt them to `code` / `is_hidden` / `is_retired`: they
+  are frozen history, not a maintained tool, and adapting them would only
+  invite someone to run them.
 - `bootstrap_categories(con)` selects the right branch automatically:
   ```python
   def bootstrap_categories(con):
@@ -254,14 +330,20 @@ nesting when it calls the other two (see its transaction-boundary note below).
       else:
           seed_category_templates(con)    # empty DB → fresh seed; or all codes present → reconcile
   ```
-  After `migrate_personal_catalog` the DB has codes and `active_template = "active"`,
-  so re-runs hit the guard in `migrate_personal_catalog` and exit immediately.
+  After `migrate_personal_catalog` runs once, every `categories` row has a
+  `code`, so `has_null_code` is `False` on every later boot — `bootstrap_categories`
+  then *always* takes the `else` branch straight to `seed_category_templates`
+  (the reconcile path) and never calls `migrate_personal_catalog` again through
+  this entry point. (`migrate_personal_catalog`'s own guard — "if any
+  `categories.code IS NOT NULL` exists, return immediately" — exists only for
+  hypothetical direct/manual calls; `bootstrap_categories` itself never reaches
+  it on a re-run, exactly as `category-templates.md` already states.)
 
 ## 6. Tests (`tests/...`, same session)
 - `tests/category_templates/test_loader.py` — parse + the coverage validator
   (the 4 shipped templates must validate; a broken fixture must raise).
 - `tests/category_templates/test_seed.py` — fresh seed inserts vocabulary +
-  4 sets, no active template; re-run is a no-op; removing a code from a fixture
+  4 templates, no active template; re-run is a no-op; removing a code from a fixture
   vocabulary retires (not deletes) its row and keeps an expense FK valid; `u_`
   rows survive a reconcile.
 - `tests/category_templates/test_migrate_personal_catalog.py` — uses a test DB

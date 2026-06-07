@@ -39,8 +39,11 @@ losing history, and have analytics stay continuous across switches.
   group it belongs to in this template and (b) whether it is visible in this
   template's curated subset. So the active template has an opinion about the
   placement of every category — including ones not in its visible subset.
-- Consequence: there are **no orphans**. Any shown category always sits in the
-  active template's logical group for it. No "canonical/foreign" group headers.
+- Consequence: there are **no orphans among factory categories** — any shown
+  factory category always sits in the active template's logical group for it.
+  No "canonical/foreign" group headers. (User-created categories are a
+  deliberate, separate exception: every template's mapping covers the factory
+  vocabulary only — see "User edits later".)
 
 ### Granularity = categories within a group; the group is the rollup
 - No category hierarchy/parent. Detail vs cumulative is expressed by the group:
@@ -169,7 +172,7 @@ losing history, and have analytics stay continuous across switches.
   stay in whatever group they were assigned; the user can `move_category` if
   needed.
 
-## Onboarding templates (proposed — pending confirmation)
+## Onboarding templates (decided — already authored on disk)
 
 Minimize the number so almost anyone finds a fit fast without browsing many
 options. The visibility model + AI re-marking absorb the long tail, so the
@@ -204,7 +207,7 @@ Detailed per-phase plans (each ends on the `inv pre` + `pytest` done gate):
 
 1. [Phase 1 — Schema, template storage & seed](category-templates-phase-1-schema-seed.md)
    — migration (codes, `is_hidden`/`is_retired`, drop `name` UNIQUE, index,
-   `category_sets` + `category_translations`), YAML loader, clean idempotent seed,
+   `category_templates` + `category_translations`), YAML loader, clean idempotent seed,
    one-off personal migration script (in `db/category_seed.py`).
 2. [Phase 2 — Backend domain](category-templates-phase-2-domain.md) — `apply_template`,
    visibility reads + the `(is_active OR used) AND NOT is_hidden AND NOT is_retired`
@@ -214,5 +217,5 @@ Detailed per-phase plans (each ends on the `inv pre` + `pytest` done gate):
 4. [Phase 4 — PWA](category-templates-phase-4-pwa.md) — onboarding chooser (template +
    language), search-activate picker, hide/unhide/move, switch set.
 
-Deferred (not a phase): AI re-marking editor — produces a `category_sets` row
+Deferred (not a phase): AI re-marking editor — produces a `category_templates` row
 (`origin='custom'`) and reuses `apply_template`; no new primitives.
