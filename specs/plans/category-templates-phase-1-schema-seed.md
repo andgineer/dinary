@@ -20,12 +20,13 @@ Run inside the migration's own transaction; `PRAGMA foreign_keys` is ON.
   `is_retired BOOLEAN NOT NULL DEFAULT 0`. Repurpose existing `is_active` to mean
   "in the active template's visible subset" (no DDL change, semantic only).
 - `category_groups`: add `code TEXT`, `sort_order` already exists.
-- `tags`: add `code TEXT`.
+  No `tags.code` — no template references a tag, so tags stay outside this
+  feature's code-namespace machinery; adding the column now would leave it
+  permanently `NULL` with no seed step ever touching it.
 - `code` left nullable here; backfilled by seed (step 4) before the unique index
   is relied on. Create the unique indexes now, they tolerate NULLs in SQLite:
   `CREATE UNIQUE INDEX ux_categories_code ON categories(code);`
   `CREATE UNIQUE INDEX ux_category_groups_code ON category_groups(code);`
-  `CREATE UNIQUE INDEX ux_tags_code ON tags(code);`
 
 ### 1b. Drop the `name` UNIQUE constraints
 `name` becomes a per-template baked label and may legitimately repeat (e.g. a
@@ -64,11 +65,17 @@ constraint in place → table rebuild **inside the migration**, preserving
    was; that cost is *why* this plan reaches for the PRAGMA route first rather
    than reusing 0005's pattern outright. Resolve which approach actually works
    empirically before writing the rest of the migration around it.
-2. `CREATE TABLE categories_new (... same cols incl. new ones, name TEXT NOT NULL
-   without UNIQUE ...);`
-3. `INSERT INTO categories_new SELECT ... FROM categories;`
+2. `CREATE TABLE categories_new (...)` — copy every existing column
+   (`id, name, group_id, is_active, sheet_name, sheet_group`) plus the three new
+   ones (`code, is_hidden, is_retired`); `name TEXT NOT NULL` without `UNIQUE`.
+3. `INSERT INTO categories_new SELECT id, name, group_id, is_active, sheet_name,
+   sheet_group, NULL, 0, 0 FROM categories;` (explicit column list — relying on
+   `SELECT *` would silently misalign once `categories_new` has more columns
+   than `categories`).
 4. `DROP TABLE categories; ALTER TABLE categories_new RENAME TO categories;`
-5. recreate indexes (`ux_categories_code`, the partial visibility helpers below).
+5. recreate `ux_categories_code` (the other indexes on `categories` —
+   `ix_expenses_category_id` from §1c lives on `expenses`, not `categories`, and
+   needs no recreation here).
 6. repeat for `category_groups`.
 7. `PRAGMA foreign_key_check;` then `PRAGMA foreign_keys=ON;`
 - No rollback migration: once `apply_template` has run, `categories.name` may
@@ -127,8 +134,14 @@ to each before writing the loader below — `load_templates` treats `taglines`
 as a required field, so the loader cannot be implemented (or its tests written)
 until this is done.
 
+- **Add `pyyaml` to `[project] dependencies` in `pyproject.toml` first** — it is
+  currently only a *transitive* dependency pulled in by `dev`-group tools
+  (`mkdocs`, `pre-commit`, `pymdown-extensions`; see `[dependency-groups] dev`).
+  Since `bootstrap_categories` runs on every app boot (§5) and needs this loader
+  in production, `uv sync --no-dev` must have `pyyaml` available — without this
+  addition, `import yaml` raises `ModuleNotFoundError` on a prod boot.
 - Read package resources via `importlib.resources.files("dinary.category_templates")`
-  (mirror `db/sql_loader.load_sql`). `pyyaml` is already a dependency.
+  (mirror `db/sql_loader.load_sql`).
 - File extension convention: `categories.yml` (`.yml`) is the vocabulary;
   template files use `.yaml`. The difference is intentional — `load_templates`
   globs `*.yaml` and the vocabulary is never matched.
@@ -241,10 +254,17 @@ nesting when it calls the other two (see its transaction-boundary note below).
   3. Call `seed_category_templates(con)` — loads full factory vocabulary + all four
      templates; existing rows (now with factory codes) are reused, not duplicated.
   4. Call `apply_template(con, "active", "ru")` — bakes Russian names from
-     `active.yaml` onto categories and groups; sets `active_template = "active"`.
-     Group names in the result: Еда, Жильё, ЖКХ и сервисы, Медицина,
-     Красота и ЗОЖ, Спорт, Хобби и отдых, Транспорт, Знания и продуктивность,
-     Семья и личное, Государство, Питомцы (новая).
+     `active.yaml` onto categories and groups (overwriting whatever `GROUP_MAP`
+     names step 2 backfilled — `apply_template` is the authority on the final
+     baked name, the map only needs to resolve the *code*); sets
+     `active_template = "active"`. Group names in the result come from
+     `active.yaml`'s `groups.<code>.ru`, **not** from `GROUP_MAP`'s keys — read
+     them from the template file rather than assuming they match (e.g. `growth`
+     bakes to "Развитие" in `active.yaml` today, which differs from the
+     "Знания и продуктивность" `GROUP_MAP` uses to *find* that row by its
+     pre-migration name). The only genuinely new group is `pets` ("Питомцы") —
+     absent from `GROUP_MAP` because the personal DB has no such group yet;
+     `seed_category_templates` (step 3) creates it from `active.yaml`.
 
 ## 5. Startup wiring & invoke tasks
 - **`bootstrap_categories(con)` runs on every app boot** — call it from

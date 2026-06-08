@@ -10,8 +10,9 @@ RU UI term: **набор категорий**. Build via `uv run inv build-stati
 ## 1. API client — `src/api/catalog.js`
 Add calls for the Phase 3 endpoints: `listTemplates()`,
 `getActiveTemplate()`, `applyTemplate(code, lang)`, `getCategories()`,
-`searchCategories(q)`, `activateCategory(code)`, `hideCategory(code)`,
-`unhideCategory(code)`, `moveCategory(code, groupCode)`.
+`searchCategories(q)`, `createCategory(name, groupCode)`, `renameCategory(code, name)`,
+`activateCategory(code)`, `hideCategory(code)`, `unhideCategory(code)`,
+`moveCategory(code, groupCode)`.
 
 ## 2. Onboarding (no active set → chooser)
 - `stores/catalog.js` exposes a `templateReady` promise that resolves once
@@ -69,13 +70,31 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
 
 ## 4. Manage existing categories
 - In the catalog-manage surface (`composables/catalogManage.js` + its component):
+  - add a brand-new category via `createCategory(name, groupCode)` — the
+    code-based replacement for the old id/name-keyed "add" flow, generating a
+    `u_`-prefixed code server-side (Phase 2's `create_category`);
   - hide / unhide a category (`hideCategory`/`unhideCategory`) — note hide is
-    **sticky** across template switches;
+    **sticky** across template switches; "delete" becomes "hide" (categories
+    are never deleted);
   - move a category to another group (`moveCategory`);
-  - rename stays the existing per-category label edit (label only; code stable).
-- Migrate existing id-based add/delete UI to the code-based endpoints; "delete"
-  becomes "hide" (categories are never deleted). Once migrated, remove the
-  id-based add/delete endpoints from `catalog_writer_categories.py`.
+  - rename stays a **label-only** edit (`code` stable).
+- Retire the id-based surface this replaces — `add_category` /
+  `edit_category` / `delete_category` (`catalog_writer_categories.py`) and their
+  `POST /api/catalog/categories`, `PATCH /api/catalog/categories/{id}`,
+  `DELETE /api/catalog/categories/{id}` endpoints (`api/catalog.py:121-172`).
+  It is not just "add/delete" — `edit_category` also accepts `group_id` and
+  `is_active` (`CategoryPatchBody`, wired straight into
+  `UPDATE categories SET group_id = ?, is_active = ?, …`), and leaving that path
+  reachable would let a caller bypass `move_category` (no `group_code`
+  validation) and `activate_category`/`apply_template` (no NULL-`group_id`
+  resolution, no respect for "in active template's visible subset" semantics)
+  and write directly into columns those functions now own. Rename is the only
+  part of `edit_category` with no code-based equivalent — give it one
+  (`rename_category(con, code, name)`, label-only, alongside the others in
+  Phase 2 §2) rather than keeping the old id-based PATCH alive for that one
+  field. Once the manage surface is on `createCategory`/`renameCategory`/
+  `hideCategory`/`unhideCategory`/`moveCategory`, delete `add_category`,
+  `edit_category`, `delete_category` and their three router endpoints outright.
 
 ## 5. Switch / apply another template ("сменить набор")
 - A "наборы категорий" screen: lists templates (reuse the onboarding component),
@@ -104,8 +123,11 @@ Add calls for the Phase 3 endpoints: `listTemplates()`,
 - Picker renders visible grouped; search surfaces a hidden category; selecting it
   activates and selects it.
 - Hide removes from picker; unhide restores; move changes group.
-- Delete-UI migration: the old "delete" action calls `hideCategory`; category
-  disappears from the picker but its expense history is intact.
+- Add/delete/rename-UI migration: "add" calls `createCategory` and the new
+  category appears in the picker under the chosen group; "delete" calls
+  `hideCategory` and the category disappears from the picker but its expense
+  history is intact; rename calls `renameCategory` and updates the label without
+  changing the underlying `code`.
 - Switching sets updates the visible grouping.
 
 ## Out of scope (later, not a phase)

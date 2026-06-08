@@ -30,9 +30,10 @@ losing history, and have analytics stay continuous across switches.
   filter by visibility.
 - **Categories are never deleted** (even with no linked expenses) so templates
   never break.
-- `group`, `category`, `tag` all carry a stable `code` separate from the
-  autoincrement `id`. `id` is the physical PK and is never renumbered; expenses
-  and mapping tables keep referencing `id` unchanged.
+- `group` and `category` carry a stable `code` separate from the autoincrement
+  `id`. `id` is the physical PK and is never renumbered; expenses and mapping
+  tables keep referencing `id` unchanged. Tags are untouched by this — no
+  template references a tag, so they keep their existing `name`-only identity.
 
 ### A template covers ALL categories
 - A template is a **complete** mapping: for every category it defines (a) which

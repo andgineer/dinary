@@ -95,6 +95,26 @@ Predicate (decided): **shown = `(is_active OR used) AND NOT is_hidden AND NOT is
   - `move_category(con, code, group_code)` — set `group_id` (manual override);
     bump `catalog_version`. Raise `ValueError` if `group_code` not found in
     `category_groups`.
+  - `create_category(con, name, group_code) -> str` — the missing primitive for
+    `category-templates.md`'s "add (**new** user-code or reuse existing by
+    search → activation)" decision; `activate_category` only covers the "reuse
+    existing" half. Generates a fresh `u_`-prefixed code by slugifying `name`
+    (lowercase, non-alphanumeric → `_`, collapse repeats) and appending a
+    numeric suffix on collision (`u_my_thing`, `u_my_thing_2`, …) so the
+    `ux_categories_code` unique index never raises; resolves `group_code` to
+    `group_id` (raise `ValueError` if not found — same contract as
+    `move_category`); inserts the row with `is_active=1, is_hidden=0,
+    is_retired=0`; bumps `catalog_version`; returns the generated `code`. This
+    is the direct sibling of `move_category` for the "brand new category" path
+    that Phase 4 §4's "migrate add UI to code-based ops" otherwise has nothing
+    to migrate *to* — `add_category` (`catalog_writer_categories.py`) is
+    id/name-keyed and slated for removal with no described replacement.
+  - `rename_category(con, code, name)` — set `name` only (`code` stable); bump
+    `catalog_version`. The code-based, label-only sibling that lets Phase 4
+    retire `edit_category`'s id-based `PATCH /api/catalog/categories/{id}`
+    entirely — that endpoint also takes `group_id`/`is_active`, which now belong
+    to `move_category`/`activate_category`/`apply_template` and must not be
+    reachable through a second, validation-free path into the same columns.
 
 ## 3. Wire visibility into existing consumers
 The LLM classifier and POST validation must use the **visible** set (decided).
@@ -165,11 +185,23 @@ Update each of the following directly — do not rely on the grep alone:
   classifier) — switch it to `list_visible_categories` so the manual debug path
   matches what production classification actually sees. Once this caller is
   migrated, `db.catalog.list_categories` (and `sql/list_categories.sql`) has no
-  remaining production callers — remove both as dead code along with their
-  tests (`tests/ledger/test_ledger_repo_catalog.py`,
-  `tests/ledger/test_ledger_repo_logging_projection.py`, and the
-  `"list_categories.sql"` case in `tests/services/test_sql_loader.py`) rather
-  than leaving an unused wrapper around the superseded `is_active = 1` query.
+  remaining production callers — remove both as dead code rather than leaving
+  an unused wrapper around the superseded `is_active = 1` query, and remove
+  their test coverage **precisely**, not file-by-file:
+  - `tests/ledger/test_ledger_repo_catalog.py` bundles `TestListCategories`
+    alongside `TestConnectionLifecycle`, `TestCatalogVersion`, `TestSheetMapping`
+    (covers `resolve_mapping_for_year`) and `TestGetCategoryName` — all four of
+    those test other still-live functions in `db.catalog`. Remove only the
+    `TestListCategories` class and the now-unused `list_categories` import;
+    leave the rest of the file intact.
+  - `tests/ledger/test_ledger_repo_logging_projection.py` is **not** about
+    `list_categories` at all — it is the dedicated suite for
+    `db.catalog.logging_projection` (a separate, very much live function behind
+    the sheet-logging pipeline); its one mention of `list_categories` is a
+    cross-reference in a docstring pointing at its sibling module. Do **not**
+    touch this file.
+  - `tests/services/test_sql_loader.py` — remove only the `"list_categories.sql"`
+    case, as originally stated.
 - POST `/api/expenses` category validation — rewrite `_resolve_category_for_write`
   (`api/controllers/expenses.py:423-434`, **already** 422 for both its existing
   "Unknown" / "Inactive" branches — the change is the *conditions* that trigger
@@ -220,8 +252,16 @@ Update each of the following directly — do not rely on the grep alone:
   `SELECT c.id, c.name, c.group_id, g.name, c.is_active FROM categories c
   JOIN category_groups g …` query for the admin snapshot (again, *not*
   `list_categories` — there is no `list_categories` call to except here).
-  Leave it untouched: it is removed in Phase 4 once the PWA migrates to
-  `GET /api/categories`.
+  Leave it untouched **and do not plan to remove it**: `build_catalog_snapshot`
+  is not a category-only endpoint — it assembles `category_groups`, `categories`,
+  `events`, `tags` and `frequent_categories` into one admin payload, and
+  `webapp/src/api/catalog.js` drives the existing `/api/catalog/groups`,
+  `/api/catalog/events`, `/api/catalog/tags` admin CRUD off it. `GET /api/categories`
+  (Phase 3) only ever returns the *visible* category list for the picker — it
+  cannot stand in for this snapshot. Phase 4 migrates the **picker-facing**
+  consumers (`CategorySheet.vue` / `CatalogSelectField.vue` / the catalog store's
+  category data) from this endpoint to `GET /api/categories`; the snapshot
+  endpoint itself, and the groups/events/tags admin surfaces it backs, stay.
 
 ## 4. Tests (same session)
 - `tests/category_templates/test_apply.py` — applying a template bakes names
@@ -234,6 +274,13 @@ Update each of the following directly — do not rely on the grep alone:
   apply returns an empty list from `list_visible_categories`.
 - `tests/category_templates/test_search_activate.py` — search finds a hidden
   category; activate makes it visible and places it in a group.
+- `tests/category_templates/test_create.py` — `create_category` slugifies the
+  name into a `u_`-prefixed code, places it in the resolved group, is
+  immediately visible; a colliding name gets a numeric-suffixed code
+  (`u_my_thing`, `u_my_thing_2`); unknown `group_code` raises `ValueError`;
+  the row survives a subsequent `seed_category_templates` reconcile untouched
+  (the `u_` namespace guard); `rename_category` changes `name` and leaves `code`
+  untouched.
 - Update classifier / expenses / frequent-categories tests for the visible-set
   restriction and activation-on-use.
 - `tests/api/test_api_analytics.py` (`get_analytics_summary` /

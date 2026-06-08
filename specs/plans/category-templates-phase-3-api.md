@@ -23,15 +23,28 @@ Endpoints:
 - `GET /api/categories` → **200** visible grouped list from `list_visible_categories`;
   **304** when `If-None-Match` matches. New independent endpoint with its own
   `If-None-Match` / `catalog_version` ETag handling. `GET /api/catalog` is left
-  unchanged during Phase 3; the PWA migrates to `GET /api/categories` in Phase 4.
+  unchanged — it is the broader admin snapshot (groups/categories/events/tags/
+  frequent_categories), not a category-only endpoint, and stays as the backing
+  for the existing groups/events/tags admin CRUD; only the *picker-facing*
+  category consumers migrate to `GET /api/categories` in Phase 4 (see
+  Phase 2 §3's note on `build_catalog_snapshot`).
 - `GET /api/categories/search?q=` → **200** `search_categories` result (includes
   hidden / not-in-set; excludes retired).
+- `POST /api/categories` `{name, group_code}` → `create_category`; **201**
+  `{code: str, catalog_version: int}`; **404** on unknown `group_code`. The
+  code-based replacement for the old id-based "add category" — covers the
+  "brand new category" half of `category-templates.md`'s "add (new user-code or
+  reuse existing by search → activation)" decision (the "reuse existing" half is
+  `POST /api/categories/{code}/activate` below).
 - `POST /api/categories/{code}/activate` → **200** `{catalog_version: int}`;
   **404** on unknown `code`.
 - `POST /api/categories/{code}/hide` / `POST /api/categories/{code}/unhide` →
   **200** `{catalog_version: int}`; **404** on unknown `code`.
 - `POST /api/categories/{code}/move` `{"group_code": "..."}` → **200**
   `{catalog_version: int}`; **404** on unknown `code` or unknown `group_code`.
+- `POST /api/categories/{code}/rename` `{"name": "..."}` → `rename_category`;
+  **200** `{catalog_version: int}`; **404** on unknown `code`. The label-only,
+  code-based replacement for `edit_category`'s id-based rename — see Phase 2 §2.
 - Keep the existing `/api/catalog/*` admin writers working during Phase 3;
   id-based add/delete endpoints in `catalog_writer_categories.py` are removed
   in Phase 4 step 4 once the PWA has migrated to code-based ops.
@@ -56,6 +69,8 @@ Endpoints:
   - hide removes a category from `GET /api/categories` even when it has expenses
     (used); unhide restores it.
   - move changes its group.
+  - create returns a `u_`-prefixed code, **201**, and the category appears in
+    `GET /api/categories` in the requested group; unknown `group_code` → 404.
 
 ## Done gate
 `uv run inv pre` + `uv run pytest` green.
