@@ -277,6 +277,7 @@ def test_dashboard_selectors_cell_runs(ledger_db, monkeypatch):
         get_config_json=lambda _k: None,
         mo=mo,
         open_ledger=_mock_open_ledger,
+        replica_status={"ok": True},
     )
 
     assert defs["event_selector"] is not None

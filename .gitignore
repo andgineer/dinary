@@ -3,6 +3,7 @@
 .deploy/
 .venv/
 .vite/
+.claude/
 allure-results/
 dist/
 data/
