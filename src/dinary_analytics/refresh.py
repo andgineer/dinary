@@ -44,8 +44,11 @@ def get_app_url() -> str | None:
 
 def set_app_url(url: str) -> None:
     """Persist the dinary server address to the local config file."""
+    _url = url.strip().rstrip("/")
+    if not _url.startswith(("http://", "https://")):
+        _url = f"https://{_url}"
     LOCAL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LOCAL_CONFIG_PATH.write_text(json.dumps({"app_url": url.rstrip("/")}))
+    LOCAL_CONFIG_PATH.write_text(json.dumps({"app_url": _url}))
 
 
 def refresh_replica() -> Path:
@@ -53,10 +56,7 @@ def refresh_replica() -> Path:
     db_path = REPLICA_PATH
     app_url = get_app_url()
     if app_url is None:
-        raise RefreshError(
-            "dinary-ai is not configured — open the dashboard (`inv analytics`)"
-            " and enter the server address",
-        )
+        raise RefreshError("no server address is configured yet")
     db_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = db_path.with_suffix(".tmp")
     try:
@@ -70,7 +70,7 @@ def refresh_replica() -> Path:
             with tmp_path.open("wb") as f:
                 while chunk := resp.read(65536):
                     f.write(chunk)
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError, ValueError) as exc:
         tmp_path.unlink(missing_ok=True)
         raise RefreshError(f"failed to download ledger snapshot: {exc}") from exc
 

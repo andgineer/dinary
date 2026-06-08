@@ -210,7 +210,7 @@ def test_refresh_replica_raises_when_unconfigured(monkeypatch):
     monkeypatch.setattr(refresh_module, "get_app_url", lambda: None)
     with pytest.raises(
         RefreshError,
-        match=r"dinary-ai is not configured",
+        match=r"no server address is configured",
     ):
         refresh_replica()
 

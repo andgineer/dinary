@@ -145,6 +145,7 @@ def _(
     mo,
     refresh_requested,
     refresh_ticker,
+    set_address_configured,
     set_refresh_requested,
 ):
     mo.stop(not address_configured(), mo.md(""))
@@ -152,15 +153,36 @@ def _(
     _ = refresh_ticker.value
     _status = fetch_replica_status(MCP_PORT, refresh_requested, set_refresh_requested)
 
+    _change_address_button = mo.ui.button(
+        label="⚙ Change server address",
+        on_click=lambda _v: set_address_configured(False),
+    )
+
     if _status is None:
         mo.stop(
             True,
-            mo.callout(mo.md("**dinary-ai not running** — run `inv analytics`"), kind="danger"),
+            mo.vstack(
+                [
+                    mo.callout(
+                        mo.md("**dinary-ai not running** — run `inv analytics`"),
+                        kind="danger",
+                    ),
+                    _change_address_button,
+                ],
+            ),
         )
     elif not _status["ok"]:
         mo.stop(
             True,
-            mo.callout(mo.md(f"**Replica not ready:** `{_status['error']}`"), kind="danger"),
+            mo.vstack(
+                [
+                    mo.callout(
+                        mo.md(f"**Replica not ready:** `{_status['error']}`"),
+                        kind="danger",
+                    ),
+                    _change_address_button,
+                ],
+            ),
         )
 
     replica_status = _status
@@ -196,7 +218,8 @@ def _(datetime, mo, replica_status, set_address_configured, set_refresh_requeste
 
 
 @app.cell
-def _(open_ledger, pl):
+def _(open_ledger, pl, replica_status):
+    _ = replica_status
     _con = open_ledger()
     try:
         _top10_rows = _con.execute("""
@@ -288,7 +311,8 @@ def _(
 
 
 @app.cell
-def _(date, get_config_json, mo, open_ledger):
+def _(date, get_config_json, mo, open_ledger, replica_status):
+    _ = replica_status
     _con = open_ledger()
     try:
         _year_rows = _con.execute("""
@@ -379,7 +403,8 @@ def _(date, get_config_json, mo, open_ledger):
 
 
 @app.cell
-def _(category_order, open_ledger, pl, year_selector):
+def _(category_order, open_ledger, pl, replica_status, year_selector):
+    _ = replica_status
     _selected = [int(y) for y in year_selector.value]
     _rank_df = pl.DataFrame(
         {"category": category_order, "cat_rank": list(range(len(category_order)))},
@@ -477,7 +502,8 @@ def _(
 
 
 @app.cell
-def _(all_events_info, event_selector, make_event_chart, mo, open_ledger, pl):
+def _(all_events_info, event_selector, make_event_chart, mo, open_ledger, pl, replica_status):
+    _ = replica_status
     _eid = event_selector.value
     if not _eid:
         event_chart = mo.md("*Select an event above.*")
