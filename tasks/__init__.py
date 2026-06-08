@@ -25,6 +25,7 @@ from .deploy import bootstrap_catalog, deploy, import_config
 from .devtools.build_docs import ALLOWED_DOC_LANGUAGES, build_docs, docs_task_factory
 from .devtools.constants import ALLOWED_VERSION_TYPES
 from .devtools.dev import build_static, dev, pre, reqs, test, uv, ver_task_factory, version
+from .dinary_ai import install_dinary_ai, setup_dinary_ai, uninstall_dinary_ai
 from .healthcheck import healthcheck
 from .imports.import_tasks import (
     import_budget,
@@ -68,6 +69,7 @@ __all__ = [
     "import_income",
     "import_income_all",
     "import_report_2d_3d",
+    "install_dinary_ai",
     "logs",
     "migrate",
     "pre",
@@ -80,6 +82,7 @@ __all__ = [
     "restore_from_yadisk",
     "restore_primary",
     "restore_replica",
+    "setup_dinary_ai",
     "setup_replica",
     "setup_server",
     "setup_yadisk",
@@ -88,6 +91,7 @@ __all__ = [
     "ssh_replica",
     "status",
     "test",
+    "uninstall_dinary_ai",
     "uv",
     "ver_task_factory",
     "verify_bootstrap_import",

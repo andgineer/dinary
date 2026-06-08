@@ -3,7 +3,7 @@ import sqlite3
 import allure
 import pytest
 
-from dinary_analytics.connection import LEDGER_SCHEMA, open_ledger, sync_replica
+from dinary_analytics.connection import LEDGER_SCHEMA, open_ledger
 
 
 @pytest.fixture
@@ -78,23 +78,6 @@ def test_open_ledger_can_query_join(ledger_sqlite):
         assert all(r[1] == "Groceries" for r in rows)
     finally:
         con.close()
-
-
-@allure.epic("Analytics")
-@allure.feature("Ledger Connection")
-def test_sync_replica_copies_file(tmp_path, ledger_sqlite):
-    target = tmp_path / "replica.db"
-    sync_replica(ledger_sqlite, target)
-    assert target.exists()
-    assert target.stat().st_size == ledger_sqlite.stat().st_size
-
-
-@allure.epic("Analytics")
-@allure.feature("Ledger Connection")
-def test_sync_replica_creates_parent_dir(tmp_path, ledger_sqlite):
-    target = tmp_path / "sub" / "dir" / "replica.db"
-    sync_replica(ledger_sqlite, target)
-    assert target.exists()
 
 
 @allure.epic("Analytics")

@@ -1,6 +1,5 @@
-"""DuckDB connection over the ledger SQLite replica and replica sync."""
+"""DuckDB connection over the ledger SQLite replica."""
 
-import shutil
 from pathlib import Path
 
 import duckdb
@@ -93,10 +92,3 @@ def open_ledger(replica_path: Path | None = None) -> duckdb.DuckDBPyConnection:
 def load_query(name: str) -> str:
     """Return the SQL text of a named query file from the queries directory."""
     return (QUERIES_DIR / f"{name}.sql").read_text()
-
-
-def sync_replica(source_path: Path, target_path: Path | None = None) -> None:
-    """Copy the dinary SQLite DB to the analytics replica location."""
-    target = target_path or REPLICA_PATH
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_path, target)

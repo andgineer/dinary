@@ -6,8 +6,11 @@ app = marimo.App(width="wide", app_title="Dinary Analytics")
 
 @app.cell
 def _():
+    import contextlib
     import json
-    from datetime import date, timedelta
+    import urllib.error
+    import urllib.request
+    from datetime import date, datetime, timedelta, timezone
 
     import altair as alt
     import marimo as mo
@@ -16,6 +19,8 @@ def _():
     from dinary_analytics.charts import make_basket_chart, make_chart_pair, make_event_chart
     from dinary_analytics.connection import LEDGER_SCHEMA, load_query, open_ledger
     from dinary_analytics.llm import providers_available, run_chat_turn
+    from dinary_analytics.paths import MCP_PORT
+    from dinary_analytics.refresh import get_app_url, set_app_url, trigger_refresh_now
     from dinary_analytics.settings import (
         delete_view,
         get_config_json,
@@ -26,10 +31,14 @@ def _():
 
     return (
         LEDGER_SCHEMA,
+        MCP_PORT,
         alt,
+        contextlib,
         date,
+        datetime,
         delete_view,
         empty_view_frame,
+        get_app_url,
         get_config_json,
         json,
         load_pinned_view_frames,
@@ -44,8 +53,145 @@ def _():
         providers_available,
         run_chat_turn,
         save_view,
+        set_app_url,
         set_config_json,
         timedelta,
+        timezone,
+        trigger_refresh_now,
+        urllib,
+    )
+
+
+@app.cell
+def _(
+    address_configured,
+    address_warning,
+    get_app_url,
+    mo,
+    set_address_configured,
+    set_address_warning,
+    set_app_url,
+    trigger_refresh_now,
+):
+    if address_configured():
+        _gate = mo.md("")
+    else:
+        _address_field = mo.ui.text(
+            label="Server address",
+            placeholder="https://dinary-host.tailxxxx.ts.net",
+            value=get_app_url() or "",
+        )
+
+        def _save_address(_value, _field=_address_field) -> None:
+            _url = _field.value.strip()
+            if not _url:
+                set_address_warning(True)
+                return
+            set_address_warning(False)
+            set_app_url(_url)
+            trigger_refresh_now()
+            set_address_configured(True)
+
+        _save_button = mo.ui.button(label="Save", on_click=_save_address)
+        _blocks = [
+            mo.callout(
+                mo.md(
+                    "**Where to find your server's address**\n\n"
+                    "1. Install [Tailscale](https://tailscale.com/download) on this machine "
+                    "— unless it's already running — and log in with the same account you "
+                    "used on the dinary server.\n"
+                    "2. In the Tailscale app (or "
+                    "https://login.tailscale.com/admin/machines), find your server machine "
+                    "— its name is the MagicDNS hostname, e.g. "
+                    "`https://dinary-host.tailxxxx.ts.net`. That's the same address you "
+                    "already used to install the PWA on your phone.",
+                ),
+                kind="info",
+            ),
+            mo.hstack([_address_field, _save_button], justify="start"),
+        ]
+        if address_warning():
+            _blocks.append(mo.callout(mo.md("Please enter the server address."), kind="warn"))
+        _gate = mo.vstack(_blocks)
+
+    mo.stop(not address_configured(), _gate)
+    _gate
+
+
+@app.cell
+def _(contextlib, json, urllib):
+    def fetch_replica_status(port, refresh_requested, set_refresh_requested):
+        if refresh_requested():
+            with contextlib.suppress(urllib.error.URLError, OSError):
+                urllib.request.urlopen(
+                    urllib.request.Request(f"http://localhost:{port}/refresh/now", method="POST"),
+                ).close()
+            set_refresh_requested(False)
+
+        try:
+            with urllib.request.urlopen(f"http://localhost:{port}/health", timeout=2) as resp:
+                return json.loads(resp.read())
+        except (urllib.error.URLError, OSError):
+            return None
+
+    return (fetch_replica_status,)
+
+
+@app.cell
+def _(
+    MCP_PORT,
+    address_configured,
+    fetch_replica_status,
+    mo,
+    refresh_requested,
+    refresh_ticker,
+    set_refresh_requested,
+):
+    mo.stop(not address_configured(), mo.md(""))
+
+    _ = refresh_ticker.value
+    _status = fetch_replica_status(MCP_PORT, refresh_requested, set_refresh_requested)
+
+    if _status is None:
+        mo.stop(
+            True,
+            mo.callout(mo.md("**dinary-ai not running** — run `inv analytics`"), kind="danger"),
+        )
+    elif not _status["ok"]:
+        mo.stop(
+            True,
+            mo.callout(mo.md(f"**Replica not ready:** `{_status['error']}`"), kind="danger"),
+        )
+
+    replica_status = _status
+    return (replica_status,)
+
+
+@app.cell
+def _(datetime, mo, replica_status, set_address_configured, set_refresh_requested, timezone):
+    def _format_last_refresh(last_refresh: str) -> str:
+        _dt = datetime.fromisoformat(last_refresh)
+        _minutes = int((datetime.now(tz=timezone.utc) - _dt).total_seconds() // 60)
+        if _minutes <= 30:
+            if _minutes < 1:
+                return "Data updated just now"
+            if _minutes == 1:
+                return "Data updated 1 minute ago"
+            return f"Data updated {_minutes} minutes ago"
+        if _dt.date() == datetime.now(tz=timezone.utc).date():
+            return f"Data last updated at {_dt.strftime('%H:%M')}"
+        return f"Data last updated at {_dt.strftime('%Y-%m-%d %H:%M')}"
+
+    mo.hstack(
+        [
+            mo.md(f"🔄 {_format_last_refresh(replica_status['last_refresh'])}"),
+            mo.ui.button(label="Refresh now", on_click=lambda _v: set_refresh_requested(True)),
+            mo.ui.button(
+                label="⚙ Change server address",
+                on_click=lambda _v: set_address_configured(False),
+            ),
+        ],
+        justify="start",
     )
 
 
@@ -432,10 +578,24 @@ def _(set_config_json, tag_selector, tag_year_selector, year_selector):
 
 
 @app.cell
-def _(mo):
+def _(get_app_url, mo):
     draft_view, set_draft_view = mo.state(None)
     view_list_ver, bump_view_list = mo.state(0)
-    return bump_view_list, draft_view, set_draft_view, view_list_ver
+    address_configured, set_address_configured = mo.state(get_app_url() is not None)
+    address_warning, set_address_warning = mo.state(False)
+    refresh_requested, set_refresh_requested = mo.state(False)
+    return (
+        address_configured,
+        address_warning,
+        bump_view_list,
+        draft_view,
+        refresh_requested,
+        set_address_configured,
+        set_address_warning,
+        set_draft_view,
+        set_refresh_requested,
+        view_list_ver,
+    )
 
 
 @app.cell
@@ -460,6 +620,12 @@ def _(mo):
     )
     period_selector
     return (period_selector,)
+
+
+@app.cell
+def _(mo):
+    refresh_ticker = mo.ui.refresh(default_interval="5s")
+    return (refresh_ticker,)
 
 
 @app.cell
@@ -857,13 +1023,13 @@ def _(ai_ledger_tools_pair, ai_view_tools_tuple):
 
 
 @app.cell
-def _(mo):
+def _(MCP_PORT, mo):
     mo.accordion(
         {
             "Connect external AI client (Claude Desktop / Claude Code)": mo.vstack(
                 [
                     mo.md(
-                        "MCP server runs at **`http://localhost:8765/mcp`** while `inv analytics` is active."
+                        f"MCP server runs at **`http://localhost:{MCP_PORT}/mcp`** while `inv analytics` is active."
                         " Only Claude Desktop and Claude Code support MCP.\n\n"
                         "### Claude Desktop\n\n"
                         "Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:",
@@ -873,7 +1039,7 @@ def _(mo):
                         '  "mcpServers": {\n'
                         '    "dinary-analytics": {\n'
                         '      "command": "npx",\n'
-                        '      "args": ["mcp-remote", "http://localhost:8765/mcp"]\n'
+                        f'      "args": ["mcp-remote", "http://localhost:{MCP_PORT}/mcp"]\n'
                         "    }\n"
                         "  }\n"
                         "}",
@@ -883,7 +1049,7 @@ def _(mo):
                         "### Claude Code (CLI)",
                     ),
                     mo.plain_text(
-                        "claude mcp add --transport http dinary-analytics http://localhost:8765/mcp",
+                        f"claude mcp add --transport http dinary-analytics http://localhost:{MCP_PORT}/mcp",
                     ),
                     mo.md(
                         "Verify with `claude mcp list`. "

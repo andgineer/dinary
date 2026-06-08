@@ -1,13 +1,16 @@
-"""Analytics API: GET /api/analytics/summary"""
+"""Analytics API: GET /api/analytics/summary, GET /api/analytics/db-snapshot"""
 
 import sqlite3
+import tempfile
 from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from dinary.config import settings
-from dinary.db.storage import get_db
+from dinary.db.storage import get_connection, get_db
 
 router = APIRouter()
 
@@ -78,3 +81,29 @@ def get_analytics_summary(con: sqlite3.Connection = Depends(get_db)) -> dict:  #
         "events": events,
         "trends": trends,
     }
+
+
+@router.get("/api/analytics/db-snapshot")
+def get_db_snapshot() -> FileResponse:
+    """Return a consistent point-in-time copy of the live ledger as a SQLite file."""
+    source = get_connection()
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        try:
+            target = sqlite3.connect(tmp_path)
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+    finally:
+        source.close()
+    return FileResponse(
+        tmp_path,
+        media_type="application/octet-stream",
+        filename="dinary-snapshot.db",
+        background=BackgroundTask(lambda: tmp_path.unlink(missing_ok=True)),
+    )

@@ -24,8 +24,8 @@ the `analytics` dependency group in the root `pyproject.toml`.
 
 ```
 src/dinary_analytics/
-  connection.py       # read-only DuckDB ATTACH to ledger-replica.db
-  mcp_server.py       # MCP server: DuckDB queries + analytics.db writes
+  connection.py       # read-only DuckDB ATTACH to the ledger replica
+  ai_service.py       # background app: MCP server + health/refresh-now HTTP routes + replica-refresh daemon
   settings.py         # analytics.db read/write (LMDB)
   backup.py           # analytics.db backup/restore CLI
   queries/            # named .sql files for reusable analytical queries
@@ -37,20 +37,22 @@ src/dinary_analytics/
 
 ## Runtime directory
 
-`.analytics/` at the repo root, gitignored. Created on first `inv analytics`.
+Both files live side by side in the platform-specific local app-data directory
+(e.g. `~/Library/Application Support/dinary/` on macOS):
 
 ```
-.analytics/
-  ledger-replica.db     # read-only SQLite replica of dinary ledger
+  dinary-ai.db          # read-only SQLite replica of the dinary ledger, refreshed by the daemon
   analytics.db          # app database: view configs, history (LMDB)
 ```
 
 ## Storage
 
-### ledger-replica.db
+### Ledger replica
 
-Read-only SQLite replica of the dinary server DB. Synced on every `inv analytics`
-run before Marimo starts. DuckDB opens it with `ATTACH ... (READ_ONLY)` — never
+Read-only SQLite replica of the dinary server DB, refreshed by a background daemon
+that periodically downloads a consistent snapshot over HTTP from the dinary server —
+on its own schedule, independently of `inv analytics`, and on demand via the
+dashboard's refresh control. DuckDB opens it with `ATTACH ... (READ_ONLY)` — never
 writable.
 
 ### analytics.db — LMDB
@@ -59,7 +61,7 @@ Holds: analytics view configs, dashboard configurations, LLM conversation histor
 DuckDB never stores application state; any materialized caches there are disposable
 and regenerated from the replica.
 
-`analytics.db` must be backed up. `ledger-replica.db` is reproducible and excluded
+`analytics.db` must be backed up. The ledger replica is reproducible and excluded
 from backup.
 
 ## SQL-first design
@@ -85,11 +87,11 @@ questions and reconfigure dashboards (view configs, widget order) by writing to
 
 ## inv analytics
 
-Single entry point. On every run:
-
-1. Syncs `ledger-replica.db` from the dinary server.
-2. Starts the MCP server.
-3. Opens `notebooks/dashboard.py` via `marimo run`.
+Single entry point. Ensures `dinary-ai` is reachable — installing and starting it
+via `setup-dinary-ai` if it isn't already running — then opens
+`notebooks/dashboard.py` via `marimo run`. Refreshing the ledger replica is the
+background daemon's responsibility, not a step of this flow; the dashboard surfaces
+replica readiness and lets the user trigger a refresh on demand.
 
 ## MCP server
 

@@ -446,6 +446,42 @@ def test_period_selector_cell_runs():
 
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
+def test_fetch_replica_status_survives_refresh_post_failure(monkeypatch):
+    """A failed POST /refresh/now (service restarted mid-click) must not raise."""
+    import contextlib
+    import urllib.error
+    import urllib.request
+    from unittest.mock import MagicMock
+
+    health_response = MagicMock()
+    health_response.read.return_value = json.dumps(
+        {"ok": True, "last_refresh": "2024-01-01T00:00:00+00:00", "error": None},
+    ).encode()
+    health_response.__enter__ = lambda _self: health_response
+    health_response.__exit__ = lambda *_args: None
+
+    def fake_urlopen(url, *args, **kwargs):
+        if isinstance(url, urllib.request.Request) and url.get_method() == "POST":
+            raise urllib.error.URLError("refused")
+        return health_response
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    cell = next(c for c in cells if "fetch_replica_status" in c.defs)
+
+    _, defs = cell.run(contextlib=contextlib, json=json, urllib=urllib)
+    fetch_replica_status = defs["fetch_replica_status"]
+
+    cleared = []
+    status = fetch_replica_status(12345, lambda: True, cleared.append)
+
+    assert status["ok"] is True
+    assert cleared == [False]
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
 def test_followups_cell_renders_clickable_buttons_and_hides_while_pending():
     """Follow-up suggestions render as clickable buttons; hidden while a reply is pending."""
     import marimo as mo

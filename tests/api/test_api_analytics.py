@@ -1,11 +1,15 @@
-"""API tests for GET /api/analytics/summary."""
+"""API tests for GET /api/analytics/summary and GET /api/analytics/db-snapshot."""
 
+import sqlite3
+import tempfile
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import patch
 
 import allure
 
 from dinary.config import settings
+from dinary.db import storage
 
 from _api_helpers import db  # noqa: F401
 
@@ -190,3 +194,161 @@ class TestAnalyticsEvents:
         db_con.close()
         data = client.get("/api/analytics/summary").json()
         assert not any(e["name"] == "OldTrip" for e in data["events"])
+
+
+def _spy_named_temporary_file(monkeypatch, created: list[Path]):
+    original = tempfile.NamedTemporaryFile
+
+    def spy(*args, **kwargs):
+        f = original(*args, **kwargs)
+        created.append(Path(f.name))
+        return f
+
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", spy)
+
+
+@allure.epic("Analytics")
+@allure.feature("DB Snapshot")
+class TestDbSnapshot:
+    def test_db_snapshot_returns_valid_sqlite_file(self, client, monkeypatch, tmp_path):
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        from datetime import date
+
+        y = date.today().year
+        _insert_expense(client, f"{y}-01-15", 100)
+        _insert_expense(client, f"{y}-03-10", 200)
+
+        resp = client.get("/api/analytics/db-snapshot")
+        assert resp.status_code == 200
+
+        snapshot_path = tmp_path / "snapshot.db"
+        snapshot_path.write_bytes(resp.content)
+        snap_con = sqlite3.connect(snapshot_path)
+        try:
+            snap_count = snap_con.execute("SELECT COUNT(*) FROM expenses").fetchone()[0]
+        finally:
+            snap_con.close()
+
+        live_con = storage.get_connection()
+        try:
+            live_count = live_con.execute("SELECT COUNT(*) FROM expenses").fetchone()[0]
+        finally:
+            live_con.close()
+
+        assert snap_count == live_count
+
+    def test_db_snapshot_cleans_up_temp_file(self, client, monkeypatch):
+        created: list[Path] = []
+        _spy_named_temporary_file(monkeypatch, created)
+
+        resp = client.get("/api/analytics/db-snapshot")
+        assert resp.status_code == 200
+        assert resp.content  # fully consume the body so the BackgroundTask runs
+
+        assert created
+        assert not created[0].exists()
+
+    def test_db_snapshot_cleans_up_temp_file_on_backup_failure(self, client, monkeypatch):
+        """A backup failure must unlink the orphaned temp file and surface an error response.
+
+        ``sqlite3.Connection`` is a C-level immutable type — its ``backup`` method
+        cannot be monkeypatched directly. Instead we make ``sqlite3.connect(tmp_path)``
+        (the call that creates the route's ``target`` connection — identifiable by its
+        single positional argument and no keyword arguments, unlike
+        ``storage.connect``'s call) return a stand-in that isn't a ``sqlite3.Connection``,
+        so ``source.backup(target)`` raises — exactly the failure path the route's
+        ``except Exception`` handler exists to clean up after.
+        """
+        created: list[Path] = []
+        _spy_named_temporary_file(monkeypatch, created)
+
+        real_connect = sqlite3.connect
+
+        class _UnbackupableConnection:
+            def __init__(self, real: sqlite3.Connection):
+                self._real = real
+
+            def close(self) -> None:
+                self._real.close()
+
+        def spy_connect(database, *args, **kwargs):
+            con = real_connect(database, *args, **kwargs)
+            if not args and not kwargs:
+                return _UnbackupableConnection(con)
+            return con
+
+        monkeypatch.setattr(sqlite3, "connect", spy_connect)
+
+        resp = client.get("/api/analytics/db-snapshot")
+        assert resp.status_code >= 500
+
+        assert created
+        assert not created[0].exists()
+
+    def test_db_snapshot_consistent_under_concurrent_write(self, client, monkeypatch, tmp_path):
+        """A write that lands during ``source.backup(target)`` must not tear the snapshot.
+
+        ``sqlite3.Connection`` can't be monkeypatched directly (see the failure test
+        above), so the concurrent write is injected by wrapping ``get_connection`` —
+        the route's only handle on ``source`` — in a proxy whose ``backup`` commits an
+        extra expense via a second connection immediately before delegating to the real
+        Online Backup API call. Either outcome (the row is or isn't in the snapshot) is
+        acceptable; what matters is that the resulting file opens cleanly and the count
+        is one of exactly the two possible values, never something in between (a sign
+        of a torn read).
+        """
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        from datetime import date
+
+        from dinary.api import analytics as analytics_module
+
+        y = date.today().year
+        _insert_expense(client, f"{y}-01-15", 100)
+
+        before_con = storage.get_connection()
+        try:
+            before_count = before_con.execute("SELECT COUNT(*) FROM expenses").fetchone()[0]
+        finally:
+            before_con.close()
+
+        real_get_connection = analytics_module.get_connection
+
+        class _ConcurrentWriteSource:
+            def __init__(self, real: sqlite3.Connection):
+                self._real = real
+
+            def backup(self, target, *args, **kwargs):
+                writer = storage.get_connection()
+                try:
+                    writer.execute(
+                        "INSERT INTO expenses"
+                        " (datetime, amount, amount_original, currency_original, category_id)"
+                        " VALUES (?, ?, ?, ?, ?)",
+                        (f"{y}-06-01 12:00:00", 1.0, 1.0, "EUR", 1),
+                    )
+                    writer.commit()
+                finally:
+                    writer.close()
+                return self._real.backup(target, *args, **kwargs)
+
+            def close(self) -> None:
+                self._real.close()
+
+        monkeypatch.setattr(
+            analytics_module,
+            "get_connection",
+            lambda: _ConcurrentWriteSource(real_get_connection()),
+        )
+
+        resp = client.get("/api/analytics/db-snapshot")
+        assert resp.status_code == 200
+
+        snapshot_path = tmp_path / "concurrent-snapshot.db"
+        snapshot_path.write_bytes(resp.content)
+        snap_con = sqlite3.connect(snapshot_path)
+        try:
+            snap_count = snap_con.execute("SELECT COUNT(*) FROM expenses").fetchone()[0]
+        finally:
+            snap_con.close()
+
+        assert snap_count in (before_count, before_count + 1)
