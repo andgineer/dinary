@@ -1,9 +1,10 @@
 """Tests for the dinary-ai service install/setup/uninstall tasks."""
 
+import os
 import plistlib
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from unittest.mock import MagicMock
 
 import allure
@@ -38,7 +39,7 @@ def _result(stdout: str = "") -> MagicMock:
 @pytest.fixture
 def _stub_service_lookup(monkeypatch):
     monkeypatch.setattr(dinary_ai, "_uv_path", lambda: "/opt/homebrew/bin/uv")
-    monkeypatch.setattr(dinary_ai, "_repo_root", lambda: Path("/repo/dinary"))
+    monkeypatch.setattr(dinary_ai, "_repo_root", lambda: PurePosixPath("/repo/dinary"))
 
 
 def _windows_status_csv(status: str) -> str:
@@ -86,6 +87,7 @@ def test_uninstall_removes_plist(monkeypatch, tmp_path):
 @allure.feature("Dinary AI Service")
 def test_setup_dinary_ai_idempotent(monkeypatch, tmp_path, _stub_service_lookup):
     monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(os, "getuid", lambda: 501, raising=False)
     plist_path = tmp_path / f"{dinary_ai._LABEL}.plist"
     monkeypatch.setattr(dinary_ai, "_plist_path", lambda: plist_path)
     ctx = _FakeContext()
