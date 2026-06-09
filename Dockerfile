@@ -4,7 +4,10 @@
 FROM node:22-slim AS webapp-build
 WORKDIR /webapp
 COPY webapp/package.json webapp/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+# npm ci has a long-standing bug with optional dependencies that makes it
+# skip the platform-specific Rollup native binary (npm/cli#4828); npm
+# install resolves and installs it correctly for the build platform.
+RUN npm install --no-audit --no-fund
 COPY webapp/ ./
 RUN npm run build && test -f /_static/index.html
 
