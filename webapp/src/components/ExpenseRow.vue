@@ -9,6 +9,7 @@ const PANEL_WIDTH = 84;
 const props = defineProps({
   expense: { type: Object, required: true },
   hideStore: { type: Boolean, default: false },
+  hideDate: { type: Boolean, default: false },
 });
 const emit = defineEmits(["tap"]);
 
@@ -104,7 +105,7 @@ function onEditClick(e) {
         <span v-if="secondaryText" class="row-store">{{ secondaryText }}</span>
       </div>
       <div class="row-bottom">
-        <span class="row-date">{{ formatDate(expense.date ?? expense.datetime) }}</span>
+        <span v-if="!hideDate" class="row-date">{{ formatDate(expense.date ?? expense.datetime) }}</span>
         <span class="row-category">{{ expense.category_name }}</span>
         <template v-if="expense.tags?.length">
           <span

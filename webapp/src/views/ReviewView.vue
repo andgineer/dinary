@@ -36,7 +36,8 @@ const groupedExpenses = computed(() => {
       const store = e.store_name ?? e.store ?? e.merchant ?? null;
       const total = group.reduce((s, x) => s + (Number(x.amount_original) || 0), 0);
       const currency = e.currency_original ?? "";
-      result.push({ type: "group", receipt_id: e.receipt_id, store, total, currency, expenses: group });
+      const date = e.date ?? e.datetime ?? null;
+      result.push({ type: "group", receipt_id: e.receipt_id, store, total, currency, date, expenses: group });
     }
     i++;
   }
@@ -77,6 +78,12 @@ async function handleConfirmAll() {
   if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
   const ruleIds = doubtfulItems.value.map((i) => i.id);
   await reviewStore.confirmAll(ruleIds);
+}
+
+function formatDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${d.getDate()} ${d.toLocaleString("en", { month: "short" })}`;
 }
 
 async function forceRefresh() {
@@ -204,6 +211,7 @@ onBeforeUnmount(() => {
       />
       <div v-else class="receipt-group">
         <div class="receipt-group-header">
+          <span v-if="item.date" class="receipt-group-date">{{ formatDate(item.date) }}</span>
           <span class="receipt-group-store">{{ item.store }}</span>
           <span class="receipt-group-total">
             {{ item.total.toLocaleString(undefined, { maximumFractionDigits: 2 }) }}
@@ -215,6 +223,7 @@ onBeforeUnmount(() => {
           :key="expense.id"
           :expense="expense"
           :hide-store="true"
+          :hide-date="true"
           class="receipt-group-row"
           @tap="openExpenseEdit(expense)"
         />
@@ -409,6 +418,15 @@ onBeforeUnmount(() => {
   padding: 0.35rem 0.75rem;
   background: rgba(96, 165, 250, 0.1);
   border-bottom: 1px solid rgba(96, 165, 250, 0.2);
+}
+
+.receipt-group-date {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-right: 0.4rem;
 }
 
 .receipt-group-store {
