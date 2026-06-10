@@ -255,6 +255,43 @@ Controller `resolve_receipt_manually(receipt_id, req, con) -> dict`:
 9. Response: `{"status": "ok", "expense_id": ..., "amount_original": ...,
    "currency_original": "RSD", "category_id": ...}`.
 
+### 2b-bis. Extend `GET /api/receipts/{receipt_id}` with job error details
+
+File: `src/dinary/db/receipts.py`, `get_receipt_summary` (line 348).
+
+Extend the SELECT to LEFT JOIN `receipt_classification_jobs` so the detail view
+always gets the current job state in one call:
+
+```sql
+SELECT r.id, r.store_name_raw AS merchant, r.purchase_datetime AS captured_at,
+       j.status, j.retry_count, j.last_error, j.retry_after, j.claimed_at
+  FROM receipts r
+  LEFT JOIN receipt_classification_jobs j ON j.receipt_id = r.id
+ WHERE r.id = ?
+```
+
+Add a `job` field to the returned dict — `null` when no job row exists (receipt
+already resolved or not yet queued), otherwise:
+
+```json
+{
+  "status": "poisoned",
+  "retry_count": 4,
+  "last_error": "No items found via /specifications or journal for https://suf.purs.gov.rs/v/?vl=... — receipt may not be indexed by SUF yet",
+  "retry_after": null,
+  "last_attempted_at": "2026-06-08T12:34:00Z"
+}
+```
+
+`retry_after` is `null` for `poisoned` (no further automatic retries will happen)
+and for `in_progress` (currently running); non-null for `pending` (when the next
+attempt is scheduled). `last_attempted_at` maps to `claimed_at` from the job row.
+
+No new endpoint is needed — the receipt detail view already calls
+`GET /api/receipts/{receipt_id}`.
+
+---
+
 ### 2c. Frontend
 
 `webapp/src/api/receipts.js` — add, following the `apiRequest` pattern already
@@ -288,6 +325,32 @@ Add the corresponding store actions (load queue page, resolve-and-refresh) to
 `useReviewStore` (`webapp/src/stores/review.js`) following the existing
 `loadNextPage`/`correct` patterns (lines 77-? / 108-?).
 
+**Receipt detail view — job error panel.** Wherever the receipt detail card or
+modal renders (the component that calls `GET /api/receipts/{receipt_id}`), when
+`receipt.job` is non-null render a banner **above** the expense list:
+
+- **`poisoned`** (error/red tone): heading "Automatic processing failed"; body =
+  `job.last_error` in full (not truncated); footer = "Tried N times · Last
+  attempt: \<relative time from `last_attempted_at`\>". No further retries will
+  happen automatically. Show a "Create expense manually" button — same
+  `resolveReceipt` call + `CategorySheet` flow as the queue-row action.
+- **`pending`** (warning/amber tone): heading "Waiting to retry"; body = "Tried
+  N times. Next retry: \<`retry_after` formatted\>". The "Create expense
+  manually" button is also shown here (user can skip the retry loop immediately).
+- **`in_progress`** (neutral + spinner): heading "Processing…"; body = "Tried N
+  times, currently running." Resolve button is **disabled** unless
+  `last_attempted_at` is older than **5 minutes** (checked client-side:
+  `Date.now() - new Date(job.last_attempted_at) > 5 * 60_000`). Normal
+  processing (SUF HTTP + LLM call) completes in seconds to low minutes, so
+  5 minutes reliably distinguishes a healthy run from a stuck drain loop. When the button does
+  appear, show an amber warning: "Processing appears stuck — you can create an
+  expense manually. If the automatic processing finishes first, this action will
+  return an error." On 409 from the server (worker finished first), show a toast
+  "Receipt was processed automatically" and close the dialog.
+
+The amount shown in the resolve dialog comes from `parseReceiptUrl(receipt.url)`
+(`webapp/src/composables/receipt.js:11`) — no additional backend call needed.
+
 ### 2d. Tests
 
 Backend:
@@ -299,6 +362,13 @@ Backend:
   `webapp/tests/composable-receipt.test.js:28-50` so both sides agree on the
   byte layout), missing `vl=` → `None`, malformed base64 → `None`, truncated
   buffer → `None`.
+- Extend `tests/api/test_api_receipts.py` (or the existing receipt endpoint test
+  file) for `GET /api/receipts/{receipt_id}`: assert that when an active job
+  exists the response includes `job.status`, `job.retry_count`, `job.last_error`,
+  `job.retry_after`, `job.last_attempted_at`; and that `job` is `null` once the
+  job row is deleted (receipt resolved). Cover all three statuses: `pending`
+  (non-null `retry_after`), `in_progress` (`retry_after` null), `poisoned`
+  (`retry_after` null, `last_error` present).
 - New `tests/api/test_api_receipt_queue.py`: `GET /api/receipts/queue` (empty,
   populated, ordering by `created_at`, pagination); `POST
   /api/receipts/{id}/resolve` happy path (creates exactly one expense with
@@ -317,3 +387,12 @@ existing `RuleRow`/review-component tests), covering the empty state, a row
 with a decoded amount, a row with `amount: null` (decode failed → action
 disabled), and the resolve-confirm flow calling `resolveReceipt` and refreshing
 the list.
+
+Component test for the receipt detail job-error panel: `poisoned` receipt shows
+red banner with full `last_error` text and an active "Create expense manually"
+button; `pending` shows amber banner with `retry_after` and active button;
+`in_progress` with recent `last_attempted_at` shows neutral spinner and disabled
+button; `in_progress` with `last_attempted_at` older than 5 minutes shows amber
+"appears stuck" warning and active button; receipt with `job: null` renders no
+banner at all. Also test the 409 path: `resolveReceipt` rejects with 409 →
+dialog closes and toast "Receipt was processed automatically" is shown.
