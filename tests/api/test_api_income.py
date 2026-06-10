@@ -19,7 +19,7 @@ def _mock_get_rate(con, rate_date, source, target, *, offline=False):
 @allure.feature("API")
 class TestIncomeApi:
     def test_post_creates_201(self, client):
-        with patch("dinary.api.controllers.income.get_rate", side_effect=_mock_get_rate):
+        with patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate):
             resp = client.post(
                 "/api/incomes",
                 json={

@@ -31,9 +31,13 @@
   imports". If there is a circular import, fix the dependency structure.
 - Do not use `from __future__ import annotations` — the project targets
   Python 3.13+.
-- **No re-export patterns.** Callers must import directly from the module
-  that owns the symbol. Never re-export a symbol through a parent `__init__`
-  or an intermediate module just for convenience.
+- **No re-export patterns.** This rule is about *moving* code: when a symbol
+  moves to a new module, update every importer to point at the new module
+  directly — never leave a shim/proxy re-export in the old module just to
+  avoid touching call sites. It does **not** restrict importing a shared
+  helper from the module that owns it. If two modules need the same logic,
+  put it in one place and have both import it — copy-pasting the
+  implementation to "avoid a re-export" is not acceptable.
 
 ## Plan files and in-repo docs
 

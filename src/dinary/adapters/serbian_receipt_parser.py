@@ -10,9 +10,15 @@ Fallback path (if /specifications fails or returns empty items):
   present in the official JSON response and has a fixed column-aligned format.
 """
 
+import base64
+import binascii
 import logging
 import re
+import struct
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from decimal import Decimal
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -23,6 +29,11 @@ class ParserRequestError(Exception):
 
 class ParserParseError(Exception):
     """Raised when a receipt cannot be parsed due to unexpected content (permanent)."""
+
+
+class ParserNotIndexedError(Exception):
+    """Raised when SUF returns no items and no journal — the receipt is likely
+    not indexed yet (transient; resolves once SUF processes it)."""
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +63,33 @@ class ParsedReceipt:
     total_ok: bool
     used_journal_fallback: bool = False
     purchase_datetime: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class QrPayload:
+    amount: Decimal
+    purchase_datetime: datetime  # tz-aware, UTC
+
+
+def decode_qr_payload(url: str) -> QrPayload | None:
+    """Decode amount and purchase time straight from the vl= QR parameter.
+
+    No network call — works even when SUF has nothing for this receipt yet.
+    Returns None if there's no vl= parameter or the payload doesn't decode.
+    """
+    vl = parse_qs(urlparse(url).query).get("vl", [None])[0]
+    if not vl:
+        return None
+    try:
+        raw = base64.b64decode(vl)
+        amount_units = struct.unpack_from("<Q", raw, 25)[0]
+        epoch_ms = struct.unpack_from(">Q", raw, 33)[0]
+    except (binascii.Error, struct.error, ValueError):
+        return None
+    return QrPayload(
+        amount=Decimal(amount_units) / Decimal(10000),
+        purchase_datetime=datetime.fromtimestamp(epoch_ms / 1000, tz=UTC),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +283,10 @@ async def parse_receipt(url: str) -> ParsedReceipt:
         used_journal_fallback = True
 
     if not items:
-        raise ParserParseError(f"No items found via /specifications or journal for {url}")
+        raise ParserNotIndexedError(
+            f"No items found via /specifications or journal for {url}"
+            " — receipt may not be indexed by SUF yet",
+        )
 
     items_total = round(sum(i.total_price for i in items), 2)
     return ParsedReceipt(

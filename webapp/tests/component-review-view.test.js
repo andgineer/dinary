@@ -61,9 +61,22 @@ const CATALOG = {
 
 const TELEPORT_STUB = { props: ["to", "disabled"], template: "<div><slot /></div>" };
 
+const CategorySheetStub = {
+  name: "CategorySheet",
+  props: ["open", "title", "suggestions"],
+  emits: ["select", "close"],
+  template:
+    '<div v-if="open" data-testid="category-sheet-stub">' +
+    '<button data-testid="pick-category" type="button" @click="$emit(\'select\', 5)">pick</button>' +
+    "</div>",
+};
+
 function mountView(pinia) {
   return mount(ReviewView, {
-    global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB } },
+    global: {
+      plugins: [pinia],
+      stubs: { Teleport: TELEPORT_STUB, CategorySheet: CategorySheetStub },
+    },
   });
 }
 
@@ -349,6 +362,113 @@ describe("ReviewView — receipt queue chips", () => {
     const wrapper = mountView(pinia);
     await flushPromises();
     expect(wrapper.find('[data-testid="queue-section"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+describe("ReviewView — stuck receipts section", () => {
+  it("hides the section when there are no stuck receipts", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockResolvedValue();
+    const wrapper = mountView(pinia);
+    await flushPromises();
+    expect(wrapper.find('[data-testid="stuck-section"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("shows a row with the decoded amount and an enabled action", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(async () => {
+      review.stuckReceipts = [
+        {
+          receipt_id: 1,
+          status: "poisoned",
+          retry_count: 4,
+          last_error: "boom",
+          created_at: "2026-06-01 10:00:00",
+          store_name_raw: "Maxi",
+          amount: 123.45,
+          currency: "RSD",
+          purchase_date: "2026-05-04T12:30:00+00:00",
+        },
+      ];
+    });
+    const wrapper = mountView(pinia);
+    await flushPromises();
+    expect(wrapper.find('[data-testid="stuck-section"]').exists()).toBe(true);
+    const row = wrapper.find('[data-testid="stuck-row"]');
+    expect(row.text()).toContain("Maxi");
+    expect(row.text()).toContain("123.45");
+    expect(row.text()).toContain("failed");
+    const btn = row.find('[data-testid="stuck-resolve-btn"]');
+    expect(btn.attributes("disabled")).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it("shows 'Unknown store' and 'amount unknown' with a disabled action when decode failed", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(async () => {
+      review.stuckReceipts = [
+        {
+          receipt_id: 2,
+          status: "pending",
+          retry_count: 0,
+          last_error: null,
+          created_at: "2026-06-01 10:00:00",
+          store_name_raw: "",
+          amount: null,
+          currency: null,
+          purchase_date: null,
+        },
+      ];
+    });
+    const wrapper = mountView(pinia);
+    await flushPromises();
+    const row = wrapper.find('[data-testid="stuck-row"]');
+    expect(row.text()).toContain("Unknown store");
+    expect(row.text()).toContain("amount unknown");
+    const btn = row.find('[data-testid="stuck-resolve-btn"]');
+    expect(btn.attributes("disabled")).toBeDefined();
+    wrapper.unmount();
+  });
+
+  it("resolves a stuck receipt via the category picker", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const review = useReviewStore(pinia);
+    vi.spyOn(review, "loadIfNeeded").mockImplementation(async () => {
+      review.stuckReceipts = [
+        {
+          receipt_id: 1,
+          status: "poisoned",
+          retry_count: 4,
+          last_error: "boom",
+          created_at: "2026-06-01 10:00:00",
+          store_name_raw: "Maxi",
+          amount: 123.45,
+          currency: "RSD",
+          purchase_date: "2026-05-04T12:30:00+00:00",
+        },
+      ];
+    });
+    const resolveSpy = vi.spyOn(review, "resolveStuckReceipt").mockResolvedValue();
+    const wrapper = mountView(pinia);
+    await flushPromises();
+
+    await wrapper.find('[data-testid="stuck-resolve-btn"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="category-sheet-stub"]').exists()).toBe(true);
+
+    await wrapper.find('[data-testid="pick-category"]').trigger("click");
+    await flushPromises();
+
+    expect(resolveSpy).toHaveBeenCalledWith(1, { categoryId: 5 });
     wrapper.unmount();
   });
 });

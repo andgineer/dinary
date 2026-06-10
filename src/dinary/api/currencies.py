@@ -6,6 +6,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from dinary.api.http_errors import value_error_as_422
 from dinary.config import settings
 from dinary.db import currencies
 from dinary.db.storage import get_db
@@ -31,10 +32,8 @@ class CurrencyListResponse(BaseModel):
 
 
 def _normalise_code_or_400(code: str) -> str:
-    try:
+    with value_error_as_422():
         return currencies._normalise_code(code)  # noqa: SLF001
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 def _list_response(con) -> CurrencyListResponse:

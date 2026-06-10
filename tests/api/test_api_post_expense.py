@@ -24,7 +24,7 @@ from _api_helpers import _mock_get_rate, db  # noqa: F401  (autouse + helper)
 @allure.feature("API")
 @allure.story("POST /api/expenses")
 class TestPostExpenseHappyPath:
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_create_expense(self, _mock_convert_fn, client):
         resp = client.post(
             "/api/expenses",
@@ -50,7 +50,7 @@ class TestPostExpenseHappyPath:
         assert "id" not in data
         assert "expense_id" not in data
 
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_replay_returns_duplicate(self, _mock_convert_fn, client):
         body = {
             "client_expense_id": "e2",
@@ -78,7 +78,7 @@ class TestPostExpenseHappyPath:
             con.close()
         assert count == 1
 
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_event_and_tags_are_stored(self, _mock_convert_fn, client):
         resp = client.post(
             "/api/expenses",
@@ -106,7 +106,7 @@ class TestPostExpenseHappyPath:
             con.close()
         assert tags == [1, 2]
 
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_event_auto_tags_unioned_into_expense(self, _mock_convert_fn, client):
         """POST ``/api/expenses`` must union ``events.auto_tags`` into
         the stored tag set so runtime writes carry the same invariant
@@ -168,7 +168,7 @@ class TestPostExpenseHappyPath:
         assert replay.status_code == 200, replay.text
         assert replay.json()["status"] == "duplicate"
 
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_response_echoes_original_amount_and_currency(
         self,
         _mock_convert_fn,
@@ -196,7 +196,7 @@ class TestPostExpenseHappyPath:
         assert "amount_rsd" not in data
         assert "amount" not in data
 
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_defaults_currency_to_app_currency(
         self,
         _mock_convert_fn,
@@ -231,7 +231,7 @@ class TestPostExpenseHappyPath:
             assert to_ccy.upper() == settings.accounting_currency.upper()
             return Decimal("1") / Decimal("117")
 
-        with patch("dinary.api.controllers.expenses.get_rate", side_effect=_rsd_to_eur):
+        with patch("dinary.adapters.exchange_rates.get_rate", side_effect=_rsd_to_eur):
             resp = client.post(
                 "/api/expenses",
                 json={
@@ -269,7 +269,7 @@ class TestPostExpenseHappyPath:
 @allure.feature("API")
 @allure.story("POST /api/expenses")
 class TestPostExpenseSheetLogging:
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_disabled_sheet_logging_does_not_enqueue_jobs(
         self,
         _mock_convert_fn,
@@ -297,7 +297,7 @@ class TestPostExpenseSheetLogging:
         finally:
             con.close()
 
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_enabled_sheet_logging_enqueues_job(
         self,
         _mock_convert_fn,

@@ -917,3 +917,127 @@ describe("review store: expenses localStorage cache", () => {
     expect(cached.items.map((e) => e.id)).toEqual([20]);
   });
 });
+
+describe("review store: loadStuckReceipts()", () => {
+  it("populates stuckReceipts from getReceiptQueue", async () => {
+    vi.spyOn(receiptsApi, "getReceiptQueue").mockResolvedValueOnce({
+      items: [{ receipt_id: 1, status: "poisoned", amount: 100, currency: "RSD" }],
+      has_more: false,
+    });
+    const store = useReviewStore();
+
+    await store.loadStuckReceipts();
+
+    expect(store.stuckReceipts).toHaveLength(1);
+    expect(store.stuckReceipts[0].receipt_id).toBe(1);
+    expect(store.stuckReceiptsLoading).toBe(false);
+  });
+
+  it("does not run a second load while one is in flight", async () => {
+    let resolveFirst;
+    const spy = vi.spyOn(receiptsApi, "getReceiptQueue").mockReturnValueOnce(
+      new Promise((resolve) => { resolveFirst = resolve; }),
+    );
+    const store = useReviewStore();
+
+    const first = store.loadStuckReceipts();
+    const second = store.loadStuckReceipts();
+    resolveFirst({ items: [], has_more: false });
+    await Promise.all([first, second]);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a toast on failure while online", async () => {
+    vi.spyOn(receiptsApi, "getReceiptQueue").mockRejectedValueOnce(new Error("boom"));
+    const restoreOnline = mockOnLine(true);
+    const toast = useToastStore();
+    const showSpy = vi.spyOn(toast, "show");
+    const store = useReviewStore();
+
+    await store.loadStuckReceipts();
+
+    expect(showSpy).toHaveBeenCalledWith("boom", "error");
+    expect(store.stuckReceiptsLoading).toBe(false);
+    restoreOnline();
+  });
+
+  it("triggers automatically as part of loadNextPage when the queue is non-empty", async () => {
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValueOnce({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      receipts_queue: { pending: 1, in_progress: 0, sleeping: 0, poisoned: 0 },
+    });
+    const queueSpy = vi.spyOn(receiptsApi, "getReceiptQueue").mockResolvedValueOnce({
+      items: [{ receipt_id: 1, status: "pending", amount: 50, currency: "RSD" }],
+      has_more: false,
+    });
+    const store = useReviewStore();
+
+    await store.loadNextPage();
+
+    expect(queueSpy).toHaveBeenCalledTimes(1);
+    expect(store.stuckReceipts).toHaveLength(1);
+  });
+});
+
+describe("review store: resolveStuckReceipt()", () => {
+  it("calls resolveReceipt and removes the item from stuckReceipts", async () => {
+    vi.spyOn(receiptsApi, "resolveReceipt").mockResolvedValueOnce({ status: "ok", expense_id: 1 });
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
+    });
+    vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValue({ items: [], has_more: false });
+    vi.spyOn(receiptsApi, "getReceiptQueue").mockResolvedValue({
+      items: [{ receipt_id: 2, status: "pending", amount: 50, currency: "RSD" }],
+      has_more: false,
+    });
+    const store = useReviewStore();
+    store.stuckReceipts = [
+      { receipt_id: 1, status: "poisoned", amount: 100, currency: "RSD" },
+      { receipt_id: 2, status: "pending", amount: 50, currency: "RSD" },
+    ];
+
+    await store.resolveStuckReceipt(1, { categoryId: 3 });
+
+    expect(receiptsApi.resolveReceipt).toHaveBeenCalledWith(1, { categoryId: 3 });
+    expect(store.stuckReceipts.map((i) => i.receipt_id)).toEqual([2]);
+  });
+
+  it("shows a success toast and refreshes the review feed and expenses", async () => {
+    vi.spyOn(receiptsApi, "resolveReceipt").mockResolvedValueOnce({ status: "ok", expense_id: 1 });
+    const feedSpy = vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
+    });
+    const expensesSpy = vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValue({ items: [], has_more: false });
+    vi.spyOn(receiptsApi, "getReceiptQueue").mockResolvedValue({ items: [], has_more: false });
+    const toast = useToastStore();
+    const showSpy = vi.spyOn(toast, "show");
+    const store = useReviewStore();
+    store.stuckReceipts = [{ receipt_id: 1, status: "poisoned", amount: 100, currency: "RSD" }];
+
+    await store.resolveStuckReceipt(1, { categoryId: 3 });
+
+    expect(feedSpy).toHaveBeenCalled();
+    expect(expensesSpy).toHaveBeenCalled();
+    expect(showSpy).toHaveBeenCalledWith("Expense created", "success");
+  });
+
+  it("propagates errors from resolveReceipt without removing the item", async () => {
+    vi.spyOn(receiptsApi, "resolveReceipt").mockRejectedValueOnce(
+      Object.assign(new Error("Receipt already resolved"), { status: 409 }),
+    );
+    const store = useReviewStore();
+    store.stuckReceipts = [{ receipt_id: 1, status: "poisoned", amount: 100, currency: "RSD" }];
+
+    await expect(store.resolveStuckReceipt(1, { categoryId: 3 })).rejects.toMatchObject({ status: 409 });
+    expect(store.stuckReceipts).toHaveLength(1);
+  });
+});

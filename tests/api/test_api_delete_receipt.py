@@ -35,6 +35,26 @@ def _insert_receipt_with_expenses(n_expenses=2):
         con.close()
 
 
+def _insert_job(
+    rid,
+    status="pending",
+    retry_count=0,
+    last_error=None,
+    retry_after=None,
+    claimed_at=None,
+):
+    con = storage.get_connection()
+    try:
+        con.execute(
+            "INSERT INTO receipt_classification_jobs"
+            " (receipt_id, status, retry_count, last_error, retry_after, claimed_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            [rid, status, retry_count, last_error, retry_after, claimed_at],
+        )
+    finally:
+        con.close()
+
+
 @allure.epic("Receipts")
 @allure.feature("API")
 class TestGetReceipt:
@@ -45,6 +65,49 @@ class TestGetReceipt:
         data = resp.json()
         assert data["id"] == rid
         assert data["merchant"] == "Maxi"
+
+    def test_get_receipt_without_job_has_null_job(self, client, db):  # noqa: ARG002
+        rid, _ = _insert_receipt_with_expenses(0)
+        resp = client.get(f"/api/receipts/{rid}")
+        assert resp.json()["job"] is None
+
+    def test_get_receipt_with_pending_job(self, client, db):  # noqa: ARG002
+        rid, _ = _insert_receipt_with_expenses(0)
+        _insert_job(rid, status="pending", retry_count=2, retry_after="2026-06-10 12:00:00")
+        resp = client.get(f"/api/receipts/{rid}")
+        assert resp.json()["job"] == {
+            "status": "pending",
+            "retry_count": 2,
+            "last_error": None,
+            "retry_after": "2026-06-10 12:00:00",
+            "last_attempted_at": None,
+        }
+
+    def test_get_receipt_with_in_progress_job(self, client, db):  # noqa: ARG002
+        rid, _ = _insert_receipt_with_expenses(0)
+        _insert_job(rid, status="in_progress", retry_count=1, claimed_at="2026-06-10 11:00:00")
+        resp = client.get(f"/api/receipts/{rid}")
+        job = resp.json()["job"]
+        assert job["status"] == "in_progress"
+        assert job["retry_after"] is None
+        assert job["last_attempted_at"] == "2026-06-10 11:00:00"
+
+    def test_get_receipt_with_poisoned_job(self, client, db):  # noqa: ARG002
+        rid, _ = _insert_receipt_with_expenses(0)
+        _insert_job(
+            rid,
+            status="poisoned",
+            retry_count=4,
+            last_error="No items found via /specifications or journal for https://x",
+            claimed_at="2026-06-10 11:00:00",
+        )
+        resp = client.get(f"/api/receipts/{rid}")
+        job = resp.json()["job"]
+        assert job["status"] == "poisoned"
+        assert job["retry_count"] == 4
+        assert job["last_error"] == "No items found via /specifications or journal for https://x"
+        assert job["retry_after"] is None
+        assert job["last_attempted_at"] == "2026-06-10 11:00:00"
 
     def test_get_receipt_without_include_omits_expenses(self, client, db):  # noqa: ARG002
         rid, _ = _insert_receipt_with_expenses(2)

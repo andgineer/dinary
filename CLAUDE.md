@@ -47,7 +47,7 @@ These rules come from `AGENTS.md` and supplement the defaults in this file.
 ### Imports
 - **No local (in-function) imports.** All imports at module top level, always.
 - **No `from __future__ import annotations`** — the project targets Python 3.13+.
-- **No re-export patterns** — callers import directly from the module that owns the symbol.
+- **No re-export patterns** — when a symbol moves, update importers to point at the new module instead of leaving a shim re-export. This does not forbid importing a shared helper; never duplicate logic across modules to "avoid" an import.
 
 ### Plan files
 - Never reference `.plans/*.md` files or step numbers from plans inside code comments or docstrings. Plans are ephemeral; the code is the source of truth.

@@ -20,7 +20,7 @@ def _():
     from dinary_analytics.connection import LEDGER_SCHEMA, load_query, open_ledger
     from dinary_analytics.llm import providers_available, run_chat_turn
     from dinary_analytics.paths import MCP_PORT
-    from dinary_analytics.refresh import get_app_url, set_app_url, trigger_refresh_now
+    from dinary_analytics.refresh import get_app_url, save_server_address
     from dinary_analytics.settings import (
         delete_view,
         get_config_json,
@@ -52,12 +52,11 @@ def _():
         pl,
         providers_available,
         run_chat_turn,
+        save_server_address,
         save_view,
-        set_app_url,
         set_config_json,
         timedelta,
         timezone,
-        trigger_refresh_now,
         urllib,
     )
 
@@ -68,10 +67,10 @@ def _(
     address_warning,
     get_app_url,
     mo,
+    save_server_address,
     set_address_configured,
     set_address_warning,
-    set_app_url,
-    trigger_refresh_now,
+    set_refresh_requested,
 ):
     if address_configured():
         _gate = mo.md("")
@@ -83,14 +82,12 @@ def _(
         )
 
         def _save_address(_value, _field=_address_field) -> None:
-            _url = _field.value.strip()
-            if not _url:
-                set_address_warning(True)
-                return
-            set_address_warning(False)
-            set_app_url(_url)
-            trigger_refresh_now()
-            set_address_configured(True)
+            save_server_address(
+                _field.value,
+                set_address_warning=set_address_warning,
+                set_address_configured=set_address_configured,
+                set_refresh_requested=set_refresh_requested,
+            )
 
         _save_button = mo.ui.button(label="Save", on_click=_save_address)
         _blocks = [
@@ -204,7 +201,7 @@ def _(datetime, mo, replica_status, set_address_configured, set_refresh_requeste
             return f"Data last updated at {_dt.strftime('%H:%M')}"
         return f"Data last updated at {_dt.strftime('%Y-%m-%d %H:%M')}"
 
-    mo.hstack(
+    _bar = mo.hstack(
         [
             mo.md(f"🔄 {_format_last_refresh(replica_status['last_refresh'])}"),
             mo.ui.button(label="Refresh now", on_click=lambda _v: set_refresh_requested(True)),
@@ -215,6 +212,21 @@ def _(datetime, mo, replica_status, set_address_configured, set_refresh_requeste
         ],
         justify="start",
     )
+
+    _refresh_error = replica_status.get("error")
+    if _refresh_error:
+        _output = mo.vstack(
+            [
+                _bar,
+                mo.callout(
+                    mo.md(f"**Last refresh attempt failed:** `{_refresh_error}`"),
+                    kind="warn",
+                ),
+            ],
+        )
+    else:
+        _output = _bar
+    _output
 
 
 @app.cell

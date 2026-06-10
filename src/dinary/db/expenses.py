@@ -127,7 +127,7 @@ def _to_decimal(value: float | Decimal) -> Decimal:
     return Decimal(str(value))
 
 
-def _validate_expense_refs(
+def validate_expense_refs(
     con: sqlite3.Connection,
     category_id: int,
     event_id: int | None,
@@ -397,7 +397,7 @@ def insert_expense(
     con.execute("BEGIN IMMEDIATE")
     tx_active = True
     try:
-        _validate_expense_refs(con, payload.category_id, payload.event_id, tag_ids)
+        validate_expense_refs(con, payload.category_id, payload.event_id, tag_ids)
         inserted, tx_rolled_back = _try_insert_expense_row(
             con,
             sql_params,

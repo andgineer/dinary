@@ -352,14 +352,30 @@ def get_receipt_summary(conn: sqlite3.Connection, receipt_id: int) -> dict | Non
     """
     row = conn.execute(
         """
-        SELECT r.id, r.store_name_raw AS merchant, r.purchase_datetime AS captured_at
+        SELECT r.id, r.store_name_raw AS merchant, r.purchase_datetime AS captured_at,
+               j.status, j.retry_count, j.last_error, j.retry_after, j.claimed_at
           FROM receipts r
+          LEFT JOIN receipt_classification_jobs j ON j.receipt_id = r.id
          WHERE r.id = ?
         """,
         [receipt_id],
     ).fetchone()
     if row is None:
         return None
+
+    job = None
+    if row["status"] is not None:
+        job = {
+            "status": str(row["status"]),
+            "retry_count": int(row["retry_count"]),
+            "last_error": str(row["last_error"]) if row["last_error"] else None,
+            "retry_after": (
+                str(row["retry_after"])
+                if row["status"] == "pending" and row["retry_after"]
+                else None
+            ),
+            "last_attempted_at": str(row["claimed_at"]) if row["claimed_at"] else None,
+        }
 
     expense_rows = conn.execute(
         """
@@ -391,6 +407,7 @@ def get_receipt_summary(conn: sqlite3.Connection, receipt_id: int) -> dict | Non
         "captured_at": str(row["captured_at"]) if row["captured_at"] else None,
         "expenses": expenses,
         "total": {"amount": total, "currency": currency},
+        "job": job,
     }
 
 

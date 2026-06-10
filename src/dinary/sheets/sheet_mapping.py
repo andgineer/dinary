@@ -696,3 +696,17 @@ def resolve_event_auto_tag_ids(
 ) -> list[int]:
     """Return the stored integer tag ids for the event's ``auto_tags`` column."""
     return load_event_auto_tag_ids(con, event_id)
+
+
+def resolve_effective_tag_ids(
+    con: sqlite3.Connection,
+    tag_ids: list[int],
+    event_id: int | None,
+) -> list[int]:
+    """Dedupe ``tag_ids`` and append the event's auto-attach tags, if any."""
+    effective_tag_ids: list[int] = list(dict.fromkeys(int(t) for t in tag_ids))
+    if event_id is not None:
+        for auto_id in resolve_event_auto_tag_ids(con, event_id):
+            if auto_id not in effective_tag_ids:
+                effective_tag_ids.append(auto_id)
+    return effective_tag_ids

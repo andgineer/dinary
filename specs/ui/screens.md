@@ -255,6 +255,35 @@ Save is sky-blue `#60a5fa`, disabled until a category is selected.
 - Manual: tapping Delete pops a `ConfirmDeleteSheet` (`kind="expense"`), one-line context (`<amount currency>` mono on `<category>, <date>`), Cancel + Delete.
 - Receipt: tapping Delete receipt pops `ConfirmDeleteSheet` (`kind="receipt"`) with a `ReceiptCascadeCard` in the `detail` slot — lists every item from the receipt with mono amounts and a TOTAL footer. Destructive button reads `"Delete N items"` with the live count. After delete, the store does a full feed reset + reload so the rule rows tied to the receipt disappear immediately.
 
+### Job status banner (stuck receipts)
+
+When the receipt behind an expense still has an active classification job, the
+`ReceiptCascadeCard` detail view shows a banner above the item list:
+
+- **poisoned** (error tone): the full error message, retry count, and time of
+  the last attempt. No further automatic retries will happen.
+- **pending** (warning tone): retry count and the next scheduled retry time.
+- **in_progress** (neutral, spinner): retry count. Once the job has been
+  running for more than 5 minutes, an "appears stuck" warning replaces the
+  spinner-only state.
+
+Every state except a healthy `in_progress` (under 5 minutes) shows a "Create
+expense manually" button that opens the category picker and resolves the
+receipt manually (see
+[classification-pipeline.md](../reference/classification-pipeline.md#manual-resolution)).
+If the automatic pipeline finishes first, the resolve call returns 409 and the
+UI shows a toast instead of an error.
+
+### Stuck receipts
+
+When any receipt has an active classification job (`pending`, `in_progress`,
+or `poisoned`), a STUCK RECEIPTS section lists every such receipt, oldest
+first — shown in full, with no threshold. Each row shows the merchant (or
+"Unknown store"), the amount/currency decoded from the receipt's QR payload
+(or "amount unknown" if the URL can't be decoded, with the action disabled),
+status, retry count, and age. A "Save as expense" button opens the category
+picker and resolves the receipt manually, same as the job status banner above.
+
 ### Pagination
 
 Two independent `IntersectionObserver` sentinels — one for the rule feed, one for the expense feed — each `rootMargin: "120 px"`. Skeleton rows show during fetch.

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { postReceipt, getReceipt, deleteReceipt } from "../src/api/receipts.js";
+import { postReceipt, getReceipt, deleteReceipt, getReceiptQueue, resolveReceipt } from "../src/api/receipts.js";
 
 beforeEach(async () => {
   await allure.epic("Receipts");
@@ -164,5 +164,85 @@ describe("deleteReceipt", () => {
     }));
 
     await expect(deleteReceipt(99)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("getReceiptQueue", () => {
+  it("GETs /api/receipts/queue with default pagination", async () => {
+    mockFetch(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ items: [], has_more: false }),
+    }));
+
+    const result = await getReceiptQueue();
+
+    expect(result).toEqual({ items: [], has_more: false });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/receipts/queue?page=1&page_size=20",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("GETs /api/receipts/queue with the given page and pageSize", async () => {
+    mockFetch(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ items: [], has_more: true }),
+    }));
+
+    await getReceiptQueue({ page: 2, pageSize: 5 });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/receipts/queue?page=2&page_size=5",
+      expect.anything(),
+    );
+  });
+});
+
+describe("resolveReceipt", () => {
+  it("POSTs category_id, tag_ids, event_id and comment to /api/receipts/:id/resolve", async () => {
+    mockFetch(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ status: "ok", expense_id: 11 }),
+    }));
+
+    const result = await resolveReceipt(7, { categoryId: 3, tagIds: [1, 2], eventId: 5, comment: "manual" });
+
+    expect(result).toEqual({ status: "ok", expense_id: 11 });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/receipts/7/resolve",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const body = JSON.parse(globalThis.fetch.mock.calls[0][1].body);
+    expect(body).toEqual({ category_id: 3, tag_ids: [1, 2], event_id: 5, comment: "manual" });
+  });
+
+  it("defaults tag_ids/event_id/comment when omitted", async () => {
+    mockFetch(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ status: "ok", expense_id: 12 }),
+    }));
+
+    await resolveReceipt(8, { categoryId: 4 });
+
+    const body = JSON.parse(globalThis.fetch.mock.calls[0][1].body);
+    expect(body).toEqual({ category_id: 4, tag_ids: [], event_id: null, comment: "" });
+  });
+
+  it("throws with status 409 when the receipt was already resolved", async () => {
+    mockFetch(async () => ({
+      ok: false,
+      status: 409,
+      json: async () => ({ detail: "Receipt already resolved" }),
+    }));
+
+    await expect(resolveReceipt(9, { categoryId: 1 })).rejects.toMatchObject({ status: 409 });
   });
 });

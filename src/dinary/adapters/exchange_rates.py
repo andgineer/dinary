@@ -7,12 +7,14 @@ See ``specs/reference/exchange-rates.md``.
 """
 
 import logging
+import sqlite3
 from datetime import date
 from decimal import Decimal
 
 from dinary.adapters.nbp import resolve_from_nbp
 from dinary.adapters.nbs import resolve_from_nbs
 from dinary.adapters.rate_helpers import get_db_rate, save_db_rate
+from dinary.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -97,3 +99,17 @@ def get_rate(
 
     msg = f"Could not find rate for {source}/{target} on {rate_date}"
     raise ValueError(msg)
+
+
+def convert_to_accounting_amount(
+    con: sqlite3.Connection,
+    amount: Decimal,
+    currency: str,
+    rate_date: date,
+) -> Decimal:
+    """Convert ``amount`` in ``currency`` to the accounting currency, quantized to cents.
+
+    Raises ``ValueError`` if no rate is available for the pair on ``rate_date``.
+    """
+    rate = get_rate(con, rate_date, currency, settings.accounting_currency, offline=True)
+    return (amount * rate).quantize(Decimal("0.01"))

@@ -31,7 +31,7 @@ from _api_helpers import (  # noqa: F401  (autouse + helpers)
 @allure.feature("API")
 @allure.story("Concurrency")
 class TestPostExpenseConcurrency:
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_concurrent_post_with_same_client_expense_id_is_atomic(
         self,
         _mock_convert_fn,
@@ -116,7 +116,7 @@ class TestPostExpenseConcurrency:
                 )
 
         with (
-            patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate),
+            patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate),
             _count_race_recoveries() as race_counter,
         ):
             responses = asyncio.run(_run())
@@ -210,7 +210,7 @@ class TestPostExpenseConcurrency:
                 )
 
         with (
-            patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate),
+            patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate),
             _count_race_recoveries() as race_counter,
         ):
             responses = asyncio.run(_run())
@@ -286,7 +286,7 @@ class TestPostExpenseFailurePropagation:
 
         with (
             patch("dinary.api.controllers.expenses.insert_expense", side_effect=boom),
-            patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate),
+            patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate),
         ):
             resp = client.post(
                 "/api/expenses",
@@ -303,7 +303,7 @@ class TestPostExpenseFailurePropagation:
         # No ledger row: a legitimate retry must be allowed to succeed.
         assert lookup_existing_expense("e_boom") is None
 
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_unexpected_constraint_exception_propagates(
         self,
         _mock_convert_fn,

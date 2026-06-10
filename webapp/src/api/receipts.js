@@ -15,6 +15,20 @@ export function deleteReceipt(id) {
   return apiRequest(`/api/receipts/${id}`, { method: "DELETE" });
 }
 
+export function getReceiptQueue({ page = 1, pageSize = 20 } = {}) {
+  return apiRequest(`/api/receipts/queue?page=${page}&page_size=${pageSize}`);
+}
+
+export function resolveReceipt(
+  receiptId,
+  { categoryId, tagIds = [], eventId = null, comment = "" },
+) {
+  return apiRequest(`/api/receipts/${receiptId}/resolve`, {
+    method: "POST",
+    body: { category_id: categoryId, tag_ids: tagIds, event_id: eventId, comment },
+  });
+}
+
 export async function postReceipt({ client_receipt_id, url }) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), POST_RECEIPT_TIMEOUT_MS);

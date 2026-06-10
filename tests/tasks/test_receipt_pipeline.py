@@ -6,10 +6,13 @@ lost — it ends up classified (expenses created + job deleted), poisoned (job i
 """
 
 import asyncio
+import base64
 import contextlib
 import dataclasses
 import sqlite3
+import struct
 import unittest.mock
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import allure
@@ -24,6 +27,7 @@ from dinary.adapters import rate_helpers
 from dinary.adapters.llmbroker import Execution, LLMBroker
 from dinary.adapters.serbian_receipt_parser import (
     ParsedReceipt,
+    ParserNotIndexedError,
     ParserParseError,
     ParserRequestError,
     ReceiptItem,
@@ -240,6 +244,25 @@ class TestReceiptPipelineNeverLost:
             "transient parse error must release the job for retry"
         )
 
+    def test_parser_not_indexed_releases_for_retry(self, pipeline):
+        """SUF returns no items yet (not indexed) → job released as pending, not poisoned."""
+        receipt_id = _post(pipeline)
+
+        with (
+            patch(
+                "dinary.background.classification.task.parse_receipt",
+                side_effect=ParserNotIndexedError("no items yet"),
+            ),
+            patch("dinary.background.classification.task.notify_new_receipt"),
+            patch("dinary.background.classification.task._schedule_wakeup"),
+        ):
+            asyncio.run(_drain_all_pending(_broker()))
+
+        assert _expense_count(receipt_id) == 0
+        assert _job_status(receipt_id) == "pending", (
+            "SUF-not-indexed-yet error must release the job for retry, not poison it"
+        )
+
     def test_parser_permanent_error_poisons_job(self, pipeline):
         """Malformed / unsupported receipt format (ParserParseError) → job poisoned."""
         receipt_id = _post(pipeline)
@@ -252,6 +275,40 @@ class TestReceiptPipelineNeverLost:
 
         assert _expense_count(receipt_id) == 0
         assert _job_status(receipt_id) == "poisoned", "permanent parse error must poison the job"
+
+    def test_poisoned_receipt_resolved_manually(self, pipeline):
+        """Poisoned receipt → manual resolve endpoint → expense created, job gone."""
+        purchase_dt = datetime(2026, 5, 4, 12, 30, 0, tzinfo=UTC)
+        epoch_ms = int(purchase_dt.timestamp() * 1000)
+        buf = bytearray(64)
+        struct.pack_into("<Q", buf, 25, 1234500)
+        struct.pack_into(">Q", buf, 33, epoch_ms)
+        vl = base64.b64encode(bytes(buf)).decode()
+
+        resp = pipeline.post(
+            "/api/receipts",
+            json={"client_receipt_id": "stuck-1", "url": f"https://suf.purs.gov.rs/v/?vl={vl}"},
+        )
+        assert resp.status_code == 200, resp.text
+        receipt_id = int(resp.json()["receipt_id"])
+
+        with patch(
+            "dinary.background.classification.task.parse_receipt",
+            side_effect=ParserParseError("unrecognised receipt format"),
+        ):
+            asyncio.run(_drain_all_pending(_broker()))
+
+        assert _job_status(receipt_id) == "poisoned"
+
+        resolve_resp = pipeline.post(
+            f"/api/receipts/{receipt_id}/resolve",
+            json={"category_id": 1},
+        )
+        assert resolve_resp.status_code == 200, resolve_resp.text
+
+        _assert_not_lost(receipt_id)
+        assert _expense_count(receipt_id) == 1
+        assert _job_status(receipt_id) is None
 
     def test_llm_broker_unavailable_releases_for_retry(self, pipeline):
         """All LLM providers return None → job released for retry, not lost."""
@@ -483,6 +540,10 @@ _SCENARIOS: list[_Chaos] = [
     _Chaos(
         "parse.permanent_format_error",
         [(_PARSE, {"side_effect": ParserParseError("unrecognised receipt format")})],
+    ),
+    _Chaos(
+        "parse.suf_not_indexed_yet",
+        [(_PARSE, {"side_effect": ParserNotIndexedError("no items yet")})],
     ),
     _Chaos("parse.os_error", [(_PARSE, {"side_effect": OSError("disk I/O error")})]),
     _Chaos(

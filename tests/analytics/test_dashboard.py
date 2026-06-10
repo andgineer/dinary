@@ -483,6 +483,69 @@ def test_fetch_replica_status_survives_refresh_post_failure(monkeypatch):
 
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
+def test_status_bar_cell_surfaces_refresh_error():
+    """A non-null refresh error is shown even when the replica is otherwise ok."""
+    import datetime
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    cell = next(
+        c
+        for c in cells
+        if {"replica_status", "set_refresh_requested", "set_address_configured"} <= c.refs
+    )
+
+    output, _ = cell.run(
+        datetime=datetime.datetime,
+        mo=mo,
+        replica_status={
+            "ok": True,
+            "last_refresh": "2024-01-01T00:00:00+00:00",
+            "error": "failed to download ledger snapshot: HTTP Error 502: Bad Gateway",
+        },
+        set_address_configured=lambda _v: None,
+        set_refresh_requested=lambda _v: None,
+        timezone=datetime.timezone,
+    )
+
+    _, html = output._mime_()
+    assert "Last refresh attempt failed" in html
+    assert "Bad Gateway" in html
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_status_bar_cell_hides_error_callout_when_refresh_ok():
+    """No error callout is shown when the last refresh succeeded."""
+    import datetime
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    cell = next(
+        c
+        for c in cells
+        if {"replica_status", "set_refresh_requested", "set_address_configured"} <= c.refs
+    )
+
+    output, _ = cell.run(
+        datetime=datetime.datetime,
+        mo=mo,
+        replica_status={
+            "ok": True,
+            "last_refresh": "2024-01-01T00:00:00+00:00",
+            "error": None,
+        },
+        set_address_configured=lambda _v: None,
+        set_refresh_requested=lambda _v: None,
+        timezone=datetime.timezone,
+    )
+
+    _, html = output._mime_()
+    assert "Last refresh attempt failed" not in html
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
 def test_followups_cell_renders_clickable_buttons_and_hides_while_pending():
     """Follow-up suggestions render as clickable buttons; hidden while a reply is pending."""
     import marimo as mo

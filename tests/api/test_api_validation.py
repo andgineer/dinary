@@ -100,7 +100,7 @@ class TestPostExpenseValidation:
 @allure.feature("API")
 @allure.story("Validation")
 class TestPostExpenseInactiveCarveout:
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_reseed_deactivation_allows_idempotent_replay_but_rejects_new_posts(
         self,
         _mock_convert_fn,
@@ -172,7 +172,7 @@ class TestPostExpenseInactiveCarveout:
         )
         assert mismatch.status_code == 409
 
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_inactive_tag_replay_carveout(
         self,
         _mock_convert_fn,
@@ -218,7 +218,7 @@ class TestPostExpenseInactiveCarveout:
         assert replay.status_code == 200, replay.text
         assert replay.json()["status"] == "duplicate"
 
-    @patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_inactive_tag_replay_with_mismatched_body_returns_409(
         self,
         _mock_convert_fn,

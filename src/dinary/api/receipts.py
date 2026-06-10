@@ -6,6 +6,11 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
+from dinary.api.controllers.receipt_queue import (
+    ResolveReceiptRequest,
+    list_stuck_receipts,
+    resolve_receipt_manually,
+)
 from dinary.background.classification.task import notify_new_receipt
 from dinary.db.receipts import (
     delete_receipt_cascade,
@@ -38,6 +43,24 @@ def create_receipt(
     if result.status == "ok":
         notify_new_receipt()
     return result
+
+
+@router.get("/api/receipts/queue")
+def receipt_queue(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> dict:
+    return list_stuck_receipts(con, page, page_size)
+
+
+@router.post("/api/receipts/{receipt_id}/resolve")
+def resolve_receipt(
+    receipt_id: int,
+    body: ResolveReceiptRequest,
+    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
+) -> dict:
+    return resolve_receipt_manually(receipt_id, body, con)
 
 
 @router.get("/api/receipts/{receipt_id}")

@@ -6,6 +6,7 @@ import { useToastStore } from "../stores/toast.js";
 import RuleRow from "../components/RuleRow.vue";
 import ExpenseRow from "../components/ExpenseRow.vue";
 import ExpenseEditSheet from "../components/ExpenseEditSheet.vue";
+import CategorySheet from "../components/CategorySheet.vue";
 import IconBtn from "../components/IconBtn.vue";
 
 const reviewStore = useReviewStore();
@@ -86,6 +87,51 @@ function formatDate(iso) {
   return `${d.getDate()} ${d.toLocaleString("en", { month: "short" })}`;
 }
 
+const STUCK_STATUS_LABELS = { pending: "queued", in_progress: "processing", poisoned: "failed" };
+const STUCK_STATUS_CHIP_CLASSES = {
+  pending: "queue-chip--ready",
+  in_progress: "queue-chip--processing",
+  poisoned: "queue-chip--failed",
+};
+
+function stuckStatusLabel(status) {
+  return STUCK_STATUS_LABELS[status] ?? status;
+}
+
+function stuckStatusChipClass(status) {
+  return STUCK_STATUS_CHIP_CLASSES[status] ?? "";
+}
+
+function formatAge(iso) {
+  if (!iso) return "";
+  const then = new Date(iso.includes("T") ? iso : `${iso.replace(" ", "T")}Z`);
+  const diffMin = Math.floor((Date.now() - then.getTime()) / 60_000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return `${Math.floor(diffHours / 24)}d ago`;
+}
+
+const stuckResolveItem = ref(null);
+const stuckCategorySheetOpen = ref(false);
+
+function openStuckResolve(item) {
+  if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
+  stuckResolveItem.value = item;
+  stuckCategorySheetOpen.value = true;
+}
+
+async function onStuckCategorySelect(categoryId) {
+  const item = stuckResolveItem.value;
+  if (!item) return;
+  try {
+    await reviewStore.resolveStuckReceipt(item.receipt_id, { categoryId });
+  } catch (err) {
+    toast.show(err?.message || "Resolve failed", "error");
+  }
+}
+
 async function forceRefresh() {
   if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
   reviewStore.reset();
@@ -148,6 +194,47 @@ onBeforeUnmount(() => {
         <span v-if="reviewStore.receiptsQueue.in_progress > 0" class="queue-chip queue-chip--processing">{{ reviewStore.receiptsQueue.in_progress }} processing</span>
         <span v-if="reviewStore.receiptsQueue.sleeping > 0" class="queue-chip queue-chip--sleeping">{{ reviewStore.receiptsQueue.sleeping }} sleeping</span>
         <span v-if="reviewStore.receiptsQueue.poisoned > 0" class="queue-chip queue-chip--failed">{{ reviewStore.receiptsQueue.poisoned }} failed</span>
+      </div>
+    </div>
+
+    <div
+      v-if="reviewStore.stuckReceipts.length > 0"
+      class="stuck-section"
+      data-testid="stuck-section"
+    >
+      <div class="stuck-header">
+        <span class="stuck-label">STUCK RECEIPTS</span>
+      </div>
+      <div
+        v-for="item in reviewStore.stuckReceipts"
+        :key="item.receipt_id"
+        class="stuck-row"
+        data-testid="stuck-row"
+      >
+        <div class="stuck-row-main">
+          <span class="stuck-store">{{ item.store_name_raw || "Unknown store" }}</span>
+          <span class="stuck-amount">
+            <template v-if="item.amount != null">
+              {{ Number(item.amount).toLocaleString(undefined, { maximumFractionDigits: 2 }) }}
+              <span class="stuck-currency">{{ item.currency }}</span>
+            </template>
+            <template v-else>amount unknown</template>
+          </span>
+        </div>
+        <div class="stuck-row-meta">
+          <span class="queue-chip" :class="stuckStatusChipClass(item.status)">{{ stuckStatusLabel(item.status) }}</span>
+          <span v-if="item.retry_count > 0" class="stuck-retries">{{ item.retry_count }} retries</span>
+          <span class="stuck-age">{{ formatAge(item.created_at) }}</span>
+          <button
+            type="button"
+            class="stuck-resolve-btn"
+            data-testid="stuck-resolve-btn"
+            :disabled="item.amount == null || !isOnline"
+            @click="openStuckResolve(item)"
+          >
+            Save as expense
+          </button>
+        </div>
       </div>
     </div>
 
@@ -250,6 +337,13 @@ onBeforeUnmount(() => {
     :suggestions="editingSuggestions"
     :rule-item="editingRuleItem"
     @close="closeExpenseEdit"
+  />
+
+  <CategorySheet
+    :open="stuckCategorySheetOpen"
+    title="Select category"
+    @select="onStuckCategorySelect"
+    @close="stuckCategorySheetOpen = false"
   />
 </template>
 
@@ -381,6 +475,95 @@ onBeforeUnmount(() => {
 .queue-chip--processing { color: var(--text); }
 .queue-chip--sleeping { color: var(--muted); }
 .queue-chip--failed { color: var(--error); }
+
+.stuck-section {
+  margin-bottom: 0.75rem;
+}
+
+.stuck-header {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0.25rem 0.4rem;
+}
+
+.stuck-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--warning);
+}
+
+.stuck-row {
+  padding: 0.6rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--field);
+  margin-bottom: 0.5rem;
+}
+
+.stuck-row-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.stuck-store {
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stuck-amount {
+  font-family: var(--font-num);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.stuck-currency {
+  font-size: 0.7rem;
+  color: var(--muted-2);
+  margin-left: 2px;
+}
+
+.stuck-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.stuck-retries,
+.stuck-age {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.stuck-resolve-btn {
+  margin-left: auto;
+  padding: 0.3rem 0.75rem;
+  background: rgba(96, 165, 250, 0.15);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  border-radius: 999px;
+  color: #60a5fa;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.stuck-resolve-btn:hover:not(:disabled) {
+  background: rgba(96, 165, 250, 0.25);
+}
+
+.stuck-resolve-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 .confirm-all-wrap {
   padding: 0.75rem 0;

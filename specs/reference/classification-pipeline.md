@@ -38,14 +38,33 @@ eventually replace it.
 ## Error handling strategy
 
 Network/parse errors on receipt fetch are treated differently:
-- Transient network errors: release the job for retry later.
-- Structural parse errors (receipt can't be parsed at all): poison the job to
-  prevent infinite retries.
+- Transient errors — network failures and a not-yet-indexed receipt (SUF
+  returns no items via either fetch path) — release the job for retry later,
+  with no retry ceiling.
+- Structural parse errors (the response itself is malformed, not just empty):
+  poison the job.
 
 This distinction matters because the government fiscal API is unreliable;
 treating all failures as permanent would silently discard valid receipts. See
 [receipt-fetching.md](receipt-fetching.md) for the fetch strategy and
 reliability characteristics of `suf.purs.gov.rs`.
+
+A poisoned job — or one stuck retrying indefinitely — is not a dead end; see
+"Manual resolution" below.
+
+## Manual resolution
+
+A receipt sitting in `pending`, `in_progress`, or `poisoned` status can be
+converted into an expense manually at any time, regardless of why it's stuck.
+The user picks the category (and optionally tags, an event, and a comment);
+the amount and purchase date come from the receipt's QR payload (see
+[receipt-fetching.md](receipt-fetching.md#qr-payload-as-amountdate-source)),
+not from SUF, so this works even for receipts SUF has never returned data for.
+
+The resulting expense is recorded at confidence level 4 (user-provided, the
+highest level) with no associated classification rule. This guarantees a
+receipt accepted by the API never stays unprocessed forever, independent of
+the cause of the stall.
 
 ## LLM execution failure and retry
 

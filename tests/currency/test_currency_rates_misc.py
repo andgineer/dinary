@@ -25,9 +25,10 @@ import allure
 import pytest
 
 from dinary.db import db_migrations, storage
-from dinary.adapters.exchange_rates import get_rate
+from dinary.adapters.exchange_rates import convert_to_accounting_amount, get_rate
 from dinary.adapters.nbp import _fetch_nbp_pln_leg
 from dinary.adapters.nbs import _fetch_nbs_rate
+from dinary.config import settings
 
 from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
     _MON,
@@ -89,6 +90,35 @@ class TestExchangeRate:
             assert (Decimal("11700") * rate).quantize(Decimal("0.01")) == Decimal("100.00")
         finally:
             con.close()
+
+
+@allure.epic("Currencies")
+@allure.feature("Rate resolution")
+class TestConvertToAccountingAmount:
+    def test_passthrough_when_same_currency(self, monkeypatch):
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        result = convert_to_accounting_amount(None, Decimal("540"), "EUR", date(2026, 5, 1))
+        assert result == Decimal("540.00")
+
+    def test_converts_via_rate(self, monkeypatch):
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        with patch(
+            "dinary.adapters.exchange_rates.get_rate",
+            return_value=Decimal("0.0085"),
+        ):
+            result = convert_to_accounting_amount(None, Decimal("1000"), "RSD", date(2026, 5, 1))
+        assert result == Decimal("8.50")
+
+    def test_raises_when_no_rate_available(self, monkeypatch):
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        with (
+            patch(
+                "dinary.adapters.exchange_rates.get_rate",
+                side_effect=ValueError("Could not find rate for RSD/EUR on 2026-05-01"),
+            ),
+            pytest.raises(ValueError, match="Could not find rate"),
+        ):
+            convert_to_accounting_amount(None, Decimal("1000"), "RSD", date(2026, 5, 1))
 
 
 @allure.epic("Currencies")

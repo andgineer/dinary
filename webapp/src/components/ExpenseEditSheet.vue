@@ -196,6 +196,11 @@ function _formatDate(iso) {
     return iso;
   }
 }
+
+function onReceiptResolved() {
+  cancelDelete();
+  emit("close");
+}
 </script>
 
 <template>
@@ -359,7 +364,11 @@ function _formatDate(iso) {
       created from it — not just this one. This can't be undone.
     </template>
     <template #detail>
-      <ReceiptCascadeCard :loading="cascadeLoading" :cascade="cascade" />
+      <ReceiptCascadeCard
+        :loading="cascadeLoading"
+        :cascade="cascade"
+        @resolved="onReceiptResolved"
+      />
     </template>
   </ConfirmDeleteSheet>
 </template>

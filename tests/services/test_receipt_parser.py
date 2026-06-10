@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from dinary.adapters.serbian_receipt_parser import (
-    ParserParseError,
+    ParserNotIndexedError,
     ParserRequestError,
     _parse_journal,
     _rsd,
@@ -195,7 +195,7 @@ class TestParseReceiptFallback:
         no_journal = {**_JSON_RESPONSE, "journal": ""}
         ctx, _ = _mock_async_client(no_journal, "<html>no token</html>", _SPECS_EMPTY)
         with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
-            with pytest.raises(ParserParseError):
+            with pytest.raises(ParserNotIndexedError):
                 asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
 
     def test_network_error_raises(self):

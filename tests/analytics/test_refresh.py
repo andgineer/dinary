@@ -31,6 +31,7 @@ from dinary_analytics.refresh import (
     get_last_refresh,
     get_last_refresh_error,
     refresh_replica,
+    save_server_address,
     set_app_url,
     start_refresh_daemon,
     trigger_refresh_now,
@@ -254,6 +255,57 @@ def test_set_app_url_strips_trailing_slash(tmp_path, monkeypatch):
     set_app_url("https://dinary-host.tailxxxx.ts.net/")
 
     assert get_app_url() == "https://dinary-host.tailxxxx.ts.net"
+
+
+# --- save_server_address ------------------------------------------------------
+
+
+@allure.epic("Analytics")
+@allure.feature("Refresh Daemon")
+def test_save_server_address_warns_on_blank_url(tmp_path, monkeypatch):
+    config_path = tmp_path / "dinary-ai-config.json"
+    monkeypatch.setattr(refresh_module, "LOCAL_CONFIG_PATH", config_path)
+    calls: dict[str, list] = {
+        "set_address_warning": [],
+        "set_address_configured": [],
+        "set_refresh_requested": [],
+    }
+
+    save_server_address(
+        "   ",
+        set_address_warning=lambda v: calls["set_address_warning"].append(v),
+        set_address_configured=lambda v: calls["set_address_configured"].append(v),
+        set_refresh_requested=lambda v: calls["set_refresh_requested"].append(v),
+    )
+
+    assert calls["set_address_warning"] == [True]
+    assert calls["set_address_configured"] == []
+    assert calls["set_refresh_requested"] == []
+    assert not config_path.exists()
+
+
+@allure.epic("Analytics")
+@allure.feature("Refresh Daemon")
+def test_save_server_address_persists_url_and_requests_refresh(tmp_path, monkeypatch):
+    config_path = tmp_path / "dinary-ai-config.json"
+    monkeypatch.setattr(refresh_module, "LOCAL_CONFIG_PATH", config_path)
+    calls: dict[str, list] = {
+        "set_address_warning": [],
+        "set_address_configured": [],
+        "set_refresh_requested": [],
+    }
+
+    save_server_address(
+        "https://dinary-host.tailxxxx.ts.net",
+        set_address_warning=lambda v: calls["set_address_warning"].append(v),
+        set_address_configured=lambda v: calls["set_address_configured"].append(v),
+        set_refresh_requested=lambda v: calls["set_refresh_requested"].append(v),
+    )
+
+    assert get_app_url() == "https://dinary-host.tailxxxx.ts.net"
+    assert calls["set_address_warning"] == [False]
+    assert calls["set_address_configured"] == [True]
+    assert calls["set_refresh_requested"] == [True]
 
 
 # --- _refresh_loop / trigger_refresh_now / start_refresh_daemon -------------

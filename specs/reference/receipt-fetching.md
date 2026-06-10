@@ -31,6 +31,21 @@ where the fiscal device or our parser has a minor rounding difference.
 
 The government fiscal server (`suf.purs.gov.rs`) is unreliable: observed
 timeouts, intermittent 503s, and slow responses on the same URL that succeeded
-moments earlier. All fetch failures are treated as transient — the job is
-released for retry rather than poisoned. Only a structural parse failure (the
-receipt content itself is unparseable) justifies poisoning.
+moments earlier. A receipt fetched soon after purchase can come back with a
+valid but empty response (no items via `/specifications` or the `journal`)
+because SUF hasn't indexed it yet — fetching the same URL again later returns
+the full receipt.
+
+All fetch failures, including a not-yet-indexed empty response, are treated as
+transient — the job is released for retry rather than poisoned. Only a
+genuinely malformed response (invalid JSON, or JSON that doesn't match the
+expected shape) justifies poisoning.
+
+## QR payload as amount/date source
+
+The receipt's QR URL encodes the purchase amount and timestamp directly (the
+`vl=` query parameter), independent of SUF. This is the only amount/date
+source available for a receipt SUF has never returned data for, and is what
+the manual resolution flow (see
+[classification-pipeline.md](classification-pipeline.md#manual-resolution))
+relies on.

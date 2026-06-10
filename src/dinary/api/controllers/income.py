@@ -7,7 +7,8 @@ from decimal import Decimal
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from dinary.adapters.exchange_rates import get_rate
+from dinary.adapters.exchange_rates import convert_to_accounting_amount
+from dinary.api.http_errors import value_error_as_422
 from dinary.config import settings
 from dinary.db.income import (
     IncomeData,
@@ -56,19 +57,6 @@ class IncomeListResponse(BaseModel):
     has_more: bool
 
 
-def _convert_to_accounting(
-    con: sqlite3.Connection,
-    amount_original: Decimal,
-    currency_original: str,
-    for_date: date,
-) -> float:
-    currency = currency_original.upper()
-    if currency == settings.accounting_currency.upper():
-        return float(amount_original)
-    rate = get_rate(con, for_date, currency, settings.accounting_currency, offline=True)
-    return float((amount_original * rate).quantize(Decimal("0.01")))
-
-
 def _row_to_response(row: IncomeRow) -> IncomeResponse:
     return IncomeResponse(
         id=row.id,
@@ -84,12 +72,15 @@ def _row_to_response(row: IncomeRow) -> IncomeResponse:
 
 
 def create_income_sync(req: IncomeCreateRequest, con: sqlite3.Connection) -> IncomeResponse:
-    amount = _convert_to_accounting(
-        con,
-        req.amount_original,
-        req.currency_original,
-        req.income_date,
-    )
+    with value_error_as_422():
+        amount = float(
+            convert_to_accounting_amount(
+                con,
+                req.amount_original,
+                req.currency_original.upper(),
+                req.income_date,
+            ),
+        )
     data = IncomeData(
         year=req.year,
         month=req.month,
@@ -120,7 +111,10 @@ def update_income_sync(
         req.amount_original if req.amount_original is not None else existing.amount_original
     )
     new_comment = req.comment if req.comment is not None else existing.comment
-    amount = _convert_to_accounting(con, new_amount_original, new_currency, new_income_date)
+    with value_error_as_422():
+        amount = float(
+            convert_to_accounting_amount(con, new_amount_original, new_currency, new_income_date),
+        )
     data = IncomeData(
         year=new_year,
         month=new_month,

@@ -7,6 +7,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 from dinary_analytics.paths import LOCAL_CONFIG_PATH, REPLICA_PATH
@@ -49,6 +50,29 @@ def set_app_url(url: str) -> None:
         _url = f"https://{_url}"
     LOCAL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     LOCAL_CONFIG_PATH.write_text(json.dumps({"app_url": _url}))
+
+
+def save_server_address(
+    url: str,
+    *,
+    set_address_warning: Callable[[bool], None],
+    set_address_configured: Callable[[bool], None],
+    set_refresh_requested: Callable[[bool], None],
+) -> None:
+    """Persist the server address and request a refresh, or warn if it's blank.
+
+    ``set_refresh_requested`` lets the caller wake the refresh daemon across
+    process boundaries (the daemon's wake event is per-process, so it can't be
+    triggered directly from the notebook process).
+    """
+    _url = url.strip()
+    if not _url:
+        set_address_warning(True)
+        return
+    set_address_warning(False)
+    set_app_url(_url)
+    set_address_configured(True)
+    set_refresh_requested(True)
 
 
 def refresh_replica() -> Path:

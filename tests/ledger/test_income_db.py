@@ -2,13 +2,10 @@
 
 from datetime import date
 from decimal import Decimal
-from unittest.mock import patch
 
 import allure
 import pytest
 
-from dinary.api.controllers.income import _convert_to_accounting
-from dinary.config import settings
 from dinary.db import storage
 from dinary.db.income import (
     IncomeData,
@@ -214,18 +211,3 @@ class TestGetIncomeTotalForMonth:
 
     def test_returns_none_when_no_records(self, con):
         assert get_income_total_for_month(con, 2026, 5) is None
-
-
-@allure.epic("Income")
-@allure.feature("DB layer")
-class TestCurrencyConversion:
-    def test_passthrough_when_same_currency(self, con, monkeypatch):
-        monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        result = _convert_to_accounting(con, Decimal("540"), "EUR", date(2026, 5, 1))
-        assert result == pytest.approx(540.0)
-
-    def test_converts_via_rate(self, con, monkeypatch):
-        monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        with patch("dinary.api.controllers.income.get_rate", return_value=Decimal("0.0085")):
-            result = _convert_to_accounting(con, Decimal("1000"), "RSD", date(2026, 5, 1))
-        assert result == pytest.approx(8.50, abs=0.01)

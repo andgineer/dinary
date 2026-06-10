@@ -3,7 +3,11 @@ import { ref } from "vue";
 import { getReviewFeed, getExpensesFeed, confirmAllRules, approveRule } from "../api/review.js";
 import { correctCategory, editExpense } from "../api/expenseCorrections.js";
 import { deleteExpense as apiDeleteExpense } from "../api/expenses.js";
-import { deleteReceipt as apiDeleteReceipt } from "../api/receipts.js";
+import {
+  deleteReceipt as apiDeleteReceipt,
+  getReceiptQueue,
+  resolveReceipt as apiResolveReceipt,
+} from "../api/receipts.js";
 import { useStaleCache } from "../composables/useStaleCache.js";
 import { useToastStore } from "./toast.js";
 import { useCatalogStore } from "./catalog.js";
@@ -29,6 +33,8 @@ export const useReviewStore = defineStore("review", () => {
   const items = ref(cached?.items ?? []);
   const doubtfulCount = ref(cached?.doubtfulCount ?? 0);
   const receiptsQueue = ref(cached?.receiptsQueue ?? { ..._emptyQueue });
+  const stuckReceipts = ref([]);
+  const stuckReceiptsLoading = ref(false);
   const hasMore = ref(cached?.hasMore ?? true);
   const page = ref(cached?.page ?? 0);
   const loading = ref(false);
@@ -94,6 +100,7 @@ export const useReviewStore = defineStore("review", () => {
       if (q.pending > 0 || q.in_progress > 0 || q.sleeping > 0 || q.poisoned > 0) {
         markDirty();
         useLlmStore().markDirty();
+        if (nextPage === 1) await loadStuckReceipts();
       }
     } catch (err) {
       if (navigator.onLine) {
@@ -249,6 +256,30 @@ export const useReviewStore = defineStore("review", () => {
     markDirty();
   }
 
+  async function loadStuckReceipts() {
+    if (stuckReceiptsLoading.value) return;
+    stuckReceiptsLoading.value = true;
+    try {
+      const data = await getReceiptQueue({ page: 1, pageSize: 20 });
+      stuckReceipts.value = data.items ?? [];
+    } catch (err) {
+      if (navigator.onLine) {
+        useToastStore().show(err?.message || "Failed to load stuck receipts", "error");
+      }
+    } finally {
+      stuckReceiptsLoading.value = false;
+    }
+  }
+
+  async function resolveStuckReceipt(receiptId, payload) {
+    const toast = useToastStore();
+    await apiResolveReceipt(receiptId, payload);
+    stuckReceipts.value = stuckReceipts.value.filter((i) => i.receipt_id !== receiptId);
+    reset();
+    await Promise.all([loadNextPage(), loadExpensesNextPage(), loadStuckReceipts()]);
+    toast.show("Expense created", "success");
+  }
+
   async function deleteReceipt(receiptId) {
     await apiDeleteReceipt(receiptId);
     reset();
@@ -275,6 +306,8 @@ export const useReviewStore = defineStore("review", () => {
     items,
     doubtfulCount,
     receiptsQueue,
+    stuckReceipts,
+    stuckReceiptsLoading,
     hasMore,
     page,
     loading,
@@ -298,6 +331,8 @@ export const useReviewStore = defineStore("review", () => {
     patchExpense,
     deleteExpense,
     deleteReceipt,
+    loadStuckReceipts,
+    resolveStuckReceipt,
     reset,
   };
 });

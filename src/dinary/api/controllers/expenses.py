@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from dinary.adapters.exchange_rates import get_rate
+from dinary.adapters.exchange_rates import convert_to_accounting_amount
 from dinary.api.controllers.catalog import (
     FrequentCategory,
     frequent_categories_sync,
@@ -23,6 +23,7 @@ from dinary.api.controllers.expense_corrections import (
     CorrectionScope,
     correct_category_sync,
 )
+from dinary.api.http_errors import value_error_as_422
 from dinary.config import settings
 from dinary.db.catalog import get_catalog_version
 from dinary.db.expenses import (
@@ -113,27 +114,15 @@ def create_expense_sync(req: ExpenseRequest, con: sqlite3.Connection) -> Expense
 
     expense_dt = req.expense_datetime.astimezone(ZoneInfo(settings.user_timezone))
 
-    amount_acc = req.amount
-    if currency.upper() != settings.accounting_currency.upper():
-        rate = get_rate(
-            con,
-            expense_dt.date(),
-            currency,
-            settings.accounting_currency,
-            offline=True,
-        )
-        amount_acc = (req.amount * rate).quantize(Decimal("0.01"))
+    with value_error_as_422():
+        amount_acc = convert_to_accounting_amount(con, req.amount, currency, expense_dt.date())
 
-    effective_tag_ids: list[int] = list(dict.fromkeys(int(t) for t in req.tag_ids))
-    if req.event_id is not None:
-        for auto_id in sheet_mapping.resolve_event_auto_tag_ids(con, req.event_id):
-            if auto_id not in effective_tag_ids:
-                effective_tag_ids.append(auto_id)
+    effective_tag_ids = sheet_mapping.resolve_effective_tag_ids(con, req.tag_ids, req.event_id)
 
     amount_acc_f = float(amount_acc)
     amount_orig_f = float(req.amount)
     comment = req.comment or ""
-    try:
+    with value_error_as_422():
         result = insert_expense(
             con,
             ExpensePayload(
@@ -151,8 +140,6 @@ def create_expense_sync(req: ExpenseRequest, con: sqlite3.Connection) -> Expense
             ),
             enqueue_logging=settings.sheet_logging_enabled,
         )
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from None
 
     if result == "conflict":
         diff = describe_expense_conflict(
@@ -284,16 +271,9 @@ def _update_amount(
     ).fetchone()
     if exp_row is None:
         return
-    amount_acc = amount_original
-    if currency.upper() != settings.accounting_currency.upper():
-        rate = get_rate(
-            con,
-            datetime.fromisoformat(str(exp_row[0])).date(),
-            currency,
-            settings.accounting_currency,
-            offline=True,
-        )
-        amount_acc = (amount_original * rate).quantize(Decimal("0.01"))
+    expense_date = datetime.fromisoformat(str(exp_row[0])).date()
+    with value_error_as_422():
+        amount_acc = convert_to_accounting_amount(con, amount_original, currency, expense_date)
     con.execute(
         "UPDATE expenses SET amount_original = ?, currency_original = ?, amount = ? WHERE id = ?",
         [float(amount_original), currency, float(amount_acc), expense_id],

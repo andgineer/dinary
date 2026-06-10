@@ -13,7 +13,7 @@ from _api_helpers import _mock_get_rate, db  # noqa: F401
 
 
 def _post_expense(client, *, expense_id="e1", amount=250.0, currency="RSD"):
-    with patch("dinary.api.controllers.expenses.get_rate", side_effect=_mock_get_rate):
+    with patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate):
         resp = client.post(
             "/api/expenses",
             json={

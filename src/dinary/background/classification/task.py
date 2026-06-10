@@ -15,6 +15,7 @@ import httpx
 from dinary.adapters.llmbroker import LLMBroker
 from dinary.adapters.serbian_receipt_parser import (
     ParsedReceipt,
+    ParserNotIndexedError,
     ParserParseError,
     ParserRequestError,
     parse_receipt,
@@ -224,6 +225,7 @@ async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
 
     except (
         ParserRequestError,
+        ParserNotIndexedError,
         httpx.HTTPError,
         ConnectionError,
         RateMissingError,
