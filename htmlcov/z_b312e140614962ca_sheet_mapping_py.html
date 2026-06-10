@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for src/dinary/sheets/sheet_mapping.py: 78%</title>
+    <title>Coverage for src/dinary/sheets/sheet_mapping.py: 79%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>src<span class="sep">/</span>dinary<span class="sep">/</span>sheets<span class="sep">/</span>sheet_mapping.py</b>:
-            <span class="pc_cov">78%</span>
+            <span class="pc_cov">79%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -54,8 +54,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">240 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">188<span class="text"> run</span></button>
+            <span class="text">247 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">195<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">52<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_b312e140614962ca_sheets_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.1">coverage.py v7.14.1</a>,
-            created at 2026-06-10 13:00 +0000
+            created at 2026-06-10 17:03 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -778,6 +778,20 @@
     <p class="run run2"><span class="n"><a id="t696" href="#t696">696</a></span><span class="t"><span class="op">)</span> <span class="op">-></span> <span class="nam">list</span><span class="op">[</span><span class="nam">int</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t697" href="#t697">697</a></span><span class="t">    <span class="str">"""Return the stored integer tag ids for the event's ``auto_tags`` column."""</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t698" href="#t698">698</a></span><span class="t">    <span class="key">return</span> <span class="nam">load_event_auto_tag_ids</span><span class="op">(</span><span class="nam">con</span><span class="op">,</span> <span class="nam">event_id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t699" href="#t699">699</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t700" href="#t700">700</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t701" href="#t701">701</a></span><span class="t"><span class="key">def</span> <span class="nam">resolve_effective_tag_ids</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t702" href="#t702">702</a></span><span class="t">    <span class="nam">con</span><span class="op">:</span> <span class="nam">sqlite3</span><span class="op">.</span><span class="nam">Connection</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t703" href="#t703">703</a></span><span class="t">    <span class="nam">tag_ids</span><span class="op">:</span> <span class="nam">list</span><span class="op">[</span><span class="nam">int</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t704" href="#t704">704</a></span><span class="t">    <span class="nam">event_id</span><span class="op">:</span> <span class="nam">int</span> <span class="op">|</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t705" href="#t705">705</a></span><span class="t"><span class="op">)</span> <span class="op">-></span> <span class="nam">list</span><span class="op">[</span><span class="nam">int</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t706" href="#t706">706</a></span><span class="t">    <span class="str">"""Dedupe ``tag_ids`` and append the event's auto-attach tags, if any."""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t707" href="#t707">707</a></span><span class="t">    <span class="nam">effective_tag_ids</span><span class="op">:</span> <span class="nam">list</span><span class="op">[</span><span class="nam">int</span><span class="op">]</span> <span class="op">=</span> <span class="nam">list</span><span class="op">(</span><span class="nam">dict</span><span class="op">.</span><span class="nam">fromkeys</span><span class="op">(</span><span class="nam">int</span><span class="op">(</span><span class="nam">t</span><span class="op">)</span> <span class="key">for</span> <span class="nam">t</span> <span class="key">in</span> <span class="nam">tag_ids</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t708" href="#t708">708</a></span><span class="t">    <span class="key">if</span> <span class="nam">event_id</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t709" href="#t709">709</a></span><span class="t">        <span class="key">for</span> <span class="nam">auto_id</span> <span class="key">in</span> <span class="nam">resolve_event_auto_tag_ids</span><span class="op">(</span><span class="nam">con</span><span class="op">,</span> <span class="nam">event_id</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t710" href="#t710">710</a></span><span class="t">            <span class="key">if</span> <span class="nam">auto_id</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">effective_tag_ids</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t711" href="#t711">711</a></span><span class="t">                <span class="nam">effective_tag_ids</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="nam">auto_id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t712" href="#t712">712</a></span><span class="t">    <span class="key">return</span> <span class="nam">effective_tag_ids</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -787,7 +801,7 @@
             <a class="nav" href="z_b312e140614962ca_sheets_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.1">coverage.py v7.14.1</a>,
-            created at 2026-06-10 13:00 +0000
+            created at 2026-06-10 17:03 +0000
         </p>
     </div>
 </footer>

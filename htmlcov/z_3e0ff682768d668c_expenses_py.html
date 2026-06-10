@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for src/dinary/db/expenses.py: 89%</title>
+    <title>Coverage for src/dinary/db/expenses.py: 91%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>src<span class="sep">/</span>dinary<span class="sep">/</span>db<span class="sep">/</span>expenses.py</b>:
-            <span class="pc_cov">89%</span>
+            <span class="pc_cov">91%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">130 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">116<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">14<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">118<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">12<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_3e0ff682768d668c_income_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.1">coverage.py v7.14.1</a>,
-            created at 2026-06-10 13:00 +0000
+            created at 2026-06-10 17:03 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -209,7 +209,7 @@
     <p class="run"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t">    <span class="key">return</span> <span class="nam">Decimal</span><span class="op">(</span><span class="nam">str</span><span class="op">(</span><span class="nam">value</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t"><span class="key">def</span> <span class="nam">_validate_expense_refs</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t"><span class="key">def</span> <span class="nam">validate_expense_refs</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t">    <span class="nam">con</span><span class="op">:</span> <span class="nam">sqlite3</span><span class="op">.</span><span class="nam">Connection</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t">    <span class="nam">category_id</span><span class="op">:</span> <span class="nam">int</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t">    <span class="nam">event_id</span><span class="op">:</span> <span class="nam">int</span> <span class="op">|</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -225,10 +225,10 @@
     <p class="run run2"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t">            <span class="op">[</span><span class="nam">event_id</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">        <span class="op">)</span><span class="op">.</span><span class="nam">fetchone</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t">    <span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t146" href="#t146">146</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">event_id </span><span class="op">{</span><span class="nam">event_id</span><span class="op">}</span><span class="fst"> not found in events</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t146" href="#t146">146</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">event_id </span><span class="op">{</span><span class="nam">event_id</span><span class="op">}</span><span class="fst"> not found in events</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t147" href="#t147">147</a></span><span class="t">    <span class="key">for</span> <span class="nam">tid</span> <span class="key">in</span> <span class="nam">tag_ids</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t148" href="#t148">148</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">con</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span><span class="str">"SELECT 1 FROM tags WHERE id = ?"</span><span class="op">,</span> <span class="op">[</span><span class="nam">tid</span><span class="op">]</span><span class="op">)</span><span class="op">.</span><span class="nam">fetchone</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t149" href="#t149">149</a></span><span class="t">            <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">tag_id </span><span class="op">{</span><span class="nam">tid</span><span class="op">}</span><span class="fst"> not found in tags</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t149" href="#t149">149</a></span><span class="t">            <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">tag_id </span><span class="op">{</span><span class="nam">tid</span><span class="op">}</span><span class="fst"> not found in tags</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t150" href="#t150">150</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t151" href="#t151">151</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t152" href="#t152">152</a></span><span class="t"><span class="key">def</span> <span class="nam">_try_insert_expense_row</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -479,7 +479,7 @@
     <p class="run"><span class="n"><a id="t397" href="#t397">397</a></span><span class="t">    <span class="nam">con</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span><span class="str">"BEGIN IMMEDIATE"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t398" href="#t398">398</a></span><span class="t">    <span class="nam">tx_active</span> <span class="op">=</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t399" href="#t399">399</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t400" href="#t400">400</a></span><span class="t">        <span class="nam">_validate_expense_refs</span><span class="op">(</span><span class="nam">con</span><span class="op">,</span> <span class="nam">payload</span><span class="op">.</span><span class="nam">category_id</span><span class="op">,</span> <span class="nam">payload</span><span class="op">.</span><span class="nam">event_id</span><span class="op">,</span> <span class="nam">tag_ids</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t400" href="#t400">400</a></span><span class="t">        <span class="nam">validate_expense_refs</span><span class="op">(</span><span class="nam">con</span><span class="op">,</span> <span class="nam">payload</span><span class="op">.</span><span class="nam">category_id</span><span class="op">,</span> <span class="nam">payload</span><span class="op">.</span><span class="nam">event_id</span><span class="op">,</span> <span class="nam">tag_ids</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t401" href="#t401">401</a></span><span class="t">        <span class="nam">inserted</span><span class="op">,</span> <span class="nam">tx_rolled_back</span> <span class="op">=</span> <span class="nam">_try_insert_expense_row</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t402" href="#t402">402</a></span><span class="t">            <span class="nam">con</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t403" href="#t403">403</a></span><span class="t">            <span class="nam">sql_params</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -551,7 +551,7 @@
             <a class="nav" href="z_3e0ff682768d668c_income_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.1">coverage.py v7.14.1</a>,
-            created at 2026-06-10 13:00 +0000
+            created at 2026-06-10 17:03 +0000
         </p>
     </div>
 </footer>
