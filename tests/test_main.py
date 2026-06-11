@@ -10,23 +10,29 @@ from dinary.adapters.llm_chat import ProviderConfig
 from dinary.adapters.llm_storage import SqliteLLMBrokerStorage
 from dinary.config import settings
 from dinary.main import _lifespan, create_app
-from dinary.db import storage
+from dinary.db import category_seed, storage
 from dinary.background.sheet_logging import sheet_logging
 from dinary import __version__
 
 
 @pytest.fixture(autouse=True)
-def _lifespan_stubs(monkeypatch):
+def _lifespan_stubs(db, monkeypatch):
     """Stub out lifespan side-effects irrelevant to drain-loop tests.
 
-    ``init_db`` runs yoyo migrations on each test — ~300 ms of SQLite
+    The ``db`` fixture redirects ``storage.DB_PATH`` to an isolated,
+    fully-migrated temp database, so ``_lifespan`` never touches the
+    real ``data/dinary.db``.
+
+    ``init_db`` re-runs yoyo migrations on each test — ~300 ms of SQLite
     overhead that has nothing to do with the drain-loop contract.
-    ``load_providers`` queries ``llmbroker_providers``; with ``init_db``
-    suppressed the table may not exist (especially on CI).
+    ``load_providers`` queries ``llmbroker_providers``.
+    ``bootstrap_categories`` reconciles the category catalog from the
+    packaged templates — also irrelevant here.
     ``rate_prefetch_task`` opens a DB connection and may make network
     calls; it runs concurrently and adds noise to timing assertions.
     """
     monkeypatch.setattr(storage, "init_db", lambda: None)
+    monkeypatch.setattr(category_seed, "bootstrap_categories", lambda con: None)
 
     async def _empty_providers(self) -> list[ProviderConfig]:  # noqa: ARG001
         return []
