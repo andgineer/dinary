@@ -31,7 +31,7 @@ class DeleteResult:
 
 @dataclass(frozen=True, slots=True)
 class AddResult:
-    """Return value of ``add_group`` / ``add_category`` / ``add_event`` / ``add_tag``.
+    """Return value of ``add_group`` / ``add_event`` / ``add_tag``.
 
     ``id`` is the row id (existing or new). ``status`` distinguishes
     between a brand-new INSERT, a reactivate-in-place, and a fully

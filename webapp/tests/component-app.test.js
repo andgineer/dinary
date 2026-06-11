@@ -61,6 +61,7 @@ beforeEach(async () => {
     events: [],
     tags: [],
   });
+  vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
 });
 
 afterEach(async () => {
@@ -466,5 +467,47 @@ describe("App review probe — dirty review cache", () => {
     await drainAsync();
 
     expect(loadSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("App — category template gating", () => {
+  it("renders neither onboarding nor header/main while activeTemplate is unresolved", async () => {
+    let resolveActive;
+    vi.spyOn(catalogApi, "getActiveTemplate").mockReturnValue(
+      new Promise((resolve) => { resolveActive = resolve; }),
+    );
+
+    const wrapper = mount(App, { global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="onboarding-template"]').exists()).toBe(false);
+    expect(wrapper.find(".app-header").exists()).toBe(false);
+    expect(wrapper.find(".app-main").exists()).toBe(false);
+
+    resolveActive({ active_template: "simple" });
+    await flushPromises();
+  });
+
+  it("renders OnboardingTemplate in place of header+main when activeTemplate is null", async () => {
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: null });
+    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue([]);
+
+    const wrapper = mount(App, { global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="onboarding-template"]').exists()).toBe(true);
+    expect(wrapper.find(".app-header").exists()).toBe(false);
+    expect(wrapper.find(".app-main").exists()).toBe(false);
+  });
+
+  it("renders the normal app when activeTemplate is a template code", async () => {
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const wrapper = mount(App, { global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="onboarding-template"]').exists()).toBe(false);
+    expect(wrapper.find(".app-header").exists()).toBe(true);
+    expect(wrapper.find(".app-main").exists()).toBe(true);
   });
 });

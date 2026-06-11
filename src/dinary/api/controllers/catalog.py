@@ -118,21 +118,6 @@ class TagPatchBody(BaseModel):
     is_active: bool | None = None
 
 
-class CategoryAddBody(BaseModel):
-    name: str = Field(min_length=1)
-    group_id: int
-    sheet_name: str | None = None
-    sheet_group: str | None = None
-
-
-class CategoryPatchBody(BaseModel):
-    name: str | None = Field(default=None, min_length=1)
-    group_id: int | None = None
-    sheet_name: str | None = None
-    sheet_group: str | None = None
-    is_active: bool | None = None
-
-
 class GroupAddBody(BaseModel):
     name: str = Field(min_length=1)
     sort_order: int | None = None

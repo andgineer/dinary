@@ -8,10 +8,12 @@ import IncomeView from "./views/IncomeView.vue";
 import ReviewView from "./views/ReviewView.vue";
 import AnalyticsView from "./views/AnalyticsView.vue";
 import LLMView from "./views/LLMView.vue";
+import OnboardingTemplate from "./views/OnboardingTemplate.vue";
 import { useQueueStore } from "./stores/queue.js";
 import { useReceiptQueueStore } from "./stores/receiptQueue.js";
 import { useToastStore } from "./stores/toast.js";
 import { useReviewStore } from "./stores/review.js";
+import { useCatalogStore } from "./stores/catalog.js";
 import { flushQueue } from "./composables/flushQueue.js";
 import { flushReceiptQueue } from "./composables/flushReceiptQueue.js";
 import { useOnline } from "./composables/useOnline.js";
@@ -25,6 +27,7 @@ const queue = useQueueStore();
 const receiptQueue = useReceiptQueueStore();
 const toast = useToastStore();
 const reviewStore = useReviewStore();
+const catalogStore = useCatalogStore();
 
 const { isOnline } = useOnline();
 const tab = ref("add"); // 'add' | 'review' | 'analytics' | 'income' | 'llm'
@@ -57,6 +60,7 @@ watch(isOnline, (online) => {
 });
 
 async function init() {
+  void catalogStore.initActiveTemplate();
   await queue.refresh();
   await receiptQueue.refresh();
   if (isOnline.value) {
@@ -70,6 +74,7 @@ function handleVisibilityChange() {
   if (document.visibilityState !== "visible" || !navigator.onLine) return;
   if (!isOnline.value) window.dispatchEvent(new Event("online"));
   if (reviewStore.dirtyFlag) void reviewStore.loadIfNeeded();
+  if (catalogStore.visibleCategoriesVersion >= 0) void catalogStore.loadVisibleCategories();
 }
 
 let _retryTimerId = null;
@@ -102,40 +107,47 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="isDev" class="dev-banner">DEV MODE</div>
-  <header class="app-header" :class="{ 'below-banner': isDev }">
-    <div class="header-row">
-      <h1>
-        Dinary
-        <span class="header-version">{{ headerVersionLabel }}</span>
-      </h1>
-      <HeaderSegmented
-        v-model:tab="tab"
-        :show-badge="showReviewBadge"
-      />
-    </div>
-    <button
-      v-if="queueCount > 0"
-      type="button"
-      class="queue-strip"
-      :aria-label="`${queueCount} receipts queued`"
-      data-testid="queue-strip"
-      @click="queueModalOpen = true"
-    >
-      <Clock :size="13" aria-hidden="true" />
-      <span><b>{{ queueCount }}</b> receipts queued</span>
-      <span class="queue-strip-hint">tap to review →</span>
-    </button>
-    <div v-if="!isOnline" class="offline-notice" role="status">{{ offlineMessage }}</div>
-  </header>
+  <template v-if="catalogStore.activeTemplate === undefined">
+    <!-- Still resolving the active category template — render nothing to
+         avoid a flash of either the onboarding screen or the main app. -->
+  </template>
+  <OnboardingTemplate v-else-if="catalogStore.activeTemplate === null" />
+  <template v-else>
+    <div v-if="isDev" class="dev-banner">DEV MODE</div>
+    <header class="app-header" :class="{ 'below-banner': isDev }">
+      <div class="header-row">
+        <h1>
+          Dinary
+          <span class="header-version">{{ headerVersionLabel }}</span>
+        </h1>
+        <HeaderSegmented
+          v-model:tab="tab"
+          :show-badge="showReviewBadge"
+        />
+      </div>
+      <button
+        v-if="queueCount > 0"
+        type="button"
+        class="queue-strip"
+        :aria-label="`${queueCount} receipts queued`"
+        data-testid="queue-strip"
+        @click="queueModalOpen = true"
+      >
+        <Clock :size="13" aria-hidden="true" />
+        <span><b>{{ queueCount }}</b> receipts queued</span>
+        <span class="queue-strip-hint">tap to review →</span>
+      </button>
+      <div v-if="!isOnline" class="offline-notice" role="status">{{ offlineMessage }}</div>
+    </header>
 
-  <main class="app-main">
-    <AddView v-if="tab === 'add'" />
-    <ReviewView v-else-if="tab === 'review'" />
-    <AnalyticsView v-else-if="tab === 'analytics'" />
-    <IncomeView v-else-if="tab === 'income'" />
-    <LLMView v-else-if="tab === 'llm'" />
-  </main>
+    <main class="app-main">
+      <AddView v-if="tab === 'add'" />
+      <ReviewView v-else-if="tab === 'review'" />
+      <AnalyticsView v-else-if="tab === 'analytics'" />
+      <IncomeView v-else-if="tab === 'income'" />
+      <LLMView v-else-if="tab === 'llm'" />
+    </main>
+  </template>
 
   <QueueModal :open="queueModalOpen" @close="queueModalOpen = false" />
 

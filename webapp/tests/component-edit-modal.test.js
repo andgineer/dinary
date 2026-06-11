@@ -137,57 +137,6 @@ describe("EditModal — group", () => {
   });
 });
 
-describe("EditModal — category", () => {
-  it("requires a group to be selected", async () => {
-    const wrapper = mountModal(
-      {
-        open: true,
-        kind: "category",
-        item: {
-          id: 100,
-          name: "groceries",
-          group_id: 1,
-          sheet_name: null,
-          sheet_group: null,
-        },
-      },
-      pinia,
-    );
-    await flushPromises();
-    await wrapper.find("#edit-group").setValue("");
-    await wrapper.findAll(".btn-primary")[0].trigger("click");
-    await flushPromises();
-    expect(wrapper.find(".modal-error").text()).toBe("Select a group");
-  });
-
-  it("includes group_id and sheet_* fields when changed", async () => {
-    const spy = vi.spyOn(catalog, "patch").mockResolvedValue(snapshot());
-    const wrapper = mountModal(
-      {
-        open: true,
-        kind: "category",
-        item: {
-          id: 100,
-          name: "groceries",
-          group_id: 1,
-          sheet_name: null,
-          sheet_group: null,
-        },
-      },
-      pinia,
-    );
-    await flushPromises();
-    await wrapper.find("#edit-group").setValue("2");
-    await wrapper.find("#edit-sheet-name").setValue("Food");
-    await wrapper.findAll(".btn-primary")[0].trigger("click");
-    await flushPromises();
-    expect(spy).toHaveBeenCalledWith("category", 100, {
-      group_id: 2,
-      sheet_name: "Food",
-    });
-  });
-});
-
 describe("EditModal — event", () => {
   it("rejects an inverted date range", async () => {
     const wrapper = mountModal(

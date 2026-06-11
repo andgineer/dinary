@@ -26,8 +26,8 @@ export function useCatalogManage() {
   const catalog = useCatalogStore();
   const toast = useToastStore();
 
-  const manageMode = ref({ group: false, category: false, event: false, tag: false });
-  const pendingManageId = ref({ group: null, category: null, event: null, tag: null });
+  const manageMode = ref({ group: false, event: false, tag: false });
+  const pendingManageId = ref({ group: null, event: null, tag: null });
   const editModal = ref({ open: false, kind: null, item: null });
 
   function toggleManage(kind) {

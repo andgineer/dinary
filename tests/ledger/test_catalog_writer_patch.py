@@ -1,9 +1,8 @@
 """PATCH-side ``catalog_writer`` tests.
 
-Pin the per-call atomicity of ``edit_*`` calls (rename + flag toggle
-in a single bump, full rollback on conflict, no half-applied
-column updates) and the tag-usage guard the writer enforces while
-editing event ``auto_tags``.
+Pin the per-call atomicity of ``edit_event`` (rolls back a partial
+date update on a bad composite range) and the tag-usage guard the
+writer enforces while editing event ``auto_tags``.
 
 Cross-cutting invariants (version bump, reactivate column
 preservation, integrity rules) live in
@@ -16,9 +15,7 @@ import allure
 import pytest
 
 from dinary.db import storage
-from dinary.db.catalog import get_catalog_version
-from dinary.api.controllers.catalog_writer_errors import CatalogConflictError, CatalogWriteError
-from dinary.api.controllers.catalog_writer_categories import edit_category
+from dinary.api.controllers.catalog_writer_errors import CatalogWriteError
 from dinary.api.controllers.catalog_writer_events import edit_event, set_tag_active
 from dinary.db.expenses import ExpensePayload, insert_expense
 
@@ -28,91 +25,6 @@ from _catalog_writer_helpers import _DT, _seed_minimal, fresh_db  # noqa: F401
 @allure.epic("Catalog")
 @allure.feature("DB writer")
 class TestAtomicPatch:
-    def test_edit_category_empty_string_clears_sheet_columns(self, fresh_db):
-        """Empty-string sentinel on PATCH clears ``sheet_name`` /
-        ``sheet_group`` back to NULL. Needed by the future in-app
-        editor so an operator can remove a stale mapping without
-        having to delete and re-add the category."""
-        con = storage.get_connection()
-        try:
-            con.execute(
-                "INSERT INTO category_groups (id, name, sort_order, is_active)"
-                " VALUES (1, 'g1', 1, TRUE)",
-            )
-            con.execute(
-                "INSERT INTO categories"
-                " (id, name, group_id, is_active, sheet_name, sheet_group)"
-                " VALUES (1, 'food', 1, TRUE, 'legacy_name', 'legacy_group')",
-            )
-            edit_category(
-                con,
-                1,
-                sheet_name="",
-                sheet_group="",
-            )
-            row = con.execute(
-                "SELECT sheet_name, sheet_group FROM categories WHERE id = 1",
-            ).fetchone()
-        finally:
-            con.close()
-        assert row[0] is None
-        assert row[1] is None
-
-    def test_edit_category_applies_name_and_deactivate_in_one_tx(self, fresh_db):
-        con = storage.get_connection()
-        try:
-            _seed_minimal(con)
-            v0 = get_catalog_version(con)
-            edit_category(
-                con,
-                1,
-                name="food-renamed",
-                is_active=False,
-            )
-            v1 = get_catalog_version(con)
-            row = con.execute(
-                "SELECT name, is_active FROM categories WHERE id = 1",
-            ).fetchone()
-        finally:
-            con.close()
-        assert row[0] == "food-renamed"
-        assert bool(row[1]) is False
-        # Single PATCH -> single version bump, not two.
-        assert v1 == v0 + 1
-
-    def test_edit_category_rolls_back_on_conflict(self, fresh_db):
-        """Renaming a row into a name that already exists must fail
-        and must not commit any other column change in the same PATCH
-        — the writer validates all inputs before any UPDATE so a
-        partial commit is not possible."""
-        con = storage.get_connection()
-        try:
-            _seed_minimal(con)
-            # Sibling row the rename would collide with.
-            con.execute(
-                "INSERT INTO categories (id, name, group_id, is_active)"
-                " VALUES (2, 'drink', 1, TRUE)",
-            )
-            v0 = get_catalog_version(con)
-            with pytest.raises(CatalogConflictError):
-                edit_category(
-                    con,
-                    1,
-                    name="drink",
-                    is_active=False,
-                )
-            v1 = get_catalog_version(con)
-            row = con.execute(
-                "SELECT name, is_active FROM categories WHERE id = 1",
-            ).fetchone()
-        finally:
-            con.close()
-        # Rename rejected -> the sibling is_active=False toggle in the
-        # same call must not have landed either.
-        assert row[0] == "food"
-        assert bool(row[1]) is True
-        assert v1 == v0
-
     def test_edit_event_rolls_back_partial_date_patch_on_bad_composite(
         self,
         fresh_db,

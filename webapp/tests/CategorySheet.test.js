@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { nextTick } from "vue";
-import { mount } from "@vue/test-utils";
+import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import CategorySheet from "../src/components/CategorySheet.vue";
 import { useCatalogStore } from "../src/stores/catalog.js";
+import { useToastStore } from "../src/stores/toast.js";
+import * as catalogApi from "../src/api/catalog.js";
 
 beforeEach(async () => {
   await allure.epic("Expenses");
@@ -13,59 +15,59 @@ beforeEach(async () => {
 
 const TELEPORT_STUB = { props: ["to"], template: "<div><slot /></div>" };
 
-const CATALOG = {
-  catalog_version: 1,
-  category_groups: [
-    { id: 1, name: "Food", is_active: true },
-    { id: 2, name: "Transport", is_active: true },
-  ],
-  categories: [
-    { id: 10, group_id: 1, name: "groceries", is_active: true },
-    { id: 11, group_id: 1, name: "cafe", is_active: true },
-    { id: 20, group_id: 2, name: "taxi", is_active: true },
-  ],
-  events: [],
-  tags: [],
-};
+const VISIBLE_CATEGORIES = [
+  { id: 10, code: "groceries", name: "Groceries", group_id: 1, group_name: "Food", group_sort_order: 1, group_code: "food" },
+  { id: 11, code: "cafe", name: "Cafe", group_id: 1, group_name: "Food", group_sort_order: 1, group_code: "food" },
+  { id: 20, code: "taxi", name: "Taxi", group_id: 2, group_name: "Transport", group_sort_order: 2, group_code: "transport" },
+];
 
 function mountSheet(props = {}) {
-  return mount(CategorySheet, {
+  const pinia = createPinia();
+  setActivePinia(pinia);
+  const store = useCatalogStore(pinia);
+  store.visibleCategories = VISIBLE_CATEGORIES.map((c) => ({ ...c }));
+  store.visibleCategoriesVersion = 1;
+  const w = mount(CategorySheet, {
     props: { open: true, suggestions: [], ...props },
-    global: { plugins: [createPinia()], stubs: { Teleport: TELEPORT_STUB } },
+    global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB } },
   });
+  return { w, pinia, store };
 }
 
 beforeEach(() => {
-  const pinia = createPinia();
-  setActivePinia(pinia);
-  useCatalogStore(pinia).replaceSnapshot(CATALOG);
+  vi.restoreAllMocks();
 });
 
-describe("CategorySheet — search", () => {
-  it("shows category groups when query is empty", () => {
-    const w = mountSheet();
-    expect(w.find('[data-testid="category-group"]').exists()).toBe(true);
-    expect(w.find('[data-testid="flat-results"]').exists()).toBe(false);
+const SEARCH_DEBOUNCE_MS = 300;
+
+async function search(w, text) {
+  await w.find(".search-input").setValue(text);
+  await new Promise((resolve) => setTimeout(resolve, SEARCH_DEBOUNCE_MS + 50));
+  await nextTick();
+}
+
+describe("CategorySheet — grouped list (empty query)", () => {
+  it("shows category groups from visibleCategories, ordered by group_sort_order", () => {
+    const { w } = mountSheet();
+    const groups = w.findAll('[data-testid="category-group"]');
+    expect(groups).toHaveLength(2);
+    expect(groups[0].find(".group-label").text()).toBe("Food");
+    expect(groups[1].find(".group-label").text()).toBe("Transport");
+    expect(groups[0].findAll(".cat-btn").map((b) => b.text())).toEqual(["Groceries", "Cafe"]);
   });
 
   it("shows flat results and hides groups when query is non-empty", async () => {
-    const w = mountSheet();
-    await w.find(".search-input").setValue("gro");
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([]);
+    const { w } = mountSheet();
+    await search(w, "gro");
     expect(w.find('[data-testid="flat-results"]').exists()).toBe(true);
     expect(w.find('[data-testid="category-group"]').exists()).toBe(false);
   });
 
-  it("filters flat results by category name (case-insensitive)", async () => {
-    const w = mountSheet();
-    await w.find(".search-input").setValue("cafe");
-    const items = w.findAll(".flat-item");
-    expect(items.length).toBe(1);
-    expect(items[0].text()).toContain("cafe");
-  });
-
   it("clear button resets query and shows groups again", async () => {
-    const w = mountSheet();
-    await w.find(".search-input").setValue("taxi");
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([]);
+    const { w } = mountSheet();
+    await search(w, "taxi");
     expect(w.find(".clear-btn").exists()).toBe(true);
     await w.find(".clear-btn").trigger("click");
     expect(w.find('[data-testid="flat-results"]').exists()).toBe(false);
@@ -76,7 +78,7 @@ describe("CategorySheet — search", () => {
 describe("CategorySheet — suggestion tap emits select", () => {
   it("emits select with suggestion id when pill is clicked", async () => {
     const sug = [{ id: 10, name: "groceries" }];
-    const w = mountSheet({ suggestions: sug });
+    const { w } = mountSheet({ suggestions: sug });
     const pill = w.find('[data-testid="suggestion-pills"] .cat-btn');
     await pill.trigger("click");
     expect(w.emitted("select")?.[0]).toEqual([10]);
@@ -86,34 +88,24 @@ describe("CategorySheet — suggestion tap emits select", () => {
 
 describe("CategorySheet — grid tap emits select", () => {
   it("emits select with category id when grid button is clicked", async () => {
-    const w = mountSheet();
+    const { w } = mountSheet();
     const btn = w.find('[data-testid="category-group"] .cat-btn');
     await btn.trigger("click");
-    expect(w.emitted("select")).toBeTruthy();
+    expect(w.emitted("select")?.[0]).toEqual([10]);
     expect(w.emitted("close")).toBeTruthy();
-  });
-});
-
-describe("CategorySheet — flat result tap emits select", () => {
-  it("emits select when flat result is clicked", async () => {
-    const w = mountSheet();
-    await w.find(".search-input").setValue("taxi");
-    const item = w.find(".flat-item");
-    await item.trigger("click");
-    expect(w.emitted("select")?.[0]).toEqual([20]);
   });
 });
 
 describe("CategorySheet — sticky search bar", () => {
   it("search-wrap is outside sheet-body (not inside scrollable area)", () => {
-    const w = mountSheet();
+    const { w } = mountSheet();
     const sheetBody = w.find(".sheet-body");
     expect(sheetBody.find(".search-wrap").exists()).toBe(false);
     expect(w.find(".sheet .search-wrap").exists()).toBe(true);
   });
 
   it("search-wrap renders as a direct child of sheet (outside scroll container)", () => {
-    const w = mountSheet();
+    const { w } = mountSheet();
     const sheetEl = w.find(".sheet");
     const directChildren = sheetEl.element.children;
     const childClasses = Array.from(directChildren).map((el) => el.className);
@@ -123,7 +115,9 @@ describe("CategorySheet — sticky search bar", () => {
   it("resets sheet-body scrollTop to 0 when sheet is opened", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
-    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const store = useCatalogStore(pinia);
+    store.visibleCategories = VISIBLE_CATEGORIES.map((c) => ({ ...c }));
+    store.visibleCategoriesVersion = 1;
     const w = mount(CategorySheet, {
       props: { open: false, suggestions: [] },
       global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB } },
@@ -137,8 +131,9 @@ describe("CategorySheet — sticky search bar", () => {
 
 describe("CategorySheet — Escape key", () => {
   it("clears query when Escape pressed with non-empty query", async () => {
-    const w = mountSheet();
-    await w.find(".search-input").setValue("taxi");
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([]);
+    const { w } = mountSheet();
+    await search(w, "taxi");
     expect(w.find('[data-testid="flat-results"]').exists()).toBe(true);
     await w.find(".search-input").trigger("keydown", { key: "Escape" });
     expect(w.find('[data-testid="flat-results"]').exists()).toBe(false);
@@ -146,8 +141,375 @@ describe("CategorySheet — Escape key", () => {
   });
 
   it("emits close when Escape pressed with empty query", async () => {
-    const w = mountSheet();
+    const { w } = mountSheet();
     await w.find(".search-input").trigger("keydown", { key: "Escape" });
     expect(w.emitted("close")).toBeTruthy();
+  });
+});
+
+describe("CategorySheet — search: in-set results", () => {
+  it("shows matches already in the set as flat-items with group › name", async () => {
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
+      { id: 10, code: "groceries", name: "Groceries", is_active: true, is_hidden: false },
+      { id: 20, code: "taxi", name: "Taxi", is_active: true, is_hidden: false },
+    ]);
+    const { w } = mountSheet();
+    await search(w, "a");
+
+    const items = w.findAll(".flat-item");
+    expect(items).toHaveLength(2);
+    expect(items[0].text()).toContain("Food");
+    expect(items[0].text()).toContain("Groceries");
+    expect(items[1].text()).toContain("Transport");
+    expect(items[1].text()).toContain("Taxi");
+    expect(w.find('[data-testid="addable-section"]').exists()).toBe(false);
+  });
+
+  it("emits select and close when an in-set flat result is tapped", async () => {
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
+      { id: 20, code: "taxi", name: "Taxi", is_active: true, is_hidden: false },
+    ]);
+    const { w } = mountSheet();
+    await search(w, "taxi");
+
+    await w.find(".flat-item").trigger("click");
+    expect(w.emitted("select")?.[0]).toEqual([20]);
+    expect(w.emitted("close")).toBeTruthy();
+  });
+
+  it("shows 'No matches' when nothing matches", async () => {
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([]);
+    const { w } = mountSheet();
+    await search(w, "zzz");
+
+    expect(w.find(".no-results").text()).toBe("No matches");
+    expect(w.find('[data-testid="addable-section"]').exists()).toBe(false);
+  });
+});
+
+describe("CategorySheet — search: 'Not in your set' addable section", () => {
+  it("renders inactive and hidden matches in a fenced addable section", async () => {
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
+      { id: 30, code: "concerts", name: "Concerts", is_active: false, is_hidden: false },
+      { id: 31, code: "coworking", name: "Coworking", is_active: true, is_hidden: true },
+    ]);
+    const { w } = mountSheet();
+    await search(w, "co");
+
+    const section = w.find('[data-testid="addable-section"]');
+    expect(section.exists()).toBe(true);
+    expect(section.text()).toContain("Not in your set");
+    const rows = section.findAll(".addable-item");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].text()).toContain("Concerts");
+    expect(rows[1].text()).toContain("Coworking");
+    expect(rows[1].find(".hidden-tag").exists()).toBe(true);
+    expect(rows[0].find(".hidden-tag").exists()).toBe(false);
+  });
+
+  it("omits the section when every match is already in the set", async () => {
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
+      { id: 10, code: "groceries", name: "Groceries", is_active: true, is_hidden: false },
+    ]);
+    const { w } = mountSheet();
+    await search(w, "gro");
+
+    expect(w.find('[data-testid="addable-section"]').exists()).toBe(false);
+  });
+
+  it("activating an inactive result calls activateCategory, toasts, and selects it", async () => {
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
+      { id: 30, code: "concerts", name: "Concerts", is_active: false, is_hidden: false },
+    ]);
+    const activate = vi
+      .spyOn(catalogApi, "activateCategory")
+      .mockResolvedValue({ catalog_version: 2 });
+    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+      catalog_version: 2,
+      categories: [
+        ...VISIBLE_CATEGORIES,
+        { id: 30, code: "concerts", name: "Concerts", group_id: 3, group_name: "Leisure", group_sort_order: 3, group_code: "leisure" },
+      ],
+    });
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const { w } = mountSheet();
+    await search(w, "co");
+
+    await w.find(".addable-item").trigger("click");
+    await flushPromises();
+
+    expect(activate).toHaveBeenCalledWith("concerts");
+    const toast = useToastStore();
+    expect(toast.message).toBe('"Concerts" added to your set');
+    expect(toast.type).toBe("info");
+    expect(w.emitted("select")?.[0]).toEqual([30]);
+    expect(w.emitted("close")).toBeTruthy();
+  });
+
+  it("activating a hidden result calls unhideCategory", async () => {
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
+      { id: 11, code: "cafe", name: "Cafe", is_active: true, is_hidden: true },
+    ]);
+    const unhide = vi
+      .spyOn(catalogApi, "unhideCategory")
+      .mockResolvedValue({ catalog_version: 2 });
+    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+      catalog_version: 2,
+      categories: VISIBLE_CATEGORIES,
+    });
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const { w } = mountSheet();
+    await search(w, "cafe");
+
+    await w.find(".addable-item").trigger("click");
+    await flushPromises();
+
+    expect(unhide).toHaveBeenCalledWith("cafe");
+    expect(w.emitted("select")?.[0]).toEqual([11]);
+  });
+
+  it("blocks activation while offline and keeps the sheet open", async () => {
+    Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
+    try {
+      vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
+        { id: 30, code: "concerts", name: "Concerts", is_active: false, is_hidden: false },
+      ]);
+      const activate = vi.spyOn(catalogApi, "activateCategory");
+
+      const { w } = mountSheet();
+      await search(w, "co");
+
+      await w.find(".addable-item").trigger("click");
+      await flushPromises();
+
+      expect(activate).not.toHaveBeenCalled();
+      const toast = useToastStore();
+      expect(toast.message).toBe("Not available offline");
+      expect(toast.type).toBe("error");
+      expect(w.emitted("select")).toBeFalsy();
+      expect(w.emitted("close")).toBeFalsy();
+    } finally {
+      Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+    }
+  });
+
+  it("an activated category still absent from visibleCategories (no group) shows inline as без группы", async () => {
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
+      { id: 40, code: "u_misc", name: "Misc", is_active: false, is_hidden: false },
+    ]);
+    vi.spyOn(catalogApi, "activateCategory").mockResolvedValue({ catalog_version: 2 });
+    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+      catalog_version: 2,
+      categories: VISIBLE_CATEGORIES,
+    });
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const { w } = mountSheet();
+    await search(w, "misc");
+
+    await w.find(".addable-item").trigger("click");
+    await flushPromises();
+
+    // Stays open — not enough to appear in the grouped list (NULL group_id).
+    expect(w.emitted("select")).toBeFalsy();
+    expect(w.find('[data-testid="addable-section"]').exists()).toBe(false);
+    const item = w.find(".flat-item");
+    expect(item.text()).toContain("без группы / ungrouped");
+    expect(item.text()).toContain("Misc");
+
+    await item.trigger("click");
+    expect(w.emitted("select")?.[0]).toEqual([40]);
+    expect(w.emitted("close")).toBeTruthy();
+  });
+});
+
+const TEMPLATES = [
+  {
+    code: "simple",
+    names: { en: "Simple", ru: "Простой" },
+    taglines: { en: "Basics only", ru: "Только основное" },
+  },
+  {
+    code: "travel",
+    names: { en: "Travel", ru: "Путешествия" },
+    taglines: { en: "For frequent travelers", ru: "Для тех, кто часто путешествует" },
+  },
+];
+
+describe("CategorySheet — Manage mode (§4)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("toggle switches the body to the managed view and back", async () => {
+    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
+    const { w, store } = mountSheet();
+    store.activeTemplate = "simple";
+
+    await w.find('[data-testid="manage-toggle"]').trigger("click");
+    await flushPromises();
+    expect(w.find('[data-testid="manage-view"]').exists()).toBe(true);
+    expect(w.find('[data-testid="category-group"]').exists()).toBe(false);
+
+    await w.find('[data-testid="manage-toggle"]').trigger("click");
+    expect(w.find('[data-testid="manage-view"]').exists()).toBe(false);
+    expect(w.find('[data-testid="category-group"]').exists()).toBe(true);
+  });
+
+  it("hides a category, removing it from the grouped picker", async () => {
+    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
+    const hide = vi.spyOn(catalogApi, "hideCategory").mockResolvedValue({ catalog_version: 2 });
+    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+      catalog_version: 2,
+      categories: VISIBLE_CATEGORIES.filter((c) => c.code !== "groceries"),
+    });
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const { w, store } = mountSheet();
+    store.activeTemplate = "simple";
+    await w.find('[data-testid="manage-toggle"]').trigger("click");
+    await flushPromises();
+
+    const rows = () => w.findAll('[data-testid="manage-category-row"]');
+    const groceriesRow = rows().find((r) => r.text().includes("Groceries"));
+    await groceriesRow.find('[aria-label="Hide Groceries"]').trigger("click");
+    await flushPromises();
+
+    expect(hide).toHaveBeenCalledWith("groceries");
+    expect(rows().some((r) => r.text().includes("Groceries"))).toBe(false);
+  });
+
+  it("renames a category, updating its label without changing its code", async () => {
+    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
+    const rename = vi.spyOn(catalogApi, "renameCategory").mockResolvedValue({ catalog_version: 2 });
+    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+      catalog_version: 2,
+      categories: VISIBLE_CATEGORIES.map((c) =>
+        c.code === "groceries" ? { ...c, name: "Groceries 2" } : c,
+      ),
+    });
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const { w, store } = mountSheet();
+    store.activeTemplate = "simple";
+    await w.find('[data-testid="manage-toggle"]').trigger("click");
+    await flushPromises();
+
+    const rows = () => w.findAll('[data-testid="manage-category-row"]');
+    const groceriesRow = rows().find((r) => r.text().includes("Groceries"));
+    await groceriesRow.find('[aria-label="Rename Groceries"]').trigger("click");
+
+    const editingRow = rows().find((r) => r.find(".manage-rename-input").exists());
+    await editingRow.find(".manage-rename-input").setValue("Groceries 2");
+    await editingRow.find('[aria-label="Save Groceries"]').trigger("click");
+    await flushPromises();
+
+    expect(rename).toHaveBeenCalledWith("groceries", "Groceries 2");
+    expect(rows().some((r) => r.text().includes("Groceries 2"))).toBe(true);
+  });
+
+  it("moves a category to another group via the move select", async () => {
+    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
+    const move = vi.spyOn(catalogApi, "moveCategory").mockResolvedValue({ catalog_version: 2 });
+    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+      catalog_version: 2,
+      categories: VISIBLE_CATEGORIES.map((c) =>
+        c.code === "groceries"
+          ? { ...c, group_id: 2, group_name: "Transport", group_sort_order: 2, group_code: "transport" }
+          : c,
+      ),
+    });
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const { w, store } = mountSheet();
+    store.activeTemplate = "simple";
+    await w.find('[data-testid="manage-toggle"]').trigger("click");
+    await flushPromises();
+
+    await w.find('[aria-label="Move Groceries to group"]').setValue("transport");
+    await flushPromises();
+
+    expect(move).toHaveBeenCalledWith("groceries", "transport");
+    const groups = w.findAll('[data-testid="manage-group"]');
+    const transport = groups.find((g) => g.find(".group-label").text() === "Transport");
+    const food = groups.find((g) => g.find(".group-label").text() === "Food");
+    expect(transport.text()).toContain("Groceries");
+    expect(food.text()).not.toContain("Groceries");
+  });
+
+  it("adds a category to a group via the '+ add category' row", async () => {
+    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
+    const create = vi.spyOn(catalogApi, "createCategory").mockResolvedValue({ catalog_version: 2 });
+    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+      catalog_version: 2,
+      categories: [
+        ...VISIBLE_CATEGORIES,
+        { id: 50, code: "u_snacks", name: "Snacks", group_id: 1, group_name: "Food", group_sort_order: 1, group_code: "food" },
+      ],
+    });
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const { w, store } = mountSheet();
+    store.activeTemplate = "simple";
+    await w.find('[data-testid="manage-toggle"]').trigger("click");
+    await flushPromises();
+
+    const groups = () => w.findAll('[data-testid="manage-group"]');
+    const food = () => groups().find((g) => g.find(".group-label").text() === "Food");
+    await food().find(".manage-add-btn").trigger("click");
+
+    await food().find(".manage-add-input").setValue("Snacks");
+    await food().find('[aria-label="Save new category in Food"]').trigger("click");
+    await flushPromises();
+
+    expect(create).toHaveBeenCalledWith("Snacks", "food");
+    expect(food().text()).toContain("Snacks");
+  });
+});
+
+describe("CategorySheet — Switch category set (§5)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("expands the TemplateList and applies a template using the stored language, with no language selector", async () => {
+    localStorage.setItem("dinary:catalog:lastLang", "en");
+    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
+    const apply = vi
+      .spyOn(catalogApi, "applyTemplate")
+      .mockResolvedValue({ active_template: "travel", catalog_version: 2 });
+    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+      catalog_version: 2,
+      categories: [
+        { id: 60, code: "flights", name: "Flights", group_id: 5, group_name: "Travel", group_sort_order: 1, group_code: "travel_grp" },
+      ],
+    });
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "travel" });
+
+    const { w, store } = mountSheet();
+    store.activeTemplate = "simple";
+    await w.find('[data-testid="manage-toggle"]').trigger("click");
+    await flushPromises();
+
+    expect(w.find('[data-testid="switch-template-row"]').text()).toContain("Simple");
+    expect(w.find('[data-testid="switch-template-panel"]').exists()).toBe(false);
+
+    await w.find('[data-testid="switch-template-row"]').trigger("click");
+    await flushPromises();
+
+    const panel = w.find('[data-testid="switch-template-panel"]');
+    expect(panel.exists()).toBe(true);
+    expect(panel.find("select").exists()).toBe(false);
+    expect(panel.find('[data-testid="template-list"]').exists()).toBe(true);
+
+    await w.find('[data-testid="template-travel"]').trigger("click");
+    await flushPromises();
+
+    expect(apply).toHaveBeenCalledWith("travel", "en");
+    expect(localStorage.getItem("dinary:catalog:lastLang")).toBe("en");
+    const groups = w.findAll('[data-testid="manage-group"]');
+    expect(groups.some((g) => g.find(".group-label").text() === "Travel")).toBe(true);
   });
 });

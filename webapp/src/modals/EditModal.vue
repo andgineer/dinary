@@ -8,7 +8,7 @@ import { validateTagName } from "../composables/addResult.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
-  // 'group' | 'category' | 'event' | 'tag'
+  // 'group' | 'event' | 'tag'
   kind: { type: String, default: null },
   // The catalog item to edit. May be null while modal is closed.
   item: { type: Object, default: null },
@@ -19,10 +19,7 @@ const catalog = useCatalogStore();
 const toast = useToastStore();
 
 const name = ref("");
-const groupId = ref("");
 const sortOrder = ref("");
-const sheetName = ref("");
-const sheetGroup = ref("");
 const dateFrom = ref("");
 const dateTo = ref("");
 const autoAttachEnabled = ref(false);
@@ -32,11 +29,9 @@ const error = ref("");
 const submitting = ref(false);
 
 const allActiveTags = computed(() => catalog.tags);
-const allActiveGroups = computed(() => catalog.groups);
 
 const titles = {
   group: "Edit group",
-  category: "Edit category",
   event: "Edit event",
   tag: "Edit tag",
 };
@@ -45,10 +40,7 @@ const title = computed(() => titles[props.kind] || "Edit");
 function resetFromItem() {
   const item = props.item || {};
   name.value = item.name ?? "";
-  groupId.value = item.group_id != null ? String(item.group_id) : "";
   sortOrder.value = item.sort_order != null ? String(item.sort_order) : "";
-  sheetName.value = item.sheet_name ?? "";
-  sheetGroup.value = item.sheet_group ?? "";
   dateFrom.value = item.date_from ?? "";
   dateTo.value = item.date_to ?? "";
   autoAttachEnabled.value = !!item.auto_attach_enabled;
@@ -80,15 +72,6 @@ function buildPatchBody() {
     if (so !== (item.sort_order ?? null)) body.sort_order = so;
   }
 
-  if (props.kind === "category") {
-    const newGid = groupId.value === "" ? null : Number(groupId.value);
-    if (newGid != null && newGid !== Number(item.group_id)) body.group_id = newGid;
-    const sn = sheetName.value === "" ? null : sheetName.value;
-    if ((sn ?? null) !== (item.sheet_name ?? null)) body.sheet_name = sn;
-    const sg = sheetGroup.value === "" ? null : sheetGroup.value;
-    if ((sg ?? null) !== (item.sheet_group ?? null)) body.sheet_group = sg;
-  }
-
   if (props.kind === "event") {
     if (dateFrom.value && dateFrom.value !== item.date_from) body.date_from = dateFrom.value;
     if (dateTo.value && dateTo.value !== item.date_to) body.date_to = dateTo.value;
@@ -116,12 +99,6 @@ function validate() {
     const tagErr = validateTagName(trimmed);
     if (tagErr) {
       error.value = tagErr;
-      return false;
-    }
-  }
-  if (props.kind === "category") {
-    if (!groupId.value) {
-      error.value = "Select a group";
       return false;
     }
   }
@@ -190,36 +167,6 @@ async function submit() {
         v-model="sortOrder"
         type="number"
         inputmode="numeric"
-      />
-    </template>
-
-    <template v-if="kind === 'category'">
-      <label for="edit-group">Group</label>
-      <select id="edit-group" v-model="groupId">
-        <option value="">— select —</option>
-        <option
-          v-for="g in allActiveGroups"
-          :key="g.id"
-          :value="String(g.id)"
-        >
-          {{ g.name }}
-        </option>
-      </select>
-
-      <label for="edit-sheet-name">Sheet name</label>
-      <input
-        id="edit-sheet-name"
-        v-model="sheetName"
-        type="text"
-        autocomplete="off"
-      />
-
-      <label for="edit-sheet-group">Sheet group</label>
-      <input
-        id="edit-sheet-group"
-        v-model="sheetGroup"
-        type="text"
-        autocomplete="off"
       />
     </template>
 

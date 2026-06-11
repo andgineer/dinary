@@ -28,20 +28,6 @@ class TestAdminAdd:
         assert "etag" not in data
         assert resp.headers["ETag"].startswith('W/"catalog-v')
 
-    def test_add_group_then_category(self, client):
-        g = client.post(
-            "/api/catalog/groups",
-            json={"name": "Transport"},
-        )
-        assert g.status_code == 200
-        gid = g.json()["new_id"]
-        c = client.post(
-            "/api/catalog/categories",
-            json={"name": "metro", "group_id": gid},
-        )
-        assert c.status_code == 200, c.text
-        assert any(cat["name"] == "metro" for cat in c.json()["categories"])
-
     def test_add_event_with_range(self, client):
         resp = client.post(
             "/api/catalog/events",

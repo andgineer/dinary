@@ -53,6 +53,7 @@ class VisibleCategoryItem(BaseModel):
     group_id: int
     group_name: str
     group_sort_order: int
+    group_code: str
 
 
 class CategoriesResponse(BaseModel):
@@ -140,6 +141,7 @@ def get_categories_response(con: sqlite3.Connection) -> CategoriesResponse:
                 group_id=row.group_id,
                 group_name=row.group_name,
                 group_sort_order=row.group_sort_order,
+                group_code=row.group_code,
             )
             for row in rows
         ],

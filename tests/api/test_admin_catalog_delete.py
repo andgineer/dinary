@@ -1,8 +1,8 @@
 """DELETE /api/catalog/<kind>/<id> tests.
 
 Pin the soft-vs-hard delete decision and the ``delete_status``
-field that surfaces it. Soft-delete is triggered by *any*
-referencing row, including:
+field that surfaces it for tags and events. Soft-delete is triggered
+by *any* referencing row, including:
 
 * ``expense_*`` ledger references (``usage_count >= 1``);
 * ``sheet_mapping`` / ``sheet_mapping_tags`` projection rules;
@@ -44,13 +44,13 @@ class TestAdminDelete:
     def test_delete_used_tag_is_soft(self, client):
         add = client.post("/api/catalog/tags", json={"name": "pinned-tag"})
         tid = add.json()["new_id"]
-        cat = client.post(
-            "/api/catalog/categories",
-            json={"name": "cat-for-tag", "group_id": 1},
-        )
-        cid = cat.json()["new_id"]
         con = storage.get_connection()
         try:
+            con.execute(
+                "INSERT INTO categories (id, name, group_id, is_active)"
+                " VALUES (1, 'cat-for-tag', 1, TRUE)",
+            )
+            cid = 1
             insert_expense(
                 con,
                 ExpensePayload(
@@ -78,39 +78,6 @@ class TestAdminDelete:
         entry = next(t for t in data["tags"] if t["id"] == tid)
         assert entry["is_active"] is False
 
-    def test_delete_category_soft_when_used(self, client):
-        cat = client.post(
-            "/api/catalog/categories",
-            json={"name": "pinned-cat", "group_id": 1},
-        )
-        cid = cat.json()["new_id"]
-        con = storage.get_connection()
-        try:
-            insert_expense(
-                con,
-                ExpensePayload(
-                    client_expense_id="cat-soft-1",
-                    expense_datetime=datetime(2026, 4, 20, 10, 0, 0),
-                    amount=1.0,
-                    amount_original=1.0,
-                    currency_original="RSD",
-                    category_id=cid,
-                    event_id=None,
-                    comment="",
-                    sheet_category=None,
-                    sheet_group=None,
-                    tag_ids=[],
-                ),
-                enqueue_logging=False,
-            )
-        finally:
-            con.close()
-        resp = client.delete(f"/api/catalog/categories/{cid}")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["delete_status"] == "soft"
-        assert any(c["id"] == cid and c["is_active"] is False for c in data["categories"])
-
     def test_delete_group_hard_when_empty(self, client):
         group = client.post(
             "/api/catalog/groups",
@@ -129,47 +96,19 @@ class TestAdminDelete:
             json={"name": "Blocked"},
         )
         gid = group.json()["new_id"]
-        client.post(
-            "/api/catalog/categories",
-            json={"name": "tenant", "group_id": gid},
-        )
+        con = storage.get_connection()
+        try:
+            con.execute(
+                "INSERT INTO categories (id, name, group_id, is_active)"
+                " VALUES (1, 'tenant', ?, TRUE)",
+                [gid],
+            )
+        finally:
+            con.close()
         resp = client.delete(f"/api/catalog/groups/{gid}")
         # A group that still contains any category (active or not) can't be
         # deleted; the operator must first soft/hard-delete every category.
         assert resp.status_code == 409
-
-    def test_delete_category_referenced_by_sheet_mapping_is_soft(self, client):
-        """``sheet_mapping`` carries a FK into ``categories``. Even when
-        no expense row references the category, a surviving
-        ``sheet_mapping`` row would cause the hard DELETE to trip the
-        FK constraint — the writer must detect that and soft-delete
-        instead so the drain loop's atomic map-swap is the single
-        place responsible for sheet_mapping churn.
-        """
-        cat = client.post(
-            "/api/catalog/categories",
-            json={"name": "mapped-only", "group_id": 1},
-        )
-        cid = cat.json()["new_id"]
-        con = storage.get_connection()
-        try:
-            con.execute(
-                "INSERT INTO sheet_mapping"
-                " (row_order, category_id, event_id, sheet_category, sheet_group)"
-                " VALUES (1, ?, NULL, '*', '*')",
-                [cid],
-            )
-        finally:
-            con.close()
-        resp = client.delete(f"/api/catalog/categories/{cid}")
-        assert resp.status_code == 200, resp.text
-        data = resp.json()
-        assert data["delete_status"] == "soft"
-        # ``usage_count`` is the ledger count (expenses) only, NOT the
-        # mapping reference count — it's used to tell the operator
-        # "used by N expenses" and must stay 0 here.
-        assert data["usage_count"] == 0
-        assert any(c["id"] == cid and c["is_active"] is False for c in data["categories"])
 
     def test_delete_tag_referenced_by_sheet_mapping_tags_is_soft(self, client):
         tag = client.post("/api/catalog/tags", json={"name": "mapped-tag"})

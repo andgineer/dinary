@@ -23,7 +23,6 @@ describe("useCatalogManage — manage mode", () => {
     const m = useCatalogManage();
     expect(m.manageMode.value).toEqual({
       group: false,
-      category: false,
       event: false,
       tag: false,
     });
@@ -33,7 +32,7 @@ describe("useCatalogManage — manage mode", () => {
     const m = useCatalogManage();
     m.toggleManage("group");
     expect(m.manageMode.value.group).toBe(true);
-    expect(m.manageMode.value.category).toBe(false);
+    expect(m.manageMode.value.event).toBe(false);
     m.toggleManage("group");
     expect(m.manageMode.value.group).toBe(false);
   });

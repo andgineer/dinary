@@ -172,6 +172,7 @@ class VisibleCategoryRow:
     group_id: int
     group_name: str
     group_sort_order: int
+    group_code: str
 
 
 @dataclasses.dataclass(slots=True)

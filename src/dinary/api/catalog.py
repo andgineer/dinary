@@ -8,8 +8,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from dinary.api.controllers.catalog import (
     AdminCatalogResponse,
     CatalogResponse,
-    CategoryAddBody,
-    CategoryPatchBody,
     EventAddBody,
     EventPatchBody,
     GroupAddBody,
@@ -22,11 +20,6 @@ from dinary.api.controllers.catalog import (
     handle_catalog_error,
     if_none_match_matches,
     snapshot_response,
-)
-from dinary.api.controllers.catalog_writer_categories import (
-    add_category,
-    delete_category,
-    edit_category,
 )
 from dinary.api.controllers.catalog_writer_events import (
     add_event,
@@ -115,54 +108,6 @@ def delete_group_endpoint(
 ) -> AdminCatalogResponse:
     with handle_catalog_error():
         result = delete_group(con, group_id)
-    return _etag_response(con, response, delete_result=result)
-
-
-@router.post("/api/catalog/categories", response_model=AdminCatalogResponse)
-def add_category_endpoint(
-    body: CategoryAddBody,
-    response: Response,
-    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> AdminCatalogResponse:
-    with handle_catalog_error():
-        result = add_category(
-            con,
-            name=body.name,
-            group_id=body.group_id,
-            sheet_name=body.sheet_name,
-            sheet_group=body.sheet_group,
-        )
-    return _etag_response(con, response, add_result=result)
-
-
-@router.patch("/api/catalog/categories/{category_id}", response_model=AdminCatalogResponse)
-def edit_category_endpoint(
-    category_id: int,
-    body: CategoryPatchBody,
-    response: Response,
-    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> AdminCatalogResponse:
-    with handle_catalog_error():
-        edit_category(
-            con,
-            category_id,
-            name=body.name,
-            group_id=body.group_id,
-            sheet_name=body.sheet_name,
-            sheet_group=body.sheet_group,
-            is_active=body.is_active,
-        )
-    return _etag_response(con, response)
-
-
-@router.delete("/api/catalog/categories/{category_id}", response_model=AdminCatalogResponse)
-def delete_category_endpoint(
-    category_id: int,
-    response: Response,
-    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> AdminCatalogResponse:
-    with handle_catalog_error():
-        result = delete_category(con, category_id)
     return _etag_response(con, response, delete_result=result)
 
 

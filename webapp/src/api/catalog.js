@@ -42,27 +42,96 @@ export async function fetchCatalog({ ifVersion } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Catalog mutations (groups, categories, events, tags)
+// Category templates (наборы категорий)
 // ---------------------------------------------------------------------------
 
 import { apiRequest } from "./_request.js";
+
+export async function listTemplates() {
+  return apiRequest("/api/category-templates");
+}
+
+export async function getActiveTemplate() {
+  return apiRequest("/api/category-templates/active");
+}
+
+export async function applyTemplate(code, lang) {
+  return apiRequest("/api/category-templates/apply", {
+    method: "POST",
+    body: { code, lang },
+  });
+}
+
+/**
+ * Fetch the visible-categories list. Pass the previous catalog_version
+ * (if any) to enable conditional GET — the server returns 304 and this
+ * helper returns ``{ notModified: true }`` so the caller keeps its
+ * existing cache.
+ *
+ * Returns either ``{ catalog_version, categories }`` or a NotModified
+ * instance.
+ */
+export async function getCategories({ ifVersion } = {}) {
+  const headers = {};
+  if (typeof ifVersion === "number") {
+    headers["If-None-Match"] = etagFor(ifVersion);
+  }
+  const resp = await fetch("/api/categories", { headers });
+  if (resp.status === 304) {
+    return new NotModified();
+  }
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function searchCategories(q) {
+  return apiRequest(`/api/categories/search?q=${encodeURIComponent(q)}`);
+}
+
+export async function createCategory(name, groupCode) {
+  return apiRequest("/api/categories", {
+    method: "POST",
+    body: { name, group_code: groupCode },
+  });
+}
+
+export async function renameCategory(code, name) {
+  return apiRequest(`/api/categories/${code}/rename`, {
+    method: "POST",
+    body: { name },
+  });
+}
+
+export async function activateCategory(code) {
+  return apiRequest(`/api/categories/${code}/activate`, { method: "POST" });
+}
+
+export async function hideCategory(code) {
+  return apiRequest(`/api/categories/${code}/hide`, { method: "POST" });
+}
+
+export async function unhideCategory(code) {
+  return apiRequest(`/api/categories/${code}/unhide`, { method: "POST" });
+}
+
+export async function moveCategory(code, groupCode) {
+  return apiRequest(`/api/categories/${code}/move`, {
+    method: "POST",
+    body: { group_code: groupCode },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Catalog mutations (groups, categories, events, tags)
+// ---------------------------------------------------------------------------
 
 export async function adminAddGroup({ name, sort_order } = {}) {
   return apiRequest("/api/catalog/groups", {
     method: "POST",
     body: { name, sort_order: sort_order ?? null },
-  });
-}
-
-export async function adminAddCategory({ name, group_id, sheet_name, sheet_group } = {}) {
-  return apiRequest("/api/catalog/categories", {
-    method: "POST",
-    body: {
-      name,
-      group_id,
-      sheet_name: sheet_name ?? null,
-      sheet_group: sheet_group ?? null,
-    },
   });
 }
 
@@ -96,10 +165,6 @@ export async function adminPatchGroup(group_id, body) {
   return apiRequest(`/api/catalog/groups/${group_id}`, { method: "PATCH", body });
 }
 
-export async function adminPatchCategory(category_id, body) {
-  return apiRequest(`/api/catalog/categories/${category_id}`, { method: "PATCH", body });
-}
-
 export async function adminPatchEvent(event_id, body) {
   return apiRequest(`/api/catalog/events/${event_id}`, { method: "PATCH", body });
 }
@@ -109,21 +174,15 @@ export async function adminPatchTag(tag_id, body) {
 }
 
 export const adminReactivateGroup = (id) => adminPatchGroup(id, { is_active: true });
-export const adminReactivateCategory = (id) => adminPatchCategory(id, { is_active: true });
 export const adminReactivateEvent = (id) => adminPatchEvent(id, { is_active: true });
 export const adminReactivateTag = (id) => adminPatchTag(id, { is_active: true });
 
 export const adminDeactivateGroup = (id) => adminPatchGroup(id, { is_active: false });
-export const adminDeactivateCategory = (id) => adminPatchCategory(id, { is_active: false });
 export const adminDeactivateEvent = (id) => adminPatchEvent(id, { is_active: false });
 export const adminDeactivateTag = (id) => adminPatchTag(id, { is_active: false });
 
 export async function adminDeleteGroup(group_id) {
   return apiRequest(`/api/catalog/groups/${group_id}`, { method: "DELETE" });
-}
-
-export async function adminDeleteCategory(category_id) {
-  return apiRequest(`/api/catalog/categories/${category_id}`, { method: "DELETE" });
 }
 
 export async function adminDeleteEvent(event_id) {

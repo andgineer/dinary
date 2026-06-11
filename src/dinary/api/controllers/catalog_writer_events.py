@@ -347,7 +347,7 @@ def edit_tag(
     All parameters optional. Validations (not-found, conflict) run
     *before* any UPDATE so a failed validation never leaves the row
     half-edited. ``is_active=False`` always succeeds on a known row
-    (soft-retire); see ``edit_category`` docstring for the rationale.
+    (soft-retire).
     """
     if name is not None:
         _validate_tag_name(name)

@@ -209,7 +209,7 @@ describe("catalog store: admin actions", () => {
   it("reactivate / deactivate / remove call the matching API", async () => {
     const next = { ...SAMPLE, catalog_version: 5 };
     const reactivate = vi
-      .spyOn(catalogApi, "adminReactivateCategory")
+      .spyOn(catalogApi, "adminReactivateEvent")
       .mockResolvedValue(next);
     const deactivate = vi
       .spyOn(catalogApi, "adminDeactivateEvent")
@@ -217,7 +217,7 @@ describe("catalog store: admin actions", () => {
     const del = vi.spyOn(catalogApi, "adminDeleteTag").mockResolvedValue(next);
 
     const store = useCatalogStore();
-    await store.reactivate("category", 11);
+    await store.reactivate("event", 11);
     await store.deactivate("event", 100);
     await store.remove("tag", 201);
 
@@ -317,6 +317,96 @@ describe("catalog store: loadIfNeeded TTL", () => {
     await store.loadIfNeeded();
 
     expect(store.catalogFetchedAt).toBeGreaterThan(0);
+  });
+});
+
+describe("catalog store: category templates", () => {
+  it("activeTemplate starts undefined and resolves via initActiveTemplate", async () => {
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const store = useCatalogStore();
+    expect(store.activeTemplate).toBeUndefined();
+
+    await store.initActiveTemplate();
+
+    expect(store.activeTemplate).toBe("simple");
+    await expect(store.templateReady).resolves.toBeUndefined();
+  });
+
+  it("initActiveTemplate sets activeTemplate to null when no template is active", async () => {
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: null });
+
+    const store = useCatalogStore();
+    await store.initActiveTemplate();
+
+    expect(store.activeTemplate).toBeNull();
+  });
+
+  it("applyTemplate updates activeTemplate in-memory from the response", async () => {
+    vi.spyOn(catalogApi, "applyTemplate").mockResolvedValue({
+      active_template: "family",
+      catalog_version: 5,
+    });
+    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+      catalog_version: 5,
+      categories: [],
+    });
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "family" });
+
+    const store = useCatalogStore();
+    await store.applyTemplate("family", "ru");
+
+    expect(store.activeTemplate).toBe("family");
+  });
+});
+
+describe("catalog store: visible categories", () => {
+  const VISIBLE = {
+    catalog_version: 3,
+    categories: [
+      { id: 10, code: "groceries", name: "Groceries", group_id: 1, group_name: "Food", group_sort_order: 1, group_code: "food" },
+    ],
+  };
+
+  it("loadVisibleCategories stores categories and version, then refreshes activeTemplate", async () => {
+    vi.spyOn(catalogApi, "getCategories").mockResolvedValueOnce({ ...VISIBLE });
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const store = useCatalogStore();
+    await store.loadVisibleCategories();
+
+    expect(store.visibleCategoriesVersion).toBe(3);
+    expect(store.visibleCategories).toHaveLength(1);
+    expect(store.visibleCategoryByCode("groceries")?.name).toBe("Groceries");
+    expect(store.activeTemplate).toBe("simple");
+  });
+
+  it("loadVisibleCategories on 304 keeps the cached list", async () => {
+    vi.spyOn(catalogApi, "getCategories")
+      .mockResolvedValueOnce({ ...VISIBLE })
+      .mockResolvedValueOnce(new catalogApi.NotModified());
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const store = useCatalogStore();
+    await store.loadVisibleCategories();
+    await store.loadVisibleCategories();
+
+    expect(store.visibleCategoriesVersion).toBe(3);
+    expect(store.visibleCategories).toHaveLength(1);
+  });
+
+  it("activateCategory refetches visible categories when catalog_version changes", async () => {
+    vi.spyOn(catalogApi, "activateCategory").mockResolvedValue({ catalog_version: 4 });
+    const getCategories = vi
+      .spyOn(catalogApi, "getCategories")
+      .mockResolvedValue({ catalog_version: 4, categories: [] });
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const store = useCatalogStore();
+    await store.activateCategory("concerts");
+
+    expect(getCategories).toHaveBeenCalled();
+    expect(store.visibleCategoriesVersion).toBe(4);
   });
 });
 

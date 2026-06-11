@@ -87,6 +87,110 @@ export const useCatalogStore = defineStore("catalog", () => {
   const _defaults = ref(readStoredDefaults());
   const catalogFetchedAt = ref(Number(localStorage.getItem(FETCHED_KEY)) || null);
 
+  // ----- category templates (наборы категорий) ---------------------------
+
+  // undefined = not yet known, null = no active template (onboarding),
+  // string = the active template's code.
+  const activeTemplate = ref(undefined);
+  let _resolveTemplateReady;
+  const templateReady = new Promise((resolve) => {
+    _resolveTemplateReady = resolve;
+  });
+
+  async function initActiveTemplate() {
+    try {
+      const resp = await catalogApi.getActiveTemplate();
+      activeTemplate.value = resp.active_template;
+    } catch (e) {
+      lastError.value = e;
+    } finally {
+      _resolveTemplateReady();
+    }
+  }
+
+  async function applyTemplate(code, lang) {
+    const resp = await catalogApi.applyTemplate(code, lang);
+    activeTemplate.value = resp.active_template;
+    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    return resp;
+  }
+
+  // ----- visible categories (§3 picker / Manage mode) ---------------------
+
+  const visibleCategories = ref([]);
+  const visibleCategoriesVersion = ref(-1);
+
+  async function loadVisibleCategories() {
+    try {
+      const result = await catalogApi.getCategories({
+        ifVersion: visibleCategoriesVersion.value >= 0 ? visibleCategoriesVersion.value : undefined,
+      });
+      if (result instanceof catalogApi.NotModified) return;
+      visibleCategories.value = result.categories;
+      visibleCategoriesVersion.value = result.catalog_version;
+      await initActiveTemplate();
+    } catch (e) {
+      lastError.value = e;
+      useToastStore().show(e?.message || "Failed to load categories", "error");
+    }
+  }
+
+  async function loadVisibleCategoriesIfNeeded() {
+    if (visibleCategoriesVersion.value < 0) {
+      await loadVisibleCategories();
+    }
+  }
+
+  async function _refreshVisibleCategoriesIfChanged(catalogVersion) {
+    if (typeof catalogVersion === "number" && catalogVersion !== visibleCategoriesVersion.value) {
+      await loadVisibleCategories();
+    }
+  }
+
+  function visibleCategoryByCode(code) {
+    return visibleCategories.value.find((c) => c.code === code) ?? null;
+  }
+
+  async function searchCategories(q) {
+    return catalogApi.searchCategories(q);
+  }
+
+  async function activateCategory(code) {
+    const resp = await catalogApi.activateCategory(code);
+    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    return resp;
+  }
+
+  async function unhideCategory(code) {
+    const resp = await catalogApi.unhideCategory(code);
+    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    return resp;
+  }
+
+  async function hideCategory(code) {
+    const resp = await catalogApi.hideCategory(code);
+    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    return resp;
+  }
+
+  async function renameCategory(code, name) {
+    const resp = await catalogApi.renameCategory(code, name);
+    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    return resp;
+  }
+
+  async function moveCategory(code, groupCode) {
+    const resp = await catalogApi.moveCategory(code, groupCode);
+    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    return resp;
+  }
+
+  async function createCategory(name, groupCode) {
+    const resp = await catalogApi.createCategory(name, groupCode);
+    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    return resp;
+  }
+
   function _stampFresh() {
     const now = Date.now();
     catalogFetchedAt.value = now;
@@ -291,7 +395,6 @@ export const useCatalogStore = defineStore("catalog", () => {
   async function reactivate(kind, id) {
     const fn = {
       group: catalogApi.adminReactivateGroup,
-      category: catalogApi.adminReactivateCategory,
       event: catalogApi.adminReactivateEvent,
       tag: catalogApi.adminReactivateTag,
     }[kind];
@@ -304,7 +407,6 @@ export const useCatalogStore = defineStore("catalog", () => {
   async function deactivate(kind, id) {
     const fn = {
       group: catalogApi.adminDeactivateGroup,
-      category: catalogApi.adminDeactivateCategory,
       event: catalogApi.adminDeactivateEvent,
       tag: catalogApi.adminDeactivateTag,
     }[kind];
@@ -317,7 +419,6 @@ export const useCatalogStore = defineStore("catalog", () => {
   async function remove(kind, id) {
     const fn = {
       group: catalogApi.adminDeleteGroup,
-      category: catalogApi.adminDeleteCategory,
       event: catalogApi.adminDeleteEvent,
       tag: catalogApi.adminDeleteTag,
     }[kind];
@@ -330,7 +431,6 @@ export const useCatalogStore = defineStore("catalog", () => {
   async function add(kind, body) {
     const fn = {
       group: catalogApi.adminAddGroup,
-      category: catalogApi.adminAddCategory,
       event: catalogApi.adminAddEvent,
       tag: catalogApi.adminAddTag,
     }[kind];
@@ -343,7 +443,6 @@ export const useCatalogStore = defineStore("catalog", () => {
   async function patch(kind, id, body) {
     const fn = {
       group: catalogApi.adminPatchGroup,
-      category: catalogApi.adminPatchCategory,
       event: catalogApi.adminPatchEvent,
       tag: catalogApi.adminPatchTag,
     }[kind];
@@ -386,5 +485,21 @@ export const useCatalogStore = defineStore("catalog", () => {
     remove,
     add,
     patch,
+    activeTemplate,
+    templateReady,
+    initActiveTemplate,
+    applyTemplate,
+    visibleCategories,
+    visibleCategoriesVersion,
+    loadVisibleCategories,
+    loadVisibleCategoriesIfNeeded,
+    visibleCategoryByCode,
+    searchCategories,
+    activateCategory,
+    unhideCategory,
+    hideCategory,
+    renameCategory,
+    moveCategory,
+    createCategory,
   };
 });

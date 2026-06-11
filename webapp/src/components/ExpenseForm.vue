@@ -238,8 +238,6 @@ async function handleCreate(kind, value) {
     let body;
     if (kind === "event") {
       body = value;
-    } else if (kind === "category") {
-      body = { name: value, group_id: Number(groupId.value) };
     } else {
       body = { name: value };
     }

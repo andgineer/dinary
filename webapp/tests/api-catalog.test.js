@@ -4,11 +4,9 @@ import {
   fetchCatalog,
   NotModified,
   adminAddGroup,
-  adminAddCategory,
   adminAddEvent,
   adminAddTag,
   adminPatchGroup,
-  adminPatchCategory,
   adminPatchEvent,
   adminPatchTag,
   adminReactivateGroup,
@@ -122,17 +120,6 @@ describe("admin POST helpers", () => {
     });
   });
 
-  it("adminAddCategory normalises optional fields", async () => {
-    globalThis.fetch = vi.fn(async () => okResponse());
-    await adminAddCategory({ name: "cafe", group_id: 3 });
-    expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body)).toEqual({
-      name: "cafe",
-      group_id: 3,
-      sheet_name: null,
-      sheet_group: null,
-    });
-  });
-
   it("adminAddEvent defaults auto_attach_enabled to false and auto_tags to null", async () => {
     globalThis.fetch = vi.fn(async () => okResponse());
     await adminAddEvent({
@@ -193,22 +180,17 @@ describe("admin PATCH / DELETE helpers", () => {
       status: 409,
       json: async () => ({ detail: "in use" }),
     }));
-    await expect(adminPatchCategory(1, {})).rejects.toMatchObject({
+    await expect(adminPatchEvent(1, {})).rejects.toMatchObject({
       message: "in use",
       status: 409,
     });
   });
 
-  it("category/event/tag PATCH+DELETE share the same shape", async () => {
+  it("event/tag PATCH+DELETE share the same shape", async () => {
     globalThis.fetch = vi.fn(async () => okResponse());
-    await adminPatchCategory(11, { name: "x" });
     await adminPatchEvent(22, { date_to: "2026-05-12" });
     await adminPatchTag(33, { name: "y" });
     const urls = globalThis.fetch.mock.calls.map((c) => c[0]);
-    expect(urls).toEqual([
-      "/api/catalog/categories/11",
-      "/api/catalog/events/22",
-      "/api/catalog/tags/33",
-    ]);
+    expect(urls).toEqual(["/api/catalog/events/22", "/api/catalog/tags/33"]);
   });
 });
