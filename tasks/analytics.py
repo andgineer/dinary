@@ -59,7 +59,8 @@ def analytics(c, port=_DEFAULT_MARIMO_PORT):
     else:
         print("Warning: no Gemini provider found in .deploy/llm_providers.toml — AI chat disabled.")
     c.run(
-        f"uv run marimo run {_NOTEBOOKS_DIR / 'dashboard.py'} --port {port} --no-token",
+        f"uv run marimo run {_NOTEBOOKS_DIR / 'dashboard.py'} --port {port} --no-token "
+        "--no-skew-protection",
         pty=True,
         env=extra_env,
     )

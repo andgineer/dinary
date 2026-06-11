@@ -64,7 +64,10 @@ constraint in place → table rebuild **inside the migration**, preserving
    staging-and-restoring it is far costlier than staging `tags`/`events` ever
    was; that cost is *why* this plan reaches for the PRAGMA route first rather
    than reusing 0005's pattern outright. Resolve which approach actually works
-   empirically before writing the rest of the migration around it.
+   empirically before writing the rest of the migration around it — spike this
+   on a copy of the real personal DB (with its thousands of `expenses` rows),
+   not an empty test DB, since the PRAGMA-vs-stage-and-restore tradeoff only
+   bites at that row count.
 2. `CREATE TABLE categories_new (...)` — copy every existing column
    (`id, name, group_id, is_active, sheet_name, sheet_group`) plus the three new
    ones (`code, is_hidden, is_retired`); `name TEXT NOT NULL` without `UNIQUE`.
@@ -187,7 +190,16 @@ nesting when it calls the other two (see its transaction-boundary note below).
      this group (groups have no canonical name outside template files; `apply`
      re-bakes the correct per-template name anyway); `code` set.
   4. Upsert `category_templates` (one row per factory template) with
-     `origin='factory'`, `definition_json` = the parsed template.
+     `origin='factory'`, `definition_json` = the parsed template, and
+     `sort_order` from a fixed onboarding-order map — **not**
+     `load_templates()`'s alphabetical-by-filename order, which is a parsing
+     convenience only and does not match the intended display order:
+     ```python
+     TEMPLATE_SORT_ORDER = {"simple": 0, "active": 1, "family": 2, "freelancer": 3}
+     ```
+     This is the order from `category-templates.md`'s "Onboarding templates"
+     list (Simple first, "so almost anyone finds a fit fast"); Phase 3's
+     `GET /api/category-templates` renders the chooser ordered by `sort_order`.
   5. **Retire vanished factory codes:** any `categories` row with a non-`u_`
      `code` absent from the current vocabulary → `is_active=0, is_retired=1`
      (kept for history; see Phase 2 visibility). SQL filter must be explicit:
@@ -199,6 +211,12 @@ nesting when it calls the other two (see its transaction-boundary note below).
      (no FK to expenses); if the deleted template's code equals
      `app_metadata.active_template`, also clear `active_template` so the PWA
      falls back to the onboarding chooser.
+     `category_groups.code` rows have **no equivalent retirement** — if a group
+     code drops out of every template, its row is simply left in place with
+     nothing pointing at it (`apply_template`, Phase 2, reassigns every
+     category's `group_id` from the current templates' definitions on every
+     apply). Intentional: `category_groups` carries no `is_retired` column, and
+     an orphaned group row is harmless — no FK violations, never rendered.
   6. Do **not** set `app_metadata.active_template`.
   - "default language" = a module constant (start with `ru`, matching the
     existing personal data); apply re-bakes visible names for the chosen
