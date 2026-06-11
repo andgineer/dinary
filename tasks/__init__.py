@@ -20,8 +20,8 @@ from .backups.backups_replica import (
 from .backups.backups_restore import restore_from_yadisk
 from .backups.backups_status import backup_status
 from .backups.backups_yandex import setup_yadisk
-from .db import migrate, restore_primary, verify_db
-from .deploy import bootstrap_catalog, deploy, import_config
+from .db import migrate, restore_primary, seed_categories, verify_db
+from .deploy import deploy
 from .devtools.build_docs import ALLOWED_DOC_LANGUAGES, build_docs, docs_task_factory
 from .devtools.constants import ALLOWED_VERSION_TYPES
 from .devtools.dev import build_static, dev, pre, reqs, test, uv, ver_task_factory, version
@@ -30,7 +30,6 @@ from .healthcheck import healthcheck
 from .imports.import_tasks import (
     import_budget,
     import_budget_all,
-    import_catalog,
     import_extract_income,
     import_income,
     import_income_all,
@@ -52,7 +51,6 @@ __all__ = [
     "restore_analytics",
     "restore_analytics_yadisk",
     "backup_status",
-    "bootstrap_catalog",
     "classify_receipt",
     "reclassify_receipts",
     "build_docs",
@@ -63,8 +61,6 @@ __all__ = [
     "healthcheck",
     "import_budget",
     "import_budget_all",
-    "import_catalog",
-    "import_config",
     "import_extract_income",
     "import_income",
     "import_income_all",
@@ -82,6 +78,7 @@ __all__ = [
     "restore_from_yadisk",
     "restore_primary",
     "restore_replica",
+    "seed_categories",
     "setup_dinary_ai",
     "setup_replica",
     "setup_server",

@@ -223,7 +223,7 @@ def reference_counts(
     tag_refs.update(_auto_tag_refs_by_tag_id(con))
     group_child_counts: dict[int, int] = {}
     for row_id, n in con.execute(
-        "SELECT group_id, COUNT(*) FROM categories GROUP BY group_id",
+        "SELECT group_id, COUNT(*) FROM categories WHERE group_id IS NOT NULL GROUP BY group_id",
     ).fetchall():
         group_child_counts[int(row_id)] = int(n)
     return dict(cat_refs), dict(event_refs), dict(tag_refs), group_child_counts

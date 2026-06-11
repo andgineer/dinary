@@ -38,7 +38,7 @@ from dinary.background.classification.receipt_classifier import (
 )
 from dinary.background.classification.task import _drain_all_pending
 from dinary.config import settings
-from dinary.db import db_migrations, storage
+from dinary.db import category_seed, db_migrations, storage
 from dinary.main import create_app
 
 
@@ -107,6 +107,7 @@ def pipeline(db, monkeypatch):  # noqa: ARG001
     with (
         unittest.mock.patch.object(rate_helpers, "_get_json_or_none", return_value=None),
         unittest.mock.patch.object(db_migrations, "migrate_db"),
+        unittest.mock.patch.object(category_seed, "bootstrap_categories"),
     ):
         app = create_app()
         with TestClient(app, raise_server_exceptions=True) as client:

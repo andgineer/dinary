@@ -2,6 +2,10 @@
 # work sphere; eating-out split into a group so business and personal coexist.
 id: freelancer
 names: { en: Freelancer, ru: Фрилансер, sr: Frilenser }
+taglines:
+  en: Personal and business expenses in one wallet.
+  ru: Личные и рабочие расходы в одном кошельке.
+  sr: Lični i poslovni troškovi u jednom novčaniku.
 
 groups:
   food:       { en: Food,           ru: Еда, sr: Hrana }

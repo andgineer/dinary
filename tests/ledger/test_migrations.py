@@ -234,6 +234,60 @@ class TestMigration0005FKSafety:
 
 @allure.epic("Infrastructure")
 @allure.feature("Migrations")
+class TestMigration0006CategoryTemplates:
+    """0006 adds codes/visibility flags and drops the ``name`` UNIQUE constraints."""
+
+    def test_new_columns_and_tables_exist(self, fresh_db):
+        con = _connect(fresh_db)
+        try:
+            category_cols = _column_names(con, "categories")
+            group_cols = _column_names(con, "category_groups")
+            tables = _table_names(con)
+        finally:
+            con.close()
+
+        assert {"code", "is_hidden", "is_retired"}.issubset(category_cols)
+        assert "code" in group_cols
+        assert {"category_templates", "category_translations"}.issubset(tables)
+
+    def test_foreign_keys_intact(self, fresh_db):
+        con = _connect(fresh_db)
+        try:
+            problems = con.execute("PRAGMA foreign_key_check").fetchall()
+        finally:
+            con.close()
+        assert problems == []
+
+    def test_duplicate_category_and_group_names_allowed(self, fresh_db):
+        con = _connect(fresh_db)
+        try:
+            con.execute(
+                "INSERT INTO category_groups (name, sort_order, code) VALUES ('Группа', 1, 'a')",
+            )
+            con.execute(
+                "INSERT INTO category_groups (name, sort_order, code) VALUES ('Группа', 2, 'b')",
+            )
+            con.execute(
+                "INSERT INTO categories (name, code) VALUES ('Категория', 'c1')",
+            )
+            con.execute(
+                "INSERT INTO categories (name, code) VALUES ('Категория', 'c2')",
+            )
+        finally:
+            con.close()
+
+    def test_category_code_is_unique(self, fresh_db):
+        con = _connect(fresh_db)
+        try:
+            con.execute("INSERT INTO categories (name, code) VALUES ('A', 'dup')")
+            with pytest.raises(sqlite3.IntegrityError):
+                con.execute("INSERT INTO categories (name, code) VALUES ('B', 'dup')")
+        finally:
+            con.close()
+
+
+@allure.epic("Infrastructure")
+@allure.feature("Migrations")
 class TestInitDbIntegration:
     def test_init_db_creates_file_and_connects(self, tmp_path, monkeypatch):
         monkeypatch.setattr(storage, "DATA_DIR", tmp_path)

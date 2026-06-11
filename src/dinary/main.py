@@ -31,7 +31,7 @@ from dinary.background.classification.task import receipt_classification_task
 from dinary.background.rate_prefetch.task import rate_prefetch_task
 from dinary.background.sheet_logging.task import sheet_logging_task, warm_sheet_mapping
 from dinary.config import settings
-from dinary.db import storage
+from dinary.db import category_seed, storage
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _STATIC_DIR = _PROJECT_ROOT / "_static"
@@ -67,6 +67,8 @@ def _setup_logging() -> None:
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     storage.init_db()
+    with storage.connection() as con:
+        category_seed.bootstrap_categories(con)
     broker = LLMBroker(SqliteLLMBrokerStorage())
     await broker.start()
     await warm_sheet_mapping()

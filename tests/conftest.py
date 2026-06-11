@@ -13,7 +13,7 @@ from dinary.adapters.llm_chat import ProviderConfig
 from dinary.adapters.llm_storage import SqliteLLMBrokerStorage
 from dinary.adapters.llmbroker import CallEvent
 from dinary.config import settings
-from dinary.db import db_migrations, storage
+from dinary.db import category_seed, db_migrations, storage
 from dinary.main import create_app
 from dinary.sheets import sheet_mapping
 
@@ -209,10 +209,18 @@ def client(db):  # noqa: ARG001
     the lifespan never touches the developer DB or creates a schema-less
     blank file on CI.  ``migrate_db`` is still stubbed because the temp DB
     already carries the full schema from ``blank_db``.
+
+    ``bootstrap_categories`` is stubbed too: most test modules seed their
+    own minimal ``categories``/``category_groups`` rows before requesting
+    ``client``, and ``bootstrap_categories`` would either duplicate that
+    setup (fresh seed) or reject it (``migrate_personal_catalog`` only
+    recognises the real personal-DB taxonomy). Dedicated
+    ``tests/category_templates/`` tests call it explicitly.
     """
     with (
         unittest.mock.patch.object(rate_helpers, "_get_json_or_none", return_value=None),
         unittest.mock.patch.object(db_migrations, "migrate_db"),
+        unittest.mock.patch.object(category_seed, "bootstrap_categories"),
     ):
         app = create_app()
         with TestClient(app, raise_server_exceptions=False) as c:

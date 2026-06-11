@@ -17,7 +17,7 @@ import allure
 import httpx
 
 from dinary.main import create_app
-from dinary.db import storage
+from dinary.db import category_seed, storage
 from dinary.db.expenses import lookup_existing_expense
 
 from _api_helpers import (  # noqa: F401  (autouse + helpers)
@@ -104,16 +104,17 @@ class TestPostExpenseConcurrency:
         async def _run() -> list[httpx.Response]:
             app = create_app()
             transport = httpx.ASGITransport(app=app)
-            async with (
-                app.router.lifespan_context(app),
-                httpx.AsyncClient(
-                    transport=transport,
-                    base_url="http://testserver",
-                ) as ac,
-            ):
-                return await asyncio.gather(
-                    *(ac.post("/api/expenses", json=body) for _ in range(n_requests)),
-                )
+            with patch.object(category_seed, "bootstrap_categories"):
+                async with (
+                    app.router.lifespan_context(app),
+                    httpx.AsyncClient(
+                        transport=transport,
+                        base_url="http://testserver",
+                    ) as ac,
+                ):
+                    return await asyncio.gather(
+                        *(ac.post("/api/expenses", json=body) for _ in range(n_requests)),
+                    )
 
         with (
             patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate),
@@ -198,16 +199,17 @@ class TestPostExpenseConcurrency:
         async def _run() -> list[httpx.Response]:
             app = create_app()
             transport = httpx.ASGITransport(app=app)
-            async with (
-                app.router.lifespan_context(app),
-                httpx.AsyncClient(
-                    transport=transport,
-                    base_url="http://testserver",
-                ) as ac,
-            ):
-                return await asyncio.gather(
-                    *(ac.post("/api/expenses", json=b) for b in bodies),
-                )
+            with patch.object(category_seed, "bootstrap_categories"):
+                async with (
+                    app.router.lifespan_context(app),
+                    httpx.AsyncClient(
+                        transport=transport,
+                        base_url="http://testserver",
+                    ) as ac,
+                ):
+                    return await asyncio.gather(
+                        *(ac.post("/api/expenses", json=b) for b in bodies),
+                    )
 
         with (
             patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate),

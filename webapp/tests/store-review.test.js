@@ -31,6 +31,11 @@ function mockOnLine(value) {
 beforeEach(() => {
   localStorage.clear();
   setActivePinia(createPinia());
+  // Default: page-1 loads trigger loadStuckReceipts() -> getReceiptQueue().
+  // Mock it here so tests that don't care about the stuck-receipts queue
+  // never fall through to a real fetch(). Tests that do care override with
+  // mockResolvedValueOnce/mockRejectedValueOnce/etc.
+  vi.spyOn(receiptsApi, "getReceiptQueue").mockResolvedValue({ items: [], has_more: false });
 });
 
 afterEach(() => {

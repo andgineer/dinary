@@ -192,8 +192,7 @@ def deploy(c, ref="", no_start=False):
             "===   inv restart-server                                  ===\n"
             "=== Full reset flow:                                      ===\n"
             "===   ssh $HOST 'rm -f ~/dinary/data/dinary.db*'          ===\n"
-            "===   inv restart-server          # creates schema on start ===\n"
-            "===   inv import-catalog --yes                             ===\n"
+            "===   inv restart-server          # creates schema + categories ===\n"
             "===   inv import-budget-all --yes                          ===\n"
             "===   inv import-income-all --yes                          ===\n"
             "===   inv import-verify-bootstrap-all                      ===\n"
@@ -221,36 +220,3 @@ def deploy(c, ref="", no_start=False):
         "exit 1"
     )
     ssh_run(c, health_check)
-
-
-@task(name="bootstrap-catalog")
-def bootstrap_catalog(c, yes=False):
-    """Seed catalog (groups/categories/tags/events) from hardcoded taxonomy. Requires --yes.
-
-    WARNING: overwrites any manual catalog edits. Use inv import-catalog for a Sheet-based sync.
-    """
-    if not yes:
-        print(
-            "bootstrap-catalog overwrites any manual changes to groups, categories,\n"
-            "tags, and events with the hardcoded taxonomy.\n"
-            "Pass --yes to confirm.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    ssh_run(
-        c,
-        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
-        "from tasks.imports.seed_config import bootstrap_catalog; "
-        "import json; print(json.dumps(bootstrap_catalog()))'",
-    )
-
-
-@task(name="import-config")
-def import_config(c):
-    """Seed catalog from configured Google Sheets source (non-destructive)."""
-    ssh_run(
-        c,
-        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
-        "from tasks.imports.seed import seed_from_sheet; "
-        "import json; print(json.dumps(seed_from_sheet()))'",
-    )

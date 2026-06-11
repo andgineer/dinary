@@ -97,8 +97,8 @@ DINARY_DEPLOY_HOST=ubuntu@<PUBLIC_IP>
 ```
 
 `inv setup-server` syncs the local `.deploy/.env` to the VM under
-`/home/ubuntu/dinary/.deploy/` and seeds the runtime taxonomy via
-`inv bootstrap-catalog --yes`.
+`/home/ubuntu/dinary/.deploy/`. The category catalog seeds itself
+automatically on first boot.
 
 Verify SSH access:
 
@@ -123,8 +123,6 @@ This single command performs everything on the VM via SSH:
 - Uploads `~/.config/gspread/service_account.json` to the VM
 - Creates and starts a `dinary` systemd service
 - Sets up the tunnel (Tailscale by default, or Cloudflare — depending on `DINARY_TUNNEL`)
-
-To seed categories to the DB call `inv bootstrap-catalog --yes`.
 
 ### Tailscale (default)
 
@@ -161,7 +159,6 @@ ssh ubuntu@<PUBLIC_IP> 'sudo iptables -I INPUT -p tcp --dport 8000 -j ACCEPT && 
 | Command | What it does |
 |---------|-------------|
 | `inv deploy --ref=main` | Checkout ref, sync deps, apply migrations, restart service |
-| `inv bootstrap-catalog --yes` | Re-seed the runtime taxonomy (use when taxonomy changes; overwrites manual edits) |
 | `inv status --remote` | Show dinary and tunnel service status |
 | `inv logs --remote` | Tail dinary server logs |
 | `inv setup-server` | Full re-setup (safe to re-run) |

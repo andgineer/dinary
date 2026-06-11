@@ -97,8 +97,8 @@ DINARY_DEPLOY_HOST=ubuntu@<PUBLIC_IP>
 ```
 
 `inv setup-server` синхронизирует локальные `.deploy/.env` на VM в
-`/home/ubuntu/dinary/.deploy/` и сидит базовую таксономию командой
-`inv bootstrap-catalog --yes`.
+`/home/ubuntu/dinary/.deploy/`. Каталог категорий заполняется
+автоматически при первом запуске.
 
 Проверьте SSH-доступ:
 
@@ -123,8 +123,6 @@ inv setup-server
 - Загружает `~/.config/gspread/service_account.json` на VM
 - Создаёт и запускает systemd-сервис `dinary`
 - Настраивает туннель (Tailscale по умолчанию, или Cloudflare — в зависимости от `DINARY_TUNNEL`)
-
-Для создания предопределнных категорий вызовите `inv bootstrap-catalog --yes`.
 
 ### Tailscale (по умолчанию)
 
@@ -161,7 +159,6 @@ ssh ubuntu@<PUBLIC_IP> 'sudo iptables -I INPUT -p tcp --dport 8000 -j ACCEPT && 
 | Команда | Что делает |
 |---------|-----------|
 | `inv deploy --ref=main` | Переключиться на ref, синхронизировать зависимости, применить миграции, перезапустить |
-| `inv bootstrap-catalog --yes` | Пересев таксономии (использовать при изменении таксономии; перезаписывает ручные правки) |
 | `inv status --remote` | Показать статус сервисов dinary и туннеля |
 | `inv logs --remote` | Показать логи dinary в реальном времени |
 | `inv setup-server` | Полная настройка (безопасно запускать повторно) |

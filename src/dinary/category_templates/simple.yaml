@@ -2,6 +2,10 @@
 # categories. Health/transport/etc. fold into a single Life group.
 id: simple
 names: { en: Simple, ru: Просто, sr: Jednostavno }
+taglines:
+  en: Just the basics — start tracking in seconds.
+  ru: Только самое необходимое — начните за секунды.
+  sr: Samo osnovno — počnite za nekoliko sekundi.
 
 groups:
   food:    { en: Food,    ru: Еда, sr: Hrana }

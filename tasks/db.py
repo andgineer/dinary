@@ -41,6 +41,23 @@ def migrate(c):
     )
 
 
+@task(name="seed-categories")
+def seed_categories(c):
+    """Seed/reconcile the category catalog from src/dinary/category_templates/ (local dev only).
+
+    The server runs this automatically on every boot — manual entry point for
+    ad-hoc reseed/reconcile without restarting the service.
+    """
+    c.run(
+        "uv run python -c '"
+        "from dinary.db import storage, category_seed; "
+        "storage.init_db()\n"
+        "with storage.connection() as con:\n"
+        "    category_seed.bootstrap_categories(con)\n"
+        'print("Seeded categories")\'',
+    )
+
+
 @task(name="verify-db")
 def verify_db(c, remote=False):  # noqa: ARG001
     """Check DB structural integrity and foreign-key consistency.

@@ -98,10 +98,10 @@ def _tailscale_serve_stop() -> None:
         ),
         "reset": (
             "Wipe ``data/dinary.db`` (plus its WAL / SHM sidecars) before "
-            "starting, then re-seed the catalog from the hardcoded "
-            "taxonomy (groups, categories, events, tags) so PWA dropdowns "
-            "have rows. Best-effort kills any lingering local uvicorn "
-            "process holding the DB. Non-destructive if no DB exists yet."
+            "starting, then re-seed the category catalog from the "
+            "packaged templates so PWA dropdowns have rows. Best-effort "
+            "kills any lingering local uvicorn process holding the DB. "
+            "Non-destructive if no DB exists yet."
         ),
         "rebuild": (
             "Force a full PWA rebuild even when ``_static/index.html`` "
@@ -138,9 +138,12 @@ def dev(c, port=8000, sheet_logging=False, reset=False, rebuild=False):
                 p.unlink()
                 print(f"Removed {p}")
         c.run(
-            "uv run python -c 'from tasks.imports.seed_config "
-            "import bootstrap_catalog; import json; "
-            "print(json.dumps(bootstrap_catalog()))'",
+            "uv run python -c '"
+            "from dinary.db import storage, category_seed; "
+            "storage.init_db()\n"
+            "with storage.connection() as con:\n"
+            "    category_seed.bootstrap_categories(con)\n"
+            'print("Seeded categories")\'',
         )
 
     overrides = []

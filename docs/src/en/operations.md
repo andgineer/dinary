@@ -454,10 +454,9 @@ inv restart-server                    # start; yoyo applies forward migrations
 
 ## Coordinated import reset
 
-To rebuild the full DB from Google Sheets (e.g. after restoring a backup that predates recent sheet edits):
+To rebuild expenses and income from Google Sheets (e.g. after restoring a backup that predates recent sheet edits). The category catalog seeds itself automatically on service start:
 
 ```bash
-inv import-catalog --yes
 inv import-budget-all --yes
 inv import-income-all --yes
 inv import-verify-bootstrap-all

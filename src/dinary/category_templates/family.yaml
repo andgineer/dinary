@@ -2,6 +2,10 @@
 # household, detailed kids sphere.
 id: family
 names: { en: Family with kids, ru: Семья с детьми, sr: Porodica sa decom }
+taglines:
+  en: Built around kids and the household.
+  ru: Вокруг детей и домашнего хозяйства.
+  sr: Usmereno na decu i domaćinstvo.
 
 groups:
   food:      { en: Food,      ru: Еда, sr: Hrana }

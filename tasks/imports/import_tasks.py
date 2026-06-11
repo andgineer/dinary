@@ -59,26 +59,6 @@ def _require_year(year) -> int:
     return _coerce_year(year)
 
 
-@task(name="import-catalog")
-def import_catalog(c, yes=False):
-    """Re-seed taxonomy from Google Sheets without touching expense/income data. Requires --yes."""
-    if not _require_yes(
-        yes,
-        "WARNING: import-catalog will re-sync the taxonomy from Google Sheets. "
-        "Existing ledger data (expenses, tags, sheet logging queue, income) is "
-        "preserved. Vocabulary not present in the seed files will be marked "
-        "inactive. The ``import_mapping`` table will be rebuilt. PWA clients "
-        "will be forced to refresh on next /api/catalog call.",
-    ):
-        return
-    ssh_run(
-        c,
-        "cd ~/dinary && source ~/.local/bin/env && uv run python -c '"
-        "from tasks.imports.seed import rebuild_config_from_sheets; "
-        "import json; print(json.dumps(rebuild_config_from_sheets()))'",
-    )
-
-
 @task(name="import-budget")
 def import_budget(c, year="", yes=False):
     """DESTRUCTIVE: Delete and re-import expenses for --year from Google Sheet. Requires --yes."""

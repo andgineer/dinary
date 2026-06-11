@@ -2,6 +2,10 @@
 # (sport, gear, self-growth), sparse elsewhere. Mirrors the current live catalog.
 id: active
 names: { en: Active lifestyle, ru: Активный образ жизни, sr: Aktivan način života }
+taglines:
+  en: Detailed sport, gear and growth — light on the rest.
+  ru: Подробно про спорт, снаряжение и развитие — остальное по минимуму.
+  sr: Detaljno za sport, opremu i razvoj — ostalo pojednostavljeno.
 
 groups:
   food:       { en: Food,                   ru: Еда, sr: Hrana }

@@ -23,6 +23,7 @@ dependencies = [
     "tenacity>=9.1.4",
     "cachetools>=7.0.6",
     "tzdata>=2024.1",
+    "pyyaml>=6.0.2",
     # ``invoke`` is a runtime dependency on the prod VM: deploy / admin /
     # import operations (``inv build-static``, ``inv bootstrap-catalog``,
     # ``inv import-*``, ``inv migrate``) all run on the server through

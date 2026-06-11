@@ -21,6 +21,17 @@ vi.mock("../src/api/review.js", async (importOriginal) => {
   };
 });
 
+// Page-1 loads trigger loadStuckReceipts() -> getReceiptQueue(); mock it so
+// real loadIfNeeded()/loadNextPage() runs (e.g. via onMounted) never fall
+// through to a real fetch().
+vi.mock("../src/api/receipts.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getReceiptQueue: vi.fn(async () => ({ items: [], has_more: false })),
+  };
+});
+
 const FEED_PAGE_1 = {
   doubtful_count: 2,
   has_more: false,
