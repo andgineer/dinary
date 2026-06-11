@@ -27,7 +27,7 @@
 | src/dinary/api/controllers/income.py                           |       59 |        2 |     97% |   135-136 |
 | src/dinary/api/controllers/llm.py                              |       69 |        6 |     91% |86-87, 89-90, 95-96 |
 | src/dinary/api/controllers/qr\_parser.py                       |       23 |        0 |    100% |           |
-| src/dinary/api/controllers/receipt\_queue.py                   |       68 |        3 |     96% |89, 112, 186 |
+| src/dinary/api/controllers/receipt\_queue.py                   |       68 |        3 |     96% |99, 122, 196 |
 | src/dinary/api/controllers/rules.py                            |       53 |        2 |     96% |     40-41 |
 | src/dinary/api/currencies.py                                   |       33 |        0 |    100% |           |
 | src/dinary/api/expense\_corrections.py                         |        8 |        0 |    100% |           |
