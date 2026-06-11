@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_ff7e2ebf46cd60ed_catalog_writer_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.1">coverage.py v7.14.1</a>,
-            created at 2026-06-11 08:01 +0000
+            created at 2026-06-11 09:26 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -305,7 +305,7 @@
     <p class="run"><span class="n"><a id="t223" href="#t223">223</a></span><span class="t">    <span class="nam">tag_refs</span><span class="op">.</span><span class="nam">update</span><span class="op">(</span><span class="nam">_auto_tag_refs_by_tag_id</span><span class="op">(</span><span class="nam">con</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t224" href="#t224">224</a></span><span class="t">    <span class="nam">group_child_counts</span><span class="op">:</span> <span class="nam">dict</span><span class="op">[</span><span class="nam">int</span><span class="op">,</span> <span class="nam">int</span><span class="op">]</span> <span class="op">=</span> <span class="op">{</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t225" href="#t225">225</a></span><span class="t">    <span class="key">for</span> <span class="nam">row_id</span><span class="op">,</span> <span class="nam">n</span> <span class="key">in</span> <span class="nam">con</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t226" href="#t226">226</a></span><span class="t">        <span class="str">"SELECT group_id, COUNT(*) FROM categories GROUP BY group_id"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t226" href="#t226">226</a></span><span class="t">        <span class="str">"SELECT group_id, COUNT(*) FROM categories WHERE group_id IS NOT NULL GROUP BY group_id"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t227" href="#t227">227</a></span><span class="t">    <span class="op">)</span><span class="op">.</span><span class="nam">fetchall</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t228" href="#t228">228</a></span><span class="t">        <span class="nam">group_child_counts</span><span class="op">[</span><span class="nam">int</span><span class="op">(</span><span class="nam">row_id</span><span class="op">)</span><span class="op">]</span> <span class="op">=</span> <span class="nam">int</span><span class="op">(</span><span class="nam">n</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t229" href="#t229">229</a></span><span class="t">    <span class="key">return</span> <span class="nam">dict</span><span class="op">(</span><span class="nam">cat_refs</span><span class="op">)</span><span class="op">,</span> <span class="nam">dict</span><span class="op">(</span><span class="nam">event_refs</span><span class="op">)</span><span class="op">,</span> <span class="nam">dict</span><span class="op">(</span><span class="nam">tag_refs</span><span class="op">)</span><span class="op">,</span> <span class="nam">group_child_counts</span>&nbsp;</span><span class="r"></span></p>
@@ -467,7 +467,7 @@
             <a class="nav" href="z_ff7e2ebf46cd60ed_catalog_writer_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.1">coverage.py v7.14.1</a>,
-            created at 2026-06-11 08:01 +0000
+            created at 2026-06-11 09:26 +0000
         </p>
     </div>
 </footer>
