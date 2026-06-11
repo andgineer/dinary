@@ -18,6 +18,7 @@ from dinary.adapters.llmbroker import LLMBroker
 from dinary.api import (
     analytics,
     catalog,
+    category_templates,
     currencies,
     expense_corrections,
     expenses,
@@ -108,6 +109,7 @@ def create_app() -> FastAPI:
     app.include_router(income.router)
     app.include_router(qr.router)
     app.include_router(catalog.router)
+    app.include_router(category_templates.router)
     app.include_router(currencies.router)
     app.include_router(receipts.router)
     app.include_router(rules.router)
