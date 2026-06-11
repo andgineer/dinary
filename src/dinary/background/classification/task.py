@@ -35,6 +35,7 @@ from dinary.background.classification.receipt_classifier import (
 from dinary.background.classification.store_resolver import resolve_store
 from dinary.config import settings
 from dinary.db import storage
+from dinary.db.catalog import VISIBLE_CATEGORY_PREDICATE
 from dinary.db.classification_rules import RuleHit, classify_by_rules
 from dinary.db.receipts import (
     ReceiptItemRow,
@@ -405,14 +406,15 @@ def _run_rules_pass(
 
 
 def _load_top_fallback_categories(n: int) -> list[int]:
-    """Return top-n category IDs by recent usage, padded with active categories."""
+    """Return top-n category IDs by recent usage, padded with visible categories."""
     with storage.connection() as conn:
-        active_count = conn.execute(
-            "SELECT COUNT(*) AS active_count FROM categories WHERE is_active = 1",
-        ).fetchone()["active_count"]
-        if active_count < 5:
+        visible_count = conn.execute(
+            f"SELECT COUNT(*) AS visible_count FROM categories c"  # noqa: S608
+            f" WHERE {VISIBLE_CATEGORY_PREDICATE}",
+        ).fetchone()["visible_count"]
+        if visible_count < 5:
             raise InsufficientCategoriesError(
-                f"only {active_count} active categories — need at least 5",
+                f"only {visible_count} visible categories — need at least 5",
             )
 
         rows = conn.execute(
@@ -432,17 +434,17 @@ def _load_top_fallback_categories(n: int) -> list[int]:
         if len(result) < n:
             if result:
                 placeholders = ",".join("?" * len(result))
-                not_in_clause = f"AND id NOT IN ({placeholders})"
+                not_in_clause = f"AND c.id NOT IN ({placeholders})"
                 pad_params: list = [*result, n - len(result)]
             else:
                 not_in_clause = ""
                 pad_params = [n - len(result)]
             pad_rows = conn.execute(
                 f"""
-                SELECT id FROM categories
-                 WHERE is_active = 1
+                SELECT c.id FROM categories c
+                 WHERE {VISIBLE_CATEGORY_PREDICATE}
                    {not_in_clause}
-                 ORDER BY id
+                 ORDER BY c.id
                  LIMIT ?
                 """,  # noqa: S608
                 pad_params,

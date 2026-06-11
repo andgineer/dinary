@@ -363,10 +363,41 @@ class TestCategoryCorrection:
         resp = client.patch("/api/expenses/9999/category", json={"category_id": 1})
         assert resp.status_code == 404
 
-    def test_correction_inactive_category_returns_422(self, client, db):  # noqa: ARG002
+    def test_correction_inactive_category_is_activated_on_use(self, client, db):  # noqa: ARG002
         conn = storage.get_connection()
         try:
             self._seed_correction(conn)
+        finally:
+            conn.close()
+
+        resp = client.patch("/api/expenses/1/category", json={"category_id": 3})
+        assert resp.status_code == 200, resp.text
+
+        conn = storage.get_connection()
+        try:
+            (is_active,) = conn.execute(
+                "SELECT is_active FROM categories WHERE id = 3",
+            ).fetchone()
+        finally:
+            conn.close()
+        assert bool(is_active) is True
+
+    def test_correction_retired_category_returns_422(self, client, db):  # noqa: ARG002
+        conn = storage.get_connection()
+        try:
+            self._seed_correction(conn)
+            conn.execute("UPDATE categories SET is_retired = TRUE WHERE id = 3")
+        finally:
+            conn.close()
+
+        resp = client.patch("/api/expenses/1/category", json={"category_id": 3})
+        assert resp.status_code == 422
+
+    def test_correction_hidden_category_returns_422(self, client, db):  # noqa: ARG002
+        conn = storage.get_connection()
+        try:
+            self._seed_correction(conn)
+            conn.execute("UPDATE categories SET is_hidden = TRUE WHERE id = 3")
         finally:
             conn.close()
 

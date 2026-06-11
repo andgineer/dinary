@@ -7,6 +7,7 @@ from enum import StrEnum
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from dinary.db.catalog import activate_category
 from dinary.db.classification_rules import RuleSpec, create_or_update_rule
 from dinary.db.storage import transaction
 
@@ -84,6 +85,21 @@ def _upsert_rule_in_tx(
     )
 
 
+def _validate_category_for_correction(con: sqlite3.Connection, category_id: int) -> None:
+    cat_row = con.execute(
+        "SELECT code, is_active, is_hidden, is_retired FROM categories WHERE id = ?",
+        [category_id],
+    ).fetchone()
+    if cat_row is None:
+        raise HTTPException(status_code=422, detail=f"Unknown category_id: {category_id}")
+    if cat_row["is_retired"]:
+        raise HTTPException(status_code=422, detail=f"Retired category_id: {category_id}")
+    if cat_row["is_hidden"]:
+        raise HTTPException(status_code=422, detail=f"Hidden category_id: {category_id}")
+    if not cat_row["is_active"]:
+        activate_category(con, cat_row["code"])
+
+
 def correct_category_sync(
     expense_id: int,
     req: CategoryCorrectionRequest,
@@ -97,15 +113,7 @@ def correct_category_sync(
     if row is None:
         raise HTTPException(status_code=404, detail="Expense not found")
 
-    cat_row = con.execute(
-        "SELECT id FROM categories WHERE id = ? AND is_active = 1",
-        [req.category_id],
-    ).fetchone()
-    if cat_row is None:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Unknown or inactive category_id: {req.category_id}",
-        )
+    _validate_category_for_correction(con, req.category_id)
 
     receipt_id = row[0]
     store_id = row[1]

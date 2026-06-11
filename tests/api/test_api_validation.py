@@ -57,9 +57,9 @@ class TestPostExpenseValidation:
         )
         assert resp.status_code == 422
 
-    def test_inactive_category_returns_422(self, client):
-        """A category that exists but was marked ``is_active=FALSE`` by
-        a reseed must be treated as unknown for writes."""
+    def test_inactive_category_is_activated_on_use(self, client):
+        """A category that exists but is ``is_active=FALSE`` (and not
+        hidden/retired) is reactivated on first use rather than rejected."""
         resp = client.post(
             "/api/expenses",
             json={
@@ -71,7 +71,16 @@ class TestPostExpenseValidation:
                 "expense_datetime": "2026-04-15T12:00:00+02:00",
             },
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 200, resp.text
+
+        con = storage.get_connection()
+        try:
+            (is_active,) = con.execute(
+                "SELECT is_active FROM categories WHERE id = 3",
+            ).fetchone()
+        finally:
+            con.close()
+        assert bool(is_active) is True
 
     def test_unknown_category_does_not_insert_row(self, client):
         """The unknown-category 422 path bails out before
@@ -101,7 +110,7 @@ class TestPostExpenseValidation:
 @allure.story("Validation")
 class TestPostExpenseInactiveCarveout:
     @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
-    def test_reseed_deactivation_allows_idempotent_replay_but_rejects_new_posts(
+    def test_reseed_retirement_allows_idempotent_replay_but_rejects_new_posts(
         self,
         _mock_convert_fn,
         client,
@@ -109,10 +118,10 @@ class TestPostExpenseInactiveCarveout:
         """End-to-end of the FK-safe-sync → runtime flow:
         1. Post an expense against an active category so an FK from
            ``expenses`` to ``categories`` is established.
-        2. Simulate the reseed dropping that category from the active
-           vocabulary (``is_active=FALSE``) — the row can't be deleted
-           because the FK still pins it, which is the whole point of
-           the FK-safe algorithm in ``seed_config``.
+        2. Simulate the reseed dropping that category from the
+           vocabulary entirely (``is_retired=TRUE``) — the row can't be
+           deleted because the FK still pins it, which is the whole
+           point of the FK-safe algorithm in ``seed_config``.
         3. A truly-new POST (different ``client_expense_id``) against
            the retired category must return 422.
         4. An idempotent replay (same ``client_expense_id`` + same
@@ -133,11 +142,11 @@ class TestPostExpenseInactiveCarveout:
 
         con = storage.get_connection()
         try:
-            # Simulate the FK-safe reseed path: mark the category inactive
+            # Simulate the FK-safe reseed path: mark the category retired
             # rather than deleting (which would violate the FK held by
             # the expense we just inserted).
             con.execute(
-                "UPDATE categories SET is_active = FALSE WHERE name = 'еда'",
+                "UPDATE categories SET is_active = FALSE, is_retired = TRUE WHERE name = 'еда'",
             )
             (kept,) = con.execute(
                 "SELECT COUNT(*) FROM expenses WHERE client_expense_id = 'e_pin_1'",

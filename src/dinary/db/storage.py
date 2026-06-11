@@ -165,12 +165,22 @@ class IdNameRow:
 
 
 @dataclasses.dataclass(slots=True)
-class CategoryListRow:
+class VisibleCategoryRow:
     id: int
+    code: str
     name: str
     group_id: int
     group_name: str
     group_sort_order: int
+
+
+@dataclasses.dataclass(slots=True)
+class CategorySearchRow:
+    id: int
+    code: str
+    name: str
+    is_active: bool
+    is_hidden: bool
 
 
 @dataclasses.dataclass(slots=True)

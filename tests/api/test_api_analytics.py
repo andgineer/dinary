@@ -126,6 +126,46 @@ class TestAnalyticsSummaryStats:
 
 @allure.epic("Analytics")
 @allure.feature("API")
+class TestAnalyticsAutoTrendsVisibility:
+    def test_inactive_category_with_recent_expenses_still_shown_in_trends(
+        self,
+        client,
+        monkeypatch,
+    ):
+        """A category that fell out of the active template (``is_active=0``)
+        but has fresh expenses must still surface in trends — analytics
+        reads expenses directly, regardless of any visibility flag."""
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        from datetime import date, timedelta
+
+        recent = (date.today() - timedelta(days=30)).isoformat()
+        prior = (date.today() - timedelta(days=120)).isoformat()
+
+        db_con = storage.get_connection()
+        try:
+            db_con.execute(
+                "INSERT INTO expenses"
+                " (datetime, amount, amount_original, currency_original, category_id)"
+                " VALUES (?, ?, ?, 'EUR', 1)",
+                (f"{recent}T12:00:00", 1000.0, 1000.0),
+            )
+            db_con.execute(
+                "INSERT INTO expenses"
+                " (datetime, amount, amount_original, currency_original, category_id)"
+                " VALUES (?, ?, ?, 'EUR', 1)",
+                (f"{prior}T12:00:00", 500.0, 500.0),
+            )
+            db_con.execute("UPDATE categories SET is_active = 0 WHERE id = 1")
+        finally:
+            db_con.close()
+
+        data = client.get("/api/analytics/summary").json()
+        assert data["trends"] is not None
+        assert any(t["basket_name"] == "Food" for t in data["trends"])
+
+
+@allure.epic("Analytics")
+@allure.feature("API")
 class TestAnalyticsEvents:
     def test_event_in_last_12_months_appears(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")

@@ -12,10 +12,9 @@ WITH period_amounts AS (
                            AND date(e.datetime) >= date('now', '-6 months')
                           THEN e.amount ELSE 0 END), 0) AS prior
     FROM category_groups cg
-    JOIN categories c ON c.group_id = cg.id AND c.is_active = 1
+    JOIN categories c ON c.group_id = cg.id
     JOIN expenses e    ON e.category_id = c.id
     WHERE date(e.datetime) >= date('now', '-6 months')
-      AND cg.is_active = 1
     GROUP BY cg.id, cg.name
 
     UNION ALL

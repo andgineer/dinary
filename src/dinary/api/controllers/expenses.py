@@ -25,7 +25,7 @@ from dinary.api.controllers.expense_corrections import (
 )
 from dinary.api.http_errors import value_error_as_422
 from dinary.config import settings
-from dinary.db.catalog import get_catalog_version
+from dinary.db.catalog import activate_category, get_catalog_version
 from dinary.db.expenses import (
     ExpensePayload,
     describe_expense_conflict,
@@ -402,16 +402,21 @@ def _is_replay(con: sqlite3.Connection, client_expense_id: str) -> bool:
 
 def _resolve_category_for_write(con: sqlite3.Connection, req: ExpenseRequest) -> None:
     row = con.execute(
-        "SELECT id, is_active FROM categories WHERE id = ?",
+        "SELECT code, is_active, is_hidden, is_retired FROM categories WHERE id = ?",
         [req.category_id],
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=422, detail=f"Unknown category_id: {req.category_id}")
-    if bool(row[1]):
-        return
-    if _is_replay(con, req.client_expense_id):
-        return
-    raise HTTPException(status_code=422, detail=f"Inactive category_id: {req.category_id}")
+    if row["is_retired"]:
+        if _is_replay(con, req.client_expense_id):
+            return
+        raise HTTPException(status_code=422, detail=f"Retired category_id: {req.category_id}")
+    if row["is_hidden"]:
+        if _is_replay(con, req.client_expense_id):
+            return
+        raise HTTPException(status_code=422, detail=f"Hidden category_id: {req.category_id}")
+    if not row["is_active"]:
+        activate_category(con, row["code"])
 
 
 def _validate_event(con: sqlite3.Connection, req: ExpenseRequest) -> None:

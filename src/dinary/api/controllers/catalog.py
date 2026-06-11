@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from dinary.api.controllers.catalog_writer_errors import AddResult, CatalogWriteError, DeleteResult
-from dinary.db.catalog import get_catalog_version
+from dinary.db.catalog import VISIBLE_CATEGORY_PREDICATE, get_catalog_version
 from dinary.sheets.sheet_mapping import decode_auto_tags_value
 
 # ---------------------------------------------------------------------------
@@ -229,33 +229,37 @@ def reference_counts(
     return dict(cat_refs), dict(event_refs), dict(tag_refs), group_child_counts
 
 
-_MANUAL_RECENCY = " AND e.receipt_id IS NULL AND e.datetime >= datetime('now', '-3 months')"
+_MANUAL_RECENCY = "e.receipt_id IS NULL AND e.datetime >= datetime('now', '-3 months')"
 
 _SQL_CAT_DEFAULTS = (
     "SELECT c.group_id, e.category_id, COUNT(*) AS cnt FROM expenses e"  # noqa: S608
     " JOIN categories c ON c.id = e.category_id"
-    " WHERE c.is_active = 1"
-    + _MANUAL_RECENCY
-    + " GROUP BY c.group_id, e.category_id ORDER BY c.group_id, cnt DESC"
+    f" WHERE {VISIBLE_CATEGORY_PREDICATE} AND {_MANUAL_RECENCY}"
+    " GROUP BY c.group_id, e.category_id ORDER BY c.group_id, cnt DESC"
 )
+# category_groups.is_active is vestigial here: apply_template rewrites every
+# category's group_id to a group the active template declares, so a visible
+# category can never resolve to a group outside it. The join still excludes
+# rows with group_id IS NULL.
 _SQL_GROUP_DEFAULT = (
     "SELECT c.group_id, COUNT(*) AS cnt FROM expenses e"  # noqa: S608
     " JOIN categories c ON c.id = e.category_id"
     " JOIN category_groups g ON g.id = c.group_id"
-    " WHERE g.is_active = 1" + _MANUAL_RECENCY + " GROUP BY c.group_id ORDER BY cnt DESC LIMIT 1"
+    f" WHERE {_MANUAL_RECENCY}"
+    " GROUP BY c.group_id ORDER BY cnt DESC LIMIT 1"
 )
 
 
 def frequent_categories_sync(con: sqlite3.Connection, limit: int = 5) -> list[FrequentCategory]:
     rows = con.execute(
-        """
+        f"""
         SELECT e.category_id, c.name, COUNT(*) AS cnt
           FROM expenses e JOIN categories c ON c.id = e.category_id
-         WHERE c.is_active = 1
+         WHERE {VISIBLE_CATEGORY_PREDICATE}
            AND e.receipt_id IS NULL
            AND e.datetime >= datetime('now', '-3 months')
          GROUP BY e.category_id ORDER BY cnt DESC LIMIT ?
-        """,
+        """,  # noqa: S608
         [limit],
     ).fetchall()
     return [FrequentCategory(id=int(r[0]), name=str(r[1])) for r in rows]

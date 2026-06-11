@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from dinary.db.catalog import VISIBLE_CATEGORY_PREDICATE
 from dinary.db.receipts import classification_job_counts
 from dinary.db.storage import transaction
 
@@ -151,7 +152,7 @@ def approve_rule_category(rule_id: int, category_id: int, con: sqlite3.Connectio
         raise HTTPException(status_code=404, detail="Rule not found")
     if (
         con.execute(
-            "SELECT id FROM categories WHERE id = ? AND is_active = 1",
+            f"SELECT c.id FROM categories c WHERE c.id = ? AND {VISIBLE_CATEGORY_PREDICATE}",  # noqa: S608
             [category_id],
         ).fetchone()
         is None

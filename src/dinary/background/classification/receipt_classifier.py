@@ -6,6 +6,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from dinary.adapters.llmbroker import Execution, LLMBroker
+from dinary.db.catalog import list_visible_categories
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +51,8 @@ class ClassifyOutcome:
 
 
 def load_categories(conn: sqlite3.Connection) -> dict[int, str]:
-    rows = conn.execute(
-        "SELECT c.id, cg.name, c.name"
-        " FROM categories c"
-        " LEFT JOIN category_groups cg ON cg.id = c.group_id"
-        " WHERE c.is_active = 1",
-    ).fetchall()
-    return {int(r[0]): f"{r[1]}: {r[2]}" if r[1] else str(r[2]) for r in rows}
+    """Return the visible category set as ``{id: "group: name"}`` for the LLM prompt."""
+    return {row.id: f"{row.group_name}: {row.name}" for row in list_visible_categories(conn)}
 
 
 def load_tags(conn: sqlite3.Connection) -> dict[int, str]:

@@ -1,6 +1,6 @@
 """Catalog-side ledger_repo tests: connection lifecycle,
-``catalog_version``, ``list_categories``, sheet-mapping 3D
-resolution, and ``get_category_name``.
+``catalog_version``, sheet-mapping 3D resolution, and
+``get_category_name``.
 
 Per-test DB lives under ``tmp_path`` via the autouse ``_tmp_data_dir``
 fixture imported from ``_ledger_repo_helpers``.
@@ -17,7 +17,6 @@ from dinary.db.catalog import (
     get_catalog_version,
     get_category_name,
     get_mapping_tag_ids,
-    list_categories,
     resolve_mapping_for_year,
     set_catalog_version,
 )
@@ -104,55 +103,6 @@ class TestCatalogVersion:
                 get_catalog_version(con)
         finally:
             con.close()
-
-
-@allure.epic("Catalog")
-@allure.feature("DB layer")
-class TestListCategories:
-    def test_filters_inactive_rows(self, fresh_db):
-        con = storage.get_connection()
-        try:
-            con.execute(
-                "INSERT INTO category_groups (id, name, sort_order, is_active)"
-                " VALUES (1, 'Food', 1, 1), (2, 'Gone', 2, 0)",
-            )
-            con.execute(
-                "INSERT INTO categories (id, name, group_id, is_active)"
-                " VALUES (1, 'active', 1, 1),"
-                " (2, 'retired', 1, 0),"
-                " (3, 'orphan-group', 2, 1)",
-            )
-            rows = list_categories(con)
-        finally:
-            con.close()
-        names = {r.name for r in rows}
-        # 'retired' filtered out (is_active=false on category); 'orphan-group'
-        # filtered out (group is_active=false).
-        assert names == {"active"}
-
-    def test_ordering(self, fresh_db):
-        con = storage.get_connection()
-        try:
-            con.execute(
-                "INSERT INTO category_groups (id, name, sort_order, is_active)"
-                " VALUES (1, 'Z', 2, 1), (2, 'A', 1, 1)",
-            )
-            con.execute(
-                "INSERT INTO categories (id, name, group_id, is_active)"
-                " VALUES (1, 'b', 1, 1),"
-                " (2, 'a', 1, 1),"
-                " (3, 'c', 2, 1)",
-            )
-            rows = list_categories(con)
-        finally:
-            con.close()
-        # Groups ordered by sort_order: 'A' (1) before 'Z' (2); within each
-        # group, categories ordered by name ascending.
-        assert [(r.name, r.group_name) for r in rows] == [
-            ("c", "A"),
-            ("a", "Z"),
-            ("b", "Z"),
-        ]
 
 
 @allure.epic("Catalog")

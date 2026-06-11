@@ -80,17 +80,19 @@ def db(tmp_path, monkeypatch, blank_db):
             " VALUES (2, 'Transport', 2, TRUE)",
         )
         con.execute(
-            "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'еда', 1, TRUE)",
+            "INSERT INTO categories (id, name, group_id, is_active, code)"
+            " VALUES (1, 'еда', 1, TRUE, 'groceries')",
         )
         con.execute(
-            "INSERT INTO categories (id, name, group_id, is_active)"
-            " VALUES (2, 'транспорт', 2, TRUE)",
+            "INSERT INTO categories (id, name, group_id, is_active, code)"
+            " VALUES (2, 'транспорт', 2, TRUE, 'transit')",
         )
-        # Pre-filter-friendly inactive category: API must treat it as
-        # unknown for both reads (list) and writes (POST).
+        # Inactive (not hidden/retired) category: a write referencing it
+        # exercises activation-on-use (db.catalog.activate_category), which
+        # requires a `code`.
         con.execute(
-            "INSERT INTO categories (id, name, group_id, is_active)"
-            " VALUES (3, 'ретро-категория', 1, FALSE)",
+            "INSERT INTO categories (id, name, group_id, is_active, code, is_hidden, is_retired)"
+            " VALUES (3, 'ретро-категория', 1, FALSE, 'retro_category', FALSE, FALSE)",
         )
         con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'собака', TRUE)")
         con.execute("INSERT INTO tags (id, name, is_active) VALUES (2, 'аня', TRUE)")

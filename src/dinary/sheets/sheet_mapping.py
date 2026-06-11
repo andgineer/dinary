@@ -19,6 +19,7 @@ import gspread
 from dinary.adapters.sheets_client import drive_get_modified_time, get_sheet
 from dinary.config import settings, spreadsheet_id_from_setting
 from dinary.db import storage
+from dinary.db.catalog import VISIBLE_CATEGORY_PREDICATE
 
 logger = logging.getLogger(__name__)
 
@@ -263,15 +264,18 @@ def resolve_projection(
 def _load_catalog(
     con: sqlite3.Connection,
 ) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
-    """Load every catalog row (active or inactive) by name.
+    """Load every catalog row (any visibility state) by name.
 
-    The map tab references names that must stay resolvable after an
-    operator hides a row from the manual PWA picker. ``is_active`` on
-    a category / event / tag is purely a "hide from the ручной пикер"
-    affordance; it must not break the mapping reload. Hard-deleted
-    rows are the only invariant — their names are simply absent and
-    ``parse_rows`` will still raise ``MapTabError`` with the
-    "did you mean" hint.
+    The map tab references names that must stay resolvable regardless of a
+    category's current visibility — ``is_active`` now means "in the active
+    template's visible subset" and is rewritten wholesale by
+    ``apply_template``, so a category referenced by the map can easily be
+    ``is_active=0`` (or ``is_hidden``/``is_retired``) without breaking the
+    mapping reload. Events and tags keep their original "hide from the
+    ручной пикер" ``is_active`` meaning, with the same "must stay
+    resolvable" requirement. Hard-deleted rows are the only invariant —
+    their names are simply absent and ``parse_rows`` will still raise
+    ``MapTabError`` with the "did you mean" hint.
     """
     cat_rows = con.execute("SELECT name, id FROM categories").fetchall()
     event_rows = con.execute("SELECT name, id FROM events").fetchall()
@@ -580,9 +584,9 @@ def ensure_default_map_tab() -> None:
 
     with storage.connection() as con:
         cat_rows = con.execute(
-            "SELECT c.name FROM categories c"
+            "SELECT c.name FROM categories c"  # noqa: S608
             " JOIN category_groups g ON g.id = c.group_id"
-            " WHERE c.is_active AND g.is_active"
+            f" WHERE {VISIBLE_CATEGORY_PREDICATE}"
             " ORDER BY g.sort_order, c.name",
         ).fetchall()
         tag_rows = con.execute(

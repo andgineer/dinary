@@ -15,7 +15,7 @@ from dinary.background.classification.item_normalizer import normalize_item_name
 from dinary.background.classification.receipt_classifier import (
     classify_receipt as llm_classify_receipt,
 )
-from dinary.db.catalog import list_categories
+from dinary.db.catalog import list_visible_categories
 from dinary.db.receipts import requeue_receipts
 from dinary.db.storage import get_connection
 
@@ -38,7 +38,7 @@ def classify_receipt(c, url):  # noqa: ARG001
 
     con = get_connection()
     try:
-        cats = list_categories(con)
+        cats = list_visible_categories(con)
         tag_rows = con.execute("SELECT id, name FROM tags WHERE is_active = 1").fetchall()
         tags = {int(r[0]): str(r[1]) for r in tag_rows}
     finally:
