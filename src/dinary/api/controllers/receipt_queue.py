@@ -29,15 +29,25 @@ class ResolveReceiptRequest(BaseModel):
 
 
 def list_stuck_receipts(con: sqlite3.Connection, page: int, page_size: int) -> dict:
-    """Every receipt with an active classification job, oldest first."""
+    """Receipts whose job is poisoned or has been queued for over 5 minutes, oldest first."""
     offset = (page - 1) * page_size
-    total = con.execute("SELECT COUNT(*) FROM receipt_classification_jobs").fetchone()[0]
+    total = con.execute(
+        """
+        SELECT COUNT(*)
+          FROM receipt_classification_jobs j
+          JOIN receipts r ON r.id = j.receipt_id
+         WHERE j.status = 'poisoned'
+            OR r.created_at <= datetime('now', '-5 minutes')
+        """,
+    ).fetchone()[0]
     rows = con.execute(
         """
         SELECT r.id, r.url, r.store_name_raw, r.created_at,
                j.status, j.retry_count, j.last_error
           FROM receipt_classification_jobs j
           JOIN receipts r ON r.id = j.receipt_id
+         WHERE j.status = 'poisoned'
+            OR r.created_at <= datetime('now', '-5 minutes')
          ORDER BY r.created_at
          LIMIT ? OFFSET ?
         """,

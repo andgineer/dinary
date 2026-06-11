@@ -980,6 +980,32 @@ describe("review store: loadStuckReceipts()", () => {
     expect(queueSpy).toHaveBeenCalledTimes(1);
     expect(store.stuckReceipts).toHaveLength(1);
   });
+
+  it("refreshes (and clears) on the first page even when the queue is empty", async () => {
+    vi.spyOn(receiptsApi, "getReceiptQueue").mockResolvedValueOnce({
+      items: [{ receipt_id: 1, status: "poisoned", amount: 100, currency: "RSD" }],
+      has_more: false,
+    });
+    const store = useReviewStore();
+    await store.loadStuckReceipts();
+    expect(store.stuckReceipts).toHaveLength(1);
+
+    vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValueOnce({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      receipts_queue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
+    });
+    const queueSpy = vi.spyOn(receiptsApi, "getReceiptQueue").mockResolvedValueOnce({
+      items: [],
+      has_more: false,
+    });
+
+    await store.loadNextPage();
+
+    expect(queueSpy).toHaveBeenCalledTimes(1);
+    expect(store.stuckReceipts).toHaveLength(0);
+  });
 });
 
 describe("review store: resolveStuckReceipt()", () => {

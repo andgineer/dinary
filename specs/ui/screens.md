@@ -276,9 +276,10 @@ UI shows a toast instead of an error.
 
 ### Stuck receipts
 
-When any receipt has an active classification job (`pending`, `in_progress`,
-or `poisoned`), a STUCK RECEIPTS section lists every such receipt, oldest
-first — shown in full, with no threshold. Each row shows the merchant (or
+A receipt counts as stuck once its classification job is `poisoned`, or has
+been `pending`/`in_progress` for more than 5 minutes since the receipt was
+received. A STUCK RECEIPTS section lists every such receipt, oldest first —
+shown in full, with no further threshold. Each row shows the merchant (or
 "Unknown store"), the amount/currency decoded from the receipt's QR payload
 (or "amount unknown" if the URL can't be decoded, with the action disabled),
 status, retry count, and age. A "Save as expense" button opens the category

@@ -96,7 +96,11 @@ class TestReceiptQueue:
         assert item["purchase_date"] == _PURCHASE_DT.isoformat()
 
     def test_item_with_undecodable_url_has_null_amount(self, client, db):  # noqa: ARG002
-        rid = _insert_receipt(url="https://suf.purs.gov.rs/v/", client_receipt_id="rcid-no-vl")
+        rid = _insert_receipt(
+            url="https://suf.purs.gov.rs/v/",
+            client_receipt_id="rcid-no-vl",
+            created_at="2026-06-01 10:00:00",
+        )
         _insert_job(rid, status="pending")
 
         resp = client.get("/api/receipts/queue")
@@ -104,6 +108,41 @@ class TestReceiptQueue:
         assert item["amount"] is None
         assert item["currency"] is None
         assert item["purchase_date"] is None
+
+    def test_excludes_recent_pending_job(self, client, db):  # noqa: ARG002
+        """A receipt that just entered the queue gets a 5-minute grace period."""
+        rid = _insert_receipt(client_receipt_id="rcid-recent")
+        _insert_job(rid, status="pending")
+
+        resp = client.get("/api/receipts/queue")
+        assert resp.json() == {"items": [], "has_more": False}
+
+    def test_excludes_recent_in_progress_job(self, client, db):  # noqa: ARG002
+        rid = _insert_receipt(client_receipt_id="rcid-recent-ip")
+        _insert_job(rid, status="in_progress")
+
+        resp = client.get("/api/receipts/queue")
+        assert resp.json() == {"items": [], "has_more": False}
+
+    def test_includes_recent_poisoned_job(self, client, db):  # noqa: ARG002
+        """Poisoned jobs skip the grace period — no further automatic retries."""
+        rid = _insert_receipt(client_receipt_id="rcid-recent-poisoned")
+        _insert_job(rid, status="poisoned", last_error="boom")
+
+        resp = client.get("/api/receipts/queue")
+        ids = [item["receipt_id"] for item in resp.json()["items"]]
+        assert ids == [rid]
+
+    def test_includes_pending_job_after_grace_period(self, client, db):  # noqa: ARG002
+        rid = _insert_receipt(
+            client_receipt_id="rcid-old-pending",
+            created_at="2026-06-01 10:00:00",
+        )
+        _insert_job(rid, status="pending")
+
+        resp = client.get("/api/receipts/queue")
+        ids = [item["receipt_id"] for item in resp.json()["items"]]
+        assert ids == [rid]
 
     def test_orders_oldest_first(self, client, db):  # noqa: ARG002
         newer = _insert_receipt(

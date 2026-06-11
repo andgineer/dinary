@@ -100,8 +100,8 @@ export const useReviewStore = defineStore("review", () => {
       if (q.pending > 0 || q.in_progress > 0 || q.sleeping > 0 || q.poisoned > 0) {
         markDirty();
         useLlmStore().markDirty();
-        if (nextPage === 1) await loadStuckReceipts();
       }
+      if (nextPage === 1) await loadStuckReceipts();
     } catch (err) {
       if (navigator.onLine) {
         const toast = useToastStore();
