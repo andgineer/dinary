@@ -195,8 +195,17 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    # Retries guard against transient registry timeouts when BuildKit
+    # resolves the `docker/dockerfile:1.6` syntax frontend image.
     - name: Build image
-      run: docker build -t dinary-smoke:ci .
+      uses: nick-fields/retry@v3
+      with:
+        timeout_minutes: 10
+        max_attempts: 3
+        command: docker build -t dinary-smoke:ci .
 
     - name: Verify _static/ is populated
       run: |
