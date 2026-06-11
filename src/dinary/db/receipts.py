@@ -232,6 +232,7 @@ def release_job(
     claim_token: str,
     retry_count: int,
     retry_after: str | None,
+    last_error: str | None = None,
 ) -> None:
     """Release a claimed job back to 'pending' for retry.
 
@@ -242,10 +243,10 @@ def release_job(
         """
         UPDATE receipt_classification_jobs
            SET status = 'pending', claim_token = NULL, claimed_at = NULL,
-               retry_count = ?, retry_after = ?
+               retry_count = ?, retry_after = ?, last_error = ?
          WHERE receipt_id = ? AND claim_token = ?
         """,
-        [retry_count, retry_after, receipt_id, claim_token],
+        [retry_count, retry_after, last_error, receipt_id, claim_token],
     )
 
 

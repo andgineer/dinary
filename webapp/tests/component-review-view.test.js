@@ -404,12 +404,13 @@ describe("ReviewView — stuck receipts section", () => {
     expect(row.text()).toContain("Maxi");
     expect(row.text()).toContain("123.45");
     expect(row.text()).toContain("failed");
+    expect(row.text()).toContain("boom");
     const btn = row.find('[data-testid="stuck-resolve-btn"]');
     expect(btn.attributes("disabled")).toBeUndefined();
     wrapper.unmount();
   });
 
-  it("shows 'Unknown store' and 'amount unknown' with a disabled action when decode failed", async () => {
+  it("shows store name placeholder and 'amount unknown' with a disabled action when decode failed", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const review = useReviewStore(pinia);
@@ -431,8 +432,9 @@ describe("ReviewView — stuck receipts section", () => {
     const wrapper = mountView(pinia);
     await flushPromises();
     const row = wrapper.find('[data-testid="stuck-row"]');
-    expect(row.text()).toContain("Unknown store");
+    expect(row.text()).toContain("Store name: —");
     expect(row.text()).toContain("amount unknown");
+    expect(row.find(".stuck-reason").exists()).toBe(false);
     const btn = row.find('[data-testid="stuck-resolve-btn"]');
     expect(btn.attributes("disabled")).toBeDefined();
     wrapper.unmount();

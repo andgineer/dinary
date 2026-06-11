@@ -212,7 +212,10 @@ onBeforeUnmount(() => {
         data-testid="stuck-row"
       >
         <div class="stuck-row-main">
-          <span class="stuck-store">{{ item.store_name_raw || "Unknown store" }}</span>
+          <span
+            class="stuck-store"
+            :class="{ 'stuck-store--placeholder': !item.store_name_raw }"
+          >{{ item.store_name_raw || "Store name: —" }}</span>
           <span class="stuck-amount">
             <template v-if="item.amount != null">
               {{ Number(item.amount).toLocaleString(undefined, { maximumFractionDigits: 2 }) }}
@@ -235,6 +238,7 @@ onBeforeUnmount(() => {
             Save as expense
           </button>
         </div>
+        <div v-if="item.last_error" class="stuck-reason">{{ item.last_error }}</div>
       </div>
     </div>
 
@@ -518,6 +522,12 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.stuck-store--placeholder {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--muted);
+}
+
 .stuck-amount {
   font-family: var(--font-num);
   font-size: 0.85rem;
@@ -541,6 +551,17 @@ onBeforeUnmount(() => {
 .stuck-age {
   font-size: 0.7rem;
   color: var(--muted);
+}
+
+.stuck-reason {
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .stuck-resolve-btn {

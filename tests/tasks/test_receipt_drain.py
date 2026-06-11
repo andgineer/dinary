@@ -24,6 +24,7 @@ import httpx
 
 from dinary.adapters.serbian_receipt_parser import (
     ParsedReceipt,
+    ParserNotIndexedError,
     ParserParseError,
     ParserRequestError,
     ReceiptItem,
@@ -1902,7 +1903,9 @@ class TestBulletProofNeverLoseReceipt:
         assert job_row[0] == "poisoned", (
             f"permanent parse error must poison the job, got {job_row[0]!r}"
         )
-        assert "unsupported" in (job_row[1] or ""), "last_error must capture the error message"
+        assert job_row[1] == "Could not read receipt data from PURS", (
+            "last_error must show a user-facing diagnostic"
+        )
 
     def test_httpx_error_releases_for_retry(self, drain_db):  # noqa: ARG002
         """httpx.HTTPError during receipt fetching is transient → job released for retry."""
@@ -1934,7 +1937,8 @@ class TestBulletProofNeverLoseReceipt:
         conn = storage.get_connection()
         try:
             job_row = conn.execute(
-                "SELECT status FROM receipt_classification_jobs WHERE receipt_id = ?", [receipt_id]
+                "SELECT status, last_error FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [receipt_id],
             ).fetchone()
         finally:
             conn.close()
@@ -1943,6 +1947,51 @@ class TestBulletProofNeverLoseReceipt:
         assert job_row[0] == "pending", (
             f"httpx error must release job as pending, got {job_row[0]!r}"
         )
+        assert job_row[1] == "Network error, retrying", (
+            "last_error must show a user-facing diagnostic even for transient retries"
+        )
+
+    def test_not_indexed_error_releases_with_diagnostic(self, drain_db):  # noqa: ARG002
+        """Receipt not yet indexed by PURS → transient retry with a clear diagnostic."""
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url) VALUES ('ni-r1', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id) VALUES (?)", [receipt_id]
+            )
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert job is not None
+
+        with (
+            patch(
+                "dinary.background.classification.task.parse_receipt",
+                side_effect=ParserNotIndexedError("receipt may not be indexed by SUF yet"),
+            ),
+            patch("dinary.background.classification.task.notify_new_receipt"),
+            patch("dinary.background.classification.task._schedule_wakeup"),
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+
+        conn = storage.get_connection()
+        try:
+            job_row = conn.execute(
+                "SELECT status, last_error FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert job_row is not None, "job must remain in DB for retry"
+        assert job_row[0] == "pending", (
+            f"not-indexed error must release job as pending, got {job_row[0]!r}"
+        )
+        assert job_row[1] == "Waiting for receipt to appear in PURS"
 
     def test_already_parsed_receipt_skips_parsing(self, drain_db):  # noqa: ARG002
         """On retry of an already-parsed receipt, parse_receipt is not called again."""

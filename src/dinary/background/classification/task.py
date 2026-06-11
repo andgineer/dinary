@@ -62,6 +62,29 @@ class InsufficientCategoriesError(Exception):
     """Fewer than 5 active categories; installation is broken."""
 
 
+_TRANSIENT_ERROR_REASONS: tuple[tuple[type[Exception], str], ...] = (
+    (ParserNotIndexedError, "Waiting for receipt to appear in PURS"),
+    (ParserRequestError, "Could not reach PURS — network issue"),
+    (httpx.HTTPError, "Network error, retrying"),
+    (ConnectionError, "AI classification service unavailable"),
+    (RateMissingError, "Exchange rate not available yet"),
+    (InsufficientCategoriesError, "Not enough categories configured"),
+)
+
+
+def _describe_transient_error(exc: Exception) -> str:
+    for exc_type, reason in _TRANSIENT_ERROR_REASONS:
+        if isinstance(exc, exc_type):
+            return reason
+    return "Temporary error, retrying"
+
+
+def _describe_permanent_error(exc: Exception) -> str:
+    if isinstance(exc, ParserParseError):
+        return "Could not read receipt data from PURS"
+    return f"Unexpected error: {exc}"
+
+
 def _retry_delay(retry_count: int) -> int:
     # No ceiling: the schedule tops out at one day but never stops retrying (by design).
     if retry_count == 0:
@@ -254,6 +277,7 @@ async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
                 job.claim_token,
                 new_retry_count,
                 retry_after,
+                _describe_transient_error(exc),
             )
         except Exception:
             logger.exception(
@@ -271,10 +295,10 @@ async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
             job.receipt_id,
             exc,
         )
-        await asyncio.to_thread(_poison, job.receipt_id, str(exc))
+        await asyncio.to_thread(_poison, job.receipt_id, _describe_permanent_error(exc))
     except Exception as exc:
         logger.exception("Permanent error for receipt_id=%s — poisoning", job.receipt_id)
-        await asyncio.to_thread(_poison, job.receipt_id, str(exc))
+        await asyncio.to_thread(_poison, job.receipt_id, _describe_permanent_error(exc))
 
 
 def _release(
@@ -282,9 +306,10 @@ def _release(
     claim_token: str,
     retry_count: int,
     retry_after: str | None,
+    last_error: str | None = None,
 ) -> None:
     with storage.connection() as conn:
-        release_job(conn, receipt_id, claim_token, retry_count, retry_after)
+        release_job(conn, receipt_id, claim_token, retry_count, retry_after, last_error)
 
 
 def _poison(receipt_id: int, error: str) -> None:
