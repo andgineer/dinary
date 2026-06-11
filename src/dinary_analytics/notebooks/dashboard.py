@@ -91,25 +91,25 @@ def _(
 
         _save_button = mo.ui.button(label="Save", on_click=_save_address)
         _blocks = [
-            mo.callout(
-                mo.md(
-                    "**Where to find your server's address**\n\n"
-                    "1. Install [Tailscale](https://tailscale.com/download) on this machine "
-                    "— unless it's already running — and log in with the same account you "
-                    "used on the dinary server.\n"
-                    "2. In the Tailscale app (or "
-                    "https://login.tailscale.com/admin/machines), find your server machine "
-                    "— its name is the MagicDNS hostname, e.g. "
-                    "`https://dinary-host.tailxxxx.ts.net`. That's the same address you "
-                    "already used to install the PWA on your phone.",
-                ),
-                kind="info",
-            ),
+            mo.md("### ⚙ Server address"),
             mo.hstack([_address_field, _save_button], justify="start"),
         ]
         if address_warning():
             _blocks.append(mo.callout(mo.md("Please enter the server address."), kind="warn"))
-        _gate = mo.vstack(_blocks)
+        _blocks.append(
+            mo.md(
+                "**Where to find your server's address**\n\n"
+                "1. Install [Tailscale](https://tailscale.com/download) on this machine "
+                "— unless it's already running — and log in with the same account you "
+                "used on the dinary server.\n"
+                "2. In the Tailscale app (or "
+                "https://login.tailscale.com/admin/machines), find your server machine "
+                "— its name is the MagicDNS hostname, e.g. "
+                "`https://dinary-host.tailxxxx.ts.net`. That's the same address you "
+                "already used to install the PWA on your phone.",
+            ),
+        )
+        _gate = mo.callout(mo.vstack(_blocks), kind="info")
 
     mo.stop(not address_configured(), _gate)
     _gate
@@ -148,7 +148,11 @@ def _(
     mo.stop(not address_configured(), mo.md(""))
 
     _ = refresh_ticker.value
-    _status = fetch_replica_status(MCP_PORT, refresh_requested, set_refresh_requested)
+    if refresh_requested():
+        with mo.status.spinner(title="Requesting refresh…"):
+            _status = fetch_replica_status(MCP_PORT, refresh_requested, set_refresh_requested)
+    else:
+        _status = fetch_replica_status(MCP_PORT, refresh_requested, set_refresh_requested)
 
     _change_address_button = mo.ui.button(
         label="⚙ Change server address",
@@ -187,7 +191,18 @@ def _(
 
 
 @app.cell
-def _(datetime, mo, replica_status, set_address_configured, set_refresh_requested, timezone):
+def _(
+    datetime,
+    mo,
+    refreshing,
+    replica_status,
+    set_address_configured,
+    set_refresh_requested,
+    set_refreshing,
+    timezone,
+):
+    _REFRESH_TIMEOUT_SECONDS = 60  # safety net if the refresh daemon never responds
+
     def _format_last_refresh(last_refresh: str) -> str:
         _dt = datetime.fromisoformat(last_refresh)
         _minutes = int((datetime.now(tz=timezone.utc) - _dt).total_seconds() // 60)
@@ -201,10 +216,14 @@ def _(datetime, mo, replica_status, set_address_configured, set_refresh_requeste
             return f"Data last updated at {_dt.strftime('%H:%M')}"
         return f"Data last updated at {_dt.strftime('%Y-%m-%d %H:%M')}"
 
+    def _on_refresh_click(_v) -> None:
+        set_refresh_requested(True)
+        set_refreshing(datetime.now(tz=timezone.utc).timestamp())
+
     _bar = mo.hstack(
         [
             mo.md(f"🔄 {_format_last_refresh(replica_status['last_refresh'])}"),
-            mo.ui.button(label="Refresh now", on_click=lambda _v: set_refresh_requested(True)),
+            mo.ui.button(label="Refresh now", on_click=_on_refresh_click),
             mo.ui.button(
                 label="⚙ Change server address",
                 on_click=lambda _v: set_address_configured(False),
@@ -213,19 +232,36 @@ def _(datetime, mo, replica_status, set_address_configured, set_refresh_requeste
         justify="start",
     )
 
+    _blocks = [_bar]
+
+    _clicked_at = refreshing()
+    _now = datetime.now(tz=timezone.utc).timestamp()
+    _last_refresh_ts = datetime.fromisoformat(replica_status["last_refresh"]).timestamp()
+    _refresh_done = _clicked_at is None or _last_refresh_ts >= _clicked_at
+    _refresh_pending = (
+        _clicked_at is not None
+        and not _refresh_done
+        and replica_status.get("error") is None
+        and _now - _clicked_at < _REFRESH_TIMEOUT_SECONDS
+    )
+    if _refresh_pending:
+        _blocks.append(
+            mo.callout(
+                mo.md("⏳ **Refresh requested** — this can take a few seconds…"),
+                kind="info",
+            ),
+        )
+
     _refresh_error = replica_status.get("error")
     if _refresh_error:
-        _output = mo.vstack(
-            [
-                _bar,
-                mo.callout(
-                    mo.md(f"**Last refresh attempt failed:** `{_refresh_error}`"),
-                    kind="warn",
-                ),
-            ],
+        _blocks.append(
+            mo.callout(
+                mo.md(f"**Last refresh attempt failed:** `{_refresh_error}`"),
+                kind="warn",
+            ),
         )
-    else:
-        _output = _bar
+
+    _output = mo.vstack(_blocks) if len(_blocks) > 1 else _bar
     _output
 
 
@@ -619,19 +655,25 @@ def _(set_config_json, tag_selector, tag_year_selector, year_selector):
 def _(get_app_url, mo):
     draft_view, set_draft_view = mo.state(None)
     view_list_ver, bump_view_list = mo.state(0)
-    address_configured, set_address_configured = mo.state(get_app_url() is not None)
+    address_configured, set_address_configured = mo.state(
+        get_app_url() is not None,
+        allow_self_loops=True,
+    )
     address_warning, set_address_warning = mo.state(False)
     refresh_requested, set_refresh_requested = mo.state(False)
+    refreshing, set_refreshing = mo.state(None)
     return (
         address_configured,
         address_warning,
         bump_view_list,
         draft_view,
         refresh_requested,
+        refreshing,
         set_address_configured,
         set_address_warning,
         set_draft_view,
         set_refresh_requested,
+        set_refreshing,
         view_list_ver,
     )
 
@@ -663,6 +705,9 @@ def _(mo):
 @app.cell
 def _(mo):
     refresh_ticker = mo.ui.refresh(default_interval="5s")
+    # mo.ui.refresh only fires its periodic ticks while mounted in the page —
+    # it must be part of some cell's output, even if invisible.
+    mo.output.append(refresh_ticker.style({"display": "none"}))
     return (refresh_ticker,)
 
 

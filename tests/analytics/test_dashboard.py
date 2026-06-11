@@ -546,6 +546,134 @@ def test_status_bar_cell_hides_error_callout_when_refresh_ok():
 
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
+def test_status_bar_cell_shows_refresh_requested_feedback_right_after_click():
+    """Clicking 'Refresh now' shows immediate feedback that the request was sent."""
+    import datetime
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    cell = next(
+        c
+        for c in cells
+        if {"replica_status", "set_refresh_requested", "set_address_configured"} <= c.refs
+    )
+
+    _now = datetime.datetime.now(tz=datetime.timezone.utc).timestamp()
+
+    output, _ = cell.run(
+        datetime=datetime.datetime,
+        mo=mo,
+        refreshing=lambda: _now,
+        replica_status={"ok": True, "last_refresh": "2024-01-01T00:00:00+00:00", "error": None},
+        set_address_configured=lambda _v: None,
+        set_refresh_requested=lambda _v: None,
+        set_refreshing=lambda _v: None,
+        timezone=datetime.timezone,
+    )
+
+    _, html = output._mime_()
+    assert "Refresh requested" in html
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_status_bar_cell_hides_refresh_requested_feedback_after_timeout():
+    """The 'Refresh requested' feedback disappears once enough time has passed."""
+    import datetime
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    cell = next(
+        c
+        for c in cells
+        if {"replica_status", "set_refresh_requested", "set_address_configured"} <= c.refs
+    )
+
+    _long_ago = datetime.datetime.now(tz=datetime.timezone.utc).timestamp() - 100
+
+    output, _ = cell.run(
+        datetime=datetime.datetime,
+        mo=mo,
+        refreshing=lambda: _long_ago,
+        replica_status={"ok": True, "last_refresh": "2024-01-01T00:00:00+00:00", "error": None},
+        set_address_configured=lambda _v: None,
+        set_refresh_requested=lambda _v: None,
+        set_refreshing=lambda _v: None,
+        timezone=datetime.timezone,
+    )
+
+    _, html = output._mime_()
+    assert "Refresh requested" not in html
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_status_bar_cell_hides_refresh_requested_feedback_once_refresh_completes():
+    """The 'Refresh requested' feedback disappears as soon as last_refresh advances past the click."""
+    import datetime
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    cell = next(
+        c
+        for c in cells
+        if {"replica_status", "set_refresh_requested", "set_address_configured"} <= c.refs
+    )
+
+    _now = datetime.datetime.now(tz=datetime.timezone.utc)
+    _clicked_at = (_now - datetime.timedelta(seconds=2)).timestamp()
+    _last_refresh = (_now - datetime.timedelta(seconds=1)).isoformat()
+
+    output, _ = cell.run(
+        datetime=datetime.datetime,
+        mo=mo,
+        refreshing=lambda: _clicked_at,
+        replica_status={"ok": True, "last_refresh": _last_refresh, "error": None},
+        set_address_configured=lambda _v: None,
+        set_refresh_requested=lambda _v: None,
+        set_refreshing=lambda _v: None,
+        timezone=datetime.timezone,
+    )
+
+    _, html = output._mime_()
+    assert "Refresh requested" not in html
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_address_gate_cell_shows_field_above_instructions_in_one_panel():
+    """The address field comes first, with the lookup instructions below it, in one panel."""
+    import marimo as mo
+    from marimo import MarimoStopError
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    cell = next(
+        c
+        for c in cells
+        if {"address_configured", "address_warning", "save_server_address"} <= c.refs
+    )
+
+    try:
+        cell.run(
+            address_configured=lambda: False,
+            address_warning=lambda: False,
+            get_app_url=lambda: None,
+            mo=mo,
+            save_server_address=lambda *a, **kw: None,
+            set_address_configured=lambda _v: None,
+            set_address_warning=lambda _v: None,
+            set_refresh_requested=lambda _v: None,
+        )
+    except MarimoStopError as e:
+        output = e.output
+
+    _, html = output._mime_()
+    assert "marimo-callout-output" in html
+    assert html.index("Server address") < html.index("Where to find your server")
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
 def test_followups_cell_renders_clickable_buttons_and_hides_while_pending():
     """Follow-up suggestions render as clickable buttons; hidden while a reply is pending."""
     import marimo as mo
