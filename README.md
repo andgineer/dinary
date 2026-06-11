@@ -42,7 +42,7 @@
 | src/dinary/background/classification/persist.py                |       82 |        1 |     99% |       153 |
 | src/dinary/background/classification/receipt\_classifier.py    |       55 |        0 |    100% |           |
 | src/dinary/background/classification/store\_resolver.py        |       31 |        1 |     97% |        68 |
-| src/dinary/background/classification/task.py                   |      247 |       18 |     93% |109-110, 116-123, 191-205, 306, 355, 502 |
+| src/dinary/background/classification/task.py                   |      257 |       19 |     93% |79, 132-133, 139-146, 214-228, 331, 380, 527 |
 | src/dinary/background/rate\_prefetch/task.py                   |       51 |        2 |     96% |   81, 109 |
 | src/dinary/background/sheet\_logging/income\_sheet\_logging.py |      176 |       46 |     74% |58-63, 89-90, 97-98, 106-108, 119, 152, 165-168, 176-179, 204-205, 217, 234, 240-242, 270-277, 289, 293, 309-310, 317-325 |
 | src/dinary/background/sheet\_logging/logging\_jobs.py          |       63 |        9 |     86% |88-89, 105-111 |
@@ -72,7 +72,7 @@
 | src/dinary\_analytics/refresh.py                               |      100 |        2 |     98% |   50, 161 |
 | src/dinary\_analytics/settings.py                              |       49 |        1 |     98% |        56 |
 | src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        65 |
-| **TOTAL**                                                      | **5205** |  **701** | **87%** |           |
+| **TOTAL**                                                      | **5215** |  **702** | **87%** |           |
 
 
 ## Setup coverage badge
