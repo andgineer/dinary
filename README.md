@@ -50,11 +50,11 @@
 | src/dinary/background/sheet\_logging/sheet\_logging.py         |      221 |       39 |     82% |101-105, 119-126, 134, 200-201, 211, 216-218, 261-263, 286-287, 291-301, 376, 415-416, 427, 431, 458-459, 479-489 |
 | src/dinary/background/sheet\_logging/sheets\_write.py          |       65 |       35 |     46% |114-119, 124-127, 131-136, 158-192 |
 | src/dinary/background/sheet\_logging/task.py                   |       59 |        8 |     86% | 46-59, 98 |
-| src/dinary/category\_templates/loader.py                       |       65 |       16 |     75% |65-66, 80-84, 86-90, 101-102, 112-113, 118-119, 122-123, 128-129 |
+| src/dinary/category\_templates/loader.py                       |       65 |        0 |    100% |           |
 | src/dinary/config.py                                           |      155 |       19 |     88% |38, 48, 111-113, 144, 150, 206-210, 212-216, 219-224, 227-231, 294-296 |
-| src/dinary/db/catalog.py                                       |      122 |       15 |     88% |100-104, 129-139, 210-211 |
-| src/dinary/db/category\_apply.py                               |       35 |        2 |     94% |    75, 85 |
-| src/dinary/db/category\_seed.py                                |       91 |       33 |     64% |131, 211-218, 228-239, 243-249, 253-259, 272-277 |
+| src/dinary/db/catalog.py                                       |      122 |        1 |     99% |       104 |
+| src/dinary/db/category\_apply.py                               |       35 |        0 |    100% |           |
+| src/dinary/db/category\_seed.py                                |       91 |        7 |     92% |211-218, 256-257 |
 | src/dinary/db/classification\_rules.py                         |       37 |        2 |     95% |     66-67 |
 | src/dinary/db/currencies.py                                    |       34 |        5 |     85% |21-22, 59-64 |
 | src/dinary/db/db\_migrations.py                                |       54 |        2 |     96% |    86, 89 |
@@ -77,7 +77,7 @@
 | src/dinary\_analytics/refresh.py                               |      100 |        2 |     98% |   50, 161 |
 | src/dinary\_analytics/settings.py                              |       49 |        1 |     98% |        56 |
 | src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        65 |
-| **TOTAL**                                                      | **5547** |  **754** | **86%** |           |
+| **TOTAL**                                                      | **5547** |  **696** | **87%** |           |
 
 
 ## Setup coverage badge
