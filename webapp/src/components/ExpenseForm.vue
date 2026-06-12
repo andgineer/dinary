@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Calendar, ChevronRight } from "lucide-vue-next";
 import TagPicker from "./TagPicker.vue";
 import ManageList from "./ManageList.vue";
@@ -49,6 +49,7 @@ const categoryId = ref("");
 const eventId = ref("");
 const tagIds = ref([]);
 const userEventOverride = ref(false);
+let suppressGroupCategoryReset = false;
 const submitting = ref(false);
 const justSavedFlash = ref(false);
 const newing = ref(null); // 'group' | 'category' | 'tag' | 'event' | null
@@ -95,6 +96,7 @@ function applyAutoAttachEventForDate() {
 }
 
 watch(groupId, (gid) => {
+  if (suppressGroupCategoryReset) return;
   if (!gid) {
     categoryId.value = "";
     return;
@@ -139,8 +141,14 @@ function reset() {
 function onQuickPick(catId) {
   const cat = catalog.findCategoryById(catId);
   if (!cat) return;
-  categoryId.value = String(catId);
+  // Setting groupId triggers the groupId watcher, which would otherwise reset
+  // categoryId to the group's default. Suppress it so the picked category wins.
+  suppressGroupCategoryReset = true;
   groupId.value = String(cat.group_id);
+  categoryId.value = String(catId);
+  void nextTick(() => {
+    suppressGroupCategoryReset = false;
+  });
 }
 
 async function init() {

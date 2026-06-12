@@ -23,6 +23,7 @@ const SAMPLE = {
     { id: 10, group_id: 1, name: "еда", is_active: true },
     { id: 11, group_id: 1, name: "кафе", is_active: true },
     { id: 12, group_id: 2, name: "такси", is_active: true },
+    { id: 13, group_id: 2, name: "метро", is_active: true },
   ],
   events: [
     {
@@ -139,6 +140,18 @@ describe("ExpenseForm: defaults and selectors", () => {
     sheet.vm.$emit("select", 11);
     await flushPromises();
     expect(wrapper.find('[data-testid="category-pick-btn"]').text()).toContain("кафе");
+  });
+
+  it("category-pick-btn shows the picked category when it crosses into another group", async () => {
+    // Default group is 1; picking "метро" (id 13) lives in group 2, whose default
+    // category is "такси" (id 12). The groupId watcher must not clobber the pick.
+    seedCatalog();
+    const wrapper = mountForm();
+    await flushPromises();
+    const sheet = wrapper.findComponent({ name: "CategorySheet" });
+    sheet.vm.$emit("select", 13);
+    await flushPromises();
+    expect(wrapper.find('[data-testid="category-pick-btn"]').text()).toContain("метро");
   });
 
   it("group/category dropdown block is absent from DOM", async () => {
