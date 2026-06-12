@@ -115,7 +115,7 @@ export const useCatalogStore = defineStore("catalog", () => {
     return resp;
   }
 
-  // ----- visible categories (§3 picker / Manage mode) ---------------------
+  // ----- visible categories (picker / Manage mode) ------------------------
 
   const visibleCategories = ref([]);
   const visibleCategoriesVersion = ref(-1);

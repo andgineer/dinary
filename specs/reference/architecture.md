@@ -189,6 +189,7 @@ For implementation detail on each subsystem see `specs/reference/`:
 | File | Covers |
 |---|---|
 | `catalog-api.md` | Versioning, FK-safe sync, soft/hard delete, auth stance |
+| `category-templates.md` | Category template model: terminology, visibility rules, apply/reconciliation, onboarding |
 | `classification-pipeline.md` | Pipeline design, confidence rules, error handling, event auto-attach |
 | `llm-providers.md` | Broker design, provider pool rationale, failover, prompt design |
 | `pwa-offline.md` | Offline queue, IndexedDB, reconnect pattern |

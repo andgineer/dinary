@@ -17,7 +17,7 @@ from dinary.db.storage import (
     VisibleCategoryRow,
 )
 
-#: The "pickable for new expenses" predicate (category-templates.md): a
+#: The "pickable for new expenses" predicate (specs/reference/category-templates.md): a
 #: category in the active template's visible subset, or one with at least one
 #: expense, and never one the user hid or the vocabulary retired. Assumes the
 #: categories table is aliased ``c`` in the enclosing query.

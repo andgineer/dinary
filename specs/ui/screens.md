@@ -38,6 +38,23 @@ Each tab button: inactive = `color-mix(in srgb, <tabColor> 14%, transparent)` bg
 - **Queue strip** — full-width amber strip below the header row, renders only when `queue.items.length + receiptQueue.items.length > 0`. Shows count + "tap to review →". Tap → `QueueModal`. Stacks above the offline strip when both present.
 - **Offline notice strip** — warning-color strip below the queue strip when `!isOnline`. Copy adapts by view: `Offline — expenses will be queued` on Add, `Offline — incomes can't be added or edited` on Income, generic `Offline — changes not available` elsewhere.
 
+## Onboarding
+
+Before the header/tabs/main shell can render, the app gates on whether a
+category template is active (see
+[category-templates.md](../reference/category-templates.md)):
+
+- **Unknown yet** (initial check in flight) — render nothing. The check is
+  local and sub-100ms, so no spinner.
+- **No template active** — render `OnboardingTemplate` full-screen instead of
+  the header/tabs/main shell: a language selector above `TemplateList`, one
+  tap on a набор applies it and continues into the app.
+- **A template is active** — render the normal app (header + tabs + main) as
+  described below.
+
+This is the only gate in the app — there are no routes or deep links to guard
+separately.
+
 ## Add view
 
 The entry form. The most-used view — `tab` defaults to `'add'`.
@@ -87,6 +104,10 @@ Three fields compressed into one line because each is self-explanatory by conten
 2. **`category-pick-btn`** — 46-px-min-height row, the current category name (or `"Select category…"` placeholder, muted) + right-aligned `ChevronRight` muted. Click / Enter / Space opens `CategorySheet`.
 
 The group is still tracked internally (for the group→category hierarchy logic) and pre-filled when a category is chosen, but no separate group selector is shown to the user.
+
+`CategorySheet`'s search-activate, Manage mode, and "Switch category set" are
+shared cross-cutting behavior — see
+[patterns.md#category-set-search-manage-and-switch](patterns.md#category-set-search-manage-and-switch).
 
 ### Event chips
 

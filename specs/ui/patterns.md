@@ -130,6 +130,59 @@ Toggles a `ManageList` below the field. The list shows active items above inacti
 
 References: `CatalogSelectField.vue`, `ManageList.vue`, `ExpenseForm.vue`.
 
+## Category set: search, manage, and switch
+
+`CategorySheet` is the single surface for everything in
+[category-templates.md](../reference/category-templates.md): picking a
+category, growing the active set, hiding/renaming/moving categories, and
+switching the whole category template (RU: **набор категорий**).
+
+### Search-activate
+
+Typing in the search box (debounced ~300ms) splits results into two groups:
+
+- **In your set** — normal flat rows, selectable like the grouped list.
+- **Not in your set** — a fenced section for matches that are inactive or
+  hidden. A hidden match carries a "hidden" tag so the user can tell it apart
+  from one that's simply not in the active template's subset. Tapping either
+  kind activates it (un-hiding it if needed) and selects it in one tap.
+
+A category that activates with no group yet resolved (no active template, or
+the code isn't placed by the active template) shows inline in the addable
+section labelled "без группы / ungrouped" instead of moving into the grouped
+list.
+
+Each activation from "Not in your set" counts toward the out-of-set nudge
+below.
+
+### Manage mode
+
+A cog toggle next to the search box switches the sheet body from "pick a
+category" to a managed view over the visible set: per category, hide /
+rename (label only) / move to another group; per group, "+ add category"
+(creates a new user category in that group). Hide is sticky — "delete" is
+never offered, since categories are never deleted. Unhiding happens via
+search-activate above, not in Manage mode.
+
+### Switch category set
+
+The first row in Manage mode is "Switch category set → {active набор}".
+Expanding it shows `TemplateList` for every available template, the active one
+marked; tapping one applies it. Switching re-themes groups for the new
+template's categories — the user's used categories stay visible and hidden
+categories stay hidden. This is the only entry point to switching templates;
+appropriate for a rarely-used action (the common path is onboarding, once).
+
+### Out-of-set nudge
+
+If a user repeatedly activates categories from "Not in your set" (3 times
+within 30 days), an info toast suggests opening Manage → Switch category set
+to find a better-fitting набор, then the counter resets so the next nudge
+needs 3 fresh activations.
+
+References: `CategorySheet.vue`, `TemplateList.vue`, `OnboardingTemplate.vue`,
+`composables/oosNudge.js`, `composables/uiLang.js`.
+
 ## Inline create
 
 Replaces the older add-modal pattern. Net-new catalog items are created without leaving the form context.

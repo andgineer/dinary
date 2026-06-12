@@ -160,7 +160,7 @@ function onKeydown(e) {
   }
 }
 
-// ----- Manage mode (§4/§5) ---------------------------------------------
+// ----- Manage mode --------------------------------------------------------
 
 const manageMode = ref(false);
 const switchExpanded = ref(false);

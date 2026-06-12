@@ -27,8 +27,8 @@ from dinary.db.category_apply import apply_template
 
 _DEFAULT_LANG = "ru"
 
-# Onboarding display order (category-templates.md "Onboarding templates"):
-# Simple first "so almost anyone finds a fit fast". Not load_templates()'s
+# Onboarding display order (specs/reference/category-templates.md): Simple
+# first "so almost anyone finds a fit fast". Not load_templates()'s
 # alphabetical-by-filename order, which is a parsing convenience only.
 TEMPLATE_SORT_ORDER = {"simple": 0, "active": 1, "family": 2, "freelancer": 3}
 
