@@ -66,6 +66,12 @@ def _convert_boolean(raw: bytes) -> bool:
     return bool(int(raw))
 
 
+def _unicode_lower(value: str | None) -> str | None:
+    # SQLite's built-in LOWER() only case-folds ASCII; override it with
+    # Python's Unicode-aware str.lower() for non-ASCII scripts (e.g. Cyrillic).
+    return value.lower() if value is not None else None
+
+
 sqlite3.register_adapter(Decimal, _adapt_decimal)
 sqlite3.register_adapter(date, _adapt_date)
 sqlite3.register_adapter(datetime, _adapt_datetime)
@@ -104,6 +110,7 @@ def connect(
         )
         con.execute("PRAGMA foreign_keys=ON")
         con.row_factory = sqlite3.Row
+        con.create_function("LOWER", 1, _unicode_lower, deterministic=True)
         return con
     con = sqlite3.connect(
         path,
@@ -117,6 +124,7 @@ def connect(
     con.execute("PRAGMA foreign_keys=ON")
     con.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")
     con.row_factory = sqlite3.Row
+    con.create_function("LOWER", 1, _unicode_lower, deterministic=True)
     return con
 
 

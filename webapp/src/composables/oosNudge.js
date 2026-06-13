@@ -28,6 +28,8 @@ function writeActivations(timestamps) {
 // Tracks out-of-set activations from CategorySheet's "Not in your set"
 // search section. After 3 activations within 30 days, shows an info toast
 // once and resets the counter so the next nudge requires 3 fresh activations.
+// Returns true when the nudge toast was shown, so the caller can skip its
+// own toast instead of immediately replacing the nudge.
 export function recordOutOfSetActivation() {
   const now = Date.now();
   const cutoff = now - WINDOW_MS;
@@ -37,7 +39,8 @@ export function recordOutOfSetActivation() {
   if (pruned.length >= NUDGE_THRESHOLD) {
     useToastStore().show(NUDGE_MESSAGE, "info");
     writeActivations([]);
-    return;
+    return true;
   }
   writeActivations(pruned);
+  return false;
 }

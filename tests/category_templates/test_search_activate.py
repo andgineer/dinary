@@ -48,6 +48,20 @@ class TestSearchCategories:
 
         assert not any(r.code == "fruit" for r in results)
 
+    def test_finds_category_with_capitalized_query(self, con):
+        # 'sport' is stored as lowercase "спорт" under 'simple'.
+        results = search_categories(con, "Спо")
+
+        assert any(r.code == "sport" for r in results)
+
+    def test_finds_category_with_capitalized_name(self, con):
+        # Other templates rename 'sport' to capitalized "Спорт".
+        con.execute("UPDATE categories SET name = 'Спорт' WHERE code = 'sport'")
+
+        results = search_categories(con, "спо")
+
+        assert any(r.code == "sport" for r in results)
+
 
 @allure.epic("Category templates")
 @allure.feature("Activate")

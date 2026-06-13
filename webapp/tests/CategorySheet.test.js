@@ -36,6 +36,7 @@ function mountSheet(props = {}) {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -185,6 +186,30 @@ describe("CategorySheet — search: in-set results", () => {
     expect(w.find(".no-results").text()).toBe("No matches");
     expect(w.find('[data-testid="addable-section"]').exists()).toBe(false);
   });
+
+  it("drops a stale response that resolves after the query changed", async () => {
+    let resolveFirst;
+    vi.spyOn(catalogApi, "searchCategories").mockImplementation((q) => {
+      if (q === "a") return new Promise((resolve) => { resolveFirst = resolve; });
+      return Promise.resolve([
+        { id: 20, code: "taxi", name: "Taxi", is_active: true, is_hidden: false },
+      ]);
+    });
+    const { w } = mountSheet();
+
+    await search(w, "a");
+    await search(w, "ab");
+
+    resolveFirst([
+      { id: 10, code: "groceries", name: "Groceries", is_active: true, is_hidden: false },
+    ]);
+    await flushPromises();
+    await nextTick();
+
+    const items = w.findAll(".flat-item");
+    expect(items).toHaveLength(1);
+    expect(items[0].text()).toContain("Taxi");
+  });
 });
 
 describe("CategorySheet — search: 'Not in your set' addable section", () => {
@@ -245,6 +270,35 @@ describe("CategorySheet — search: 'Not in your set' addable section", () => {
     expect(toast.type).toBe("info");
     expect(w.emitted("select")?.[0]).toEqual([30]);
     expect(w.emitted("close")).toBeTruthy();
+  });
+
+  it("on the 3rd out-of-set activation, shows the switch-набор nudge instead of the 'added' toast", async () => {
+    localStorage.setItem(
+      "dinary:catalog:oosActivations",
+      JSON.stringify([Date.now(), Date.now()]),
+    );
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
+      { id: 30, code: "concerts", name: "Concerts", is_active: false, is_hidden: false },
+    ]);
+    vi.spyOn(catalogApi, "activateCategory").mockResolvedValue({ catalog_version: 2 });
+    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+      catalog_version: 2,
+      categories: [
+        ...VISIBLE_CATEGORIES,
+        { id: 30, code: "concerts", name: "Concerts", group_id: 3, group_name: "Leisure", group_sort_order: 3, group_code: "leisure" },
+      ],
+    });
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const { w } = mountSheet();
+    await search(w, "co");
+
+    await w.find(".addable-item").trigger("click");
+    await flushPromises();
+
+    const toast = useToastStore();
+    expect(toast.message).toMatch(/Switch category set/);
+    expect(toast.message).not.toBe('"Concerts" added to your set');
   });
 
   it("activating a hidden result calls unhideCategory", async () => {

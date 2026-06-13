@@ -42,7 +42,6 @@ const searchResults = ref([]);
 const activatingCode = ref(null);
 
 let debounceTimer = null;
-let searchSeq = 0;
 
 watch(
   () => props.open,
@@ -67,13 +66,14 @@ watch(query, (q) => {
     searchResults.value = [];
     return;
   }
-  const seq = ++searchSeq;
   debounceTimer = setTimeout(async () => {
     try {
       const results = await catalog.searchCategories(trimmed);
-      if (seq === searchSeq) searchResults.value = results;
+      // Drop the response if the query changed while it was in flight —
+      // a newer debounce cycle is already handling the current text.
+      if (query.value.trim() === trimmed) searchResults.value = results;
     } catch (e) {
-      if (seq === searchSeq) toast.show(e?.message || "Search failed", "error");
+      if (query.value.trim() === trimmed) toast.show(e?.message || "Search failed", "error");
     }
   }, SEARCH_DEBOUNCE_MS);
 });
@@ -135,8 +135,10 @@ async function selectAddable(item) {
     } else {
       await catalog.activateCategory(item.code);
     }
-    recordOutOfSetActivation();
-    toast.show(`"${item.name}" added to your set`, "info");
+    const nudged = recordOutOfSetActivation();
+    if (!nudged) {
+      toast.show(`"${item.name}" added to your set`, "info");
+    }
     item.is_active = true;
     item.is_hidden = false;
     const visible = catalog.visibleCategoryByCode(item.code);
