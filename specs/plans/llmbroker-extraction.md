@@ -20,9 +20,9 @@ The design optimizes two things at once:
   with a non-standard requirement implements **one small port**, reusing shipped
   implementations for everything else.
 - **It tunes itself.** The package does not just log calls — a background
-  optimizer reads telemetry (per provider *and per task type*) and **acts**:
+  optimizer reads telemetry (per provider *and per operation*) and **acts**:
   auto-adjusts cooldowns/delays, offlines and re-probes bad providers, and routes
-  each task type to the providers that empirically handle it best. The goal is
+  each operation to the providers that empirically handle it best. The goal is
   "it just works" — not a feed of advice about free providers the user will never
   read. A human is bothered only by what only a human can fix (pool
   under-provisioned, API key dead).
@@ -86,7 +86,7 @@ Dataclasses keep descriptive names so short ports pair with clear data:
 |---|---|
 | `Registry.load()` | `list[ProviderConfig]` |
 | `SharedState.snapshot()` | `dict[str, ProviderHealth]` |
-| `Telemetry.record(event)` | `CallEvent` |
+| `Telemetry.record(call)` | `Call` |
 | `Secrets.resolve(ref)` | `str` (the key) |
 
 `provider` (an `(base_url, api_key, model)` endpoint) stays the public term —
@@ -113,8 +113,8 @@ shipped battery; a reader stops at the first rung that fits.
    ```python
    import llmbroker
 
-   broker = llmbroker.Broker(registry=llmbroker.Registry.toml("providers.toml"))
-   reply = (await broker.ask("Summarize this receipt: ...")).text
+   llm = llmbroker.Broker(registry=llmbroker.Registry.toml("providers.toml"))
+   reply = (await llm.ask("Summarize this receipt: ...", operation="summary")).text
    ```
 
 State is in-memory, telemetry goes to the log, keys come from env. Nothing to
@@ -136,7 +136,7 @@ there is nothing to share.
 registry = await llmbroker.Registry.sqlite("broker.db").import_if_empty(
     llmbroker.Registry.toml("providers.toml"),
 )
-broker = llmbroker.Broker(
+llm = llmbroker.Broker(
     registry=registry,
     telemetry=llmbroker.Telemetry.sqlite("broker.db"),
     # no shared_state= → single process (Rung 2 adds it for clusters)
@@ -196,10 +196,10 @@ class CallStatus(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class CallEvent:
-    label: str
-    task_type: str | None
-    trace_id: Hashable | None
+class Call:
+    provider: str
+    operation: str | None
+    trace_id: str | None
     status: CallStatus                   # coarse transport outcome — the axis routing reacts to
     http_status: int | None = None       # exact code (500/timeout → None); captured now, unrecoverable later
     latency_ms: int | None = None
@@ -231,18 +231,18 @@ class SharedState(Protocol):
 
 
 class Telemetry(Protocol):
-    async def record(self, event: CallEvent) -> None: ...
+    async def record(self, call: Call) -> None: ...
     # Optional read/aggregation surface (queryable batteries — sqlite/jsonl/postgres —
     # implement it; log()/none() do not). Powers a host admin UI AND the Optimizer
     # warm-start, so neither needs raw SQL:
-    # async def provider_usage(self, *, since: datetime) -> dict[str, ProviderUsage]: ...
-    # async def recent(self, *, limit: int) -> list[CallEvent]: ...
-    # async def purge(self, *, trace_id: Hashable) -> None: ...  # cascade delete by correlation id
+    # async def provider_stats(self, *, since: datetime) -> dict[str, ProviderStats]: ...
+    # async def recent(self, *, limit: int) -> list[Call]: ...
+    # async def purge(self, *, trace_id: str) -> None: ...  # cascade delete by correlation id
 ```
 
 - **The schema is private; the API is the public contract.** No host issues raw
-  SQL against `llmbroker_providers`/`llmbroker_call_log` — config goes through the
-  `Registry` admin surface, live state through `broker.provider_health()`, and
+  SQL against `llmbroker_providers`/`llmbroker_calls` — config goes through the
+  `Registry` admin surface, live state through `llm.provider_health()`, and
   call-log aggregation/cleanup through the `Telemetry` read surface above. This is
   what lets the package own and evolve its schema independently after extraction;
   a host admin UI is built entirely on typed methods, and it works identically over
@@ -250,11 +250,11 @@ class Telemetry(Protocol):
 - **Only `Registry.load()` is mandatory** for a custom backend; the admin
   methods (`add`/`update`/`remove`) are an optional mixin the **host admin UI**
   drives, never the broker. The queryable `Telemetry` read surface
-  (`provider_usage`/`recent`/`purge`) is the analogous optional mixin for the
+  (`provider_stats`/`recent`/`purge`) is the analogous optional mixin for the
   call-log side; `log()`/`none()` omit it.
-- `ProviderUsage` is a small read-model dataclass for admin aggregates
+- `ProviderStats` is a small read-model dataclass for admin aggregates
   (per-provider `call_count` over the window, `last_status`, `last_at`) — derived
-  from `CallEvent` rows, never a stored table of its own.
+  from `Call` rows, never a stored table of its own.
 - `SharedState` is **optional and cluster-only** — omit `shared_state=` and the
   broker uses its private in-memory state. There is no public "in-memory
   SharedState" object; single-process is the absence of the parameter.
@@ -269,7 +269,7 @@ class Telemetry(Protocol):
   Protocol-breaking change — a node writes the whole `ProviderHealth` (state
   included), so optimizer-driven transitions propagate over `snapshot()` with no
   new method.
-- `CallEvent` captures `prompt_tokens`/`completion_tokens` (objective, read from
+- `Call` captures `prompt_tokens`/`completion_tokens` (objective, read from
   the response `usage` when present) and `quality_score` from P1 because
   telemetry is **append-only** — a column added later starts with no history,
   which is exactly the data the Optimizer needs. `quality_score` is **orthogonal
@@ -277,9 +277,9 @@ class Telemetry(Protocol):
   `status=CallStatus.OK`), `quality_score` is whether that answer was usable. **Cost is
   deliberately not stored** — it is `tokens × a price table`, a host/Optimizer
   concern derived later from the tokens, not a raw signal to journal. The
-  **source** of `quality_score` (host `rate()` vs the P5 LLM-judge) is **not**
+  **source** of `quality_score` (host `score()` vs the P5 LLM-judge) is **not**
   a separate column in P1: until the judge exists every score is a host
-  `rate()` ground truth, so pre-judge rows are unambiguous and a
+  `score()` ground truth, so pre-judge rows are unambiguous and a
   `quality_source` column can be added with the judge (P5) with no lost history —
   unlike `tokens`/`quality_score` themselves, whose per-row values are
   unrecoverable if not captured now.
@@ -290,27 +290,27 @@ class Telemetry(Protocol):
 - **Two entry points, each with one clean type — no polymorphic parameter.**
   `chat` is the full API and always takes a chat messages array; `ask` is a thin
   convenience for the dominant single-user-turn case. Both return a `Result`
-  handle exposing `.text`, `.usage`, and `.rate(...)`:
+  handle exposing `.text`, `.usage`, and `.score(...)`:
   ```python
   async def chat(
       messages: list[dict],          # full chat array; each message carries its own role
       *,
       model: str | None = None,      # per-call override of ProviderConfig.model
-      task_type: str | None = None,
-      trace_id: Hashable | None = None,
+      operation: str | None = None,
+      trace_id: str | None = None,
       **provider_params,             # temperature, tools, response_format… → into the request body as-is
   ) -> Result
 
   async def ask(prompt: str, **kw) -> Result
       # sugar: chat([{"role": "user", "content": prompt}], **kw)
   ```
-  Rung 0 is `broker.ask("Summarize …")`; anything beyond one user turn (system
+  Rung 0 is `llm.ask("Summarize …")`; anything beyond one user turn (system
   prompt, multi-turn history, assistant context) goes through `chat(messages)`.
   Keeping `messages` a single honest type avoids the `str | list` chameleon — the
   convenience lives in a separate, unambiguous method, not in an overloaded arg.
 - Both `ask` and `chat` take an opaque `trace_id` (correlation) and a
-  `task_type: str | None` (a host-defined category — e.g. `"receipt_classification"`,
-  `"summary"`). `task_type` is what lets the `Optimizer` tune and route per type,
+  `operation: str | None` (a host-defined category — e.g. `"receipt_classification"`,
+  `"summary"`). `operation` is what lets the `Optimizer` tune and route per operation,
   so it is captured from day one even though the Optimizer is built later.
 - **`ask`/`chat` raise rather than returning a sentinel.** A `BrokerError` hierarchy —
   `NoProviderAvailable` (every provider in cooldown, nothing to call) and
@@ -318,16 +318,16 @@ class Telemetry(Protocol):
   `str | None` return, so "no capacity" is never confused with an empty answer and
   callers distinguish "retry later" from "all dead".
 
-`Result.rate(score: float)` (quality feedback on an HTTP-200 but imperfect
+`Result.score(value: float)` (quality feedback on an HTTP-200 but imperfect
 answer) records the score into the broker's live state (mirrored to `SharedState`
-if present) and emits a `CallEvent` to telemetry with `status=CallStatus.OK` but
-`quality_score=score` — the call succeeded at the transport layer, the answer is
+if present) and emits a `Call` to telemetry with `status=CallStatus.OK` but
+`quality_score=value` — the call succeeded at the transport layer, the answer is
 judged separately, so quality is attributed apart from the HTTP outcome. A host
-marks an unusable answer with `rate(0.0)`; the P5 LLM-judge reuses the **same**
+marks an unusable answer with `score(0.0)`; the P5 LLM-judge reuses the **same**
 method to fill sampled non-binary scores, so there is one write path into
 `quality_score`.
-`CallEvent` carries `task_type` alongside `trace_id`, so quality, tokens, and
-latency can all be attributed per (provider, task type).
+`Call` carries `operation` alongside `trace_id`, so quality, tokens, and
+latency can all be attributed per (provider, operation).
 
 ---
 
@@ -459,7 +459,7 @@ The package ships an `Optimizer`: a background control loop (like the provider
 refresh) that reads telemetry and *acts*, not just reports.
 
 ```python
-broker = llmbroker.Broker(
+llm = llmbroker.Broker(
     registry=Registry.sqlite("broker.db"),
     telemetry=Telemetry.sqlite("broker.db"),   # queryable → warm-start + analysis (optimizer runs on any backend)
     optimize=True,                              # default-on; learns from the live event stream
@@ -467,16 +467,16 @@ broker = llmbroker.Broker(
 ```
 
 **The Optimizer's working state is a live in-memory aggregate, not journal data.**
-It feeds off the **live event stream** — every `Telemetry.record(event)` updates
-rolling per-(provider, task_type) stats in memory (the Optimizer interposes at the
+It feeds off the **live event stream** — every `Telemetry.record(call)` updates
+rolling per-(provider, operation) stats in memory (the Optimizer interposes at the
 `record()` seam, e.g. as a `Telemetry` decorator, so this works with *any* backend
-including `log()`/`none()`). The append-only journal (`CallEvent` rows) stays the
+including `log()`/`none()`). The append-only journal (`Call` rows) stays the
 durable source of truth; the Optimizer's rankings/tuning are a derived projection
 of it. That projection **may** be checkpointed to its **own** table for a fast warm
-start — but is never written back into the append-only `call_log` (mixing a mutable
+start — but is never written back into the append-only `llmbroker_calls` (mixing a mutable
 projection into an event log is a category error). Whether to checkpoint or simply
 recompute from the journal on start is a **P4 open question**, not a P1 lock. Either
-way, `CallEvent` must be rich from day one: a column added later starts with no
+way, `Call` must be rich from day one: a column added later starts with no
 history, and historical warm-start/backfill is exactly what a queryable backend
 buys.
 
@@ -495,15 +495,15 @@ buys.
   | Probing       | Success     | Available | Reset to Initial Delay      |
   | Probing       | Failure     | Offline   | Restart Sleep / Alarm        |
 
-- **Task routing** — bias selection of each `task_type` toward the providers that
+- **Operation routing** — bias selection of each `operation` toward the providers that
   empirically handle it best. The policy is **tiered / lexicographic, not a
   weighted-sum scalar** (`w·quality + w·latency + w·cost` is untunable — the terms
   are not commensurable, and a latency win must never "buy back" a quality loss):
   1. **Availability gate** — candidates are providers not in cooldown (the FSM
      already drops Waiting/Offline); residual flakiness is a soft tiebreak.
-  2. **Quality floor gate** — drop providers whose per-`task_type` usable-rate is
+  2. **Quality floor gate** — drop providers whose per-`operation` usable-rate is
      below a floor. Quality is a gate, not a tradeable term.
-  3. **Objective ranking — the objective lives with the `task_type`.** A
+  3. **Objective ranking — the objective lives with the `operation`.** A
      background batch type (e.g. `receipt_classification`) ranks the gated set by
      quality; an interactive type ranks by latency. There is no single global
      weighting that is right for both.
@@ -518,18 +518,18 @@ buys.
   providers keep being sampled (else their stats go stale and recovery/decay is
   invisible), and a Bayesian usable-rate for the **sparse** quality signal. The
   broker exposes a pluggable **selection policy**; the default is round-robin, and
-  the Optimizer swaps in the per-`task_type` ranking it maintains from telemetry.
+  the Optimizer swaps in the per-`operation` ranking it maintains from telemetry.
   Concrete thresholds and the bandit flavor are a P4 open question; the tiering and
-  the per-`task_type`-objective principle are the decided shape.
+  the per-`operation`-objective principle are the decided shape.
 - **Pool hygiene** — automatically deprioritize/retire consistently-useless
   providers. Nothing for a human to read.
 
 **What it may use an LLM for** (optional, sampled, never on the hot path):
 
-- **Quality judging** — sample outputs per (provider, task_type) and score them
+- **Quality judging** — sample outputs per (provider, operation) and score them
   with an LLM-as-judge, closing the quality loop *without* the host having to call
-  `rate()`. The judge call goes through the broker itself (dogfooding) under a
-  low-priority `task_type` and **degrades gracefully** if no provider is free — it
+  `score()`. The judge call goes through the broker itself (dogfooding) under a
+  low-priority `operation` and **degrades gracefully** if no provider is free — it
   is optional intelligence, never required for the broker to function.
 - **Ambiguous tuning/routing judgement** when threshold rules are inconclusive.
 
@@ -544,12 +544,12 @@ of trivia about individual free providers.
   Available↔Waiting, live `call_later` re-enqueue — runs regardless of telemetry
   backend. It reacts to live responses, not to stored history.
 - **Optimizer (learned):** delay tuning, the Offline→Probing→Active recovery, and
-  per-`task_type` routing. It learns from the **live event stream** (in-memory
+  per-`operation` routing. It learns from the **live event stream** (in-memory
   rolling aggregates), so it is **not** gated on a queryable backend — with
   `Telemetry.log()`/`none()` it simply boots **cold** and learns from live traffic.
   A **queryable** backend (`sqlite`/`jsonl`/`postgres`) is an accelerator, not a
   gate: it warm-starts those aggregates after a restart and enables ad-hoc
-  analysis. This is why `task_type` (and tokens/quality) are captured from P1 —
+  analysis. This is why `operation` (and tokens/quality) are captured from P1 —
   you cannot warm-start or back-fill data you never recorded.
 
 ---
@@ -579,9 +579,9 @@ Broker(
 
 The `sqlite` batteries self-manage their tables via `ensure_schema(db)`:
 `Registry.sqlite` owns the config table `llmbroker_providers`, `Telemetry.sqlite`
-owns `llmbroker_call_log`. The `call_log` schema includes three nullable columns
+owns `llmbroker_calls`. The `llmbroker_calls` schema includes three nullable columns
 — `prompt_tokens`, `completion_tokens`, `quality_score` — so the Optimizer has
-token and quality history from day one (see the `CallEvent` rationale in
+token and quality history from day one (see the `Call` rationale in
 "Ports"). `ensure_schema` is the **single authority** for the package's schema:
 no host migration ever builds, alters, or owns these tables (see "Coexisting with
 host migration tools").
@@ -631,7 +631,7 @@ database. Two failure modes follow, and the package must prevent both:
 
 ### Rule 1 — every DB object carries the `llmbroker_` prefix
 
-Tables (`llmbroker_providers`, `llmbroker_call_log`), the schema-version marker,
+Tables (`llmbroker_providers`, `llmbroker_calls`), the schema-version marker,
 **and every index, unique-constraint, and trigger** the batteries create are
 named `llmbroker_*`. This makes the package's whole footprint filterable by a
 single prefix and collision-safe:
@@ -689,9 +689,9 @@ Create `src/llmbroker/` with the broker core, the ports, and the
 provider state + `log`/`none`/`jsonl`/`sqlite` telemetry batteries — enough to
 serve Rung 0/1 and carry dinary with unchanged request-path behavior. The
 `SharedState` port (the cluster seam) is defined in P1; its backends land in P3.
-Also capture the Optimizer's future inputs on every call — `task_type`
+Also capture the Optimizer's future inputs on every call — `operation`
 (`ask`/`chat`), `prompt_tokens`/`completion_tokens` (from the response
-`usage`), and `quality_score` (`rate(0.0)` → 0.0) into `CallEvent` — so the
+`usage`), and `quality_score` (`score(0.0)` → 0.0) into `Call` — so the
 data exists before the `Optimizer` control loop, which itself lands in Phase 4.
 P1 also ships the host-coexistence surface: every DB object is `llmbroker_`-
 prefixed, `ensure_schema` is version-aware (initial create now; additive
@@ -699,25 +699,25 @@ data-preserving ALTERs hang off the version marker in later releases), and
 `llmbroker.alembic.include_object` is exported (see "Coexisting with host migration
 tools"). Because the DB schema is **private**, P1 also ships the admin API that
 replaces raw SQL — the `Registry` admin surface (`add`/`update`/`remove`) and the
-queryable `Telemetry` read surface (`provider_usage`/`recent`/`purge`) — and
+queryable `Telemetry` read surface (`provider_stats`/`recent`/`purge`) — and
 reworks dinary's admin to consume it. dinary's side gets the one-off `0007` drop
 migration that hands schema ownership to the package.
 
 ```
 src/llmbroker/
   __init__.py            # public API: Broker, Registry, Secrets, SharedState, Telemetry,
-                         #             ProviderConfig, ProviderHealth, CallEvent, CallStatus, Result,
+                         #             ProviderConfig, ProviderHealth, Call, CallStatus, Result,
                          #             BrokerError/NoProviderAvailable/AllProvidersFailed
   alembic.py             # include_object (llmbroker_-prefix predicate) — host migration-tool coexistence;
                          #             tool-named submodule, accessed as llmbroker.alembic.include_object
   chat.py                # from adapters/llm_chat.py — ProviderConfig moves to models.py;
-                         #             response parsing also surfaces `usage` tokens for CallEvent; else verbatim
+                         #             response parsing also surfaces `usage` tokens for Call; else verbatim
   broker.py              # from adapters/llmbroker.py — ports renamed, internal state + SharedState reconcile,
-                         #             ask() sugar, tokens/quality_score into CallEvent
+                         #             ask() sugar, tokens/quality_score into Call
   models.py              # ProviderConfig (config only — rate_limited_until moves to ProviderHealth),
                          #             ProviderState, ProviderHealth (full state machine),
-                         #             CallEvent (task_type + prompt/completion tokens + quality_score),
-                         #             ProviderUsage (admin read-model: call_count/last_status/last_at)
+                         #             Call (operation + prompt/completion tokens + quality_score),
+                         #             ProviderStats (admin read-model: call_count/last_status/last_at)
   state.py               # private in-memory per-provider live state (always-on; not a public port)
   schema.py              # ensure_schema for sqlite batteries: version-aware (creates + applies
                          #             additive, data-preserving ALTERs against an llmbroker_-prefixed
@@ -729,10 +729,10 @@ src/llmbroker/
   secrets.py             # Secrets Protocol, Secrets.env() (default), Secrets.dict(), callable adapter
   shared_state.py        # SharedState Protocol (cluster seam; redis/postgres/mongodb backends in P3)
   telemetry/
-    __init__.py          # Telemetry Protocol (record + optional read surface: provider_usage/recent/purge)
+    __init__.py          # Telemetry Protocol (record + optional read surface: provider_stats/recent/purge)
     log.py               # Telemetry.log() (default), Telemetry.none() — record-only, no read surface
     jsonl.py             # Telemetry.jsonl() (record + read surface)
-    sqlite.py            # Telemetry.sqlite() (llmbroker_call_log; record + read surface: provider_usage/recent/purge)
+    sqlite.py            # Telemetry.sqlite() (llmbroker_calls; record + read surface: provider_stats/recent/purge)
   cli.py                 # python -m llmbroker env-template <toml> | import <toml> --into ... --on-conflict ...
   data/
     providers.example.toml
@@ -796,14 +796,14 @@ left as documented optimizations.
 The core value, built once telemetry capture (P1) exists. The Optimizer learns
 from the **live event stream** (in-memory rolling aggregates at the
 `Telemetry.record()` seam), so it runs on any backend; the **queryable read
-surface** (`provider_usage`/`recent` — already shipped in P1 for the admin UI, on
+surface** (`provider_stats`/`recent` — already shipped in P1 for the admin UI, on
 `Telemetry.sqlite`/`jsonl` and `postgres` from P3) is for **warm-start after a
 restart and ad-hoc analysis**, not a precondition. The Optimizer reuses that same
 read surface rather than introducing its own. Add a pluggable **selection
 policy** seam to the broker (default round-robin). Build the background `Optimizer`
-that: computes per-(provider, task_type) stats; auto-tunes cooldowns/delays and
+that: computes per-(provider, operation) stats; auto-tunes cooldowns/delays and
 runs the offline→probe→active recovery (the state model in "Autonomous
-optimization"); maintains a per-`task_type` routing ranking the broker selection
+optimization"); maintains a per-`operation` routing ranking the broker selection
 consults; and exposes `alerts()` for the human-only items (under-provisioned, dead
 key). Selection strategy: first 0-wait provider, else minimal remaining wait —
 biased by the routing ranking. Default-on; with `Telemetry.log()`/`none()` it boots
@@ -813,9 +813,9 @@ the Optimizer has learned from live traffic.
 ### Phase 5 — LLM-in-the-loop deepening (future, not scheduled here)
 
 The Optimizer's *optional* use of an LLM: LLM-as-judge quality scoring on sampled
-outputs per (provider, task_type) to close the quality loop without host
-`rate()`, and LLM judgement for ambiguous tuning/routing. Always sampled,
-off the hot path, dogfooded through the broker under a low-priority `task_type`,
+outputs per (provider, operation) to close the quality loop without host
+`score()`, and LLM judgement for ambiguous tuning/routing. Always sampled,
+off the hot path, dogfooded through the broker under a low-priority `operation`,
 and gracefully skipped when no provider is free. Plus richer fail statistics
 (API-key-expiration diagnostics) and per-provider Initial/Min/Max delay tuning.
 
@@ -836,7 +836,7 @@ later restarts.
 from llmbroker import Broker, Registry, Telemetry
 ...
 registry = Registry.sqlite(storage.DB_PATH)
-broker = Broker(
+llm = Broker(
     registry=registry,
     telemetry=Telemetry.sqlite(storage.DB_PATH),
     # no shared_state= — dinary runs one process, live state stays in memory
@@ -859,18 +859,18 @@ every piece of data through a typed `llmbroker` API:
   (`add`/`update`/`remove`), replacing the raw `db.storage.transaction()` SELECT/
   INSERT/UPDATE/DELETE over `llmbroker_providers`.
 - **Live cooldown/fail** → a small read-only endpoint surfacing
-  `broker.provider_health()`. The `rate_limited_until`/`execution_fail_count`
+  `llm.provider_health()`. The `rate_limited_until`/`execution_fail_count`
   columns are gone after `0007`; live state is the only source.
 - **`used_today`/`last_status` aggregation** → the `Telemetry` read surface
-  (`provider_usage(since=...)`), replacing the raw aggregation query over
-  `llmbroker_call_log`.
+  (`provider_stats(since=...)`), replacing the raw aggregation query over
+  `llmbroker_calls`.
 
 The webapp admin LLM page keeps its existing shape: `llm_status()` returns the
 same payload keys (`rate_limited_until`, `execution_fail_count`, `used_today`,
-`last_status`), now assembled from `provider_health()` + `provider_usage()`
+`last_status`), now assembled from `provider_health()` + `provider_stats()`
 instead of table columns, so **no frontend change** is required. Audit for any
 remaining code that names the two tables in SQL (e.g.
-`tests/api/test_api_delete_receipt.py`'s reference to `llmbroker_call_log`,
+`tests/api/test_api_delete_receipt.py`'s reference to `llmbroker_calls`,
 likely a per-receipt cascade) and route it through `Telemetry.purge(trace_id=...)`
 or drop it — after this rework **no dinary code names `llmbroker_*` tables**.
 
@@ -880,14 +880,14 @@ its keys move to env / the deploy secret store (a migration note for ops).
 
 **Schema migration `0007`** (next free number after `0006_category_templates` —
 confirm at implementation time)**:** **drop** the `llmbroker_*` objects
-(`llmbroker_providers`, `llmbroker_call_log`, and any legacy indexes) so that
+(`llmbroker_providers`, `llmbroker_calls`, and any legacy indexes) so that
 `llmbroker`'s `ensure_schema` becomes their sole creator and owner. On the next
 startup the sqlite batteries recreate both tables in their current shape —
 including the `prompt_tokens`/`completion_tokens`/`quality_score` call-log
 columns and **without** the legacy `rate_limited_until`/`execution_fail_count`
 config columns — and the startup `import_if_empty` re-fills `llmbroker_providers`
 from `.deploy/llm_providers.toml`. This **discards existing local
-`llmbroker_call_log` history once** — acceptable and intentional: dinary is the
+`llmbroker_calls` history once** — acceptable and intentional: dinary is the
 package's single local instance, that table data is disposable, and provider
 config is re-imported from the TOML. This DROP is a **one-off cleanup of dinary's
 pre-extraction tables**, not how the package upgrades in general — post-extraction
@@ -900,10 +900,10 @@ the existing migrations deploy machinery (`tasks/deploy.py` already ships
 |---|---|
 | `src/dinary/background/classification/task.py` | `from dinary.adapters.llmbroker import LLMBroker` → `from llmbroker import Broker`; rename `LLMBroker` references to `Broker` |
 | `src/dinary/background/classification/store_resolver.py` | same |
-| `src/dinary/background/classification/receipt_classifier.py` | `from dinary.adapters.llmbroker import Execution, LLMBroker` → `from llmbroker import Broker, Result` (rename `LLMBroker`→`Broker`, `Execution`→`Result`); pass `task_type="receipt_classification"` to `chat()` so the Optimizer can tune/route per task type |
+| `src/dinary/background/classification/receipt_classifier.py` | `from dinary.adapters.llmbroker import Execution, LLMBroker` → `from llmbroker import Broker, Result` (rename `LLMBroker`→`Broker`, `Execution`→`Result`); pass `operation="receipt_classification"` to `chat()` so the Optimizer can tune/route per operation |
 | `src/dinary_analytics/llm.py` | `from dinary.adapters.llm_chat import (...)` → `from llmbroker import (...)` |
 | `tasks/receipt.py` | `LLMBroker(TomlLLMBrokerStorage())` → `Broker(registry=Registry.toml(_PROVIDERS_TOML))` with `_PROVIDERS_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llm_providers.toml"` |
-| `src/dinary/api/controllers/llm.py` | drop all raw SQL over `llmbroker_*`; provider CRUD via `Registry` admin (`load`/`add`/`update`/`remove`), aggregation via `Telemetry.provider_usage()`, live cooldown/fail via `broker.provider_health()` |
+| `src/dinary/api/controllers/llm.py` | drop all raw SQL over `llmbroker_*`; provider CRUD via `Registry` admin (`load`/`add`/`update`/`remove`), aggregation via `Telemetry.provider_stats()`, live cooldown/fail via `llm.provider_health()` |
 | `src/dinary/api/llm.py` | add the read-only `provider_health()` endpoint; `llm_status()` assembles the unchanged payload keys from the API surfaces above |
 
 After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.adapters.llm_storage" src/ tests/ tasks/` returns nothing.
@@ -931,20 +931,20 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
   from its snapshot until cooldown passes; idempotent records.
 - New `test_cli_env_template.py`: scanning a TOML emits the expected `.env`
   skeleton (all `api_key_ref` names, blank values, no secrets).
-- `test_broker.py` / `test_telemetry.py` assert that `task_type`,
+- `test_broker.py` / `test_telemetry.py` assert that `operation`,
   `prompt_tokens`/`completion_tokens` (from a stubbed response `usage`), and
-  `quality_score` flow into the recorded `CallEvent`: `task_type` from
+  `quality_score` flow into the recorded `Call`: `operation` from
   `ask`/`chat`, tokens parsed from the response, and `quality_score=0.0`
-  emitted by `Result.rate(0.0)` (with `status` still `CallStatus.OK`).
+  emitted by `Result.score(0.0)` (with `status` still `CallStatus.OK`).
 - **Migration `0007` drop test** (dinary-side, `tests/services/`, needs
   `dinary.db.db_migrations`): after applying migrations through `0007`,
-  `llmbroker_providers` and `llmbroker_call_log` are **absent** (`PRAGMA
+  `llmbroker_providers` and `llmbroker_calls` are **absent** (`PRAGMA
   table_info` empty / `sqlite_master` has no such table). No more yoyo-vs-
   `ensure_schema` equivalence test — yoyo no longer builds the package schema, so
   there is no second source to reconcile.
 - **`ensure_schema` rebuild test** (package-side, `tests/llmbroker/`): on an empty
   DB (or one just dropped), `ensure_schema` creates `llmbroker_providers` and
-  `llmbroker_call_log` with the `prompt_tokens`/`completion_tokens`/`quality_score`
+  `llmbroker_calls` with the `prompt_tokens`/`completion_tokens`/`quality_score`
   columns and **without** `rate_limited_until`/`execution_fail_count`; every
   created object name starts with `llmbroker_`; running it twice is a no-op. The
   version-aware additive-upgrade path is exercised when the first ALTER actually
@@ -952,15 +952,15 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
 - New `test_alembic.py` (package-side): `alembic.include_object` returns `False`
   for any `llmbroker_*` object name and `True` otherwise; composing with a host
   predicate skips when either says skip.
-- `test_telemetry.py` covers the read surface: `provider_usage(since=...)`
+- `test_telemetry.py` covers the read surface: `provider_stats(since=...)`
   aggregates `call_count`/`last_status`/`last_at` per provider from recorded
-  `CallEvent`s; `recent(limit=...)` returns latest events; `purge(trace_id=...)`
+  `Call`s; `recent(limit=...)` returns latest events; `purge(trace_id=...)`
   deletes the matching rows; `log()`/`none()` do **not** expose the read surface.
 - `tests/api/test_admin_llm.py`: rewrite for the **API-only** admin — assert the
   controller issues **no raw SQL** over `llmbroker_*` and that the `llm_status`
   payload is assembled from the API: `rate_limited_until`/`execution_fail_count`
-  from `broker.provider_health()`, `used_today`/`last_status` from
-  `Telemetry.provider_usage()`; provider CRUD round-trips through the `Registry`
+  from `llm.provider_health()`, `used_today`/`last_status` from
+  `Telemetry.provider_stats()`; provider CRUD round-trips through the `Registry`
   admin surface. Add coverage for the new read-only `provider_health()` endpoint.
   The existing assertion that `execution_fail_count` is present in each provider
   entry stays.
@@ -972,7 +972,7 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
   logic; the fixture that pre-populated providers now calls
   `Registry.sqlite(...).import_from(...)` explicitly instead of relying on
   constructor seeding).
-- `tests/api/test_api_delete_receipt.py` currently names `llmbroker_call_log` in
+- `tests/api/test_api_delete_receipt.py` currently names `llmbroker_calls` in
   raw SQL; update it to drive `Telemetry.purge(trace_id=...)` (or drop the
   cascade) so no dinary code names the package's tables.
 - New `test_registry_sqlite.py` covers `import_from` policies (`skip` leaves
@@ -994,7 +994,7 @@ them.
   `storage.DB_PATH` (no `shared_state=` — one process, live state in memory), with
   providers imported (once, if empty) from `.deploy/llm_providers.toml`, keys via
   `api_key_ref` + env; the sqlite
-  batteries own `llmbroker_providers`/`llmbroker_call_log` (`ensure_schema`);
+  batteries own `llmbroker_providers`/`llmbroker_calls` (`ensure_schema`);
   migrations `0004`/`0005` created the tables historically, a new migration drops
   them so `llmbroker`'s `ensure_schema` owns the schema (recreated on next start
   with the `prompt_tokens`/`completion_tokens`/`quality_score` call-log columns and
@@ -1020,12 +1020,12 @@ The Rung 0→2 ladder above is the README. It records current capabilities
 (round-robin queue, one in-flight request per provider, per-provider 429/503
 cooldown honoring `Retry-After`, pluggable `Registry`/`Secrets`/`Telemetry` plus
 opt-in `SharedState` for clusters, `Secrets` indirection so no key lives in
-config, `task_type`-tagged telemetry, the `llmbroker_`-prefixed self-owned schema
+config, `operation`-tagged telemetry, the `llmbroker_`-prefixed self-owned schema
 and `llmbroker.alembic.include_object` coexistence hook) and the
-`Optimizer` roadmap (autonomous self-tuning + task routing; optional LLM-in-the-
+`Optimizer` roadmap (autonomous self-tuning + operation routing; optional LLM-in-the-
 loop quality judging). It documents the **admin API** — provider CRUD via the
 `Registry` admin surface, call-log aggregates via the `Telemetry` read surface
-(`provider_usage`/`recent`/`purge`), and live state via `broker.provider_health()`
+(`provider_stats`/`recent`/`purge`), and live state via `llm.provider_health()`
 — as the way to build an admin UI, noting the **DB schema is private** (no raw
 SQL). It includes the "running llmbroker alongside your migrations" section (the
 per-tool table + the Alembic snippet from "Coexisting with host migration
@@ -1044,10 +1044,10 @@ publish); the import name stays `llmbroker`.
 4. `uv run python -c "import llmbroker; print(llmbroker.Registry.toml, llmbroker.SharedState, llmbroker.Secrets.env, llmbroker.alembic.include_object)"`.
 5. `uv run python -m llmbroker env-template src/llmbroker/data/providers.example.toml` prints a `.env` skeleton.
 6. Smoke: applying migration `0007` leaves no `llmbroker_providers`/
-   `llmbroker_call_log` tables; `uv run inv dev` then starts, `ensure_schema`
+   `llmbroker_calls` tables; `uv run inv dev` then starts, `ensure_schema`
    recreates both (current shape, all objects `llmbroker_`-prefixed) and
    `import_if_empty` fills `llmbroker_providers`; a second start no-ops both;
-   admin LLM API reads `llmbroker_providers`/`llmbroker_call_log` and overlays live
+   admin LLM API reads `llmbroker_providers`/`llmbroker_calls` and overlays live
    `provider_health()`.
 
 ---
@@ -1060,7 +1060,7 @@ publish); the import name stays `llmbroker`.
   is a live in-memory aggregate of the event stream (see "Autonomous
   optimization"); whether it is checkpointed to its own table for a fast warm
   start or simply recomputed from the journal is a **P4 decision**, deferred. The
-  P1 invariant is only that the append-only `CallEvent` journal stays rich enough
+  P1 invariant is only that the append-only `Call` journal stays rich enough
   to reconstruct it. If a real need for restart-resilient cooldown on one node ever
   appears, add an opt-in file-backed state — not shipped now.
 - **Example-file variants** (P2): how many goal-specific TOMLs, and the
@@ -1074,16 +1074,16 @@ publish); the import name stays `llmbroker`.
   seam; how the routing ranking is computed and how aggressively it overrides
   round-robin.
 - **LLM-in-the-loop cost/safety** (P5): sampling rate for LLM-as-judge quality
-  scoring; the judge prompt/rubric per task type; guarding token spend; how the
+  scoring; the judge prompt/rubric per operation; guarding token spend; how the
   judge avoids starving real traffic on a busy pool. When the judge lands, add a
-  `quality_source` column to `CallEvent` (host `rate()` = ground truth vs
+  `quality_source` column to `Call` (host `score()` = ground truth vs
   judge = noisier) so the router can weight the two by confidence; pre-P5 rows are
   all host-sourced, so nothing is lost by deferring it.
 - **Per-provider Initial/Min/Max delay** (P5): individual vs one global; computed
   vs fixed KISS schedule (lean KISS first).
 - **Optional `Telemetry` read-surface shape** (P1, decided minimally): the methods
-  shipped now are exactly what dinary's admin needs (`provider_usage`, `recent`,
-  `purge`); richer query/filtering (date ranges, per-`task_type` breakdowns,
+  shipped now are exactly what dinary's admin needs (`provider_stats`, `recent`,
+  `purge`); richer query/filtering (date ranges, per-`operation` breakdowns,
   pagination) is added when a consumer needs it, without breaking the existing
   signatures.
 
@@ -1098,7 +1098,7 @@ publish); the import name stays `llmbroker`.
 - **Any HTTP / server layer.** `llmbroker` is a library; a microservice gateway
   is a host concern, built on the host's own web framework.
 - The `Optimizer` itself (P4) and its LLM-in-the-loop deepening (P5) — only the
-  `task_type` data capture and the selection-policy seam are designed now.
+  `operation` data capture and the selection-policy seam are designed now.
 - **Token streaming (`stream()`)** — a real capability a universal LLM broker will
   eventually need (chat UIs, agents), but deliberately **not built in P1**. This is
   a recorded gap, not an oversight: `chat` returns a `Result` handle (not a
@@ -1108,6 +1108,6 @@ publish); the import name stays `llmbroker`.
 - Renaming the import name `llmbroker`.
 - A standalone HTTP admin surface in the package. dinary's admin **is** reworked
   in P1 to be API-only (see "dinary wiring") — provider CRUD through the `Registry`
-  admin surface, aggregation through `Telemetry.provider_usage()`, live state
-  through `broker.provider_health()` — but it remains dinary's own FastAPI
+  admin surface, aggregation through `Telemetry.provider_stats()`, live state
+  through `llm.provider_health()` — but it remains dinary's own FastAPI
   endpoints consuming the library; `llmbroker` ships no admin HTTP layer of its own.
