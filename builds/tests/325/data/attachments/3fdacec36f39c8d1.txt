@@ -1,0 +1,4 @@
+INFO     dinary.db.storage:storage.py:273 anchored accounting_currency=RSD in app_metadata
+INFO     dinary.background.sheet_logging.task:task.py:66 sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+INFO     dinary.background.classification.task:task.py:236 Receipt drain: processing receipt_id=1
+INFO     dinary.background.classification.task:task.py:248 Receipt drain: completed receipt_id=1

@@ -1,0 +1,1 @@
+2026-06-11 03:21:06,523 INFO     tasks.imports.report_2d_3d — Year 2024: collected 0 detail rows

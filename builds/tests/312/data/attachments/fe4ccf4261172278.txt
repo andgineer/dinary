@@ -1,0 +1,2 @@
+2026-06-10 17:02:06,391 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-06-10 17:02:06,394 INFO     tasks.imports.expense_import — Applied post-import fixes for 2026

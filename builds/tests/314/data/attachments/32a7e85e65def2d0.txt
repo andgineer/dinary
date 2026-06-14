@@ -1,0 +1,4 @@
+2026-06-11 03:20:42,900 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-06-11 03:20:42,903 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-06-11 03:20:42,908 INFO     dinary.api.controllers.catalog_writer — catalog_writer add_category(name='orig'): bumped catalog_version
+2026-06-11 03:20:42,914 INFO     dinary.api.controllers.catalog_writer — catalog_writer edit_category(id=1): bumped catalog_version

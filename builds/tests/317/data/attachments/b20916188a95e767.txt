@@ -1,0 +1,1 @@
+2026-06-11 07:30:54,749 WARNING  dinary.adapters.serbian_receipt_parser — Token not found in HTML for https://suf.purs.gov.rs/v/?vl=test, falling back to journal

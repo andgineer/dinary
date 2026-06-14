@@ -1,0 +1,1 @@
+2026-06-11 19:10:00,024 INFO     dinary.background.sheet_logging.task — sheet-logging task started: interval=0.05s

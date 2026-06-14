@@ -1,0 +1,23 @@
+2026-06-12 04:21:27,586 INFO     tasks.imports.income_extract — Extracting year 2021 from worksheet 'Balance'
+2026-06-12 04:21:27,586 ERROR    tasks.imports.income_extract — Failed to read year 2021 — skipping
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/tasks/imports/income_extract.py", line 145, in extract_all_years
+    records = extract_income_records(
+        source.year,
+    ...<2 lines>...
+        layout,
+    )
+  File "/home/runner/work/dinary/dinary/tasks/imports/income_extract.py", line 75, in extract_income_records
+    ss = get_sheet(spreadsheet_id)
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 1240, in _execute_mock_call
+    result = effect(*args, **kwargs)
+  File "/home/runner/work/dinary/dinary/tests/imports/test_income_extract.py", line 244, in _get_sheet
+    raise OSError("network error")
+OSError: network error
+2026-06-12 04:21:27,587 INFO     tasks.imports.income_extract — Extracting year 2023 from worksheet 'Income'

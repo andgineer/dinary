@@ -1,0 +1,1 @@
+2026-06-12 07:57:30,162 WARNING  dinary.adapters.llmbroker — LLMBroker: P1 network error (ConnectError)

@@ -1,0 +1,10 @@
+ERROR    dinary.background.classification.task:task.py:468 mark_failed raised for receipt_id=1 attempt 1 — continuing
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/background/classification/task.py", line 466, in _run_llm_pass
+    await outcome.execution.mark_failed()
+  File "/home/runner/work/dinary/dinary/src/dinary/adapters/llmbroker.py", line 62, in mark_failed
+    await self._storage.on_quality_feedback(self.provider_label, usable=False)
+  File "/opt/hostedtoolcache/Python/3.13.13/x64/lib/python3.13/unittest/mock.py", line 2327, in _execute_mock_call
+    raise effect
+RuntimeError: storage down
+WARNING  dinary.background.classification.task:task.py:473 classification execution_failed attempt 1/1 receipt_id=1

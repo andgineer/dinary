@@ -1,0 +1,1 @@
+2026-06-10 12:58:40,679 INFO     dinary.api.controllers.catalog_writer — catalog_writer edit_category(id=1): bumped catalog_version

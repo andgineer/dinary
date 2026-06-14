@@ -1,0 +1,4 @@
+2026-06-11 13:40:37,808 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-06-11 13:40:37,812 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-06-11 13:40:37,820 INFO     dinary.background.rate_prefetch.task — prefetched RSD/EUR rate for 2026-06-11: 0.008520
+2026-06-11 13:40:37,825 INFO     dinary.db.expenses — insert_expense conflict for client_expense_id='e_cat_change': diff=category_id: stored=1 incoming=2

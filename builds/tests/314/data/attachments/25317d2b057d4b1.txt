@@ -1,0 +1,4 @@
+2026-06-11 03:21:17,144 INFO     dinary.db.storage — anchored accounting_currency=RSD in app_metadata
+2026-06-11 03:21:17,148 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-06-11 03:21:17,160 INFO     dinary.background.classification.task — Receipt drain: processing receipt_id=1
+2026-06-11 03:21:17,161 WARNING  dinary.background.classification.task — Transient error for receipt_id=1 (connection refused) — releasing for retry in 0s (attempt 1)

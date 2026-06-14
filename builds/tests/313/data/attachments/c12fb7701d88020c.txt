@@ -1,0 +1,95 @@
+2026-06-11 03:10:51,047 INFO     yoyo.migrations — Applying 0001_initial_schema
+2026-06-11 03:10:51,048 INFO     yoyo.migrations —  - applying step 0
+2026-06-11 03:10:51,048 INFO     yoyo.migrations —  - applying step 1
+2026-06-11 03:10:51,048 INFO     yoyo.migrations —  - applying step 2
+2026-06-11 03:10:51,048 INFO     yoyo.migrations —  - applying step 3
+2026-06-11 03:10:51,049 INFO     yoyo.migrations —  - applying step 4
+2026-06-11 03:10:51,049 INFO     yoyo.migrations —  - applying step 5
+2026-06-11 03:10:51,049 INFO     yoyo.migrations —  - applying step 6
+2026-06-11 03:10:51,049 INFO     yoyo.migrations —  - applying step 7
+2026-06-11 03:10:51,049 INFO     yoyo.migrations —  - applying step 8
+2026-06-11 03:10:51,049 INFO     yoyo.migrations —  - applying step 9
+2026-06-11 03:10:51,050 INFO     yoyo.migrations —  - applying step 10
+2026-06-11 03:10:51,050 INFO     yoyo.migrations —  - applying step 11
+2026-06-11 03:10:51,050 INFO     yoyo.migrations —  - applying step 12
+2026-06-11 03:10:51,050 INFO     yoyo.migrations —  - applying step 13
+2026-06-11 03:10:51,050 INFO     yoyo.migrations —  - applying step 14
+2026-06-11 03:10:51,052 INFO     yoyo.migrations — Marking 0001_initial_schema applied
+2026-06-11 03:10:51,053 INFO     yoyo.migrations — Applying 0002_exchange_rates_source_target
+2026-06-11 03:10:51,053 INFO     yoyo.migrations —  - applying step 0
+2026-06-11 03:10:51,053 INFO     yoyo.migrations —  - applying step 1
+2026-06-11 03:10:51,055 INFO     yoyo.migrations — Marking 0002_exchange_rates_source_target applied
+2026-06-11 03:10:51,055 INFO     yoyo.migrations — Applying 0003_app_currencies
+2026-06-11 03:10:51,056 INFO     yoyo.migrations —  - applying step 0
+2026-06-11 03:10:51,057 INFO     yoyo.migrations — Marking 0003_app_currencies applied
+2026-06-11 03:10:51,057 INFO     yoyo.migrations — Applying 0004_receipt_pipeline
+2026-06-11 03:10:51,058 INFO     yoyo.migrations —  - applying step 0
+2026-06-11 03:10:51,058 INFO     yoyo.migrations —  - applying step 1
+2026-06-11 03:10:51,058 INFO     yoyo.migrations —  - applying step 2
+2026-06-11 03:10:51,058 INFO     yoyo.migrations —  - applying step 3
+2026-06-11 03:10:51,059 INFO     yoyo.migrations —  - applying step 4
+2026-06-11 03:10:51,059 INFO     yoyo.migrations —  - applying step 5
+2026-06-11 03:10:51,059 INFO     yoyo.migrations —  - applying step 6
+2026-06-11 03:10:51,059 INFO     yoyo.migrations —  - applying step 7
+2026-06-11 03:10:51,060 INFO     yoyo.migrations —  - applying step 8
+2026-06-11 03:10:51,060 INFO     yoyo.migrations —  - applying step 9
+2026-06-11 03:10:51,060 INFO     yoyo.migrations —  - applying step 10
+2026-06-11 03:10:51,060 INFO     yoyo.migrations —  - applying step 11
+2026-06-11 03:10:51,061 INFO     yoyo.migrations —  - applying step 12
+2026-06-11 03:10:51,061 INFO     yoyo.migrations —  - applying step 13
+2026-06-11 03:10:51,061 INFO     yoyo.migrations —  - applying step 14
+2026-06-11 03:10:51,062 INFO     yoyo.migrations —  - applying step 15
+2026-06-11 03:10:51,062 INFO     yoyo.migrations —  - applying step 16
+2026-06-11 03:10:51,062 INFO     yoyo.migrations —  - applying step 17
+2026-06-11 03:10:51,063 INFO     yoyo.migrations —  - applying step 18
+2026-06-11 03:10:51,063 INFO     yoyo.migrations —  - applying step 19
+2026-06-11 03:10:51,063 INFO     yoyo.migrations —  - applying step 20
+2026-06-11 03:10:51,063 INFO     yoyo.migrations —  - applying step 21
+2026-06-11 03:10:51,063 INFO     yoyo.migrations —  - applying step 22
+2026-06-11 03:10:51,065 INFO     yoyo.migrations — Marking 0004_receipt_pipeline applied
+2026-06-11 03:10:51,066 INFO     yoyo.migrations — Applying 0005_income_logging
+2026-06-11 03:10:51,067 INFO     yoyo.migrations —  - applying step 0
+2026-06-11 03:10:51,067 INFO     yoyo.migrations —  - applying step 1
+2026-06-11 03:10:51,067 INFO     yoyo.migrations —  - applying step 2
+2026-06-11 03:10:51,067 INFO     yoyo.migrations —  - applying step 3
+2026-06-11 03:10:51,068 INFO     yoyo.migrations —  - applying step 4
+2026-06-11 03:10:51,069 INFO     yoyo.migrations —  - applying step 5
+2026-06-11 03:10:51,069 INFO     yoyo.migrations —  - applying step 6
+2026-06-11 03:10:51,069 INFO     yoyo.migrations —  - applying step 7
+2026-06-11 03:10:51,069 INFO     yoyo.migrations —  - applying step 8
+2026-06-11 03:10:51,069 INFO     yoyo.migrations —  - applying step 9
+2026-06-11 03:10:51,069 INFO     yoyo.migrations —  - applying step 10
+2026-06-11 03:10:51,070 INFO     yoyo.migrations —  - applying step 11
+2026-06-11 03:10:51,070 INFO     yoyo.migrations —  - applying step 12
+2026-06-11 03:10:51,070 INFO     yoyo.migrations —  - applying step 13
+2026-06-11 03:10:51,070 INFO     yoyo.migrations —  - applying step 14
+2026-06-11 03:10:51,070 INFO     yoyo.migrations —  - applying step 15
+2026-06-11 03:10:51,070 INFO     yoyo.migrations —  - applying step 16
+2026-06-11 03:10:51,070 INFO     yoyo.migrations —  - applying step 17
+2026-06-11 03:10:51,070 INFO     yoyo.migrations —  - applying step 18
+2026-06-11 03:10:51,071 INFO     yoyo.migrations —  - applying step 19
+2026-06-11 03:10:51,071 INFO     yoyo.migrations —  - applying step 20
+2026-06-11 03:10:51,072 INFO     yoyo.migrations —  - applying step 21
+2026-06-11 03:10:51,072 INFO     yoyo.migrations —  - applying step 22
+2026-06-11 03:10:51,072 INFO     yoyo.migrations —  - applying step 23
+2026-06-11 03:10:51,072 INFO     yoyo.migrations —  - applying step 24
+2026-06-11 03:10:51,072 INFO     yoyo.migrations —  - applying step 25
+2026-06-11 03:10:51,072 INFO     yoyo.migrations —  - applying step 26
+2026-06-11 03:10:51,072 INFO     yoyo.migrations —  - applying step 27
+2026-06-11 03:10:51,073 INFO     yoyo.migrations —  - applying step 28
+2026-06-11 03:10:51,073 INFO     yoyo.migrations —  - applying step 29
+2026-06-11 03:10:51,073 INFO     yoyo.migrations —  - applying step 30
+2026-06-11 03:10:51,073 INFO     yoyo.migrations —  - applying step 31
+2026-06-11 03:10:51,073 INFO     yoyo.migrations —  - applying step 32
+2026-06-11 03:10:51,074 INFO     yoyo.migrations —  - applying step 33
+2026-06-11 03:10:51,074 INFO     yoyo.migrations —  - applying step 34
+2026-06-11 03:10:51,076 INFO     yoyo.migrations —  - applying step 35
+2026-06-11 03:10:51,076 INFO     yoyo.migrations —  - applying step 36
+2026-06-11 03:10:51,076 INFO     yoyo.migrations —  - applying step 37
+2026-06-11 03:10:51,077 INFO     yoyo.migrations —  - applying step 38
+2026-06-11 03:10:51,078 INFO     yoyo.migrations —  - applying step 39
+2026-06-11 03:10:51,079 INFO     yoyo.migrations —  - applying step 40
+2026-06-11 03:10:51,081 INFO     yoyo.migrations — Marking 0005_income_logging applied
+2026-06-11 03:10:51,085 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-06-11 03:10:51,089 INFO     tasks.imports.seed — Seed complete: {'category_groups': 11, 'categories': 35, 'events': 27, 'tags': 9, 'mappings_created': 95}
+2026-06-11 03:10:51,089 WARNING  tasks.imports.seed — import-config inserted 95 new import_mapping row(s) without bumping catalog_version; run `inv import-catalog` to force PWA clients to refresh the catalog.

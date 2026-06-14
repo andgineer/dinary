@@ -1,0 +1,1 @@
+2026-06-11 13:40:55,406 INFO     dinary.api.controllers.catalog_writer — catalog_writer add_group(reactivate name='already_here'): no-op (hash unchanged)

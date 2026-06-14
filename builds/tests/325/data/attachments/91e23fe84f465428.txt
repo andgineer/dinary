@@ -1,0 +1,4 @@
+2026-06-12 04:21:43,639 INFO     dinary.db.storage — anchored accounting_currency=RSD in app_metadata
+2026-06-12 04:21:43,644 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-06-12 04:21:43,658 INFO     dinary.background.classification.task — Receipt drain: processing receipt_id=1
+2026-06-12 04:21:43,659 ERROR    dinary.background.classification.task — Permanent parse error for receipt_id=1 — poisoning: unrecognised receipt format

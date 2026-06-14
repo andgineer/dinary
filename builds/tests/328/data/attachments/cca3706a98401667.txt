@@ -1,0 +1,2 @@
+2026-06-13 06:00:16,568 WARNING  dinary.sheets.sheet_mapping — ensure_default_map_tab: skipping envelope override 'гигиена' -> 'гигиена' because the category is not in the active catalog; update sheet_mapping._CATEGORY_ENVELOPES after renaming categories
+2026-06-13 06:00:16,568 WARNING  dinary.sheets.sheet_mapping — ensure_default_map_tab: skipping envelope override 'ЗОЖ' -> 'ЗОЖ' because the category is not in the active catalog; update sheet_mapping._CATEGORY_ENVELOPES after renaming categories

@@ -1,0 +1,1 @@
+2026-06-11 07:30:46,950 INFO     tasks.imports.income_extract — Extracting year 2024 from worksheet 'Income'
