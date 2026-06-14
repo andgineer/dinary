@@ -106,6 +106,10 @@ category (sticky, never auto-restored), move a category to a different group,
 create a new category in a group, and switch to a different template at any
 time (re-themes the set; used and hidden categories are preserved).
 
+Before switching, the user can preview a template's full contents — every
+group and all its visible categories — to compare candidates without applying
+any of them.
+
 ## Deferred: AI re-marking editor
 
 Re-arranging a template — or producing a personal "My setup" template — with

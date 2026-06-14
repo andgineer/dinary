@@ -1,9 +1,11 @@
 <script setup>
+import { computed } from "vue";
 import { X } from "lucide-vue-next";
+import { useKeyboardVisible } from "../composables/useKeyboardVisible.js";
 
 defineOptions({ inheritAttrs: false });
 
-defineProps({
+const props = defineProps({
   open: { type: Boolean, default: false },
   dimmed: { type: Boolean, default: false },
   ariaLabel: { type: String, default: "Sheet" },
@@ -12,6 +14,24 @@ defineProps({
   zIndex: { type: Number, default: 45 },
 });
 const emit = defineEmits(["close"]);
+
+// On-screen keyboards eat into the visual viewport without shrinking the
+// layout viewport that `position: fixed` and `vh` units are based on. Pull
+// the sheet's bottom edge up by the keyboard's height so the footer (and,
+// for tall sheets, the whole sheet) stays within the visible area.
+const { keyboardBottom } = useKeyboardVisible();
+
+const sheetStyle = computed(() => {
+  const kb = keyboardBottom.value;
+  const style = { zIndex: props.zIndex, bottom: `${kb}px` };
+  if (kb > 0 && !props.fullHeight) {
+    style.maxHeight = `calc(80vh - ${kb}px)`;
+    if (props.tall) {
+      style.minHeight = `min(50vh, calc(100vh - ${kb}px))`;
+    }
+  }
+  return style;
+});
 </script>
 
 <template>
@@ -24,7 +44,7 @@ const emit = defineEmits(["close"]);
         v-if="open"
         class="sheet"
         :class="{ 'sheet-dimmed': dimmed, 'sheet-full': fullHeight, 'sheet-tall': tall }"
-        :style="{ zIndex }"
+        :style="sheetStyle"
         v-bind="$attrs"
         role="dialog"
         aria-modal="true"

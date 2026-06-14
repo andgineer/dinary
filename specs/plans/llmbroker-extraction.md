@@ -187,7 +187,13 @@ dependency", so there is no list of "which submodules are eager" to memorize.
    ```python
    import llmbroker
 
-   llms = llmbroker.Broker(registry=llmbroker.Registry("llms.toml"))
+   llms = llmbroker.Broker(registry=llmbroker.Registry("llms.toml"))   # sync — no await
+   reply = llms.ask("Summarize this receipt: ...", operation="summary").text
+   ```
+   The synchronous `Broker` is the default most reach for. An async host (FastAPI,
+   agents) uses `llmbroker.AsyncBroker` instead — identical surface, with `await`:
+   ```python
+   llms = llmbroker.AsyncBroker(registry=llmbroker.Registry("llms.toml"))
    reply = (await llms.ask("Summarize this receipt: ...", operation="summary")).text
    ```
    `llmbroker.Registry(path)` loads the config file and dispatches by extension
@@ -197,34 +203,33 @@ State is in-memory, telemetry goes to the log, keys come from env. Nothing to
 implement, no secret in source. `ask` is the simplest call — it wraps a bare
 string as one user message (`chat` is the full messages API). When every LLM is
 momentarily busy it raises `NoLLMAvailable`; the README example shows handling
-that. The broker starts its background machinery lazily on the first `await
-ask`/`chat`, so this one-liner needs no `start()` and no `async with` (see
-"Lifecycle"); a throwaway script on the default log telemetry can simply exit.
+that. The broker starts its background machinery lazily on the first `ask`/`chat`,
+so this one-liner needs no `start()` and no context manager (see "Lifecycle"); a
+throwaway script on the default log telemetry can simply exit.
 
 ### Rung 1 — "if you have a database"
 
-Persist config and telemetry, build an admin UI on the DB table. Connecting to
+Persist config and telemetry, build an admin UI through the broker. Connecting to
 the store and **populating** it are separate steps (see "Seeding a DB store" —
-the constructor never auto-seeds). The one-line sugar `import_if_empty` covers the
-common "fill on first run" case. **`shared_state` is not part of this** — a single
-process keeps cooldown state in memory internally; there is nothing to share.
+the constructor never auto-seeds). One idempotent `sync_configs` call on every
+startup keeps the DB in step with the authors' set (default `policy="mirror"`).
+**`shared_state` is not part of this** — a single process keeps cooldown state in
+memory internally; there is nothing to share.
 
 ```python
 import llmbroker
 import llmbroker.sqlite          # dep-carrying → explicit import (llmbroker.Registry needs no import)
 
-registry = await llmbroker.sqlite.Registry("broker.db").import_if_empty(
-    llmbroker.Registry("llms.toml"),
-)
 llms = llmbroker.Broker(
-    registry=registry,
+    registry=llmbroker.sqlite.Registry("broker.db"),
     telemetry=llmbroker.sqlite.Telemetry("broker.db"),
     # no shared_state= → single process (Rung 2 adds it for clusters)
 )
+llms.sync_configs(llmbroker.Registry("llms.toml"))   # every startup, idempotent; default policy="mirror"
 ```
 
-A host that hand-manages the DB just never imports; a host that wants our updated
-catalog re-runs an explicit `import_from(..., on_conflict="update")`.
+A host that wants to **curate** its own pool instead uses `policy="if_empty"` (seed
+once, then `add`/`remove` survive restarts); `policy="add"` only ever adds new entries.
 
 ### Rung 2 — "if you run a cluster"
 
@@ -264,7 +269,7 @@ class LifecyclePhase(Enum):   # the catalogue of lifecycle phase codes
 
 # A snapshot of one LLM's live state, its field values fixed at the moment it is
 # built — it is NOT stored and held. The broker builds a fresh one every time you
-# read llms[name].state, and builds one each time it saves to the shared store in a
+# `await llms[name].state()`, and builds one each time it saves to the shared store in a
 # cluster. Plain fields only (no live properties), so it can be saved to and loaded
 # from redis/postgres.
 @dataclass(frozen=True, slots=True)
@@ -375,9 +380,9 @@ class TelemetryProtocol(Protocol):
 # otherwise; not pre-locked now (see "Autonomous optimization").
 @runtime_checkable
 class QueryableTelemetryProtocol(TelemetryProtocol, Protocol):
-    async def stats(self, *, since: datetime | None = None) -> dict[str, TelemetryStats]: ...  # default window when None
-    async def recent(self, *, limit: int) -> list[Call]: ...
-    async def purge(self, *, before: datetime) -> int: ...  # retention — drop rows older than `before`
+    async def metrics(self, *, since: datetime | None = None) -> dict[str, LLMMetrics]: ...  # per-LLM aggregates; broker builds snapshot() from this; default window when None
+    async def calls(self, *, limit: int) -> list[Call]: ...
+    async def purge_calls(self, *, before: datetime) -> int: ...  # retention — drop rows older than `before`
 
 
 # Lifecycle capability shared by every port that holds an open resource (sqlite/redis/
@@ -397,139 +402,195 @@ class AsyncResourceProtocol(Protocol):
 | Type | Axis | Role |
 |---|---|---|
 | `LLMConfig` | config | a stored `(name, base_url, model, api_key_ref)` row; what `RegistryProtocol.load()` returns; no secret |
-| `LLM` | facade | the `Mapping` value `llms[name]`; bundles `.config` + `.state` + `.stats()`, one handle |
+| `AsyncLLM` / `LLM` | facade | the `Mapping` value `llms[name]`; one handle bundling sync `.config` + `.state()` + `.metrics()` (async on `AsyncLLM`, sync on `LLM`) |
 | `LifecyclePhase` | enum | the FSM label: Available / Cooling / Offline / Probing |
 | `LLMState` | live | a snapshot of one LLM's runtime state `(phase, cooldown_until, fail_count)`, built on read; also what `SharedStateProtocol.read()`/`write()` stores in a cluster |
+| `LLMSnapshot` | frozen report | a point-in-time materialization of one LLM `(config, state, metrics)`, all sync fields; the value type of `snapshot()` |
 | `Usage` | event | token counts the provider reported for one call `(prompt_tokens, completion_tokens, total_tokens, extra)`; on `Result.usage` and `Call.usage` |
-| `TelemetryStats` | aggregate | per-LLM `(call_count, last_status, last_at)` derived from `Call` rows; `QueryableTelemetryProtocol.stats()` / `LLM.stats()` |
+| `LLMMetrics` | aggregate | per-LLM `(call_count, last_status, last_at)` derived from `Call` rows; `QueryableTelemetryProtocol.metrics()` / `LLM.metrics()` |
 | `Call` | event | one telemetry record (`id`, `llm_name`, `operation`, `status`, `usage`, `quality_score`, …); `id` is the uuid `record_quality` updates by |
 
-### The `Broker` is a `Mapping`, the value is the `LLM` facade
+### Two clients: `AsyncBroker` (the engine) and `Broker` (the shipped sync wrapper)
+
+The async `AsyncBroker` is the core (its concurrency model — per-LLM queue slot, one
+in-flight request, cooldown re-enqueue — is asyncio). The synchronous `Broker` is a
+**first-class shipped wrapper** over an `AsyncBroker` running on a dedicated background
+event-loop thread (see "Sync wrapper"); it is what the casual majority reaches for, async
+hosts (dinary) use `AsyncBroker`. The split mirrors the SDKs users already know —
+`Anthropic`/`AsyncAnthropic`, `openai.OpenAI`/`AsyncOpenAI`, `httpx.Client`/`AsyncClient`:
+**clean name = sync, `Async` prefix = async.** The two surfaces are signature-identical
+apart from `async`/`await` and `aclose`/`close`, `async with`/`with`.
 
 ```python
-class LLM:                       # facade returned by llms[name] — a thin bundle, no copied fields
-    config: LLMConfig            # sync — the pure stored config (name/base_url/model/api_key_ref)
-    @property
-    def state(self) -> LLMState: ...   # sync — built FRESH on every access from the broker's live
-                                       #   internals (cooldown timestamp, fail counter, optimizer phase);
-                                       #   nothing stored, so the phase is always current
-    async def stats(self, *, since: datetime | None = None) -> TelemetryStats: ...   # async — telemetry I/O; default window when None
+@dataclass(frozen=True, slots=True)
+class LLMSnapshot:               # frozen point-in-time materialization (value type of snapshot())
+    config: LLMConfig
+    state: LLMState
+    metrics: LLMMetrics | None    # None when telemetry is not queryable
+
+
+class AsyncLLM:                  # handle returned by AsyncBroker[name] — config + a ref back to the broker
+    config: LLMConfig            # sync — the pure stored config (name/base_url/model/api_key_ref); never lies
+    async def state(self) -> LLMState: ...     # async — live (phase/cooldown_until/fail_count); reads shared
+                                               #   state in a cluster, in-memory single-process; always the TRUTH
+    async def metrics(self, *, since: datetime | None = None) -> LLMMetrics: ...  # this LLM's aggregate; default window when None
     # the resolved secret is NOT here and NOT on config — it lives in the broker's
     # private _resolved_keys map, keyed by name, and never leaves the broker.
 
 
-class Broker(Mapping[str, LLM]):
+SyncPolicy = Literal["mirror", "add", "if_empty"]   # how sync_configs reconciles the DB with a source
+
+
+class AsyncBroker(Mapping[str, AsyncLLM]):
     def __init__(
         self,
         *,
-        registry,                    # RegistryProtocol (e.g. llmbroker.Registry("llms.toml") or llmbroker.sqlite.Registry(...))
-        secrets=None,                # SecretsProtocol (default llmbroker.Secrets() — env); broker resolves api_key_ref → _resolved_keys
-        shared_state=None,           # SharedStateProtocol — opt-in, cluster only
-        telemetry=None,              # TelemetryProtocol (default llmbroker.Telemetry() — log)
-        optimize: "bool | Optimizer" = True,   # True ≡ Optimizer() (judge_fraction=0.0); see "Autonomous optimization"
-    ): ...                           # __init__ is cheap & side-effect-free; background loops start lazily
+        registry: RegistryProtocol,                  # e.g. llmbroker.Registry("llms.toml") or llmbroker.sqlite.Registry(...)
+        secrets: SecretsProtocol | None = None,      # default llmbroker.Secrets() — env; broker resolves api_key_ref → _resolved_keys
+        shared_state: SharedStateProtocol | None = None,   # opt-in, cluster only
+        telemetry: TelemetryProtocol | None = None,  # default llmbroker.Telemetry() — log
+        optimize: bool | Optimizer = True,           # True ≡ Optimizer() (judge_fraction=0.0); see "Autonomous optimization"
+    ) -> None: ...                                   # cheap & side-effect-free; background loops start lazily
 
-    async def aclose(self) -> None: ...        # cancel background loops, close owned ports
-    async def __aenter__(self) -> "Broker": ...  # returns self; teardown sugar over aclose()
-    async def __aexit__(self, *exc) -> None: ...
+    async def aclose(self) -> None: ...
+    async def __aenter__(self) -> "AsyncBroker": ...
+    async def __aexit__(self, *exc: object) -> None: ...
 
-    # Two entry points, always raise (never return a sentinel). `wait` bounds only how
-    # long to wait for a free LLM slot: None = wait indefinitely (default), 0 = do not
-    # wait (raise NoLLMAvailable at once if nothing is free now), N = wait up to N seconds
-    # then raise NoLLMAvailable. AllLLMsFailed is raised when a slot was obtained but the
-    # LLM(s) errored. `wait` is named to stay distinct from a future per-request provider
-    # timeout — it is capacity wait, not response timeout.
-    async def ask(
-        self, prompt: str, *,
-        operation: str | None = None,
-        trace_id: str | None = None,
-        wait: float | None = None,
-    ) -> Result: ...
-
-    async def chat(
-        self, messages: list[dict], *,
-        operation: str | None = None,
-        trace_id: str | None = None,
-        wait: float | None = None,
-    ) -> Result: ...
-    # __getitem__/__iter__/__len__ → the LLM facade by name
+    # ── primary role: route a completion across the pool. Always raise, never a sentinel.
+    # `wait` bounds the capacity wait for a free LLM slot: None = wait indefinitely (default),
+    # 0 = do not wait (raise NoLLMAvailable at once), N = wait up to N seconds then raise
+    # NoLLMAvailable. AllLLMsFailed fires when a slot was obtained but the LLM(s) errored.
+    # `wait` stays distinct from a future per-request provider timeout — capacity, not response.
+    async def ask(self, prompt: str, *, operation: str | None = None,
+                  trace_id: str | None = None, wait: float | None = None) -> AsyncResult: ...
+    async def chat(self, messages: list[dict], *, operation: str | None = None,
+                   trace_id: str | None = None, wait: float | None = None) -> AsyncResult: ...
     # NB: no per-call provider passthrough — see "Provider-specific parameters" below
+
+    # ── inspection: Mapping[str, AsyncLLM] over EVERY configured LLM (health shows in state().phase) ──
+    def __getitem__(self, name: str) -> AsyncLLM: ...
+    def __iter__(self) -> Iterator[str]: ...
+    def __len__(self) -> int: ...
+
+    # ── frozen report of the WHOLE pool in one round-trip — not a parallel live map, a value ──
+    async def snapshot(self, *, since: datetime | None = None) -> Mapping[str, LLMSnapshot]: ...
+
+    # ── change the pool (single items). Delegate to the mutable registry AND reconcile the live
+    # pool (resolve key via Secrets, create/drain the queue slot). `add` upserts by cfg.name.
+    # Require a mutable registry; a file Registry raises a clear "edit the file" error. ──
+    async def add(self, cfg: LLMConfig) -> None: ...
+    async def remove(self, name: str) -> None: ...
+
+    # ── reconcile the DB pool with a source set, idempotently, EVERY startup (like `alembic upgrade`):
+    # no-op when already matching, applies the delta otherwise. policy picks the rule. ──
+    async def sync_configs(self, source: RegistryProtocol, *, policy: SyncPolicy = "mirror") -> None: ...
+
+    # ── call journal (require a queryable telemetry backend; else a clear error) ──
+    async def calls(self, *, limit: int) -> list[Call]: ...
+    async def purge_calls(self, *, before: datetime) -> int: ...
+
+    # ── human-only signals (P4 Optimizer; empty list when optimize=False) ──
+    async def alerts(self) -> list[Alert]: ...
 ```
+
+The synchronous `Broker` (shipped, first-class) is the same surface without `async`/`await`,
+with `close()`/`with` instead of `aclose()`/`async with`; it returns `LLM`/`Result` (sync
+analogues of `AsyncLLM`/`AsyncResult`). `LLMSnapshot` is shared (it is plain data). See
+"Sync wrapper".
 
 ```python
+# async host (dinary)
+llms = llmbroker.AsyncBroker(registry=llmbroker.sqlite.Registry("broker.db"))
+cfg = llms["groq-llama"].config                              # sync, static
+print(cfg.model, (await llms["groq-llama"].state()).phase)   # live, async
+report = await llms.snapshot(since=midnight)                 # whole pool, one frozen value
+for name, s in report.items():
+    print(name, s.config.model, s.state.phase, s.metrics.call_count)
+
+# casual / sync host — same code, no await, clean name
 llms = llmbroker.Broker(registry=llmbroker.sqlite.Registry("broker.db"))
-groq = llms["groq-llama"]
-print(groq.config.model, groq.state.phase)   # objects, not unrolled fields — symmetric with stats()
-for name in llms:
-    print(name, llms[name].state.phase)
+report = llms.snapshot()
+for name, s in report.items():
+    print(name, s.config.model, s.state.phase)
 ```
 
-- **The schema is private; the API is the public contract.** No host issues raw
-  SQL against `llmbroker_registry`/`llmbroker_calls` — config goes through the
-  `MutableRegistryProtocol` admin surface, live state through the `Broker` Mapping
-  (`llms[name].state` …), and call-log aggregation/retention through the
-  `QueryableTelemetryProtocol` read surface above. This is what lets the package own and evolve its
-  schema independently after extraction; a host admin UI is built entirely on
-  typed methods, and it works identically over any backend (sqlite/postgres/
-  mongodb), which a fixed table shape never could.
-- **`Broker` is a read-only `Mapping[str, LLM]`.** Indexing the broker is one
-  level (`llms[name]`, never `llms.llms[name]`); the `LLM` facade is a thin bundle
-  of `.config` (the cached `LLMConfig`) + `.state` (a fresh `LLMState` built on each
-  read) + `.stats()` — no copied fields. The same `LLMState` value is what
-  `SharedState.read()`/`.write()` stores in a cluster.
-  **Why the broker *is* the Mapping (not a `.pool`/`.llms` sub-attribute, and not
-  renamed `Pool` or `Client`).** The host's variable is `llms` regardless of the class
-  name (it is the domain-meaningful name; `pool` alone — "pool of what?" — never gets
-  written), so both roles read naturally under it: `llms.chat(...)` (the call) and
-  `llms[name].state`, `name in llms`, `len(llms)` (inspection). A `.pool` sub-attribute
-  buys nothing over direct indexing, and `.llms` would force the `llms.llms[name]`
-  stutter. `Broker` names the object's **primary** role — the thing you call to route
-  completions across LLMs — and rhymes with the package name `llmbroker`; `Pool` would
-  overweight the secondary collection role (`pool.chat()` reads wrong), and `Client`
-  (the single-endpoint idiom of `openai.OpenAI`/`httpx.Client`) reads *worse* under the
-  Mapping role — `client[name]`, `len(client)` ask "client of what?", and a single
-  "client" that is itself a collection of LLMs is a category error. **A `Mapping` that
-  also performs I/O is admittedly unusual** (most mappings are passive); it is justified
-  because there is genuinely **one** object here with one host variable, and both
-  readings of it are honest — calling it (`llms.chat`) and inspecting it (`llms[name]`).
-  Splitting them into two objects would only manufacture the `llms.pool[name]` stutter
-  the single-object design exists to avoid. So the class stays `Broker`, the Mapping is
-  the broker itself, and indexing is one level.
-- **One rule governs sync vs async: a member is `async` iff it performs I/O.**
-  In-memory / cached access is sync — `llms[name]`, `LLM.config`/`.state`,
-  `Result.text`/`.usage`, `name in llms`, `len(llms)`. Anything touching the
-  network, a file, or the DB is async — `ask`/`chat`, every `RegistryProtocol.*`, every
-  `TelemetryProtocol.*`, `LLM.stats()`, and `Result.record_quality()` (it writes the
-  score to telemetry). This makes the mix predictable rather than arbitrary. The async
-  `Broker` is the **core** because the concurrency model (per-LLM queue slot, one
-  in-flight request, cooldown re-enqueue) is asyncio; a sync-only host gets the
-  deferred `SyncBroker` facade (see "Explicitly out of scope"), not a half-sync
-  core.
-- **Mutation lives on the registry, never on the broker Mapping.** You cannot
-  `llms[new_key] = …` — the broker only knows already-loaded LLMs, and `add` has
-  no key to index yet. `add`/`update`/`remove` are async because the registry is
-  I/O-backed (file/db); a sync `registry[key]` would lie, so the `RegistryProtocol` port
-  is **async methods, not a Mapping**. The two read views answer different
-  questions and span different (overlapping) sets — `registry` = *all configured*
-  (incl. freshly added / filtered-out), `llms` = *currently managed* + health —
-  so both existing is correct, not redundant.
+- **The schema is private; the broker is the public contract.** No host issues raw
+  SQL against `llmbroker_registry`/`llmbroker_calls`, and **no host calls a port method
+  directly** — config CRUD goes through `llms.add`/`remove`/`sync_configs`, live state
+  through `await llms[name].state()` (or the whole-pool `await llms.snapshot()`), and
+  call-log read/retention through `await llms.calls()`/`purge_calls()`. The ports
+  (`MutableRegistryProtocol`, `QueryableTelemetryProtocol`) are contracts the **broker**
+  consumes and **backend authors** implement, not surfaces the host touches. This is what
+  lets the package own and evolve its schema independently after extraction; a host admin
+  UI is built entirely on broker methods and works identically over any backend
+  (sqlite/postgres/mongodb), which a fixed table shape never could.
+- **The broker is a read-only `Mapping`.** Indexing it is one level (`llms[name]`,
+  never `llms.llms[name]`); the handle (`AsyncLLM`/`LLM`) bundles sync `.config` (the
+  cached `LLMConfig`) + `.state()` (live `LLMState`, the truth) + `.metrics()` — no sync
+  field that could go stale. The same `LLMState` value is what `SharedState.read()`/`.write()`
+  stores in a cluster. The Mapping spans **every** configured LLM; health is read via
+  `state().phase`, so there is no separate "configured vs managed" view to reconcile.
+  The whole-pool view is a separate, frozen value — `await llms.snapshot()` — not a
+  parallel live map.
+  **Why the broker *is* the Mapping (not a `.pool`/`.llms` sub-attribute).** The host's
+  variable is `llms` regardless of the class name, so both roles read naturally under it:
+  `llms.chat(...)` (the call) and `llms[name]`, `name in llms`, `len(llms)` (inspection).
+  A `.pool` sub-attribute buys nothing over direct indexing, and `.llms` would force the
+  `llms.llms[name]` stutter. **A `Mapping` that also performs I/O is admittedly unusual**
+  (most mappings are passive); it is justified because there is genuinely **one** object
+  with one host variable, and both readings of it are honest. Splitting them would only
+  manufacture the `llms.pool[name]` stutter the single-object design exists to avoid.
+- **One rule governs sync vs async on `AsyncBroker`/`AsyncLLM`: a member is `async` iff
+  it performs I/O.** In-memory / cached access is sync — `llms[name]`, `.config` (the
+  static stored config, which cannot lie), `Result.text`/`.usage`, `name in llms`,
+  `len(llms)`. Anything touching the network, a file, or the DB is async — `ask`/`chat`,
+  the config mutators (`add`/`remove`/`sync_configs`), `AsyncLLM.state()`/`.metrics()`,
+  `snapshot()`, `calls`/`purge_calls`, and `Result.record_quality()`. **`state()` is
+  deliberately async, not a sync property:** in a cluster the truth lives in the shared
+  store, so reading it is I/O — a sync field would silently show this instance's stale
+  mirror. The static `config` is the only live-ish member that stays sync, because it is
+  the value you set, not a volatile signal. The synchronous `Broker` wrapper blocks
+  instead of awaiting (see "Sync wrapper") — same surface, no `await`.
+- **Mutation is a broker method, not a `MutableMapping`.** The broker stays a
+  **read-only** `Mapping` — you cannot `llms[new_key] = …` (assigning a handle by key has
+  no construction semantics; the key lives inside `cfg.name`; and the op is I/O, so it
+  can't be a sync `__setitem__`). Config changes go through the named methods
+  `llms.add(cfg)` (upsert by `cfg.name`) / `llms.remove(name)` (single items) and
+  `llms.sync_configs(source, policy=...)` (bulk reconcile, every startup; see "Seeding").
+  Each delegates to the mutable registry backend **and** reconciles the live pool in the
+  same call (resolve the key via `Secrets`, create or drain the queue slot), so `llms`
+  reflects the change atomically — no user-facing refresh, no "configured but not yet
+  live" gap. A host **never** calls `registry.add()` itself; the registry port's CRUD is
+  what the broker delegates to and what the package's own CLI uses for offline seeding. On
+  an immutable file `Registry` (it implements only `RegistryProtocol`) these raise a clear
+  "edit the file" error.
 - **Layered protocols, not "optional methods".** A custom backend implements the
   level it supports, and each level is a real, type-checked contract. `RegistryProtocol`
-  (just `load()`) is all the broker needs; `MutableRegistryProtocol(RegistryProtocol)` adds
-  `get`/`add`/`update`/`remove` — the **host admin UI** types against it and drives
-  CRUD over any backend with full static checking, never the broker. Likewise
-  `TelemetryProtocol` (just `record()`) vs `QueryableTelemetryProtocol(TelemetryProtocol)`
-  (`stats`/`recent`/`purge`) for the call-log read side; the default `Telemetry()`
-  (log) / `NoTelemetry()` implement only `TelemetryProtocol`. This mirrors
-  `Sequence`/`MutableSequence`: a consumer annotates the capability it requires
-  rather than sniffing `hasattr`, and a host that swaps sqlite→postgres keeps its
-  admin code's types unchanged. The richer protocols are `@runtime_checkable` so the
-  Optimizer can `isinstance(telemetry, QueryableTelemetryProtocol)` to choose warm-start
-  vs cold-boot.
-- `TelemetryStats` is a small read-model for admin aggregates (per-LLM `call_count`
-  over the window, `last_status`, `last_at`) — derived from `Call` rows, never a
-  stored table of its own. `QueryableTelemetryProtocol.stats(since=...)` returns
-  `dict[str, TelemetryStats]`; the `LLM.stats(since=...)` facade returns one.
+  (just `load()`) is all the broker needs to *read* config; `MutableRegistryProtocol(RegistryProtocol)`
+  adds `get`/`add`/`update`/`remove` — the **broker** requires it to offer
+  `llms.add`/`remove`/`sync_configs`, and `isinstance`-checks the registry so a file backend
+  gives a clear error instead of a missing method. Likewise `TelemetryProtocol` (just
+  `record()`) vs `QueryableTelemetryProtocol(TelemetryProtocol)` (`metrics`/`calls`/`purge_calls`)
+  for the call-log read side; the default `Telemetry()` (log) / `NoTelemetry()` implement
+  only `TelemetryProtocol`, so `llms.calls()`/`purge_calls()` raise a clear error on them
+  (and `snapshot()`'s `metrics` field is `None`). This mirrors `Sequence`/`MutableSequence`: the broker annotates the capability it
+  requires rather than sniffing `hasattr`, and a host that swaps sqlite→postgres changes
+  nothing. The richer protocols are `@runtime_checkable` so both the broker (capability
+  gating) and the Optimizer (`isinstance(telemetry, QueryableTelemetryProtocol)` for
+  warm-start vs cold-boot) decide by `isinstance`, never `hasattr`.
+- `LLMMetrics` is a small per-LLM read-model for admin aggregates (`call_count`,
+  `last_status`, `last_at`) — derived from `Call` rows, never a stored table of its own.
+  The per-name `await llms[name].metrics()` returns one (a query scoped to that LLM); the
+  whole-pool view is `await llms.snapshot()`, which bundles each LLM's `config`+`state`+`metrics`
+  into a frozen `LLMSnapshot` in **one** round-trip (one `SharedState.read()` + one
+  telemetry aggregate). `metrics` is named for the telemetry-domain standard
+  (OpenTelemetry's *metrics* signal), cleanly distinct from `state()`.
+- `snapshot()` is a **frozen materialization**, not a second live map: `await llms.snapshot()`
+  returns a plain `Mapping[str, LLMSnapshot]` you index/iterate like any dict, captured at
+  one instant. It is `snapshot()` (cf. `tracemalloc.take_snapshot()`), **not** `copy()`
+  (which must preserve the value type and be a sync shallow copy) — it changes the value
+  type to the resolved `LLMSnapshot` and does I/O. This is what removes the "two parallel
+  dicts" smell: `llms` is the live handle-Mapping, `snapshot()` is a point-in-time report value.
 - `SharedState` is **optional and cluster-only** — omit `shared_state=` and the
   broker uses its private in-memory state. There is no public "in-memory
   SharedState" object; single-process is the absence of the parameter.
@@ -565,11 +626,14 @@ for name in llms:
   the judge exists every score is a host `score()` ground truth, so pre-judge rows
   are unambiguous and a `quality_source` column can be added with the judge (P5)
   with no lost history.
-- `Broker(registry=...)` takes a `RegistryProtocol`; build one with `llmbroker.Registry(path)`
-  (file) or `llmbroker.sqlite.Registry(...)`. Programmatic config goes through the
-  admin `add()` or a custom `RegistryProtocol` implementation; `import_from` takes a
-  `RegistryProtocol` source too. The kwarg matches the port, like `secrets=`/`shared_state=`/
-  `telemetry=` taking a `SecretsProtocol`/`SharedStateProtocol`/`TelemetryProtocol`.
+- `registry=` takes a `RegistryProtocol`; build one with `llmbroker.Registry(path)`
+  (file) or `llmbroker.sqlite.Registry(...)` — **the port is only a backend selector you
+  construct**, every operation on it is reached through the broker. Programmatic config
+  goes through `llms.add`/`remove`; bulk reconcile with a source through
+  `llms.sync_configs(source, policy=...)`, whose `source` is itself a `RegistryProtocol`
+  (e.g. `llmbroker.Registry("llms.toml")`). The kwarg matches the port, like
+  `secrets=`/`shared_state=`/`telemetry=` taking a
+  `SecretsProtocol`/`SharedStateProtocol`/`TelemetryProtocol`.
 - **Two entry points, each with one clean type — no polymorphic parameter.**
   `chat` is the full API and always takes a chat messages array; `ask` is a thin
   convenience for the dominant single-user-turn case. Both return a `Result`
@@ -634,7 +698,7 @@ broker-side uuids never collide and need no central id authority. The 16-byte / 
 locality cost is negligible for a retention-`purge`d event table; UUIDv7 is a drop-in if
 ordering ever matters. `record_quality`
 records the score into the broker's live state (mirrored to shared state if present)
-and then calls `telemetry.record_quality(call_id, value)` — a method on
+and then calls `telemetry.record_quality(call_id, score)` — a method on
 `TelemetryProtocol` whose two implementations diverge by what the backend can do:
 
 - **Queryable backends** (`sqlite`/`jsonl`/`postgres`) `UPDATE llmbroker_calls SET
@@ -653,9 +717,9 @@ tokens, and latency are all attributed per (llm, operation) against one canonica
 
 ## Lifecycle — construct cheap, start lazily, close explicitly
 
-The broker owns background machinery (per-LLM `asyncio.Queue` slots, the refresh
-loop, the P4 `Optimizer` loop) and, through its ports, open resources (sqlite/
-redis connections). The lifecycle keeps the Rung-0 one-liner trivial while making
+The broker owns background machinery (per-LLM `asyncio.Queue` slots, the cooldown
+re-enqueue timers, the P4 `Optimizer` loop) and, through its ports, open resources
+(sqlite/redis connections). The lifecycle keeps the Rung-0 one-liner trivial while making
 clean shutdown unambiguous.
 
 - **`Broker(...)` is cheap and side-effect-free.** The constructor only stores
@@ -696,10 +760,13 @@ clean shutdown unambiguous.
   **two-step** — never the constructor in the `with` header:
 
   ```python
-  llms = llmbroker.Broker(registry=..., telemetry=...)
+  llms = llmbroker.AsyncBroker(registry=..., telemetry=...)
   async with llms:        # `as` is redundant; teardown guaranteed on exit
       ...
   ```
+
+  The synchronous `Broker` mirrors this with `close()` and a plain `with llms:` (it owns
+  the background event-loop thread and shuts it down on close).
 
 - **Three levels, matched to the consumer:**
   1. **Throwaway script on the default log telemetry** — no teardown needed; the
@@ -712,6 +779,32 @@ clean shutdown unambiguous.
 
   The rule of thumb: **the moment a DB/network battery is attached, or the process
   does not immediately exit, close the broker.**
+
+---
+
+## Sync wrapper — the shipped synchronous `Broker`
+
+`Broker` is a **first-class, shipped** synchronous client — the one the casual majority
+reaches for (scripts, notebooks, sync web frameworks, CLIs, `inv` tasks). `AsyncBroker`
+is the async engine; `Broker` wraps one running on a **dedicated background event-loop
+thread**, and its blocking `ask()`/`chat()`/… submit the coroutine to that loop and wait
+on the result. The pool's concurrency therefore persists across calls (unlike a per-call
+`asyncio.run`, which would tear down and rebuild the pool every time). This is the
+established two-client pattern — `Anthropic`/`AsyncAnthropic`, `openai.OpenAI`/`AsyncOpenAI`,
+`httpx.Client`/`AsyncClient` — with the **clean name on the sync client**.
+
+- **Same surface, no `async`/`await`.** Every method mirrors `AsyncBroker` one-for-one;
+  `Broker` returns `LLM`/`Result` (sync analogues of `AsyncLLM`/`AsyncResult`) whose
+  `state()`/`metrics()`/`record_quality()` block instead of awaiting. The shared frozen
+  `LLMSnapshot` is identical (it is plain data). Teardown is `close()` / `with llms:`
+  (vs `aclose()` / `async with`).
+- **Thin proxies, one core.** The wrapper is a small layer of blocking proxies; all logic
+  — the queue, cooldowns, demand-driven shared-state sync, the Optimizer — lives once in
+  `AsyncBroker`. **unasync-style codegen is rejected**: the asyncio concurrency core cannot
+  be produced by stripping `await`, so `Broker` delegates to a live `AsyncBroker` rather
+  than being a generated sync copy.
+- **Pick by host.** Async hosts (dinary/FastAPI, agents) use `AsyncBroker`; everything
+  else uses `Broker`. Both ship in P1.
 
 ---
 
@@ -738,7 +831,7 @@ llmbroker.Broker(registry=..., secrets=my_vault_resolver)                       
 
 - **Resolution is a `Broker` concern, not a `Registry` one.** The registry returns
   **pure** `LLMConfig` (with `api_key_ref`, no secret); the broker calls
-  `secrets.resolve(api_key_ref)` for each entry at load/refresh and keeps the
+  `secrets.resolve(api_key_ref)` for each entry when it loads config and keeps the
   resolved keys in its **private** `_resolved_keys` map (keyed by `name`). So the
   resolved secret never rides a public object — `secrets=` lives on the `Broker`
   only, never on the registry constructor.
@@ -746,8 +839,8 @@ llmbroker.Broker(registry=..., secrets=my_vault_resolver)                       
   — both zero-dependency, so they are top-level classes, not a backend submodule. A
   plain `Callable[[str], Awaitable[str]] | Callable[[str], str]` is accepted and
   adapted, so a secret-manager integration is one small function.
-- Keys are resolved at load/refresh; rotated secrets are picked up on the next
-  refresh tick.
+- Keys are resolved when config is (re)loaded — on `llms.add`/`sync_configs` and the
+  demand-driven config read; rotated secrets are picked up on the next load.
 
 ### Example files + `env-template` (so key names are never hand-typed)
 
@@ -761,54 +854,42 @@ llmbroker.Broker(registry=..., secrets=my_vault_resolver)                       
 
 ---
 
-## Seeding a DB store — explicit import, never a constructor side-effect
+## Seeding a DB store — `sync_configs`, idempotent, every startup
 
-A backend `registry(…)` factory only **connects**; it never populates. Once a DB
-table exists it is authoritative — nothing auto-mutates it, so there is no "what
-happens if the seed changed?" ambiguity. Filling and updating it is a
-**separate, explicit operation** with a chosen conflict policy:
-
-```python
-reg = llmbroker.sqlite.Registry("broker.db")
-await reg.import_from(llmbroker.Registry("llms.toml"), on_conflict="skip")
-```
-
-`import_from(source, *, on_conflict: Literal["skip", "update", "replace"] = "skip")`
-takes any read-only `RegistryProtocol` source (e.g. `llmbroker.Registry("llms.toml")`).
-The `Literal` policy type is statically checked — a typo'd policy is a type error, not a
-silent no-op. Policies map to the real user journeys:
-
-| `on_conflict` | Effect | Journey |
-|---|---|---|
-| `skip` (default) | insert LLMs missing by name; never touch existing rows | protect hand-edits; safe re-runs |
-| `update` | upsert — insert new + overwrite existing fields from the source | pull our updated recommended catalog into the DB |
-| `replace` | wipe the table, then insert the source | full reset to the source |
-
-A host that decides to hand-manage the DB simply stops importing; a host that
-wants our catalog changes re-runs `import_from(..., on_conflict="update")`. On a
-fresh (empty) DB all three policies behave identically.
-
-**One-line sugar for simple use:** `import_if_empty(source)` imports only when the
-store is empty and returns the registry, so first-run fill composes inline
-without any constructor magic:
+Constructing a backend registry only **selects/connects** it; it never populates. The
+DB is brought into step with a source set by **one idempotent broker call run on every
+startup** — exactly the `alembic upgrade` pattern: a no-op when the DB already matches,
+applies the delta otherwise. There is no separate "seed once" method and nothing to
+remember to call only the first time.
 
 ```python
-registry = await llmbroker.sqlite.Registry("broker.db").import_if_empty(
-    llmbroker.Registry("llms.toml"),
-)
+llms = llmbroker.Broker(registry=llmbroker.sqlite.Registry("broker.db"))
+llms.sync_configs(llmbroker.Registry("llms.toml"))   # every startup; default policy="mirror"
 ```
 
-Because `import_if_empty` never acts on a non-empty store, changing the source
-later cannot surprise an existing DB — it only ever fills a blank one. The same
-operations are on the CLI for ops:
+`AsyncBroker.sync_configs(source, *, policy: SyncPolicy = "mirror")` takes any read-only
+`RegistryProtocol` source. The `Literal` policy is statically checked — a typo'd policy is
+a type error, not a silent no-op. The policy chooses **who is authoritative**, which in
+turn decides whether `add`/`remove` are meaningful:
+
+| `policy` | Each startup | Authoritative | `add`/`remove`? |
+|---|---|---|---|
+| `mirror` (default) | DB ← exactly the source: add new, update changed, **remove** dropped | the source (authors' set) | don't use them — they're undone next boot |
+| `if_empty` | fill only while DB is empty, else no-op | the DB after first fill | yes — they persist across restarts |
+| `add` | add new by name; never touch or remove existing | mixed | partial — re-adds a name you removed |
+
+`mirror` is the default because the authors maintain the recommended set and the majority
+just wants "always be current." A host that prefers to **curate its own pool** uses
+`if_empty` and then `add`/`remove`. All three are idempotent and safe to run every boot.
+The same operation is on the CLI for ops (it builds a throwaway broker — no host code):
 
 ```bash
-python -m llmbroker import llms.toml --into sqlite:broker.db --on-conflict update
+python -m llmbroker sync llms.toml --into sqlite:broker.db --policy mirror
 ```
 
-`import_from`/`import_if_empty` are built on the `MutableRegistryProtocol` admin surface
-(`add`/`update`/`remove`); `llmbroker.Registry` (file is the store) implements only
-`RegistryProtocol` and needs neither — edit the file.
+`sync_configs` needs a mutable registry (it reconciles via the backend's
+`add`/`update`/`remove`); the file `llmbroker.Registry` implements only `RegistryProtocol`,
+so on it it raises a clear "edit the file" error.
 
 ---
 
@@ -817,27 +898,32 @@ python -m llmbroker import llms.toml --into sqlite:broker.db --on-conflict updat
 The broker keeps its single-process machinery: one `asyncio.Queue` slot per LLM,
 at most one in-flight request per LLM, `loop.call_later` re-enqueue after a 429
 cooldown, and its **private in-memory** per-LLM live state. `SharedState`, when
-supplied, layers on without the core knowing whether it is clustered:
+supplied, layers on **demand-driven** — synced when it matters, never on a timer:
 
-- **On 429/503:** the broker updates its in-memory cooldown **and** schedules its
-  own local `call_later` re-enqueue; if `shared_state=` is set it also builds the
-  new `LLMState` and calls `write(name, state)` so *other* copies learn.
-- **On the refresh tick** (existing refresh loop, now tightened/configurable):
-  with `SharedState`, the broker calls `read()` and reconciles its local queue
-  against the shared state — dropping LLMs other copies marked cooling/offline,
-  re-adding those whose cooldown passed. **Clustering rides on the refresh loop
-  that already exists.**
+- **Freshness is needed only at selection.** Reading shared state is **lazy at the
+  moment the broker picks an LLM for a call**, with a short TTL to coalesce a burst of
+  calls into one `read()`. An idle process (a user files a few receipts a day) makes
+  **zero** calls to the shared store; cost scales with traffic, not wall-clock. A redis
+  `read()` (~1 ms) is noise next to the LLM request (seconds) it precedes.
+- **On 429/503 (write-through):** the broker updates its in-memory cooldown, schedules
+  its own local `call_later` re-enqueue, and — if `shared_state=` is set — builds the new
+  `LLMState` and calls `write(name, state)` so *other* copies learn. Writes happen only on
+  a real state change, the only meaningful moment.
+- **Cooldown expiry needs no polling.** A peer that read `cooldown_until` just compares it
+  to `now()` locally; expiry is computed, not detected, so there is nothing to poll for.
 - **No `shared_state=` (default):** everything stays in the process's own memory —
-  behavior identical to today (local `call_later`), zero infra, zero races.
+  identical to single-process behavior (local `call_later`), zero infra, zero races, and
+  `state()`/`metrics()` simply read the in-memory mirror.
 - **Shared backends** (`llmbroker.redis`/`postgres`/`mongodb` `.SharedState(...)`)
-  exist **only for clusters**: `read()` returns the shared state; bounded races (two
-  copies briefly both see an LLM free) cost at most one redundant 429. There is no
-  `sqlite` `SharedState` — SQLite is not a cross-node store, and single-process
+  exist **only for clusters**: `read()` returns the whole shared state in one round-trip;
+  bounded races (two copies briefly both see an LLM free) cost at most one redundant 429.
+  There is no `sqlite` `SharedState` — SQLite is not a cross-node store, and single-process
   needs no externalized state.
 
-Reconcile granularity = refresh interval (eventual consistency). A precise
-"local timer driven by the shared cooldown value" and redis pub/sub for
-near-instant propagation are noted as **future optimizations**, not built now.
+Granularity = the selection moment (eventual consistency only between calls, which is the
+only window that exists). redis pub/sub for push propagation is noted as a **future
+optimization**, not built now. **There is no user-facing `refresh()` and no background
+poll** — drift is reconciled lazily at selection and eagerly on write, both automatic.
 
 ---
 
@@ -846,7 +932,7 @@ near-instant propagation are noted as **future optimizations**, not built now.
 Showing per-LLM advice is not the goal — **nobody will study what is happening
 with yet another free LLM, or care which vendor backs it.** The goal is that the
 cluster **tunes itself and routes work optimally, invisibly.** The package ships
-an `Optimizer`: a background control loop (like the refresh loop) that reads
+an `Optimizer`: a background control loop that reads
 telemetry and *acts*, not just reports.
 
 ```python
@@ -961,7 +1047,8 @@ backend buys.
 - **Ambiguous tuning/routing judgement** when threshold rules are inconclusive.
 
 **The only thing surfaced to a human** is what a human alone can fix:
-`Optimizer.alerts()` returns the rare actionable items — *the whole pool is
+`await llms.alerts()` (the broker re-exposes the Optimizer's signal; empty when
+`optimize=False`) returns the rare actionable items — *the whole pool is
 under-provisioned for your request rate*, *this API key looks dead* — not a feed
 of trivia about individual free LLMs.
 
@@ -1005,8 +1092,8 @@ import llmbroker
 import llmbroker.sqlite
 import llmbroker.redis
 
-llmbroker.Broker(
-    registry=llmbroker.sqlite.Registry("broker.db"),       # populate separately via import_from / import_if_empty
+llmbroker.AsyncBroker(                                      # shared_state ⇒ cluster ⇒ async
+    registry=llmbroker.sqlite.Registry("broker.db"),       # populate separately via llms.sync_configs(...)
     shared_state=llmbroker.redis.SharedState("redis://..."),  # omit for single process
     telemetry=llmbroker.sqlite.Telemetry("broker.db"),
 )
@@ -1143,8 +1230,10 @@ framework. The README documents this snippet and the per-tool table above as the
 
 ### Phase 1 — extraction + core architecture (do now)
 
-Create `src/llmbroker/` with the broker core (incl. its lazy-start / `aclose()` /
-`async with` lifecycle — see "Lifecycle"), the ports, and the file (`.toml`/
+Create `src/llmbroker/` with the async broker core `AsyncBroker` (incl. its lazy-start /
+`aclose()` / `async with` lifecycle — see "Lifecycle") **and the synchronous `Broker`
+wrapper** (a first-class shipped facade over `AsyncBroker` on a background event-loop
+thread — see "Sync wrapper"), the ports, and the file (`.toml`/
 `.json`) + `sqlite` `Registry` + `Secrets`/`DictSecrets` + internal in-memory live
 state + `Telemetry`/`NoTelemetry`/`JsonlTelemetry`/`sqlite.Telemetry` batteries —
 enough to serve Rung 0/1 and carry dinary with unchanged request-path behavior. The
@@ -1157,34 +1246,44 @@ host-coexistence surface: every DB object is `llmbroker_`-prefixed, `ensure_sche
 is version-aware (initial create now; additive data-preserving ALTERs hang off the
 version marker in later releases), and `llmbroker.alembic.include_object` is
 exported (see "Coexisting with host migration tools"). Because the DB schema is
-**private**, P1 also ships the admin API that replaces raw SQL — the
-`MutableRegistryProtocol` admin surface (`get`/`add`/`update`/`remove`) and the
-`QueryableTelemetryProtocol` read surface (`stats`/`recent`/`purge`) — and reworks dinary's admin to consume it.
-dinary's side gets the one-off drop migration that hands schema ownership to the
-package.
+**private**, P1 also ships the **broker front door** that replaces raw SQL — config
+CRUD (`llms.add`/`remove` + `llms.sync_configs`, built on the `MutableRegistryProtocol`
+backend contract), live state + usage (`await llms.snapshot()`), and call-log
+read/retention (`await llms.calls()`/`purge_calls()`, built on the
+`QueryableTelemetryProtocol` backend contract) — and reworks dinary's admin to consume it
+(no host code calls a port directly). dinary's side gets the one-off drop migration that
+hands schema ownership to the package.
 
 ```
 src/llmbroker/
   __init__.py            # top-level surface — ONLY what an app uses:
-                         #             Broker, LLM, LifecyclePhase, Result, Optimizer,
+                         #             AsyncBroker, Broker (sync wrapper), AsyncLLM, LLM, AsyncResult, Result,
+                         #             LifecyclePhase, Optimizer,
                          #             Registry/Secrets/DictSecrets/Telemetry/NoTelemetry/JsonlTelemetry,
                          #             BrokerError/NoLLMAvailable/AllLLMsFailed.
                          #             Protocols (RegistryProtocol/MutableRegistryProtocol/SecretsProtocol/SharedStateProtocol/
                          #             TelemetryProtocol/QueryableTelemetryProtocol/AsyncResourceProtocol) and DTOs (LLMConfig/
-                         #             LLMState/Usage/Call/CallStatus/TelemetryStats) are NOT exported here — backend/admin
-                         #             authors import them from their defining modules (registry.py/secrets.py/
+                         #             LLMState/LLMSnapshot/Usage/Call/CallStatus/LLMMetrics/SyncPolicy) are NOT exported here —
+                         #             backend/admin authors import them from their defining modules (registry.py/secrets.py/
                          #             shared_state.py/telemetry.py/models.py).
                          #             NEVER imports a dep-carrying backend submodule (sqlite/redis/postgres/mongodb).
   chat.py                # from adapters/llm_chat.py — LLMConfig moves to models.py; receives the resolved
                          #             key from the broker (not off a public field); parses response usage → Usage for Call; else verbatim
-  broker.py              # from adapters/llmbroker.py — Broker(Mapping[str, LLM]), the LLM facade,
-                         #             cheap __init__ + lazy start + aclose()/__aenter__/__aexit__ (Lifecycle),
-                         #             private _resolved_keys (name→secret) + internal LLMState + shared-state reconcile,
-                         #             ask() sugar + `wait` capacity bound, tokens/quality_score into Call
+  broker.py              # from adapters/llmbroker.py — AsyncBroker(Mapping[str, AsyncLLM]), the AsyncLLM handle
+                         #             (sync .config + async .state()/.metrics()), the single front door:
+                         #             ask()/chat() + `wait` capacity bound; add/remove + sync_configs(policy)
+                         #             (delegate to registry + reconcile live pool); snapshot(); calls/purge_calls;
+                         #             alerts(); cheap __init__ + lazy start + aclose()/async with;
+                         #             private _resolved_keys (name→secret) + internal LLMState + demand-driven
+                         #             shared-state sync (lazy read at selection, write-through on change);
+                         #             tokens/quality_score into Call
+  sync.py                # Broker / LLM / Result — synchronous wrappers over Async* on a dedicated background
+                         #             event-loop thread; blocking proxies (no `await`), close()/with teardown
   models.py              # LLMConfig (config: name/base_url/model/api_key_ref — no secret),
                          #             LifecyclePhase (enum), LLMState (live state + SharedState wire DTO),
+                         #             LLMSnapshot (frozen config+state+metrics), SyncPolicy (Literal),
                          #             Usage (provider token report), Call (llm_name/usage/…), CallStatus,
-                         #             TelemetryStats (call_count/last_status/last_at),
+                         #             LLMMetrics (call_count/last_status/last_at),
                          #             AsyncResourceProtocol (shared port-lifecycle capability; aclose())
   state.py               # private in-memory per-LLM live state (always-on; not a public port) → LLMState
   schema.py              # ensure_schema for the sqlite battery: version-aware (creates + applies additive,
@@ -1197,10 +1296,11 @@ src/llmbroker/
   shared_state.py        # SharedStateProtocol Protocol (cluster seam; backends in postgres/redis/mongodb submodules)  [core]
   telemetry.py           # TelemetryProtocol + QueryableTelemetryProtocol (read layer) Protocols,
                          #             llmbroker.Telemetry() (log, default), NoTelemetry(), JsonlTelemetry(path)  [core]
-  sqlite.py              # llmbroker.sqlite.Registry (config; admin CRUD; import_from/import_if_empty)
-                         #             + llmbroker.sqlite.Telemetry (llmbroker_calls; record + read surface)  [aiosqlite]
+  sqlite.py              # llmbroker.sqlite.Registry (config; MutableRegistryProtocol CRUD — get/add/update/remove —
+                         #             that the broker's sync_configs reconciles against)
+                         #             + llmbroker.sqlite.Telemetry (llmbroker_calls; record + queryable read surface)  [aiosqlite]
   alembic.py             # llmbroker.alembic.include_object — host migration-tool coexistence (dependency-free)
-  cli.py                 # python -m llmbroker env-template <config> | import <config> --into ... --on-conflict ...
+  cli.py                 # python -m llmbroker env-template <config> | sync <config> --into ... --policy ...
   data/
     llms.example.toml
     .env.example
@@ -1210,6 +1310,7 @@ src/llmbroker/
 tests/llmbroker/         # must NOT import dinary.*
   test_chat.py
   test_broker.py
+  test_broker_sync.py
   test_registry_toml.py
   test_registry_sqlite.py
   test_secrets.py
@@ -1258,15 +1359,15 @@ to refresh the example set from a documented source (e.g. a prompt sourced from
 `llmbroker.redis`/`postgres`/`mongodb` `.shared_state`; `llmbroker.postgres`/
 `mongodb` `.registry` (with the optional admin CRUD); `llmbroker.postgres`/
 `mongodb` `.telemetry`. Each behind an optional dependency extra.
-Reconcile-via-refresh as specified; pub/sub and precise-timer left as documented
-optimizations.
+Demand-driven sync as specified (lazy read at selection + write-through on change, no
+poll); pub/sub push propagation left as a documented optimization.
 
 ### Phase 4 — the `Optimizer` (autonomous control loop)
 
 The core value, built once telemetry capture (P1) exists. The Optimizer learns
 from the **live event stream** (in-memory rolling aggregates at the
 `Telemetry.record()` seam), so it runs on any backend; the **queryable read
-surface** (`stats`/`recent` — already shipped in P1 for the admin UI, on
+surface** (`metrics`/`calls` — already shipped in P1 for the admin UI, on
 `llmbroker.sqlite`/`jsonl` and `postgres` from P3) is for **warm-start after a
 restart and ad-hoc analysis**, not a precondition. The Optimizer reuses that same
 read surface rather than introducing its own, deciding warm-start vs cold-boot with
@@ -1296,27 +1397,25 @@ diagnostics) and per-LLM Initial/Min/Max delay tuning.
 
 ## dinary wiring (Phase 1)
 
-dinary is single-process, so it uses explicit composition over its one SQLite file
+dinary is single-process, so it composes over its one SQLite file
 (`storage.DB_PATH`) for **config + telemetry only**; no `shared_state=` (live state
-stays in the broker's internal memory). The config table is populated by an
-explicit `import_if_empty` during startup bootstrap (next to `bootstrap_categories`),
-not by a constructor side-effect — so a fresh deploy auto-fills once, and
-hand-edits or deletions in the table are never clobbered on later restarts.
+stays in the broker's internal memory). dinary is async (FastAPI), so it uses
+`AsyncBroker`. Because dinary curates its pool through an admin UI, it syncs with
+`policy="if_empty"` — seed on first deploy, then admin `add`/`remove` survive restarts.
 
 ```python
 # src/dinary/main.py — inside the FastAPI lifespan
 import llmbroker
 import llmbroker.sqlite          # dep-carrying → explicit (file registry is zero-dep, already available)
 ...
-registry = llmbroker.sqlite.Registry(storage.DB_PATH)
-llms = llmbroker.Broker(
-    registry=registry,
+llms = llmbroker.AsyncBroker(
+    registry=llmbroker.sqlite.Registry(storage.DB_PATH),
     telemetry=llmbroker.sqlite.Telemetry(storage.DB_PATH),
     # no shared_state= — dinary runs one process, live state stays in memory
 )
 
-# in the async startup bootstrap (alongside bootstrap_categories):
-await registry.import_if_empty(llmbroker.Registry(_LLM_PROVIDERS_TOML))
+# in the async startup bootstrap (alongside bootstrap_categories), every start, idempotent:
+await llms.sync_configs(llmbroker.Registry(_LLM_PROVIDERS_TOML), policy="if_empty")
 ...
 # on shutdown (end of the lifespan): stop background loops, close connections
 await llms.aclose()
@@ -1326,32 +1425,31 @@ dinary holds the broker for the whole app lifetime, so it constructs once in the
 FastAPI lifespan and calls `await llms.aclose()` on shutdown (the long-lived-app
 level of "Lifecycle") rather than wrapping requests in `async with`.
 
-Pulling an updated `.deploy/llm_providers.toml` into an existing DB is then a
-deliberate op (`import_from(..., on_conflict="update")` via an `inv` task), never
+Pulling new LLMs from an updated `.deploy/llm_providers.toml` without clobbering admin
+edits is a deliberate op (`llms.sync_configs(..., policy="add")` via an `inv` task), never
 automatic.
 
-**Admin goes API-only (decided): dinary issues no raw SQL against
-`llmbroker_*`.** The schema is now private to the package (see "Ports"), so
+**Admin goes broker-only (decided): dinary issues no raw SQL against `llmbroker_*`
+and holds no port handle.** The schema is now private to the package (see "Ports"), so
 dinary's admin (`api/controllers/llm.py`, `api/llm.py`) is reworked to reach every
-piece of data through a typed `llmbroker` API:
+piece of data through the **`AsyncBroker`** — the only object it keeps:
 
-- **Config / CRUD** → `registry.load()` and the `MutableRegistryProtocol` admin surface
-  (`get`/`add`/`update`/`remove`), replacing the raw `db.storage.transaction()`
-  SELECT/INSERT/UPDATE/DELETE over the old config table.
-- **Live cooldown/fail** → the `Broker` Mapping (`llms[name].state.phase`,
-  `.state.cooldown_until`, `.state.fail_count`). The `rate_limited_until`/`execution_fail_count`
-  columns are gone after the drop migration; live state is the only source.
-- **`used_today`/`last_status` aggregation** → the `QueryableTelemetryProtocol` read
-  surface (`stats(since=...)`), replacing the raw aggregation query over `llmbroker_calls`.
+- **Config / CRUD** → `llms` (the Mapping, for reads) and `llms.add`/`remove`,
+  replacing the raw `db.storage.transaction()` SELECT/INSERT/UPDATE/DELETE over the old
+  config table.
+- **Live cooldown/fail + usage** → `await llms.snapshot()` (whole pool in one round-trip):
+  per-LLM `.state` (`.phase`/`.cooldown_until`/`.fail_count`) and `.metrics`
+  (`.call_count`/`.last_status`), replacing the live columns and the raw aggregation query.
+  The `rate_limited_until`/`execution_fail_count` columns are gone after the drop migration.
 
 The webapp admin LLM page keeps its existing shape: `llm_status()` returns the same
 payload keys (`rate_limited_until`, `execution_fail_count`, `used_today`,
-`last_status`), now assembled from `llms[name].state` (`cooldown_until`/`fail_count`) +
-`telemetry.stats()` instead of table columns, so **no frontend change** is
+`last_status`), now assembled from `await llms.snapshot()` (per-LLM `state.cooldown_until`/
+`state.fail_count` + `metrics`) instead of table columns, so **no frontend change** is
 required. After this rework **no dinary code names `llmbroker_*` tables**: the
 per-receipt delete (`tests/api/test_api_delete_receipt.py` currently names
 `llmbroker_calls` in a cascade) **stops touching the call log entirely** — the
-broker's append-only journal is bounded by `Telemetry.purge(before=...)` retention.
+broker's append-only journal is bounded by `Telemetry.purge_calls(before=...)` retention.
 
 `_DEPLOY_DIR`/`_LLM_PROVIDERS_TOML` move next to the existing `_PROJECT_ROOT` in
 `main.py`. dinary's `.deploy/llm_providers.toml` switches to `[[llms]]` sections
@@ -1367,7 +1465,7 @@ next startup the sqlite battery recreates `llmbroker_registry` (config columns
 `rate_limited_until`/`execution_fail_count`) and `llmbroker_calls` (PK `id`, plus the
 `prompt_tokens`/`completion_tokens`/`total_tokens`/`usage_extra`/`quality_score`
 columns), and the startup
-`import_if_empty` re-fills `llmbroker_registry` from `.deploy/llm_providers.toml`.
+`sync_configs(..., policy="if_empty")` re-fills `llmbroker_registry` from `.deploy/llm_providers.toml`.
 This **discards existing local `llmbroker_calls` history once** — acceptable and
 intentional: dinary is the package's single local instance, that table data is
 disposable, and config is re-imported from the TOML. This DROP is a **one-off
@@ -1379,13 +1477,13 @@ already ships `src/dinary/db/migrations/`), so no deploy change.
 
 | File | Change |
 |---|---|
-| `src/dinary/background/classification/task.py` | `from dinary.adapters.llmbroker import LLMBroker` → `from llmbroker import Broker`; rename `LLMBroker` references to `Broker` |
+| `src/dinary/background/classification/task.py` | `from dinary.adapters.llmbroker import LLMBroker` → `from llmbroker import AsyncBroker` (dinary is async); rename `LLMBroker` references to `AsyncBroker` |
 | `src/dinary/background/classification/store_resolver.py` | same |
-| `src/dinary/background/classification/receipt_classifier.py` | `from dinary.adapters.llmbroker import Execution, LLMBroker` → `from llmbroker import Broker, Result` (rename `LLMBroker`→`Broker`, `Execution`→`Result`). The main `classify` call: `broker.execute(messages, execution_id=…)` → `broker.chat(messages, operation="receipt_classification", trace_id=…)` (default `wait=None` blocks until served), and `if execution.output is None` (broker_unavailable) becomes a `try/except NoLLMAvailable` around it. `get_chain_name`'s `broker.execute(…, wait=False)` → `broker.chat(…, operation="chain_name", wait=0)` inside `try/except NoLLMAvailable: return store_name_raw` — the same graceful skip, now one method with `wait=0` instead of a separate `try_chat` |
+| `src/dinary/background/classification/receipt_classifier.py` | `from dinary.adapters.llmbroker import Execution, LLMBroker` → `from llmbroker import AsyncBroker, AsyncResult` (rename `LLMBroker`→`AsyncBroker`, `Execution`→`AsyncResult`). The main `classify` call: `broker.execute(messages, execution_id=…)` → `await broker.chat(messages, operation="receipt_classification", trace_id=…)` (default `wait=None` blocks until served), and `if execution.output is None` (broker_unavailable) becomes a `try/except NoLLMAvailable` around it. `get_chain_name`'s `broker.execute(…, wait=False)` → `await broker.chat(…, operation="chain_name", wait=0)` inside `try/except NoLLMAvailable: return store_name_raw` — the same graceful skip, now one method with `wait=0` instead of a separate `try_chat` |
 | `src/dinary_analytics/llm.py` | `from dinary.adapters.llm_chat import (AllProvidersBusyError, AllProvidersFailedError, ProviderConfig, complete_with_tools)` → errors `NoLLMAvailable`/`AllLLMsFailed` from top-level `llmbroker`, but `LLMConfig` (was `ProviderConfig`) from `llmbroker.models` and chat helpers from `llmbroker.chat` — they are not top-level |
 | `tasks/receipt.py` | `LLMBroker(TomlLLMBrokerStorage())` → `Broker(registry=llmbroker.Registry(_PROVIDERS_TOML))` (file registry is zero-dep — available from `import llmbroker`, no extra import) and `_PROVIDERS_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llm_providers.toml"` |
-| `src/dinary/api/controllers/llm.py` | drop all raw SQL over `llmbroker_*`; config CRUD typed against `MutableRegistryProtocol` (`load`/`get`/`add`/`update`/`remove`), aggregation against `QueryableTelemetryProtocol` (`stats`), live cooldown/fail via the `Broker` Mapping (`llms[name].state`) |
-| `src/dinary/api/llm.py` | surface live state via the `Broker` Mapping; `llm_status()` assembles the unchanged payload keys from the API surfaces above |
+| `src/dinary/api/controllers/llm.py` | drop all raw SQL over `llmbroker_*` and the registry/telemetry handles; config reads via the `llms` Mapping and CRUD via `llms.add`/`remove`, live cooldown/fail + usage via `await llms.snapshot()` |
+| `src/dinary/api/llm.py` | surface live state + usage via `await llms.snapshot()`; `llm_status()` assembles the unchanged payload keys from it |
 
 After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.adapters.llm_storage" src/ tests/ tasks/` returns nothing.
 
@@ -1397,19 +1495,30 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
 
 - `tests/services/test_llm_chat.py` → `tests/llmbroker/test_chat.py`
   (`patch("dinary.adapters.llm_chat.httpx.Client")` → `patch("llmbroker.chat.httpx.Client")`).
-- `tests/services/test_llmbroker.py` → `tests/llmbroker/test_broker.py`; add coverage
-  for the `Mapping` surface — `llms[name]` returns an `LLM` facade whose `state.phase`
-  is `COOLING` while cooling and `AVAILABLE` once cooldown passes; `name in llms`,
-  `len(llms)`, iteration; the facade exposes `.config`/`.state` (objects, not unrolled
-  fields); the resolved secret is not on `.config` and not reachable via the facade.
+- `tests/services/test_llmbroker.py` → `tests/llmbroker/test_broker.py` (against `AsyncBroker`);
+  add coverage for the `Mapping` surface — `llms[name]` returns an `AsyncLLM` handle whose
+  `await .state()` reports `COOLING` while cooling and `AVAILABLE` once cooldown passes;
+  `name in llms`, `len(llms)`, iteration; the handle exposes sync `.config` + async
+  `.state()`/`.metrics()`; the resolved secret is not on `.config` and not reachable via
+  the handle. Cover **`snapshot()`**: returns a `Mapping[str, LLMSnapshot]` with frozen
+  `config`/`state`/`metrics` for every LLM (metrics `None` when telemetry is not queryable).
+  Cover the **front-door CRUD**: `await llms.add(cfg)` makes the LLM appear in the Mapping
+  atomically (no manual refresh); `remove` reflects immediately; `llms.add` on a file
+  `Registry` raises a clear error. Cover **`sync_configs` policies**: `mirror` makes the
+  pool exactly match the source (add/update/remove), `if_empty` only fills an empty pool,
+  `add` only inserts new — all idempotent on a second call.
   Cover the **`wait` contract**: with every LLM cooling, `chat(..., wait=0)` raises
   `NoLLMAvailable` at once, `chat(..., wait=0.1)` raises after ~0.1s, and a call whose
   cooldown clears within the wait succeeds; when an LLM is tried and errors, `chat`
-  raises `AllLLMsFailed` regardless of `wait`. Also cover the **lifecycle**: `Broker(...)` constructs without a running
-  loop and starts no background task until the first `await ask`/`chat`; `aclose()`
-  cancels the background loops and calls the ports' `aclose()`; `async with llms:`
-  is equivalent to `aclose()` on exit; and `optimize` accepts both `True`/`False`
-  and an `Optimizer(judge_fraction=...)` instance (shape only — no judge loop in P1).
+  raises `AllLLMsFailed` regardless of `wait`. Also cover the **lifecycle**: `AsyncBroker(...)`
+  constructs without a running loop and starts no background task until the first
+  `await ask`/`chat`; `aclose()` cancels the background loops and calls the resource ports'
+  `aclose()` (selected by `isinstance(port, AsyncResourceProtocol)`, never `hasattr`);
+  `async with llms:` is equivalent to `aclose()` on exit; and `optimize` accepts both
+  `True`/`False` and an `Optimizer(judge_fraction=...)` instance (shape only — no judge loop in P1).
+- New `test_broker_sync.py`: the synchronous `Broker` mirrors `AsyncBroker` — same calls
+  without `await`, `close()`/`with` teardown; a `chat` on `Broker` returns a `Result`
+  and runs the pool on the background loop thread across calls.
 - `tests/services/test_llm_storage.py` splits into `test_registry_toml.py`,
   `test_registry_sqlite.py`, `test_telemetry.py` (and `test_state.py`), each
   adapting `SqliteLLMBrokerStorage()` → the new battery with an explicit
@@ -1429,9 +1538,9 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
   `usage` (`Call.usage.prompt_tokens`/`.completion_tokens`/`.total_tokens`, and `.extra`
   round-tripped through `usage_extra` JSON) flow into the recorded `Call`, and that the
   `Call.id` uuid is populated. Quality is asserted **without a second row**: after one
-  `chat`, `Result.record_quality(0.0)` on a `sqlite.Telemetry` leaves `call_count`
+  `chat`, `AsyncResult.record_quality(0.0)` on a `sqlite.Telemetry` leaves `call_count`
   unchanged and sets `quality_score=0.0` on the **same** row (matched by `id`); on the
-  log `Telemetry()` it appends a distinct quality record, **not** a `Call`. `Result.usage`
+  log `Telemetry()` it appends a distinct quality record, **not** a `Call`. `AsyncResult.usage`
   exposes the same `Usage`.
 - **Drop-migration test** (dinary-side, `tests/services/`, needs
   `dinary.db.db_migrations`): after applying migrations through the drop, the legacy
@@ -1449,9 +1558,9 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
 - New `test_alembic.py` (package-side): `llmbroker.alembic.include_object` returns
   `False` for any `llmbroker_*` object name and `True` otherwise; composing with a
   host predicate skips when either says skip.
-- `test_telemetry.py` covers the read surface: `stats(since=...)` aggregates
-  `call_count`/`last_status`/`last_at` per LLM from recorded `Call`s; `recent(limit=...)`
-  returns latest events; `purge(before=...)` deletes rows older than the cutoff and
+- `test_telemetry.py` covers the read surface: `metrics(since=...)` aggregates
+  `call_count`/`last_status`/`last_at` per LLM from recorded `Call`s; `calls(limit=...)`
+  returns latest events; `purge_calls(before=...)` deletes rows older than the cutoff and
   returns the count; the default `Telemetry()` (log) / `NoTelemetry()` do **not** expose the read surface.
 - **Protocol-layer membership** (`test_telemetry.py` / `test_registry_*`): assert the
   `@runtime_checkable` layers classify batteries correctly —
@@ -1460,31 +1569,31 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
   still a `TelemetryProtocol`); `isinstance(llmbroker.sqlite.Registry(...),
   MutableRegistryProtocol)` is `True` while the file `llmbroker.Registry(...)` is a
   `RegistryProtocol` but **not** a `MutableRegistryProtocol`.
-- `tests/api/test_admin_llm.py`: rewrite for the **API-only** admin — assert the
-  controller issues **no raw SQL** over `llmbroker_*` and that the `llm_status`
-  payload is assembled from the API: `rate_limited_until`/`execution_fail_count`
-  from the `Broker` Mapping (`llms[name].state.cooldown_until`/`.state.fail_count`),
-  `used_today`/`last_status` from `QueryableTelemetryProtocol.stats()`; config CRUD round-trips
-  through the `MutableRegistryProtocol` admin surface. The existing assertion that
-  `execution_fail_count` is present in each entry stays.
+- `tests/api/test_admin_llm.py`: rewrite for the **broker-only** admin — assert the
+  controller issues **no raw SQL** over `llmbroker_*`, holds no port handle, and that the
+  `llm_status` payload is assembled from `await llms.snapshot()`: `rate_limited_until`/`execution_fail_count`
+  from per-LLM `state` (`cooldown_until`/`fail_count`), `used_today`/`last_status`
+  from per-LLM `metrics`; config CRUD round-trips through `llms.add`/`remove`.
+  The existing assertion that `execution_fail_count` is present in each entry stays.
 - Mechanical import updates in dinary-side tests referencing the broker:
   `test_main.py`, `test_store_resolver.py`, `test_receipt_classifier.py`,
   `test_receipt_classification.py`, `test_receipt_pipeline_e2e.py`,
   `test_receipt_drain.py`, `test_receipt_pipeline.py`, `test_llm.py`,
   `tests/conftest.py` (the `NullStorage`/`real_llm_seed` fixtures keep their logic;
   the fixture that pre-populated config now calls
-  `llmbroker.sqlite.Registry(...).import_from(...)` explicitly instead of relying on
+  `await llms.sync_configs(..., policy="if_empty")` explicitly instead of relying on
   constructor seeding).
 - `tests/api/test_api_delete_receipt.py` currently names `llmbroker_calls` in raw
   SQL; update it so the per-receipt delete **no longer touches the call log** (the
-  cascade is removed — retention via `Telemetry.purge(before=...)` bounds growth),
+  cascade is removed — retention via `Telemetry.purge_calls(before=...)` bounds growth),
   so no dinary code names the package's tables.
-- New `test_registry_sqlite.py` covers `import_from` policies (`skip` leaves
-  existing rows; `update` upserts; `replace` wipes-then-inserts) and `import_if_empty`
-  (fills an empty store, no-ops on a populated one).
+- New `test_registry_sqlite.py` covers the `MutableRegistryProtocol` CRUD the broker
+  delegates to: `add` inserts, `get` reads back, `update` overwrites by name, `remove`
+  deletes; `ensure_schema` is applied once. (The `sync_configs` policy behaviour is
+  tested at the broker level in `test_broker.py`, since the policy lives on the broker.)
 
-Every new battery, the `Secrets` resolvers, `ask()`, the import operations, and the
-`env-template`/`import` CLI ship with tests in the phase that introduces them.
+Every new battery, the `Secrets` resolvers, `ask()`, `sync_configs`, and the
+`env-template`/`sync` CLI ship with tests in the phase that introduces them.
 
 ---
 
@@ -1495,7 +1604,7 @@ Every new battery, the `Secrets` resolvers, `ask()`, the import operations, and 
   (queue round-robin, storage Protocol, …). Add one paragraph: dinary runs
   `llmbroker` via explicit `llmbroker.sqlite.Registry` + `llmbroker.sqlite.Telemetry`
   over `storage.DB_PATH` (no `shared_state=` — one process, live state in memory),
-  with config imported (once, if empty) from `.deploy/llm_providers.toml`, keys via
+  with config synced (`sync_configs`, `policy="if_empty"`) from `.deploy/llm_providers.toml`, keys via
   `api_key_ref` + env; the sqlite battery owns `llmbroker_registry`/`llmbroker_calls`
   (`ensure_schema`); migrations `0004`/`0005` created the tables historically, a new
   migration drops them so `llmbroker`'s `ensure_schema` owns the schema (recreated on
@@ -1522,9 +1631,11 @@ Every new battery, the `Secrets` resolvers, `ask()`, the import operations, and 
 
 The Rung 0→2 ladder above is the README. It records current capabilities
 (round-robin queue, one in-flight request per LLM, per-LLM 429/503 cooldown honoring
-`Retry-After`, the `Broker` as a `Mapping[str, LLM]`, pluggable
+`Retry-After`, the broker as a `Mapping` of LLM handles in **two clients** —
+synchronous `Broker` (the default most reach for) and `AsyncBroker` (async hosts), the
+`Anthropic`/`AsyncAnthropic` convention, pluggable
 `RegistryProtocol`/`SecretsProtocol`/`TelemetryProtocol` plus opt-in `SharedStateProtocol` for
-clusters, the `MutableRegistryProtocol`/`QueryableTelemetryProtocol` admin layers, secrets
+clusters, the `MutableRegistryProtocol`/`QueryableTelemetryProtocol` capability layers, secrets
 indirection so no key lives in config, `operation`-tagged
 telemetry, the `llmbroker_`-prefixed self-owned schema and
 `llmbroker.alembic.include_object` coexistence hook) and the `Optimizer` roadmap
@@ -1535,11 +1646,16 @@ working features.** Concretely, the README states that in P1 the broker is react
 only (round-robin + 429/503 cooldown), `optimize=True` is the reserved default that
 runs no optimizer until P4 (so the constructor reads the same before and after), and
 `LifecyclePhase.OFFLINE`/`PROBING` are reserved codes that **never occur** in P1 —
-`llms[name].state.phase` is only ever `AVAILABLE` or `COOLING` until the Optimizer
-lands. The types are locked now purely so P4/P5 add no breaking change. It documents the **admin API** — config CRUD via the
-`MutableRegistryProtocol` admin surface, call-log aggregates via the `QueryableTelemetryProtocol`
-read surface (`stats`/`recent`/`purge`), and live state via the `Broker` Mapping (`llms[name].state`) — as
-the way to build an admin UI, noting the **DB schema is private** (no raw SQL). It
+`(await llms[name].state()).phase` is only ever `AVAILABLE` or `COOLING` until the
+Optimizer lands. The types are locked now purely so P4/P5 add no breaking change. It
+documents the **broker as the single front door** — config CRUD via
+`llms.add`/`remove` + `llms.sync_configs(source, policy=...)`, call journal via
+`await llms.calls()`/`purge_calls()`, and live state + usage via `await llms.snapshot()`
+(whole pool, frozen) / `await llms[name].state()` — as the way to build an admin UI,
+noting the **DB schema is private**, **no host code calls a port directly** (ports are
+backend selectors + backend-author contracts), and **there is no user-facing `refresh()`**
+(config/state drift syncs automatically; `sync_configs` is the idempotent every-start
+reconcile). It
 documents the **naming convention** (bare name = default battery
 `llmbroker.Registry`/`Secrets`/`Telemetry`; variant = `DictSecrets`/`NoTelemetry`/
 `JsonlTelemetry`; dependency backend = `llmbroker.<backend>.<Port>`; interface =
@@ -1550,10 +1666,10 @@ top-level classes needing only `import llmbroker` (`llmbroker.Registry(path)`,
 an external dependency is a submodule imported explicitly (`import llmbroker.sqlite`,
 constructed fully qualified as `llmbroker.sqlite.Registry(...)`); **never `from
 llmbroker import sqlite`.** It documents the **lifecycle** (cheap constructor, lazy
-start on first call, `aclose()` / `async with` for teardown, broker owns its ports;
-see "Lifecycle"). It documents the async `Broker` as the core (with the deferred
-`SyncBroker` facade for sync-only hosts) and the rule that a member is `async` iff it
-does I/O. It includes the
+start on first call, `aclose()`/`async with` — sync `Broker`: `close()`/`with` — for
+teardown, broker owns its ports; see "Lifecycle"). It documents the **two clients** —
+`AsyncBroker` as the async engine and the shipped synchronous `Broker` wrapper (clean
+name, no `await`) — and the rule that a member is `async` iff it does I/O. It includes the
 "running llmbroker alongside
 your migrations" section (the per-tool table + the Alembic snippet from "Coexisting
 with host migration tools"). It states plainly that `llmbroker` is a **library, not a
@@ -1567,15 +1683,15 @@ import name and the distribution name are `llmbroker`.
 1. `uv run inv pre` → "All checks passed!" + `0 errors`.
 2. `uv run pytest` → all green, incl. `tests/llmbroker/`.
 3. `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.adapters.llm_storage" src/ tests/ tasks/` → empty.
-4. `uv run python -c "import llmbroker, llmbroker.sqlite, llmbroker.alembic; print(llmbroker.Broker, llmbroker.LLM, llmbroker.LifecyclePhase, llmbroker.Result, llmbroker.Registry, llmbroker.JsonlTelemetry, llmbroker.NoTelemetry, llmbroker.DictSecrets, llmbroker.Secrets, llmbroker.NoLLMAvailable, llmbroker.alembic.include_object)"`.
-   Also assert: `import llmbroker` alone does **not** import `aiosqlite` (no dep-carrying submodule pulled); the protocols/DTOs are **not** top-level (`hasattr(llmbroker, "RegistryProtocol")` is `False`) and import from their modules (`from llmbroker.registry import RegistryProtocol, MutableRegistryProtocol; from llmbroker.telemetry import TelemetryProtocol, QueryableTelemetryProtocol; from llmbroker.shared_state import SharedStateProtocol; from llmbroker.models import LLMConfig, LLMState, Usage, Call, AsyncResourceProtocol`).
+4. `uv run python -c "import llmbroker, llmbroker.sqlite, llmbroker.alembic; print(llmbroker.AsyncBroker, llmbroker.Broker, llmbroker.AsyncLLM, llmbroker.LLM, llmbroker.LifecyclePhase, llmbroker.AsyncResult, llmbroker.Result, llmbroker.Registry, llmbroker.JsonlTelemetry, llmbroker.NoTelemetry, llmbroker.DictSecrets, llmbroker.Secrets, llmbroker.NoLLMAvailable, llmbroker.alembic.include_object)"`.
+   Also assert: `import llmbroker` alone does **not** import `aiosqlite` (no dep-carrying submodule pulled); the protocols/DTOs are **not** top-level (`hasattr(llmbroker, "RegistryProtocol")` is `False`) and import from their modules (`from llmbroker.registry import RegistryProtocol, MutableRegistryProtocol; from llmbroker.telemetry import TelemetryProtocol, QueryableTelemetryProtocol; from llmbroker.shared_state import SharedStateProtocol; from llmbroker.models import LLMConfig, LLMState, LLMSnapshot, SyncPolicy, Usage, Call, LLMMetrics, AsyncResourceProtocol`).
 5. `uv run python -m llmbroker env-template src/llmbroker/data/llms.example.toml` prints a `.env` skeleton.
 6. Smoke: applying the drop migration leaves no legacy `llmbroker_providers`/
    `llmbroker_calls` tables; `uv run inv dev` then starts, `ensure_schema` creates
    `llmbroker_registry` + `llmbroker_calls` (current shape, all objects
-   `llmbroker_`-prefixed) and `import_if_empty` fills `llmbroker_registry`; a second
-   start no-ops both; the admin LLM API reads `llmbroker_registry`/`llmbroker_calls`
-   and overlays live state from the `Broker` Mapping.
+   `llmbroker_`-prefixed) and `sync_configs(..., policy="if_empty")` fills `llmbroker_registry`; a second
+   start no-ops both; the admin LLM page renders config from the `llms` Mapping and
+   overlays live state/usage from `await llms.snapshot()`.
 
 ---
 
@@ -1609,7 +1725,7 @@ import name and the distribution name are `llmbroker`.
 - **Per-LLM Initial/Min/Max delay** (P5): individual vs one global; computed vs fixed
   KISS schedule (lean KISS first).
 - **Optional `Telemetry` read-surface shape** (P1, decided minimally): the methods
-  shipped now are exactly what dinary's admin needs (`stats`, `recent`, `purge`);
+  shipped now are exactly what dinary's admin needs (`metrics`, `calls`, `purge_calls`);
   richer query/filtering (date ranges, per-`operation` breakdowns, pagination) is added
   when a consumer needs it, without breaking the existing signatures.
 
@@ -1653,21 +1769,8 @@ import name and the distribution name are `llmbroker`.
   `max_tokens`/`tools` surface) that each provider adapter **translates** into its
   wire format, **not** a raw passthrough. Deferred until a consumer needs it; the
   shape (where the knobs live, how adapters map them) is decided then.
-- **Sync facade (`SyncBroker`)** — a blocking client for hosts not on asyncio
-  (Flask sync, CLI, Django sync). The async `Broker` stays the core because the
-  concurrency model (per-LLM queue slot, one in-flight request, cooldown
-  re-enqueue) is asyncio. `SyncBroker` wraps a `Broker` running on a **dedicated
-  background event-loop thread**; its sync `ask()`/`chat()` submit the coroutine
-  and block, so the pool's concurrency persists across calls (unlike a per-call
-  `asyncio.run`, which would tear down and rebuild the pool every time). This is
-  the established two-client pattern (`httpx.Client`/`AsyncClient`,
-  `openai.OpenAI`/`AsyncOpenAI`). Purely additive — no Protocol break — so it lands
-  when a sync consumer appears; dinary is async (FastAPI) and needs only the async
-  core now. unasync-style codegen is rejected for this package: the asyncio
-  concurrency core cannot be produced by stripping `await`.
 - Renaming the import or distribution name `llmbroker`.
 - A standalone HTTP admin surface in the package. dinary's admin **is** reworked in P1
-  to be API-only (see "dinary wiring") — config CRUD through the `MutableRegistryProtocol`
-  admin surface, aggregation through `QueryableTelemetryProtocol.stats()`, live state through the `Broker`
-  Mapping — but it remains dinary's own FastAPI endpoints consuming the library;
-  `llmbroker` ships no admin HTTP layer of its own.
+  to be broker-only (see "dinary wiring") — config CRUD through `llms.add`/`remove`,
+  live state + usage through `await llms.snapshot()` — but it remains dinary's own
+  FastAPI endpoints consuming the library; `llmbroker` ships no admin HTTP layer of its own.

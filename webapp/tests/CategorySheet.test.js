@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { nextTick } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
@@ -583,5 +583,55 @@ describe("CategorySheet — persistent bottom bar (§6)", () => {
     expect(w.find('[data-testid="switch-template-row"]').exists()).toBe(false);
     expect(w.find('[data-testid="switch-template-panel"]').exists()).toBe(false);
     expect(w.find('[data-testid="template-list"]').exists()).toBe(false);
+  });
+});
+
+describe("CategorySheet — search while offline", () => {
+  const SEARCH_RETRY_MS = 5000;
+
+  it("shows the search-unavailable message when the request fails at the network level", async () => {
+    const networkError = new TypeError("Failed to fetch");
+    const searchSpy = vi.spyOn(catalogApi, "searchCategories").mockRejectedValue(networkError);
+    const { w } = mountSheet();
+
+    await search(w, "gro");
+
+    expect(searchSpy).toHaveBeenCalledWith("gro");
+    const offline = w.find('[data-testid="search-offline"]');
+    expect(offline.exists()).toBe(true);
+    expect(offline.text()).toBe("Search is unavailable offline");
+    expect(w.find('[data-testid="flat-results"]').exists()).toBe(false);
+
+    w.unmount();
+  });
+
+  it("retries automatically and clears the offline message once the search succeeds", async () => {
+    vi.useFakeTimers();
+    try {
+      const networkError = new TypeError("Failed to fetch");
+      const searchSpy = vi
+        .spyOn(catalogApi, "searchCategories")
+        .mockRejectedValueOnce(networkError)
+        .mockResolvedValueOnce([
+          { id: 10, code: "groceries", name: "Groceries", is_active: true, is_hidden: false },
+        ]);
+      const { w } = mountSheet();
+
+      await w.find(".search-input").setValue("gro");
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+
+      expect(w.find('[data-testid="search-offline"]').exists()).toBe(true);
+      expect(w.find('[data-testid="flat-results"]').exists()).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(SEARCH_RETRY_MS);
+
+      expect(searchSpy).toHaveBeenCalledTimes(2);
+      expect(w.find('[data-testid="search-offline"]').exists()).toBe(false);
+      expect(w.find('[data-testid="flat-results"]').exists()).toBe(true);
+
+      w.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

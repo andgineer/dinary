@@ -12,6 +12,9 @@ A single **header segmented control** in `App.vue` switches between the five vie
 ├────────────────────────────────────────────┤
 │ ⏱ 2 receipts queued        tap to review → │  queue strip (amber), only when queued
 ├────────────────────────────────────────────┤
+│ You often add categories outside your set. │  out-of-set nudge banner, only when triggered
+│              Switch category set        ✕  │
+├────────────────────────────────────────────┤
 │ Offline — expenses will be queued          │  offline strip, only when offline
 ├────────────────────────────────────────────┤
 │              active view body              │
@@ -35,8 +38,9 @@ Each tab button: inactive = `color-mix(in srgb, <tabColor> 14%, transparent)` bg
 ### Header chrome
 
 - **Brand** (`Dinary`) on the left. Version string removed from header.
-- **Queue strip** — full-width amber strip below the header row, renders only when `queue.items.length + receiptQueue.items.length > 0`. Shows count + "tap to review →". Tap → `QueueModal`. Stacks above the offline strip when both present.
-- **Offline notice strip** — warning-color strip below the queue strip when `!isOnline`. Copy adapts by view: `Offline — expenses will be queued` on Add, `Offline — incomes can't be added or edited` on Income, generic `Offline — changes not available` elsewhere.
+- **Queue strip** — full-width amber strip below the header row, renders only when `queue.items.length + receiptQueue.items.length > 0`. Shows count + "tap to review →". Tap → `QueueModal`. Stacks above the other strips when present.
+- **Out-of-set nudge banner** — full-width strip below the queue strip, shown when the out-of-set nudge has triggered (see [patterns.md#category-set-search-manage-and-switch](patterns.md#category-set-search-manage-and-switch)). "Switch category set" opens the template switcher; `✕` dismisses. Stays until the user acts.
+- **Offline notice strip** — warning-color strip below the other strips when `!isOnline`. Copy adapts by view: `Offline — expenses will be queued` on Add, `Offline — incomes can't be added or edited` on Income, generic `Offline — changes not available` elsewhere.
 
 ## Onboarding
 
@@ -47,8 +51,9 @@ category template is active (see
 - **Unknown yet** (initial check in flight) — render nothing. The check is
   local and sub-100ms, so no spinner.
 - **No template active** — render `OnboardingTemplate` full-screen instead of
-  the header/tabs/main shell: a language selector above `TemplateList`, one
-  tap on a набор applies it and continues into the app.
+  the header/tabs/main shell: a language selector above `TemplatePreviewPicker`
+  (master-detail набор preview), applying the selected one continues into the
+  app.
 - **A template is active** — render the normal app (header + tabs + main) as
   described below.
 
@@ -101,7 +106,7 @@ Three fields compressed into one line because each is self-explanatory by conten
 `category-card` is a single 12-px-radius shell with `--field` background and `1.5px solid --border`. Two horizontal rows separated by a 1-px divider:
 
 1. **`CategoryQuickPicks`** — wrap-flow of frequently-used pills. Tap selects without opening any sheet. Selected pill fills `--expense`.
-2. **`category-pick-btn`** — 46-px-min-height row, the current category name (or `"Select category…"` placeholder, muted) + right-aligned `ChevronRight` muted. Click / Enter / Space opens `CategorySheet`.
+2. **`category-pick-btn`** — 46-px-min-height row, the current category name (or `"Select category…"` placeholder, muted) + a muted cog button (opens `CategorySheet` directly in Manage mode) + right-aligned `ChevronRight` muted. Click / Enter / Space on the row opens `CategorySheet` in pick mode.
 
 The group is still tracked internally (for the group→category hierarchy logic) and pre-filled when a category is chosen, but no separate group selector is shown to the user.
 

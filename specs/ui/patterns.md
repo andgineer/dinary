@@ -155,33 +155,44 @@ list.
 Each activation from "Not in your set" counts toward the out-of-set nudge
 below.
 
-### Manage mode
+### Persistent footer bar
 
-A cog toggle next to the search box switches the sheet body from "pick a
-category" to a managed view over the visible set: per category, hide /
-rename (label only) / move to another group; per group, "+ add category"
-(creates a new user category in that group). Hide is sticky — "delete" is
-never offered, since categories are never deleted. Unhiding happens via
-search-activate above, not in Manage mode.
+`CategorySheet` has a footer bar, visible in every mode (pick, search, and
+manage):
+
+- **Left** — "Category set: {active набор}", opens the template switcher.
+- **Right** — a toggle between "pick a category" and a managed view over the
+  visible set: per category, hide / rename (label only) / move to another
+  group; per group, "+ add category" (creates a new user category in that
+  group). Hide is sticky — "delete" is never offered, since categories are
+  never deleted. Unhiding happens via search-activate above, not in Manage
+  mode.
+
+On the Add view, a muted cog inside the category-pick row (left of the
+chevron) opens `CategorySheet` directly in Manage mode, without affecting the
+row's normal pick-mode tap.
 
 ### Switch category set
 
-The first row in Manage mode is "Switch category set → {active набор}".
-Expanding it shows `TemplateList` for every available template, the active one
-marked; tapping one applies it. Switching re-themes groups for the new
+The footer's left button opens a shared template-switch sheet, also used by
+onboarding: a master-detail preview lets the user compare набор before
+choosing. A chip row selects a template; below it, a detail panel shows that
+template's full contents — every group and all its visible categories — so
+the user sees what they'd get before applying. The active набор's chip is
+marked, and applying it is disabled. Applying re-themes groups for the new
 template's categories — the user's used categories stay visible and hidden
-categories stay hidden. This is the only entry point to switching templates;
-appropriate for a rarely-used action (the common path is onboarding, once).
+categories stay hidden.
 
 ### Out-of-set nudge
 
 If a user repeatedly activates categories from "Not in your set" (3 times
-within 30 days), an info toast suggests opening Manage → Switch category set
-to find a better-fitting набор, then the counter resets so the next nudge
-needs 3 fresh activations.
+within 30 days), a persistent banner above the main view suggests switching
+the category set, then the counter resets so the next nudge needs 3 fresh
+activations. The banner stays until the user switches or dismisses it.
 
-References: `CategorySheet.vue`, `TemplateList.vue`, `OnboardingTemplate.vue`,
-`composables/oosNudge.js`, `composables/uiLang.js`.
+References: `CategorySheet.vue`, `TemplatePreviewPicker.vue`,
+`TemplateSwitchSheet.vue`, `OnboardingTemplate.vue`, `composables/oosNudge.js`,
+`composables/uiLang.js`.
 
 ## Inline create
 
