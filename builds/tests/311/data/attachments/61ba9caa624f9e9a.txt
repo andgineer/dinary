@@ -1,5 +1,0 @@
-INFO     dinary.db.storage:storage.py:262 anchored accounting_currency=RSD in app_metadata
-INFO     dinary.background.sheet_logging.task:task.py:66 sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
-WARNING  dinary.background.rate_prefetch.task:task.py:91 rate for RSD/RSD on 2026-06-10 not written to DB (stale fallback 1), retrying in 30 min
-INFO     dinary.background.classification.task:task.py:211 Receipt drain: processing receipt_id=1
-WARNING  dinary.background.classification.task:task.py:241 Transient error for receipt_id=1 (broker unreachable) — releasing for retry in 0s (attempt 1)

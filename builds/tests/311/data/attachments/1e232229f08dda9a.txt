@@ -1,2 +1,0 @@
-WARNING  dinary.adapters.serbian_receipt_parser:serbian_receipt_parser.py:209 Empty /specifications for https://suf.purs.gov.rs/v/?vl=test, falling back to journal
-INFO     dinary.adapters.serbian_receipt_parser:serbian_receipt_parser.py:243 Using journal fallback for https://suf.purs.gov.rs/v/?vl=test
