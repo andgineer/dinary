@@ -11,6 +11,7 @@ import {
   useReceiptQueueStore,
 } from "../src/stores/receiptQueue.js";
 import { useReviewStore } from "../src/stores/review.js";
+import { useCatalogStore } from "../src/stores/catalog.js";
 
 
 beforeEach(async () => {
@@ -509,5 +510,63 @@ describe("App — category template gating", () => {
     expect(wrapper.find('[data-testid="onboarding-template"]').exists()).toBe(false);
     expect(wrapper.find(".app-header").exists()).toBe(true);
     expect(wrapper.find(".app-main").exists()).toBe(true);
+  });
+});
+
+describe("App — out-of-set nudge banner", () => {
+  beforeEach(() => {
+    localStorage.removeItem("dinary:catalog:nudgeActive");
+    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue([]);
+  });
+
+  it("hides the nudge strip when showSetNudge is false", async () => {
+    const wrapper = mount(App, { global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="nudge-strip"]').exists()).toBe(false);
+  });
+
+  it("shows the nudge strip when showSetNudge is true", async () => {
+    const pinia = createPinia();
+    const catalog = useCatalogStore(pinia);
+    catalog.setSetNudge(true);
+
+    const wrapper = mount(App, { global: { plugins: [pinia] } });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="nudge-strip"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("You often add categories outside your set.");
+  });
+
+  it("'Switch category set' opens the template-switch sheet and clears the flag", async () => {
+    const pinia = createPinia();
+    const catalog = useCatalogStore(pinia);
+    catalog.setSetNudge(true);
+
+    const wrapper = mount(App, { global: { plugins: [pinia] } });
+    await flushPromises();
+
+    await wrapper.find('[data-testid="nudge-switch-btn"]').trigger("click");
+    await flushPromises();
+
+    expect(catalog.templateSwitchOpen).toBe(true);
+    expect(catalog.showSetNudge).toBe(false);
+    expect(wrapper.find('[data-testid="nudge-strip"]').exists()).toBe(false);
+  });
+
+  it("dismiss clears the flag without opening the template-switch sheet", async () => {
+    const pinia = createPinia();
+    const catalog = useCatalogStore(pinia);
+    catalog.setSetNudge(true);
+
+    const wrapper = mount(App, { global: { plugins: [pinia] } });
+    await flushPromises();
+
+    await wrapper.find('[data-testid="nudge-dismiss-btn"]').trigger("click");
+    await flushPromises();
+
+    expect(catalog.showSetNudge).toBe(false);
+    expect(catalog.templateSwitchOpen).toBe(false);
+    expect(wrapper.find('[data-testid="nudge-strip"]').exists()).toBe(false);
   });
 });

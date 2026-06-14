@@ -2,6 +2,7 @@
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { Clock } from "lucide-vue-next";
 import QueueModal from "./components/QueueModal.vue";
+import TemplateSwitchSheet from "./components/TemplateSwitchSheet.vue";
 import HeaderSegmented from "./components/HeaderSegmented.vue";
 import AddView from "./views/AddView.vue";
 import IncomeView from "./views/IncomeView.vue";
@@ -137,6 +138,26 @@ onBeforeUnmount(() => {
         <span><b>{{ queueCount }}</b> receipts queued</span>
         <span class="queue-strip-hint">tap to review →</span>
       </button>
+      <div v-if="catalogStore.showSetNudge" class="nudge-strip" data-testid="nudge-strip">
+        <span>You often add categories outside your set.</span>
+        <button
+          type="button"
+          class="nudge-action"
+          data-testid="nudge-switch-btn"
+          @click="catalogStore.openTemplateSwitch(); catalogStore.setSetNudge(false)"
+        >
+          Switch category set
+        </button>
+        <button
+          type="button"
+          class="nudge-dismiss"
+          aria-label="Dismiss"
+          data-testid="nudge-dismiss-btn"
+          @click="catalogStore.setSetNudge(false)"
+        >
+          ✕
+        </button>
+      </div>
       <div v-if="!isOnline" class="offline-notice" role="status">{{ offlineMessage }}</div>
     </header>
 
@@ -150,6 +171,7 @@ onBeforeUnmount(() => {
   </template>
 
   <QueueModal :open="queueModalOpen" @close="queueModalOpen = false" />
+  <TemplateSwitchSheet />
 
   <div
     class="toast"
@@ -247,6 +269,44 @@ onBeforeUnmount(() => {
   margin-left: auto;
   font-size: 0.72rem;
   opacity: 0.85;
+}
+
+.nudge-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0.5rem 1rem;
+  background: rgba(91, 141, 239, 0.12);
+  border-top: 1px solid rgba(91, 141, 239, 0.25);
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.nudge-action {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 0.3rem 0.6rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 7px;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  width: auto;
+}
+
+.nudge-dismiss {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  width: auto;
+  display: flex;
+  align-items: center;
 }
 
 .offline-notice {

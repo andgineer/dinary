@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useCatalogStore } from "../stores/catalog.js";
 import { useToastStore } from "../stores/toast.js";
 import * as catalogApi from "../api/catalog.js";
-import TemplateList from "../components/TemplateList.vue";
+import TemplatePreviewPicker from "../components/TemplatePreviewPicker.vue";
 import { resolveUiLang } from "../composables/uiLang.js";
 
 const LAST_LANG_KEY = "dinary:catalog:lastLang";
@@ -61,7 +61,13 @@ onMounted(init);
       </button>
     </div>
 
-    <TemplateList :templates="templates" :lang="lang" @apply="apply" />
+    <TemplatePreviewPicker
+      :templates="templates"
+      :lang="lang"
+      :active-code="null"
+      :applying="applying"
+      @apply="apply"
+    />
   </main>
 </template>
 

@@ -1,11 +1,15 @@
-"""Tests for dinary.db.category_apply.apply_template and _resolve_name."""
+"""Tests for dinary.db.category_apply.apply_template and resolve_category_name."""
 
 import allure
 import pytest
 
 from dinary.db import category_seed, storage
 from dinary.db.catalog import get_catalog_version, list_visible_categories
-from dinary.db.category_apply import _resolve_name, apply_template
+from dinary.db.category_apply import (
+    apply_template,
+    load_category_translations,
+    resolve_category_name,
+)
 
 
 @pytest.fixture
@@ -122,23 +126,29 @@ class TestApplyTemplate:
 
 @allure.epic("Category templates")
 @allure.feature("Apply")
-class TestResolveName:
+class TestResolveCategoryName:
     def test_rename_override_wins(self, con):
         definition = {"renames": {"groceries": {"ru": "Моя еда"}}}
+        translations = load_category_translations(con)
 
-        assert _resolve_name(con, definition, "groceries", "ru") == "Моя еда"
+        assert resolve_category_name(translations, definition, "groceries", "ru") == "Моя еда"
 
     def test_falls_back_to_translation(self, con):
         definition = {"renames": {}}
+        translations = load_category_translations(con)
 
-        assert _resolve_name(con, definition, "groceries", "ru") == "продукты"
+        assert resolve_category_name(translations, definition, "groceries", "ru") == "продукты"
 
     def test_falls_back_to_default_lang_when_requested_lang_missing(self, con):
         definition = {"renames": {}}
+        translations = load_category_translations(con)
 
-        assert _resolve_name(con, definition, "groceries", "fr") == "продукты"
+        assert resolve_category_name(translations, definition, "groceries", "fr") == "продукты"
 
     def test_falls_back_to_code_when_no_translation_exists(self, con):
         definition = {"renames": {}}
+        translations = load_category_translations(con)
 
-        assert _resolve_name(con, definition, "no_such_code", "ru") == "no_such_code"
+        assert (
+            resolve_category_name(translations, definition, "no_such_code", "ru") == "no_such_code"
+        )

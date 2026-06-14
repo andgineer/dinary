@@ -85,6 +85,60 @@ class TestListTemplates:
         assert custom["origin"] == "custom"
         assert custom["names"]["ru"] == "Мой набор"
         assert custom["taglines"]["en"] == "tag"
+        assert custom["groups"] == []
+
+    def test_groups_preview_is_ordered_with_visible_categories_only(self, client):
+        resp = client.get("/api/category-templates")
+        data = resp.json()
+        simple = next(t for t in data if t["code"] == "simple")
+
+        group_codes = [g["code"] for g in simple["groups"]]
+        assert group_codes == ["food", "housing", "life", "growth", "leisure"]
+
+        food = simple["groups"][0]
+        assert food["names"] == {"en": "Food", "ru": "Еда", "sr": "Hrana"}
+        ru_names = [c["names"]["ru"] for c in food["categories"]]
+        assert ru_names == ["продукты", "кафе", "доставка еды", "алкоголь"]
+        en_names = [c["names"]["en"] for c in food["categories"]]
+        assert en_names == ["Groceries", "Cafe", "Food delivery", "Alcohol"]
+
+    def test_hidden_codes_are_absent_from_preview(self, client):
+        resp = client.get("/api/category-templates")
+        data = resp.json()
+        simple = next(t for t in data if t["code"] == "simple")
+
+        all_codes_ru = {c["names"]["ru"] for g in simple["groups"] for c in g["categories"]}
+        # 'fruit' (ru: фрукты) is in simple's hidden bucket for the 'food' group.
+        assert "фрукты" not in all_codes_ru
+
+    def test_renamed_code_surfaces_rename_not_vocabulary_name(self, client):
+        con = storage.get_connection()
+        try:
+            con.execute(
+                "INSERT INTO category_templates (code, origin, sort_order, definition_json) "
+                "VALUES ('mine', 'custom', 99, ?)",
+                [
+                    json.dumps(
+                        {
+                            "names": {"ru": "Мой набор", "en": "My setup"},
+                            "taglines": {"ru": "тег", "en": "tag"},
+                            "groups": {"food": {"ru": "Еда", "en": "Food"}},
+                            "renames": {"groceries": {"ru": "Моя еда", "en": "My Food"}},
+                            "visible": {"food": ["groceries"]},
+                            "hidden": {},
+                        },
+                    ),
+                ],
+            )
+        finally:
+            con.close()
+
+        resp = client.get("/api/category-templates")
+        data = resp.json()
+        mine = next(t for t in data if t["code"] == "mine")
+        food = mine["groups"][0]
+        assert food["code"] == "food"
+        assert food["categories"][0]["names"] == {"ru": "Моя еда", "en": "My Food"}
 
 
 @allure.epic("Category templates")

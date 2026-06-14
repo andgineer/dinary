@@ -21,6 +21,21 @@ const VISIBLE_CATEGORIES = [
   { id: 20, code: "taxi", name: "Taxi", group_id: 2, group_name: "Transport", group_sort_order: 2, group_code: "transport" },
 ];
 
+const TEMPLATES = [
+  {
+    code: "simple",
+    names: { en: "Simple", ru: "Простой" },
+    taglines: { en: "Basics only", ru: "Только основное" },
+    groups: [],
+  },
+  {
+    code: "travel",
+    names: { en: "Travel", ru: "Путешествия" },
+    taglines: { en: "For frequent travelers", ru: "Для тех, кто часто путешествует" },
+    groups: [],
+  },
+];
+
 function mountSheet(props = {}) {
   const pinia = createPinia();
   setActivePinia(pinia);
@@ -37,6 +52,9 @@ function mountSheet(props = {}) {
 beforeEach(() => {
   vi.restoreAllMocks();
   localStorage.clear();
+  // CategorySheet loads the template catalog (for the bottom bar's active-set
+  // name) on every open — mock it so unrelated tests never hit the network.
+  vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
 });
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -272,7 +290,7 @@ describe("CategorySheet — search: 'Not in your set' addable section", () => {
     expect(w.emitted("close")).toBeTruthy();
   });
 
-  it("on the 3rd out-of-set activation, shows the switch-набор nudge instead of the 'added' toast", async () => {
+  it("on the 3rd out-of-set activation, sets the persistent nudge flag instead of the 'added' toast", async () => {
     localStorage.setItem(
       "dinary:catalog:oosActivations",
       JSON.stringify([Date.now(), Date.now()]),
@@ -290,14 +308,14 @@ describe("CategorySheet — search: 'Not in your set' addable section", () => {
     });
     vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
 
-    const { w } = mountSheet();
+    const { w, store } = mountSheet();
     await search(w, "co");
 
     await w.find(".addable-item").trigger("click");
     await flushPromises();
 
+    expect(store.showSetNudge).toBe(true);
     const toast = useToastStore();
-    expect(toast.message).toMatch(/Switch category set/);
     expect(toast.message).not.toBe('"Concerts" added to your set');
   });
 
@@ -378,19 +396,6 @@ describe("CategorySheet — search: 'Not in your set' addable section", () => {
     expect(w.emitted("close")).toBeTruthy();
   });
 });
-
-const TEMPLATES = [
-  {
-    code: "simple",
-    names: { en: "Simple", ru: "Простой" },
-    taglines: { en: "Basics only", ru: "Только основное" },
-  },
-  {
-    code: "travel",
-    names: { en: "Travel", ru: "Путешествия" },
-    taglines: { en: "For frequent travelers", ru: "Для тех, кто часто путешествует" },
-  },
-];
 
 describe("CategorySheet — Manage mode (§4)", () => {
   beforeEach(() => {
@@ -523,47 +528,60 @@ describe("CategorySheet — Manage mode (§4)", () => {
   });
 });
 
-describe("CategorySheet — Switch category set (§5)", () => {
-  beforeEach(() => {
-    localStorage.clear();
+describe("CategorySheet — persistent bottom bar (§6)", () => {
+  it("renders the set-switch and manage-toggle buttons in the footer, not the search row", () => {
+    const { w } = mountSheet();
+    expect(w.find(".search-wrap").find('[data-testid="manage-toggle"]').exists()).toBe(false);
+
+    const footer = w.find(".sheet-footer");
+    expect(footer.find('[data-testid="open-template-switch"]').exists()).toBe(true);
+    expect(footer.find('[data-testid="manage-toggle"]').exists()).toBe(true);
   });
 
-  it("expands the TemplateList and applies a template using the stored language, with no language selector", async () => {
+  it("shows the active template name and stays present while searching and in manage mode", async () => {
     localStorage.setItem("dinary:catalog:lastLang", "en");
-    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
-    const apply = vi
-      .spyOn(catalogApi, "applyTemplate")
-      .mockResolvedValue({ active_template: "travel", catalog_version: 2 });
-    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
-      catalog_version: 2,
-      categories: [
-        { id: 60, code: "flights", name: "Flights", group_id: 5, group_name: "Travel", group_sort_order: 1, group_code: "travel_grp" },
-      ],
-    });
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "travel" });
-
+    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([]);
     const { w, store } = mountSheet();
     store.activeTemplate = "simple";
+    await flushPromises();
+
+    expect(w.find('[data-testid="open-template-switch"]').text()).toContain("Simple");
+
+    await search(w, "gro");
+    expect(w.find('[data-testid="open-template-switch"]').exists()).toBe(true);
+
+    await w.find(".clear-btn").trigger("click");
+    await w.find('[data-testid="manage-toggle"]').trigger("click");
+    expect(w.find('[data-testid="open-template-switch"]').exists()).toBe(true);
+  });
+
+  it("left button opens the shared template-switch sheet", async () => {
+    const { w, store } = mountSheet();
+    await w.find('[data-testid="open-template-switch"]').trigger("click");
+    expect(store.templateSwitchOpen).toBe(true);
+  });
+
+  it("right icon toggles manage mode", async () => {
+    const { w } = mountSheet();
+    await w.find('[data-testid="manage-toggle"]').trigger("click");
+    expect(w.find('[data-testid="manage-view"]').exists()).toBe(true);
+
+    await w.find('[data-testid="manage-toggle"]').trigger("click");
+    expect(w.find('[data-testid="manage-view"]').exists()).toBe(false);
+  });
+
+  it("initialManage opens the sheet straight into manage mode", () => {
+    const { w } = mountSheet({ initialManage: true });
+    expect(w.find('[data-testid="manage-view"]').exists()).toBe(true);
+  });
+
+  it("no inline template-switch UI remains", async () => {
+    const { w } = mountSheet();
     await w.find('[data-testid="manage-toggle"]').trigger("click");
     await flushPromises();
 
-    expect(w.find('[data-testid="switch-template-row"]').text()).toContain("Simple");
+    expect(w.find('[data-testid="switch-template-row"]').exists()).toBe(false);
     expect(w.find('[data-testid="switch-template-panel"]').exists()).toBe(false);
-
-    await w.find('[data-testid="switch-template-row"]').trigger("click");
-    await flushPromises();
-
-    const panel = w.find('[data-testid="switch-template-panel"]');
-    expect(panel.exists()).toBe(true);
-    expect(panel.find("select").exists()).toBe(false);
-    expect(panel.find('[data-testid="template-list"]').exists()).toBe(true);
-
-    await w.find('[data-testid="template-travel"]').trigger("click");
-    await flushPromises();
-
-    expect(apply).toHaveBeenCalledWith("travel", "en");
-    expect(localStorage.getItem("dinary:catalog:lastLang")).toBe("en");
-    const groups = w.findAll('[data-testid="manage-group"]');
-    expect(groups.some((g) => g.find(".group-label").text() === "Travel")).toBe(true);
+    expect(w.find('[data-testid="template-list"]').exists()).toBe(false);
   });
 });

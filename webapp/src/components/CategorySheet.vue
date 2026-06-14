@@ -2,7 +2,6 @@
 import { computed, ref, watch, nextTick, onBeforeUnmount } from "vue";
 import {
   Check,
-  ChevronDown,
   ChevronRight,
   EyeOff,
   Layers,
@@ -16,18 +15,15 @@ import { useCatalogStore } from "../stores/catalog.js";
 import { useToastStore } from "../stores/toast.js";
 import { useOnline } from "../composables/useOnline.js";
 import { recordOutOfSetActivation } from "../composables/oosNudge.js";
-import { resolveUiLang } from "../composables/uiLang.js";
-import * as catalogApi from "../api/catalog.js";
 import BaseSheet from "./BaseSheet.vue";
-import TemplateList from "./TemplateList.vue";
 
 const SEARCH_DEBOUNCE_MS = 300;
-const LAST_LANG_KEY = "dinary:catalog:lastLang";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   suggestions: { type: Array, default: () => [] },
   title: { type: String, default: "Select category" },
+  initialManage: { type: Boolean, default: false },
 });
 const emit = defineEmits(["select", "close"]);
 
@@ -40,6 +36,7 @@ const bodyEl = ref(null);
 const query = ref("");
 const searchResults = ref([]);
 const activatingCode = ref(null);
+const manageMode = ref(false);
 
 let debounceTimer = null;
 
@@ -49,7 +46,11 @@ watch(
     if (isOpen) {
       query.value = "";
       searchResults.value = [];
+      manageMode.value = props.initialManage;
       void catalog.loadVisibleCategoriesIfNeeded();
+      catalog.ensureTemplateCatalog().catch((e) => {
+        toast.show(e?.message || "Failed to load category sets", "error");
+      });
       nextTick(() => {
         if (bodyEl.value) bodyEl.value.scrollTop = 0;
         searchEl.value?.focus({ preventScroll: true });
@@ -164,59 +165,17 @@ function onKeydown(e) {
 
 // ----- Manage mode --------------------------------------------------------
 
-const manageMode = ref(false);
-const switchExpanded = ref(false);
-const templates = ref([]);
-const templatesLoaded = ref(false);
-const templateLang = ref("ru");
-const applyingTemplate = ref(false);
 const editingCode = ref(null);
 const editingName = ref("");
 const addingGroupCode = ref(null);
 const addingName = ref("");
 const busyCode = ref(null);
 
-const activeTemplateName = computed(() => {
-  const tpl = templates.value.find((t) => t.code === catalog.activeTemplate);
-  if (!tpl) return catalog.activeTemplate ?? "";
-  return tpl.names?.[templateLang.value] ?? tpl.names?.ru ?? tpl.code;
-});
-
-async function toggleManage() {
+function toggleManage() {
   manageMode.value = !manageMode.value;
   if (!manageMode.value) return;
-  switchExpanded.value = false;
   editingCode.value = null;
   addingGroupCode.value = null;
-  if (templatesLoaded.value) return;
-  try {
-    templates.value = await catalogApi.listTemplates();
-    templatesLoaded.value = true;
-    const available = Object.keys(templates.value[0]?.names ?? { ru: "" });
-    const stored = localStorage.getItem(LAST_LANG_KEY);
-    templateLang.value = stored && available.includes(stored) ? stored : resolveUiLang(available);
-  } catch (e) {
-    toast.show(e?.message || "Failed to load category sets", "error");
-  }
-}
-
-function toggleSwitchTemplate() {
-  switchExpanded.value = !switchExpanded.value;
-}
-
-async function applySwitchTemplate(code) {
-  if (applyingTemplate.value) return;
-  applyingTemplate.value = true;
-  try {
-    await catalog.applyTemplate(code, templateLang.value);
-    localStorage.setItem(LAST_LANG_KEY, templateLang.value);
-    toast.show("Category set switched", "success");
-    switchExpanded.value = false;
-  } catch (e) {
-    toast.show(e?.message || "Failed to switch category set", "error");
-  } finally {
-    applyingTemplate.value = false;
-  }
 }
 
 async function hideCategoryRow(cat) {
@@ -333,46 +292,12 @@ async function confirmAdd(groupCode) {
             <X :size="14" />
           </button>
         </div>
-        <button
-          type="button"
-          class="manage-toggle-btn"
-          data-testid="manage-toggle"
-          :aria-label="manageMode ? 'Close manage' : 'Manage categories'"
-          @click="toggleManage"
-        >
-          <X v-if="manageMode" :size="16" aria-hidden="true" />
-          <Settings v-else :size="16" aria-hidden="true" />
-        </button>
       </div>
     </template>
 
     <div ref="bodyEl">
       <template v-if="manageMode">
         <div class="manage-view" data-testid="manage-view">
-          <button
-            type="button"
-            class="switch-template-row"
-            data-testid="switch-template-row"
-            @click="toggleSwitchTemplate"
-          >
-            <span>Switch category set → {{ activeTemplateName }}</span>
-            <ChevronDown v-if="switchExpanded" :size="14" aria-hidden="true" />
-            <ChevronRight v-else :size="14" aria-hidden="true" />
-          </button>
-
-          <div v-if="switchExpanded" class="switch-template-panel" data-testid="switch-template-panel">
-            <p class="switch-template-hint">
-              Switching re-themes groups for the template's categories. Your used categories
-              stay; hidden ones stay hidden.
-            </p>
-            <TemplateList
-              :templates="templates"
-              :active-code="catalog.activeTemplate"
-              :lang="templateLang"
-              @apply="applySwitchTemplate"
-            />
-          </div>
-
           <div
             v-for="g in groupedCategories"
             :key="g.groupId"
@@ -568,6 +493,29 @@ async function confirmAdd(groupCode) {
         </div>
       </template>
     </div>
+
+    <template #footer>
+      <button
+        type="button"
+        class="set-switch-btn"
+        data-testid="open-template-switch"
+        @click="catalog.openTemplateSwitch()"
+      >
+        <Layers :size="14" aria-hidden="true" />
+        <span>Category set: {{ catalog.activeTemplateName }}</span>
+        <ChevronRight :size="14" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="manage-toggle-btn"
+        data-testid="manage-toggle"
+        :aria-label="manageMode ? 'Close manage' : 'Manage categories'"
+        @click="toggleManage"
+      >
+        <X v-if="manageMode" :size="16" aria-hidden="true" />
+        <Settings v-else :size="16" aria-hidden="true" />
+      </button>
+    </template>
   </BaseSheet>
 </template>
 
@@ -619,6 +567,30 @@ async function confirmAdd(groupCode) {
   border-radius: 8px;
   color: var(--muted);
   cursor: pointer;
+}
+
+.set-switch-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.75rem;
+  background: var(--field);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.set-switch-btn span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
 }
 
 .clear-btn {
@@ -818,38 +790,6 @@ async function confirmAdd(groupCode) {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-}
-
-.switch-template-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.6rem 0.75rem;
-  background: var(--field);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  color: var(--text);
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  text-align: left;
-}
-
-.switch-template-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  padding: 0.75rem;
-  background: var(--field);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-}
-
-.switch-template-hint {
-  font-size: 0.78rem;
-  color: var(--muted);
-  margin: 0;
 }
 
 .manage-group {

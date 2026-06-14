@@ -36,6 +36,7 @@ const {
 const selectedCurrency = ref("");
 const currencyPickerOpen = ref(false);
 const categorySheetOpen = ref(false);
+const manageOnOpen = ref(false);
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -136,6 +137,14 @@ function reset() {
   userEventOverride.value = false;
   applyDefaultGroupAndCategory();
   applyAutoAttachEventForDate();
+}
+
+function openCategoryManage() {
+  manageOnOpen.value = true;
+  categorySheetOpen.value = true;
+  nextTick(() => {
+    manageOnOpen.value = false;
+  });
 }
 
 function onQuickPick(catId) {
@@ -332,7 +341,16 @@ defineExpose({ save, reset });
       >
         <span v-if="categoryId">{{ catalog.findCategoryById(Number(categoryId))?.name }}</span>
         <span v-else class="placeholder">Select category…</span>
-        <ChevronRight :size="16" class="pick-chevron" aria-hidden="true" />
+        <div class="pick-actions">
+          <ChevronRight :size="16" class="pick-chevron" aria-hidden="true" />
+          <IconBtn
+            icon="cog"
+            tone="muted"
+            label="Manage categories"
+            data-testid="category-manage-btn"
+            @click.stop="openCategoryManage"
+          />
+        </div>
       </div>
     </div>
 
@@ -445,6 +463,7 @@ defineExpose({ save, reset });
   <CategorySheet
     :open="categorySheetOpen"
     :suggestions="[]"
+    :initial-manage="manageOnOpen"
     @select="onQuickPick($event); categorySheetOpen = false"
     @close="categorySheetOpen = false"
   />
@@ -585,8 +604,15 @@ defineExpose({ save, reset });
   color: var(--muted);
 }
 
-.pick-chevron {
+.pick-actions {
   margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.pick-chevron {
   flex-shrink: 0;
   color: var(--muted);
 }

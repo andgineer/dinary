@@ -37,7 +37,7 @@ const emit = defineEmits(["click"]);
     :class="`icon-btn--${tone}`"
     :aria-label="label"
     :disabled="disabled"
-    @click="emit('click')"
+    @click="emit('click', $event)"
   >
     <component :is="ICONS[icon]" :size="14" aria-hidden="true" />
   </button>

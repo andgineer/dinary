@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useToastStore } from "../src/stores/toast.js";
+import { useCatalogStore } from "../src/stores/catalog.js";
 import { recordOutOfSetActivation } from "../src/composables/oosNudge.js";
 
 beforeEach(async () => {
@@ -26,16 +27,15 @@ describe("recordOutOfSetActivation", () => {
     expect(useToastStore().visible).toBe(false);
   });
 
-  it("shows an info toast and resets the counter on the 3rd activation within 30 days", () => {
+  it("raises the persistent nudge banner and resets the counter on the 3rd activation within 30 days", () => {
     recordOutOfSetActivation();
     recordOutOfSetActivation();
     const nudged = recordOutOfSetActivation();
 
     expect(nudged).toBe(true);
-    const toast = useToastStore();
-    expect(toast.visible).toBe(true);
-    expect(toast.type).toBe("info");
-    expect(toast.message).toMatch(/Switch category set/);
+    expect(useCatalogStore().showSetNudge).toBe(true);
+    expect(localStorage.getItem("dinary:catalog:nudgeActive")).toBe("1");
+    expect(useToastStore().visible).toBe(false);
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY))).toEqual([]);
   });
 

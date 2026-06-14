@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import * as catalogApi from "../api/catalog.js";
 import { useToastStore } from "./toast.js";
+import { resolveUiLang } from "../composables/uiLang.js";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EVENT_WINDOW_DAYS = 30;
@@ -9,6 +10,8 @@ const SNAPSHOT_CACHE_KEY = "dinary:catalog:v1";
 const DEFAULTS_CACHE_KEY = "dinary:defaults:v1";
 const FETCHED_KEY = "dinary:catalog:fetchedAt";
 const CATALOG_TTL_MS = MS_PER_DAY;
+const LAST_LANG_KEY = "dinary:catalog:lastLang";
+const NUDGE_FLAG_KEY = "dinary:catalog:nudgeActive";
 
 function isActive(item) {
   // Lenient: treat missing is_active as active so older cached snapshots
@@ -113,6 +116,53 @@ export const useCatalogStore = defineStore("catalog", () => {
     activeTemplate.value = resp.active_template;
     await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
     return resp;
+  }
+
+  // ----- template switcher (shared sheet + preview cache) -----------------
+
+  const templateCatalog = ref([]);
+  const templateCatalogLoaded = ref(false);
+  const templateLang = ref("ru");
+  const templateSwitchOpen = ref(false);
+
+  async function ensureTemplateCatalog() {
+    if (templateCatalogLoaded.value) return;
+    templateCatalog.value = await catalogApi.listTemplates();
+    templateCatalogLoaded.value = true;
+    const available = Object.keys(templateCatalog.value[0]?.names ?? { ru: "" });
+    const stored = localStorage.getItem(LAST_LANG_KEY);
+    templateLang.value = stored && available.includes(stored) ? stored : resolveUiLang(available);
+  }
+
+  function persistTemplateLang() {
+    localStorage.setItem(LAST_LANG_KEY, templateLang.value);
+  }
+
+  const activeTemplateName = computed(() => {
+    const tpl = templateCatalog.value.find((t) => t.code === activeTemplate.value);
+    if (!tpl) return activeTemplate.value ?? "";
+    return tpl.names?.[templateLang.value] ?? tpl.names?.ru ?? tpl.code;
+  });
+
+  function openTemplateSwitch() {
+    templateSwitchOpen.value = true;
+  }
+
+  function closeTemplateSwitch() {
+    templateSwitchOpen.value = false;
+  }
+
+  // ----- out-of-set nudge banner ------------------------------------------
+
+  const showSetNudge = ref(localStorage.getItem(NUDGE_FLAG_KEY) === "1");
+
+  function setSetNudge(active) {
+    showSetNudge.value = active;
+    if (active) {
+      localStorage.setItem(NUDGE_FLAG_KEY, "1");
+    } else {
+      localStorage.removeItem(NUDGE_FLAG_KEY);
+    }
   }
 
   // ----- visible categories (picker / Manage mode) ------------------------
@@ -489,6 +539,16 @@ export const useCatalogStore = defineStore("catalog", () => {
     templateReady,
     initActiveTemplate,
     applyTemplate,
+    templateCatalog,
+    templateLang,
+    templateSwitchOpen,
+    ensureTemplateCatalog,
+    persistTemplateLang,
+    activeTemplateName,
+    openTemplateSwitch,
+    closeTemplateSwitch,
+    showSetNudge,
+    setSetNudge,
     visibleCategories,
     visibleCategoriesVersion,
     loadVisibleCategories,

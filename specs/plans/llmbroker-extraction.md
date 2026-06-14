@@ -39,12 +39,15 @@ not just Phase 1. The import name and the PyPI distribution name are both **`llm
 (already reserved, cemented — no rename). **Nothing usable is published to PyPI until all
 phases (the `Optimizer` and the LLM-judge included) are implemented.** Phase 1 exists only
 to extract the package in-tree and **prove it inside dinary** as dinary's real LLM path —
-it is internal-only, never an external release. Because the package is unpublished until
-complete, the P1 surface may lock the *shape* of features that do not work yet (the
-default-on `optimize=True`, the full `LifecyclePhase` FSM, the version-aware `ensure_schema`
-upgrade seam) purely as forward-compatibility hygiene: by the time any external user can
-`pip install llmbroker`, every locked knob is real, so there is no published do-nothing
-surface and no version churn from late-arriving features. Only once the phases are done is
+it is internal-only, never an external release. **The P1 contract is minimal, not frozen.**
+We lock only what is genuinely knowable *without* the unbuilt feature — the default-on
+`optimize=True`, the name/shape of `Optimizer(judge_fraction=...)`, the `LifecyclePhase` enum labels.
+Anything that cannot be known without building the feature (the `LLMState` fields beyond
+`phase`, the read-aggregate shape the Optimizer will want) is **deliberately not locked**:
+it is added additively in P4/P5, and where additive is impossible we ship a breaking
+release of `llmbroker` synchronized with dinary. dinary pins a version, so a breaking
+change is an ordinary dependency bump, not a crisis — the goal of P1 is a clean extraction
+behind a minimal, honestly-evolvable surface, not a permanent freeze. Only once the phases are done is
 the package git-extracted into its **own repository**, given its own `pyproject.toml`,
 published, and from then on **developed and versioned independently** of dinary — which
 then consumes it as an ordinary pinned dependency, not as in-tree source.
@@ -309,7 +312,7 @@ class Call:
 
 
 @dataclass(frozen=True, slots=True)
-class TelemetryStats:                    # admin read-model, derived from Call rows
+class LLMMetrics:                        # per-LLM admin read-model, derived from Call rows
     call_count: int
     last_status: CallStatus | None
     last_at: datetime | None
@@ -334,7 +337,7 @@ class RegistryProtocol(Protocol):
 class MutableRegistryProtocol(RegistryProtocol, Protocol):
     async def get(self, name: str) -> LLMConfig | None: ...
     async def add(self, cfg: LLMConfig) -> None: ...
-    async def update(self, name: str, **fields) -> None: ...
+    async def update(self, cfg: LLMConfig) -> None: ...   # keyed by cfg.name (immutable); fully typed, no **fields
     async def remove(self, name: str) -> None: ...
 
 
@@ -345,6 +348,9 @@ class SecretsProtocol(Protocol):
 # Optional, opt-in — only for clusters (several broker copies sharing one
 # redis/postgres store so they agree on each LLM's state). A plain read/write store
 # of the whole LLMState — the broker builds the value it writes at write time.
+# Serialization is tolerant of LLMState evolution: read() ignores unknown fields and
+# defaults missing ones, so a later release can add LLMState fields without breaking an
+# already-deployed cluster backend (see the LLMState evolution note in "Ports").
 class SharedStateProtocol(Protocol):
     async def read(self) -> dict[str, LLMState]: ...                # current state of every LLM in the store
     async def write(self, name: str, state: LLMState) -> None: ...  # save one LLM's whole state (phase included)
@@ -361,14 +367,29 @@ class TelemetryProtocol(Protocol):
 
 
 # Read/aggregation extension (queryable batteries — sqlite/jsonl/postgres — implement
-# it; default log/none do not). Powers a host admin UI AND the Optimizer warm-start,
-# so neither needs raw SQL. `@runtime_checkable` so the Optimizer can `isinstance`
-# the telemetry to decide warm-start vs cold-boot — no hasattr sniffing.
+# it; default log/none do not). The P1 shape is exactly what a host admin UI needs —
+# no raw SQL. `@runtime_checkable` so the Optimizer can `isinstance` the telemetry to
+# decide warm-start vs cold-boot — no hasattr sniffing. NB: the Optimizer's own
+# warm-start aggregate shape (per-(llm, operation), quality/latency) is decided in P4
+# and may add methods here — additively where possible, a synchronized breaking release
+# otherwise; not pre-locked now (see "Autonomous optimization").
 @runtime_checkable
 class QueryableTelemetryProtocol(TelemetryProtocol, Protocol):
-    async def stats(self, *, since: datetime) -> dict[str, TelemetryStats]: ...
+    async def stats(self, *, since: datetime | None = None) -> dict[str, TelemetryStats]: ...  # default window when None
     async def recent(self, *, limit: int) -> list[Call]: ...
     async def purge(self, *, before: datetime) -> int: ...  # retention — drop rows older than `before`
+
+
+# Lifecycle capability shared by every port that holds an open resource (sqlite/redis/
+# postgres/mongodb connections). It is ORTHOGONAL to a port's data contract — not inherited
+# by RegistryProtocol/TelemetryProtocol/… — so a zero-resource port (file Registry, env
+# Secrets, log Telemetry, NoTelemetry) simply does not implement it. `@runtime_checkable`
+# so aclose() teardown is decided by `isinstance(port, AsyncResourceProtocol)`, never by
+# hasattr sniffing — the same structural mechanism QueryableTelemetryProtocol uses. aclose()
+# is idempotent (a second call is a no-op).
+@runtime_checkable
+class AsyncResourceProtocol(Protocol):
+    async def aclose(self) -> None: ...
 ```
 
 **The data types — who's who** (the README carries this same table):
@@ -392,7 +413,7 @@ class LLM:                       # facade returned by llms[name] — a thin bund
     def state(self) -> LLMState: ...   # sync — built FRESH on every access from the broker's live
                                        #   internals (cooldown timestamp, fail counter, optimizer phase);
                                        #   nothing stored, so the phase is always current
-    async def stats(self, *, since: datetime) -> TelemetryStats: ...   # async — telemetry I/O + window
+    async def stats(self, *, since: datetime | None = None) -> TelemetryStats: ...   # async — telemetry I/O; default window when None
     # the resolved secret is NOT here and NOT on config — it lives in the broker's
     # private _resolved_keys map, keyed by name, and never leaves the broker.
 
@@ -405,7 +426,7 @@ class Broker(Mapping[str, LLM]):
         secrets=None,                # SecretsProtocol (default llmbroker.Secrets() — env); broker resolves api_key_ref → _resolved_keys
         shared_state=None,           # SharedStateProtocol — opt-in, cluster only
         telemetry=None,              # TelemetryProtocol (default llmbroker.Telemetry() — log)
-        optimize: "bool | Optimizer" = True,   # True ≡ Optimizer() (judge off); see "Autonomous optimization"
+        optimize: "bool | Optimizer" = True,   # True ≡ Optimizer() (judge_fraction=0.0); see "Autonomous optimization"
     ): ...                           # __init__ is cheap & side-effect-free; background loops start lazily
 
     async def aclose(self) -> None: ...        # cancel background loops, close owned ports
@@ -518,12 +539,20 @@ for name in llms:
   computes the new state and saves it). Writing the **whole** state — not granular
   events — is what lets every phase, including the Optimizer's Offline/Probing,
   propagate to other copies with no extra method.
-- `LLMState.phase` models the **full** Optimizer state machine
-  (Available/Cooling/Offline/Probing) from day one. P1 only ever sets
+- `LLMState.phase` carries the **full** `LifecyclePhase` enum
+  (Available/Cooling/Offline/Probing) from day one — the labels are knowable without
+  the Optimizer, so fixing them now is cheap and harmless. P1 only ever sets
   Available/Cooling (429/503 cooldown); Offline/Probing are populated by the
-  Optimizer (P4). The phase is part of the saved state now so the P3
-  `SharedState` backends (redis/postgres/mongodb) carry it **without** a later
-  Protocol-breaking change — a copy writes the whole `LLMState`, phase included.
+  Optimizer (P4). **`LLMState` is not declared final, though.** The Optimizer (P4) will
+  likely add tuning fields that must also sync across a cluster — `current_delay`, the
+  offline-sleep length, a probe counter — none of which `phase`/`cooldown_until` encode
+  (a cluster peer reading shared state today inherits the *phase* and next-wake time, but
+  not the escalation level driving the next transition). So the contract here is **not
+  "the shape is frozen" but "SharedState serialization tolerates evolution"**:
+  `read()` ignores unknown fields and defaults missing ones, so P4 can add `LLMState`
+  fields without breaking an already-deployed P3 backend. Where a change cannot be made
+  additively, it is a synchronized breaking release of `llmbroker`+dinary (dinary pins a
+  version) — an ordinary dependency bump, not something P1 must contort to avoid.
 - `Call` captures token `usage` (objective, read from the response, when present)
   and `quality_score` from P1 because telemetry is
   **append-only** — a column added later starts with no history, which is exactly
@@ -566,6 +595,11 @@ for name in llms:
   keeps one contract and never returns `None`. Best-effort, skippable work ("enrich if a
   slot is spare, else move on") is `chat(..., wait=0)` inside `try/except
   NoLLMAvailable` — one obvious branch, no second method to learn.
+  **The `wait=None` (wait indefinitely) default suits the broker's core job — ride out
+  finite 429/503 cooldowns rather than push retry onto every caller — and is what a
+  queue worker (dinary's classifier) wants.** An **interactive** caller that must bound
+  latency should pass a finite `wait`; the README leads with this so the default is never
+  a surprise hang under sustained backpressure.
 - Both `ask` and `chat` take an opaque `trace_id` (correlation) and an
   `operation: str | None` (a host-defined category — e.g. `"receipt_classification"`,
   `"summary"`). `operation` is what lets the `Optimizer` tune and route per
@@ -584,7 +618,7 @@ for name in llms:
   orthogonal: it fires whenever an LLM was actually tried and errored, regardless of
   `wait`, because that is a real failure, not a capacity skip.
 
-`Result.record_quality(value: float)` — `async`, since it writes to telemetry; the
+`Result.record_quality(score: float)` — `async`, since it writes to telemetry; the
 verb is honest about the side effect, parallel to `TelemetryProtocol.record(call)`, and
 avoids "rate" colliding with rate-limiting. It does **not** emit a second `Call`.
 Quality attaches to the **existing** call: every `Call` carries a broker-assigned
@@ -632,13 +666,19 @@ clean shutdown unambiguous.
 - **Teardown is `await llms.aclose()`** — it does two things: (1) cancels the
   broker's background loops (always — a running event loop holds strong refs to those
   tasks, so they are never GC-collected on their own and the task closures keep the
-  broker alive), and (2) closes the **resource-holding** ports it owns (calling each
-  port's optional `aclose()`). In P1 the only resource-holding port is
+  broker alive), and (2) closes the **resource-holding** ports it owns. A resource-holding
+  backend implements the `@runtime_checkable` `AsyncResourceProtocol` (a single
+  `async def aclose(self)`); the broker decides what to close with
+  `isinstance(port, AsyncResourceProtocol)` and calls `aclose()` only on the ports that
+  match — the same structural-protocol mechanism used for `QueryableTelemetryProtocol`,
+  **never** `hasattr` sniffing. A zero-resource port simply does not implement the protocol
+  and is skipped, so it need not declare a no-op. In P1
+  the only resource-holding port is
   `llmbroker.sqlite.*` (the aiosqlite worker thread + connection + the DB file fd, none
   of which GC reclaims promptly); P3 adds the redis/postgres/mongodb sockets. The
   zero-resource ports — file `Registry`, `Secrets`/`DictSecrets`, log `Telemetry`,
-  `NoTelemetry` — have a no-op `aclose()`, so a TOML+log broker's teardown is *only* the
-  task cancellation.
+  `NoTelemetry` — do not implement `AsyncResourceProtocol` at all, so the broker skips them
+  and a TOML+log broker's teardown is *only* the task cancellation.
 - **Ports are owned by exactly one broker; resource ports are not shared.** The broker
   owns and closes every port handed to it. A resource port (`sqlite`/`redis`/`postgres`)
   belongs to one broker — if two brokers must talk to the same DB, each is given its own
@@ -649,8 +689,8 @@ clean shutdown unambiguous.
   resource port is self-evidently wrong — whichever broker shuts down first would close
   the connection out from under the other (a *premature*-close bug, which no ownership
   trick fixes). Zero-resource ports (`Secrets`, log `Telemetry`) may be shared freely —
-  their `aclose()` is a no-op. As cheap hygiene, every port's `aclose()` is **idempotent**
-  (a second call is a no-op, never an error).
+  they implement no `aclose()`. As cheap hygiene, every resource port's `aclose()` is
+  **idempotent** (a second call is a no-op, never an error).
 - **`async with` is teardown sugar over `aclose()`**, not a second way to start.
   `__aenter__` returns `self`. Because the constructor is multi-line, the idiom is
   **two-step** — never the constructor in the `with` header:
@@ -733,8 +773,10 @@ reg = llmbroker.sqlite.Registry("broker.db")
 await reg.import_from(llmbroker.Registry("llms.toml"), on_conflict="skip")
 ```
 
-`import_from(source, *, on_conflict=...)` takes any read-only `RegistryProtocol` source
-(e.g. `llmbroker.Registry("llms.toml")`). Policies map to the real user journeys:
+`import_from(source, *, on_conflict: Literal["skip", "update", "replace"] = "skip")`
+takes any read-only `RegistryProtocol` source (e.g. `llmbroker.Registry("llms.toml")`).
+The `Literal` policy type is statically checked — a typo'd policy is a type error, not a
+silent no-op. Policies map to the real user journeys:
 
 | `on_conflict` | Effect | Journey |
 |---|---|---|
@@ -820,17 +862,17 @@ llms = llmbroker.Broker(
 ```python
 optimize=True                              # default: delay tuning + routing, ZERO extra LLM calls (active from P4)
 optimize=False                             # broker stays reactive (round-robin + 429/503 cooldown), no learning
-optimize=llmbroker.Optimizer(judge=0.05)   # the above + LLM-as-judge scores 5% of answers (active from P5)
+optimize=llmbroker.Optimizer(judge_fraction=0.05)   # the above + LLM-as-judge scores 5% of answers (active from P5)
 ```
 
-`Optimizer(judge: float = 0.0)` — `judge` is the **sampling fraction** the
-LLM-as-judge scores (`0.0` = off). `True` ≡ `Optimizer()` (`judge=0.0`), `False`
+`Optimizer(judge_fraction: float = 0.0)` — `judge_fraction` is the **sampling fraction** the
+LLM-as-judge scores (`0.0` = off). `True` ≡ `Optimizer()` (`judge_fraction=0.0`), `False`
 ≡ no optimizer. So the default self-tuning is **free** (no extra LLM traffic), and
 token-spending judging is **never** enabled implicitly — only when a host sets
-`judge>0`.
+`judge_fraction>0`.
 
 **P1 ships only the shape, not the behavior.** P1 fixes the parameter
-(`optimize: bool | Optimizer = True`, `Optimizer(judge=0.0)`) so the default is
+(`optimize: bool | Optimizer = True`, `Optimizer(judge_fraction=0.0)`) so the default is
 locked now and P4 can switch the engine on with **no API change**. In P1 the
 Optimizer loop does not exist: `optimize=True` runs nothing, and the broker is
 **reactive regardless** — round-robin selection + per-LLM 429/503 cooldown. The
@@ -910,7 +952,7 @@ backend buys.
 
 **What it may use an LLM for** (optional, sampled, never on the hot path):
 
-- **Quality judging** — **off unless the host sets `Optimizer(judge>0)`** — sample
+- **Quality judging** — **off unless the host sets `Optimizer(judge_fraction>0)`** — sample
   that fraction of outputs per (llm, operation) and score them with an LLM-as-judge,
   closing the quality loop *without* the host having to call `record_quality()`. The
   judge call goes through the broker itself (dogfooding) under a low-priority
@@ -1128,8 +1170,8 @@ src/llmbroker/
                          #             Registry/Secrets/DictSecrets/Telemetry/NoTelemetry/JsonlTelemetry,
                          #             BrokerError/NoLLMAvailable/AllLLMsFailed.
                          #             Protocols (RegistryProtocol/MutableRegistryProtocol/SecretsProtocol/SharedStateProtocol/
-                         #             TelemetryProtocol/QueryableTelemetryProtocol) and DTOs (LLMConfig/LLMState/
-                         #             Usage/Call/CallStatus/TelemetryStats) are NOT exported here — backend/admin
+                         #             TelemetryProtocol/QueryableTelemetryProtocol/AsyncResourceProtocol) and DTOs (LLMConfig/
+                         #             LLMState/Usage/Call/CallStatus/TelemetryStats) are NOT exported here — backend/admin
                          #             authors import them from their defining modules (registry.py/secrets.py/
                          #             shared_state.py/telemetry.py/models.py).
                          #             NEVER imports a dep-carrying backend submodule (sqlite/redis/postgres/mongodb).
@@ -1142,7 +1184,8 @@ src/llmbroker/
   models.py              # LLMConfig (config: name/base_url/model/api_key_ref — no secret),
                          #             LifecyclePhase (enum), LLMState (live state + SharedState wire DTO),
                          #             Usage (provider token report), Call (llm_name/usage/…), CallStatus,
-                         #             TelemetryStats (call_count/last_status/last_at)
+                         #             TelemetryStats (call_count/last_status/last_at),
+                         #             AsyncResourceProtocol (shared port-lifecycle capability; aclose())
   state.py               # private in-memory per-LLM live state (always-on; not a public port) → LLMState
   schema.py              # ensure_schema for the sqlite battery: version-aware (creates + applies additive,
                          #             data-preserving ALTERs against an llmbroker_-prefixed version marker);
@@ -1235,10 +1278,10 @@ offline→probe→active recovery (the state model in "Autonomous optimization")
 maintains a per-`operation` routing ranking the broker selection consults; and
 exposes `alerts()` for the human-only items (under-provisioned, dead key).
 Selection strategy: first 0-wait LLM, else minimal remaining wait — biased by the
-routing ranking. Default-on (`optimize=True` ≡ `Optimizer(judge=0.0)`); with the
+routing ranking. Default-on (`optimize=True` ≡ `Optimizer(judge_fraction=0.0)`); with the
 default `Telemetry()` (log) / `NoTelemetry()` it boots cold (no warm-start) and the
 broker keeps its reactive round-robin cooldown until the Optimizer has learned from
-live traffic. The LLM-as-judge is enabled only by `optimize=Optimizer(judge>0)`.
+live traffic. The LLM-as-judge is enabled only by `optimize=Optimizer(judge_fraction>0)`.
 
 ### Phase 5 — LLM-in-the-loop deepening (future, not scheduled here)
 
@@ -1366,7 +1409,7 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
   loop and starts no background task until the first `await ask`/`chat`; `aclose()`
   cancels the background loops and calls the ports' `aclose()`; `async with llms:`
   is equivalent to `aclose()` on exit; and `optimize` accepts both `True`/`False`
-  and an `Optimizer(judge=...)` instance (shape only — no judge loop in P1).
+  and an `Optimizer(judge_fraction=...)` instance (shape only — no judge loop in P1).
 - `tests/services/test_llm_storage.py` splits into `test_registry_toml.py`,
   `test_registry_sqlite.py`, `test_telemetry.py` (and `test_state.py`), each
   adapting `SqliteLLMBrokerStorage()` → the new battery with an explicit
@@ -1486,7 +1529,7 @@ indirection so no key lives in config, `operation`-tagged
 telemetry, the `llmbroker_`-prefixed self-owned schema and
 `llmbroker.alembic.include_object` coexistence hook) and the `Optimizer` roadmap
 (autonomous self-tuning + operation routing; optional LLM-in-the-loop quality judging
-behind `Optimizer(judge>0)`). **The README must keep this boundary sharp: describe
+behind `Optimizer(judge_fraction>0)`). **The README must keep this boundary sharp: describe
 the reactive behavior as what ships, and the Optimizer/judge as roadmap — never as
 working features.** Concretely, the README states that in P1 the broker is reactive
 only (round-robin + 429/503 cooldown), `optimize=True` is the reserved default that
@@ -1525,7 +1568,7 @@ import name and the distribution name are `llmbroker`.
 2. `uv run pytest` → all green, incl. `tests/llmbroker/`.
 3. `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.adapters.llm_storage" src/ tests/ tasks/` → empty.
 4. `uv run python -c "import llmbroker, llmbroker.sqlite, llmbroker.alembic; print(llmbroker.Broker, llmbroker.LLM, llmbroker.LifecyclePhase, llmbroker.Result, llmbroker.Registry, llmbroker.JsonlTelemetry, llmbroker.NoTelemetry, llmbroker.DictSecrets, llmbroker.Secrets, llmbroker.NoLLMAvailable, llmbroker.alembic.include_object)"`.
-   Also assert: `import llmbroker` alone does **not** import `aiosqlite` (no dep-carrying submodule pulled); the protocols/DTOs are **not** top-level (`hasattr(llmbroker, "RegistryProtocol")` is `False`) and import from their modules (`from llmbroker.registry import RegistryProtocol, MutableRegistryProtocol; from llmbroker.telemetry import TelemetryProtocol, QueryableTelemetryProtocol; from llmbroker.shared_state import SharedStateProtocol; from llmbroker.models import LLMConfig, LLMState, Usage, Call`).
+   Also assert: `import llmbroker` alone does **not** import `aiosqlite` (no dep-carrying submodule pulled); the protocols/DTOs are **not** top-level (`hasattr(llmbroker, "RegistryProtocol")` is `False`) and import from their modules (`from llmbroker.registry import RegistryProtocol, MutableRegistryProtocol; from llmbroker.telemetry import TelemetryProtocol, QueryableTelemetryProtocol; from llmbroker.shared_state import SharedStateProtocol; from llmbroker.models import LLMConfig, LLMState, Usage, Call, AsyncResourceProtocol`).
 5. `uv run python -m llmbroker env-template src/llmbroker/data/llms.example.toml` prints a `.env` skeleton.
 6. Smoke: applying the drop migration leaves no legacy `llmbroker_providers`/
    `llmbroker_calls` tables; `uv run inv dev` then starts, `ensure_schema` creates

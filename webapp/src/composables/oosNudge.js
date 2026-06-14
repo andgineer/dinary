@@ -1,11 +1,8 @@
-import { useToastStore } from "../stores/toast.js";
+import { useCatalogStore } from "../stores/catalog.js";
 
 const STORAGE_KEY = "dinary:catalog:oosActivations";
 const WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const NUDGE_THRESHOLD = 3;
-const NUDGE_MESSAGE =
-  "You've added several categories outside your set — open the category " +
-  "picker's Manage → Switch category set to see other sets.";
 
 function readActivations() {
   try {
@@ -26,10 +23,11 @@ function writeActivations(timestamps) {
 }
 
 // Tracks out-of-set activations from CategorySheet's "Not in your set"
-// search section. After 3 activations within 30 days, shows an info toast
-// once and resets the counter so the next nudge requires 3 fresh activations.
-// Returns true when the nudge toast was shown, so the caller can skip its
-// own toast instead of immediately replacing the nudge.
+// search section. After 3 activations within 30 days, raises the persistent
+// nudge banner (catalog.showSetNudge) and resets the counter so the next
+// nudge requires 3 fresh activations.
+// Returns true when the banner was raised, so the caller can skip its own
+// toast instead of immediately covering the banner.
 export function recordOutOfSetActivation() {
   const now = Date.now();
   const cutoff = now - WINDOW_MS;
@@ -37,7 +35,7 @@ export function recordOutOfSetActivation() {
   pruned.push(now);
 
   if (pruned.length >= NUDGE_THRESHOLD) {
-    useToastStore().show(NUDGE_MESSAGE, "info");
+    useCatalogStore().setSetNudge(true);
     writeActivations([]);
     return true;
   }

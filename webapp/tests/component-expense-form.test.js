@@ -377,3 +377,58 @@ describe("ExpenseForm: event chip reactivity after catalog changes", () => {
     expect(wrapper.find('[data-testid="event-chip-100"]').exists()).toBe(false);
   });
 });
+
+describe("ExpenseForm: category-row manage gear", () => {
+  const TELEPORT_STUB = { props: ["to"], template: "<div><slot /></div>" };
+
+  function mountFormWithTeleportStub() {
+    return mount(ExpenseForm, {
+      global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB } },
+    });
+  }
+
+  it("gear opens the category sheet directly into manage mode", async () => {
+    seedCatalog();
+    const wrapper = mountFormWithTeleportStub();
+    await flushPromises();
+
+    await wrapper.find('[data-testid="category-manage-btn"]').trigger("click");
+    await flushPromises();
+
+    const sheet = wrapper.findComponent({ name: "CategorySheet" });
+    expect(sheet.props("open")).toBe(true);
+    expect(wrapper.find('[data-testid="manage-view"]').exists()).toBe(true);
+  });
+
+  it("normal row click opens the sheet without entering manage mode", async () => {
+    seedCatalog();
+    const wrapper = mountFormWithTeleportStub();
+    await flushPromises();
+
+    await wrapper.find('[data-testid="category-pick-btn"]').trigger("click");
+    await flushPromises();
+
+    const sheet = wrapper.findComponent({ name: "CategorySheet" });
+    expect(sheet.props("open")).toBe(true);
+    expect(wrapper.find('[data-testid="manage-view"]').exists()).toBe(false);
+  });
+
+  it("does not carry manage mode over to a later normal-click reopen", async () => {
+    seedCatalog();
+    const wrapper = mountFormWithTeleportStub();
+    await flushPromises();
+
+    await wrapper.find('[data-testid="category-manage-btn"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="manage-view"]').exists()).toBe(true);
+
+    const sheet = wrapper.findComponent({ name: "CategorySheet" });
+    sheet.vm.$emit("close");
+    await flushPromises();
+
+    await wrapper.find('[data-testid="category-pick-btn"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.findComponent({ name: "CategorySheet" }).props("open")).toBe(true);
+    expect(wrapper.find('[data-testid="manage-view"]').exists()).toBe(false);
+  });
+});

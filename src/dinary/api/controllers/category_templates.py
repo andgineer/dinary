@@ -18,11 +18,26 @@ from dinary.db.catalog import (
     search_categories,
     unhide_category,
 )
-from dinary.db.category_apply import apply_template
+from dinary.db.category_apply import (
+    DEFAULT_LANG,
+    apply_template,
+    load_category_translations,
+    resolve_category_name,
+)
 
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
+
+
+class TemplatePreviewCategory(BaseModel):
+    names: dict[str, str]
+
+
+class TemplatePreviewGroup(BaseModel):
+    code: str
+    names: dict[str, str]
+    categories: list[TemplatePreviewCategory]
 
 
 class CategoryTemplateItem(BaseModel):
@@ -30,6 +45,7 @@ class CategoryTemplateItem(BaseModel):
     names: dict[str, str]
     taglines: dict[str, str]
     origin: str
+    groups: list[TemplatePreviewGroup]
 
 
 class ActiveTemplateResponse(BaseModel):
@@ -100,6 +116,7 @@ def list_category_templates(con: sqlite3.Connection) -> list[CategoryTemplateIte
     rows = con.execute(
         "SELECT code, origin, definition_json FROM category_templates ORDER BY sort_order",
     ).fetchall()
+    translations = load_category_translations(con)
     items = []
     for code, origin, definition_json in rows:
         definition = json.loads(definition_json)
@@ -109,9 +126,43 @@ def list_category_templates(con: sqlite3.Connection) -> list[CategoryTemplateIte
                 names=definition["names"],
                 taglines=definition["taglines"],
                 origin=str(origin),
+                groups=_build_template_groups(definition, translations),
             ),
         )
     return items
+
+
+def _build_template_groups(
+    definition: dict,
+    translations: dict[str, dict[str, str]],
+) -> list[TemplatePreviewGroup]:
+    """Build the ordered, visible-only group/category preview for a template."""
+    langs = list(definition["names"].keys())
+    visible = definition["visible"]
+    result = []
+    for group_code, group_names in definition["groups"].items():
+        codes = visible.get(group_code, [])
+        if not codes:
+            continue
+        result.append(
+            TemplatePreviewGroup(
+                code=group_code,
+                names={
+                    lang: group_names.get(lang, group_names.get(DEFAULT_LANG, group_code))
+                    for lang in langs
+                },
+                categories=[
+                    TemplatePreviewCategory(
+                        names={
+                            lang: resolve_category_name(translations, definition, code, lang)
+                            for lang in langs
+                        },
+                    )
+                    for code in codes
+                ],
+            ),
+        )
+    return result
 
 
 def get_active_template_response(con: sqlite3.Connection) -> ActiveTemplateResponse:

@@ -15,7 +15,7 @@ import sqlite3
 
 from dinary.db import catalog, storage
 
-_DEFAULT_LANG = "ru"
+DEFAULT_LANG = "ru"
 
 
 def apply_template(con: sqlite3.Connection, template_code: str, lang: str) -> None:
@@ -28,6 +28,7 @@ def apply_template(con: sqlite3.Connection, template_code: str, lang: str) -> No
         msg = f"Unknown category template: {template_code!r}"
         raise ValueError(msg)
     definition = json.loads(row[0])
+    translations = load_category_translations(con)
 
     placement: dict[str, tuple[str, bool]] = {}
     for group_code, codes in definition["visible"].items():
@@ -39,14 +40,14 @@ def apply_template(con: sqlite3.Connection, template_code: str, lang: str) -> No
 
     with storage.transaction(con):
         for sort_order, (group_code, group_names) in enumerate(definition["groups"].items()):
-            name = group_names.get(lang, group_names.get(_DEFAULT_LANG, group_code))
+            name = group_names.get(lang, group_names.get(DEFAULT_LANG, group_code))
             con.execute(
                 "UPDATE category_groups SET name = ?, sort_order = ? WHERE code = ?",
                 [name, sort_order, group_code],
             )
 
         for code, (group_code, is_visible) in placement.items():
-            name = _resolve_name(con, definition, code, lang)
+            name = resolve_category_name(translations, definition, code, lang)
             con.execute(
                 "UPDATE categories SET "
                 "group_id = (SELECT id FROM category_groups WHERE code = ?), "
@@ -63,8 +64,16 @@ def apply_template(con: sqlite3.Connection, template_code: str, lang: str) -> No
         )
 
 
-def _resolve_name(
-    con: sqlite3.Connection,
+def load_category_translations(con: sqlite3.Connection) -> dict[str, dict[str, str]]:
+    """Load every ``category_translations`` row into ``{code: {lang: name}}``."""
+    translations: dict[str, dict[str, str]] = {}
+    for code, lang, name in con.execute("SELECT code, lang, name FROM category_translations"):
+        translations.setdefault(code, {})[lang] = name
+    return translations
+
+
+def resolve_category_name(
+    translations: dict[str, dict[str, str]],
     definition: dict,
     code: str,
     lang: str,
@@ -74,12 +83,5 @@ def _resolve_name(
     if code in renames and lang in renames[code]:
         return str(renames[code][lang])
 
-    for try_lang in (lang, _DEFAULT_LANG):
-        row = con.execute(
-            "SELECT name FROM category_translations WHERE code = ? AND lang = ?",
-            [code, try_lang],
-        ).fetchone()
-        if row is not None:
-            return str(row[0])
-
-    return code
+    names = translations.get(code, {})
+    return names.get(lang, names.get(DEFAULT_LANG, code))
