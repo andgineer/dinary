@@ -438,6 +438,19 @@ class AsyncLLM:                  # handle returned by AsyncBroker[name] — conf
     # private _resolved_keys map, keyed by name, and never leaves the broker.
 
 
+class AsyncResult:                 # returned by AsyncBroker.ask()/chat()
+    text: str                      # the assistant's reply content; "" when the reply is tool-calls-only
+    tool_calls: list[dict] | None  # raw `tool_calls` from the response, verbatim; None when absent
+    usage: Usage | None             # token counts the provider reported, when present
+    async def record_quality(self, score: float) -> None: ...  # writes quality_score onto the Call
+                                                                  # this Result was built from (matched
+                                                                  # by the broker-assigned Call.id)
+
+
+# `Result` is the synchronous analogue, returned by Broker.ask()/chat(): identical
+# fields, `record_quality` blocks instead of awaiting — see "Sync wrapper".
+
+
 SyncPolicy = Literal["mirror", "add", "if_empty"]   # how sync_configs reconciles the DB with a source
 
 
@@ -463,9 +476,12 @@ class AsyncBroker(Mapping[str, AsyncLLM]):
     # `wait` stays distinct from a future per-request provider timeout — capacity, not response.
     async def ask(self, prompt: str, *, operation: str | None = None,
                   trace_id: str | None = None, wait: float | None = None) -> AsyncResult: ...
-    async def chat(self, messages: list[dict], *, operation: str | None = None,
+    async def chat(self, messages: list[dict], *, tools: list[dict] | None = None,
+                   operation: str | None = None,
                    trace_id: str | None = None, wait: float | None = None) -> AsyncResult: ...
-    # NB: no per-call provider passthrough — see "Provider-specific parameters" below
+    # `tools` is passed through verbatim (wire-format, like `messages` — see "Two entry
+    # points"); NB beyond that, no per-call provider passthrough — see "Provider-specific
+    # parameters" below
 
     # ── inspection: Mapping[str, AsyncLLM] over EVERY configured LLM (health shows in state().phase) ──
     def __getitem__(self, name: str) -> AsyncLLM: ...
@@ -614,6 +630,14 @@ for name, s in report.items():
   fields without breaking an already-deployed P3 backend. Where a change cannot be made
   additively, it is a synchronized breaking release of `llmbroker`+dinary (dinary pins a
   version) — an ordinary dependency bump, not something P1 must contort to avoid.
+- **`phase` is always derived for `Available`/`Cooling`, never trusted as stored.**
+  Every time the broker builds an `LLMState` — for `state()`, `snapshot()`, or after
+  `SharedState.read()` returns a peer's value — it recomputes `phase` as `COOLING`
+  iff `cooldown_until` is set and still in the future, `AVAILABLE` otherwise. A peer's
+  stale `COOLING` whose `cooldown_until` has since passed therefore never leaks into
+  `state().phase`; reading shared state needs no extra reconciliation step. Only
+  `OFFLINE`/`PROBING` (P4) are trusted as stored — they have no `cooldown_until`-based
+  derivation.
 - `Call` captures token `usage` (objective, read from the response, when present)
   and `quality_score` from P1 because telemetry is
   **append-only** — a column added later starts with no history, which is exactly
@@ -645,6 +669,22 @@ for name, s in report.items():
   There is **no per-call provider passthrough** — the broker does not know which
   provider will serve a call, so raw provider body fields have no place in its API
   (see "Provider-specific parameters").
+- **`chat` accepts an optional `tools: list[dict] | None = None`, passed through
+  verbatim alongside `messages`.** Unlike a provider tuning knob (`temperature`,
+  `response_format`), the `tools`/`tool_calls` JSON-schema shape is part of the same
+  OpenAI-compatible chat-completions wire contract `messages` already is — every
+  provider this broker targets accepts the same `tools` array and returns
+  `tool_calls` the same way, so passing it through is the same "honest pass-through
+  of provider wire format" as `messages`, **not** the rejected per-call
+  provider-params passthrough (see "Provider-specific parameters"). `Result` gains
+  `.tool_calls` (the raw `tool_calls` list from the response, `None` when absent)
+  alongside `.text`/`.usage`/`.record_quality(...)`. `ask` takes no `tools=` — tool
+  use implies a multi-turn loop, which is `chat`'s domain. The broker itself runs no
+  tool-call loop: one call is one routed request, returning whatever the chosen LLM
+  answered, tool calls included. Orchestrating "execute the tool, append the result,
+  call again" is the host's job — `llmbroker.chat.run_tool_loop` (see "Shipped
+  batteries" / package layout) is a host-agnostic helper for exactly that, built on
+  top of `chat(messages, tools=..., ...)`.
 - **One pair of methods, a numeric `wait`, always raising — no `try_*` twins, no
   `wait` *flag*.** There is no honest "blocking vs non-blocking" split to make: even
   the so-called blocking call goes `await` and waits on the chosen LLM, which can
@@ -1269,6 +1309,17 @@ src/llmbroker/
                          #             NEVER imports a dep-carrying backend submodule (sqlite/redis/postgres/mongodb).
   chat.py                # from adapters/llm_chat.py — LLMConfig moves to models.py; receives the resolved
                          #             key from the broker (not off a public field); parses response usage → Usage for Call; else verbatim
+                         #             also ships `run_tool_loop(llms, messages, *, tools, dispatch, **chat_kwargs)`
+                         #             (ported from complete_with_tools/run_tool_step/_run_tool_loop) — a host-agnostic
+                         #             helper that repeatedly calls `llms.chat(messages, tools=tools, **chat_kwargs)`,
+                         #             executes each `result.tool_calls` entry via the host-supplied `dispatch` mapping,
+                         #             appends the tool results to `messages`, and loops until a tool-call-free reply;
+                         #             written against the sync `Broker` (dinary_analytics' only current tool-calling
+                         #             consumer is sync) — an async `arun_tool_loop` for `AsyncBroker` is deferred until
+                         #             an async host needs tool-calling. NB: the module `llmbroker.chat` and the
+                         #             broker method `.chat()` share a name in different namespaces (a host does
+                         #             `import llmbroker.chat` for `run_tool_loop` and separately calls
+                         #             `llms.chat(...)`) — intentional, not a collision; the README calls it out.
   broker.py              # from adapters/llmbroker.py — AsyncBroker(Mapping[str, AsyncLLM]), the AsyncLLM handle
                          #             (sync .config + async .state()/.metrics()), the single front door:
                          #             ask()/chat() + `wait` capacity bound; add/remove + sync_configs(policy)
@@ -1448,7 +1499,7 @@ payload keys (`rate_limited_until`, `execution_fail_count`, `used_today`,
 `state.fail_count` + `metrics`) instead of table columns, so **no frontend change** is
 required. After this rework **no dinary code names `llmbroker_*` tables**: the
 per-receipt delete (`tests/api/test_api_delete_receipt.py` currently names
-`llmbroker_calls` in a cascade) **stops touching the call log entirely** — the
+`llmbroker_call_log` in a cascade) **stops touching the call log entirely** — the
 broker's append-only journal is bounded by `Telemetry.purge_calls(before=...)` retention.
 
 `_DEPLOY_DIR`/`_LLM_PROVIDERS_TOML` move next to the existing `_PROJECT_ROOT` in
@@ -1458,7 +1509,7 @@ deploy secret store (a migration note for ops).
 
 **The drop migration** (next free number after `0006_category_templates` — confirm
 at implementation time)**:** **drop** the old `llmbroker_*` objects (the legacy
-`llmbroker_providers` config table, `llmbroker_calls`, and any legacy indexes) so
+`llmbroker_providers` config table, `llmbroker_call_log`, and any legacy indexes) so
 that `llmbroker`'s `ensure_schema` becomes their sole creator and owner. On the
 next startup the sqlite battery recreates `llmbroker_registry` (config columns
 `name`/`base_url`/`model`/`api_key_ref`, **without** the legacy
@@ -1466,7 +1517,7 @@ next startup the sqlite battery recreates `llmbroker_registry` (config columns
 `prompt_tokens`/`completion_tokens`/`total_tokens`/`usage_extra`/`quality_score`
 columns), and the startup
 `sync_configs(..., policy="if_empty")` re-fills `llmbroker_registry` from `.deploy/llm_providers.toml`.
-This **discards existing local `llmbroker_calls` history once** — acceptable and
+This **discards existing local `llmbroker_call_log` history once** — acceptable and
 intentional: dinary is the package's single local instance, that table data is
 disposable, and config is re-imported from the TOML. This DROP is a **one-off
 cleanup of dinary's pre-extraction tables**, not how the package upgrades in
@@ -1477,11 +1528,11 @@ already ships `src/dinary/db/migrations/`), so no deploy change.
 
 | File | Change |
 |---|---|
-| `src/dinary/background/classification/task.py` | `from dinary.adapters.llmbroker import LLMBroker` → `from llmbroker import AsyncBroker` (dinary is async); rename `LLMBroker` references to `AsyncBroker` |
+| `src/dinary/background/classification/task.py` | `from dinary.adapters.llmbroker import LLMBroker` → `from llmbroker import AsyncBroker` (dinary is async); rename `LLMBroker` references to `AsyncBroker`. `await outcome.execution.mark_failed()` (the `execution_failed` branch) → `await outcome.execution.record_quality(0.0)` — same "mark this answer unusable" signal, now a telemetry write instead of `BrokerStorage.on_quality_feedback`; keep the existing `try/except` + warning log around the call (a telemetry write failing must not block the fallback-expense path) |
 | `src/dinary/background/classification/store_resolver.py` | same |
-| `src/dinary/background/classification/receipt_classifier.py` | `from dinary.adapters.llmbroker import Execution, LLMBroker` → `from llmbroker import AsyncBroker, AsyncResult` (rename `LLMBroker`→`AsyncBroker`, `Execution`→`AsyncResult`). The main `classify` call: `broker.execute(messages, execution_id=…)` → `await broker.chat(messages, operation="receipt_classification", trace_id=…)` (default `wait=None` blocks until served), and `if execution.output is None` (broker_unavailable) becomes a `try/except NoLLMAvailable` around it. `get_chain_name`'s `broker.execute(…, wait=False)` → `await broker.chat(…, operation="chain_name", wait=0)` inside `try/except NoLLMAvailable: return store_name_raw` — the same graceful skip, now one method with `wait=0` instead of a separate `try_chat` |
-| `src/dinary_analytics/llm.py` | `from dinary.adapters.llm_chat import (AllProvidersBusyError, AllProvidersFailedError, ProviderConfig, complete_with_tools)` → errors `NoLLMAvailable`/`AllLLMsFailed` from top-level `llmbroker`, but `LLMConfig` (was `ProviderConfig`) from `llmbroker.models` and chat helpers from `llmbroker.chat` — they are not top-level |
-| `tasks/receipt.py` | `LLMBroker(TomlLLMBrokerStorage())` → `Broker(registry=llmbroker.Registry(_PROVIDERS_TOML))` (file registry is zero-dep — available from `import llmbroker`, no extra import) and `_PROVIDERS_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llm_providers.toml"` |
+| `src/dinary/background/classification/receipt_classifier.py` | `from dinary.adapters.llmbroker import Execution, LLMBroker` → `from llmbroker import AsyncBroker, AsyncResult` (rename `LLMBroker`→`AsyncBroker`, `Execution`→`AsyncResult`). The main `classify` call: `broker.execute(messages, execution_id=…)` → `await broker.chat(messages, operation="receipt_classification", trace_id=…)` (default `wait=None` blocks until served), and `if execution.output is None` (broker_unavailable) becomes a `try/except NoLLMAvailable` around it. `get_chain_name`'s `broker.execute(…, wait=False)` → `await broker.chat(…, operation="chain_name", wait=0)` inside `try/except NoLLMAvailable: return store_name_raw` — the same graceful skip, now one method with `wait=0` instead of a separate `try_chat`. `ClassificationOutcome.execution: Execution` → `execution: AsyncResult` |
+| `src/dinary_analytics/llm.py` | `from dinary.adapters.llm_chat import (AllProvidersBusyError, AllProvidersFailedError, ProviderConfig, complete_with_tools)` → `load_providers`'s `ProviderConfig` becomes `LLMConfig` from `llmbroker.models`; `run_chat_turn` (sync) constructs `llmbroker.Broker(registry=llmbroker.Registry(_providers_path()))` (the existing `_providers_path()`/`DINARY_LLM_PROVIDERS_FILE` override logic stays — it just picks the TOML path handed to `llmbroker.Registry`); `complete_with_tools(providers, messages, tools=schemas, dispatch=dispatch)` → `llmbroker.chat.run_tool_loop(llms, messages, tools=schemas, dispatch=dispatch, operation="analytics_chat")`; `AllProvidersBusyError`/`AllProvidersFailedError` → `llmbroker.NoLLMAvailable`/`llmbroker.AllLLMsFailed` (top-level) |
+| `tasks/receipt.py` | `LLMBroker(TomlLLMBrokerStorage())` → `AsyncBroker(registry=llmbroker.Registry(_PROVIDERS_TOML))` (file registry is zero-dep — available from `import llmbroker`, no extra import) and `_PROVIDERS_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llm_providers.toml"`. **`AsyncBroker`, not the sync `Broker`** — `_run_all` already runs under `asyncio.run` and calls `llm_classify_receipt`/`get_chain_name`, which (per the `receipt_classifier.py` row) take an `AsyncBroker` and `await broker.chat(...)`; a sync `Broker` would be the wrong type at that call site. `await broker.start()`/`await broker.stop()` become: no `start()` call (lazy start on first `await ask`/`chat`) and `await llms.aclose()` in `_run_all`'s `finally` (or wrap the loop body in `async with llms:`) |
 | `src/dinary/api/controllers/llm.py` | drop all raw SQL over `llmbroker_*` and the registry/telemetry handles; config reads via the `llms` Mapping and CRUD via `llms.add`/`remove`, live cooldown/fail + usage via `await llms.snapshot()` |
 | `src/dinary/api/llm.py` | surface live state + usage via `await llms.snapshot()`; `llm_status()` assembles the unchanged payload keys from it |
 
@@ -1495,6 +1546,11 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
 
 - `tests/services/test_llm_chat.py` → `tests/llmbroker/test_chat.py`
   (`patch("dinary.adapters.llm_chat.httpx.Client")` → `patch("llmbroker.chat.httpx.Client")`).
+  Add coverage for `run_tool_loop`: a `tool_calls` response drives one `dispatch`
+  execution and a follow-up `chat(messages, tools=...)` call with the tool result
+  appended, looping until a tool-call-free reply; also cover `chat(messages,
+  tools=schemas)` passing `tools` through verbatim to the provider request and
+  `Result.tool_calls` reflecting the raw response `tool_calls` (`None` when absent).
 - `tests/services/test_llmbroker.py` → `tests/llmbroker/test_broker.py` (against `AsyncBroker`);
   add coverage for the `Mapping` surface — `llms[name]` returns an `AsyncLLM` handle whose
   `await .state()` reports `COOLING` while cooling and `AVAILABLE` once cooldown passes;
@@ -1544,7 +1600,7 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
   exposes the same `Usage`.
 - **Drop-migration test** (dinary-side, `tests/services/`, needs
   `dinary.db.db_migrations`): after applying migrations through the drop, the legacy
-  `llmbroker_providers` and `llmbroker_calls` are **absent** (`PRAGMA table_info`
+  `llmbroker_providers` and `llmbroker_call_log` are **absent** (`PRAGMA table_info`
   empty / `sqlite_master` has no such table). No more yoyo-vs-`ensure_schema`
   equivalence test — yoyo no longer builds the package schema.
 - **`ensure_schema` rebuild test** (package-side, `tests/llmbroker/`): on an empty DB
@@ -1578,12 +1634,34 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
 - Mechanical import updates in dinary-side tests referencing the broker:
   `test_main.py`, `test_store_resolver.py`, `test_receipt_classifier.py`,
   `test_receipt_classification.py`, `test_receipt_pipeline_e2e.py`,
-  `test_receipt_drain.py`, `test_receipt_pipeline.py`, `test_llm.py`,
-  `tests/conftest.py` (the `NullStorage`/`real_llm_seed` fixtures keep their logic;
-  the fixture that pre-populated config now calls
+  `test_receipt_drain.py`, `test_receipt_pipeline.py`, `tests/conftest.py`.
+  `NullStorage` (the `BrokerStorage` stub implementing `load_providers`/
+  `on_call_logged`/`on_rate_limited`/`on_quality_feedback`) is **removed** —
+  `BrokerStorage` no longer exists; fixtures construct `AsyncBroker`/`Broker`
+  directly with `llmbroker.Registry`/`llmbroker.DictSecrets`/`llmbroker.NoTelemetry()`
+  (or `llmbroker.sqlite.*` over `tmp_path` where a queryable backend is needed).
+  `real_llm_seed` keeps its logic. The fixture that pre-populated config now calls
   `await llms.sync_configs(..., policy="if_empty")` explicitly instead of relying on
-  constructor seeding).
-- `tests/api/test_api_delete_receipt.py` currently names `llmbroker_calls` in raw
+  constructor seeding.
+- **`mark_failed` → `record_quality(0.0)`** (`tests/services/test_receipt_classification.py`,
+  `tests/services/test_receipt_classifier.py`, `tests/tasks/test_receipt_drain.py`,
+  `tests/tasks/test_receipt_pipeline.py`, `tests/api/test_receipt_pipeline_e2e.py`):
+  every `storage_mock.on_quality_feedback = AsyncMock()` stub goes away with
+  `BrokerStorage`. `test_mark_failed_raises_fallback_creates_expense` and
+  `test_mark_failed_raises_still_raises_exhausted`
+  (`tests/services/test_receipt_classification.py:528,759`) become
+  "`record_quality(0.0)` raising must not block the fallback-expense path / must
+  not swallow `ClassificationExhaustedError`" — patch `AsyncResult.record_quality`
+  to raise and assert `task.py`'s existing `try/except` around the call still logs
+  and continues.
+- `tests/analytics/test_llm.py` (reworked, not mechanical): replace
+  `from dinary.adapters.llm_chat import AllProvidersBusyError, AllProvidersFailedError`
+  with `llmbroker.NoLLMAvailable`/`llmbroker.AllLLMsFailed`; the
+  `monkeypatch.setattr(llm_module, "complete_with_tools", ...)` calls retarget
+  `llm_module.run_tool_loop` (now `llmbroker.chat.run_tool_loop`, imported into
+  `dinary_analytics.llm`); `patch("dinary.adapters.llm_chat.httpx.Client", ...)`
+  becomes `patch("llmbroker.chat.httpx.Client", ...)`.
+- `tests/api/test_api_delete_receipt.py` currently names `llmbroker_call_log` in raw
   SQL; update it so the per-receipt delete **no longer touches the call log** (the
   cascade is removed — retention via `Telemetry.purge_calls(before=...)` bounds growth),
   so no dinary code names the package's tables.
@@ -1761,14 +1839,17 @@ import name and the distribution name are `llmbroker`.
   model has always come from the provider config.)
 - **Provider-specific parameters** — `ask`/`chat` take **no** per-call provider
   passthrough (no `provider_params`, no `**kwargs`). A raw body dict (temperature,
-  tools, `response_format`, …) is provider-shaped, and the broker selects the LLM —
+  `response_format`, `top_p`, …) is provider-shaped, and the broker selects the LLM —
   hence the provider — at call time, so it cannot know whose schema a passthrough
   targets; routing the same dict to a different provider would silently send the
   wrong fields. If a real need to influence requests appears, the likely design is
   **`llmbroker`'s own provider-agnostic knobs** (e.g. a normalized `temperature`/
-  `max_tokens`/`tools` surface) that each provider adapter **translates** into its
+  `max_tokens` surface) that each provider adapter **translates** into its
   wire format, **not** a raw passthrough. Deferred until a consumer needs it; the
-  shape (where the knobs live, how adapters map them) is decided then.
+  shape (where the knobs live, how adapters map them) is decided then. **`tools`/
+  `tool_calls` is not in this category** — it is a named `chat` parameter because,
+  like `messages`, it is part of the shared OpenAI-compatible wire format every
+  targeted provider speaks identically (see "Two entry points").
 - Renaming the import or distribution name `llmbroker`.
 - A standalone HTTP admin surface in the package. dinary's admin **is** reworked in P1
   to be broker-only (see "dinary wiring") — config CRUD through `llms.add`/`remove`,

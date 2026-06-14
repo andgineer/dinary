@@ -20,9 +20,15 @@ sent it in the request — and patches its own cached snapshot. The existing
 (`POST/PATCH/DELETE /api/catalog/{groups,events,tags}/...` →
 `applySnapshot()`) returns the *entire* catalog for the same kind of one-row
 change; it gets the same treatment. `apply_template` (which genuinely
-rewrites most of `category_groups`/`categories`) is the one case that keeps
-returning — and applying — the full snapshot inline. Either way, a mutation is
-a single POST round trip: no follow-up GET to refresh the cache.
+rewrites most of `category_groups`/`categories`) is the odd one out the other
+way: today it returns only `{active_template, catalog_version}`, and the
+frontend follows up with a separate conditional `GET /api/categories`
+(`_refreshVisibleCategoriesIfChanged`). Since that endpoint and its
+visible-categories cache are both going away, `apply_template` switches *to*
+returning — and applying — the full snapshot inline, replacing
+`ApplyTemplateResponse` with `CategoryMutationResponse` (§6). Either way, a
+mutation ends up as a single POST round trip: no follow-up GET to refresh the
+cache.
 
 ---
 
@@ -58,10 +64,12 @@ endpoints today, not just the 6 category ones. The fix applies uniformly:
   the frontend calls `catalog.load()` (conditional GET, returns the fresh
   snapshot because the ETag now differs). No new consistency mechanism is
   introduced — this plan just stops manufacturing reasons to bypass it.
-- **`apply_template` is the genuine exception.** It rewrites most of
-  `category_groups` and many `categories` rows in ways the frontend cannot
-  reconstruct from the request alone, so it returns (and the frontend applies)
-  the full snapshot — this is "we tell the backend what to do and get the new
+- **`apply_template` is the genuine exception, and a new response shape.** It
+  rewrites most of `category_groups` and many `categories` rows in ways the
+  frontend cannot reconstruct from the request alone, so its response changes
+  from today's `{active_template, catalog_version}` to the full snapshot
+  (`CategoryMutationResponse`, §6), which the frontend applies via
+  `applySnapshot()` — this is "we tell the backend what to do and get the new
   catalog back," not the one-row case.
 
 ---
@@ -83,14 +91,22 @@ sets `is_active` already maintains "used implies active", except one:
   already call `activate_category()` when an expense is created/corrected
   against an inactive category.
 - `category_apply.apply_template()` (`src/dinary/db/category_apply.py`) is the
-  **only** place that sets `is_active = 0` for an existing category — for
-  every code placed in the new template's `hidden` bucket, unconditionally.
+  only place that sets `is_active = 0` for an existing category **during
+  normal API operation** — for every code placed in the new template's
+  `hidden` bucket, unconditionally. (`category_seed.py`'s `_retire_vanished`,
+  a seed/maintenance-time step, also sets `is_active = 0`, but always together
+  with `is_retired = 1` — those rows are excluded from
+  `VISIBLE_CATEGORY_PREDICATE` by the `is_retired` clause regardless of
+  `is_active`, in both the old and the simplified predicate, so it needs no
+  change here.)
 
 Fix `apply_template` to never deactivate a category that already has expenses.
 Then `is_active` always already equals `(is_active OR has_expenses)`, and the
 predicate collapses to `NOT is_retired AND NOT is_hidden AND is_active`
-everywhere — no `has_expenses` field, no `EXISTS` subquery, in the snapshot or
-in any of the 4 call sites.
+everywhere — no `has_expenses` field, no `EXISTS` subquery, in the predicate's
+definition or in any of its 6 usages across `background/classification/task.py`,
+`sheets/sheet_mapping.py`, `api/controllers/catalog.py`, and
+`api/controllers/rules.py`.
 
 ### 1. `src/dinary/db/category_apply.py` — `apply_template()`
 
@@ -121,7 +137,10 @@ VISIBLE_CATEGORY_PREDICATE = "NOT c.is_retired AND NOT c.is_hidden AND c.is_acti
 Update the docstring/comment (currently explains the `OR has_expenses`
 rationale) to describe the simpler invariant: "`is_active` already reflects
 template membership and historical use; `apply_template` is the only writer
-that can deactivate a category, and it never does so for one with expenses."
+that can deactivate a category during normal operation, and it never does so
+for one with expenses. (`category_seed`'s retirement step also clears
+`is_active`, but always alongside `is_retired`, which this predicate excludes
+unconditionally.)"
 
 ### 3. Simplify `src/dinary/db/sql/list_visible_categories.sql`
 
@@ -144,12 +163,17 @@ ORDER BY g.sort_order, c.name
 ### 4. One-time local backfill
 
 Existing dev DB may already have categories with `is_active=0` and expense
-history (from a past template switch, before this fix). Add a small migration
-(or a one-off `UPDATE`, run once against the personal dev DB) to reconcile:
+history (from a past template switch, before this fix). The category-templates
+feature hasn't shipped to production yet (prod is on 1.4.1), so this is a
+one-off `UPDATE` against the personal dev DB only — no production migration
+needed. Exclude `is_retired` rows (handled separately by
+`category_seed._retire_vanished`, and already excluded from
+`VISIBLE_CATEGORY_PREDICATE` regardless of `is_active`):
 
 ```sql
 UPDATE categories SET is_active = 1
 WHERE is_active = 0
+  AND NOT is_retired
   AND id IN (SELECT DISTINCT category_id FROM expenses);
 ```
 
@@ -160,7 +184,7 @@ WHERE is_active = 0
 ### 5. Augment `build_catalog_snapshot()` — `src/dinary/api/controllers/catalog.py`
 
 **Models** (lines ~22-36): `CategoryGroupItem` gains `code: str`; `CategoryItem`
-gains `code: str` and `is_hidden: bool`.
+gains `code: str`, `is_hidden: bool`, and `is_retired: bool`.
 
 **`category_groups` query** (currently line ~272) — add `g.code`:
 
@@ -184,18 +208,24 @@ Dict per group (currently lines ~291-298) gains `code`:
 ```
 
 **`categories` query** (currently lines ~274-278) — add `c.code`, `c.is_hidden`,
-exclude retired:
+`c.is_retired`. Retired rows **stay** in the snapshot (no `WHERE` added):
+`findCategoryById` (webapp) needs them to resolve the category of old expenses
+whose category was later retired by `category_seed._retire_vanished`, which
+retires by vocabulary membership regardless of expense history.
+`is_active=0` (always true for retired rows — `_retire_vanished` sets both
+flags together) already excludes them from `visibleCategories`, and the new
+`is_retired` field lets `searchCategories()` exclude them from "addable"
+results (§9), matching the old `search_categories.sql`'s `WHERE NOT c.is_retired`:
 
 ```python
 category_rows = con.execute(
-    "SELECT c.id, c.code, c.name, c.group_id, g.name, c.is_active, c.is_hidden"
+    "SELECT c.id, c.code, c.name, c.group_id, g.name, c.is_active, c.is_hidden, c.is_retired"
     " FROM categories c JOIN category_groups g ON g.id = c.group_id"
-    " WHERE NOT c.is_retired"
     " ORDER BY g.sort_order, c.name",
 ).fetchall()
 ```
 
-Dict per category (currently lines ~301-309) gains `code`, `is_hidden`:
+Dict per category (currently lines ~301-309) gains `code`, `is_hidden`, `is_retired`:
 
 ```python
 {
@@ -206,6 +236,7 @@ Dict per category (currently lines ~301-309) gains `code`, `is_hidden`:
     "group": str(r[4]),
     "is_active": bool(r[5]),
     "is_hidden": bool(r[6]),
+    "is_retired": bool(r[7]),
     "removable": cat_refs.get(int(r[0]), 0) == 0,
 }
 ```
@@ -222,13 +253,33 @@ where the server determines something the frontend couldn't: `activate` may
 resolve `group_id` from the active template if it was `NULL`; `create`
 assigns the new row's `id` and slugified `code`.
 
-**Base response** (`src/dinary/api/controllers/catalog.py`, near
-`CategoryItem`):
+**Base response + shared ref-count helper** (`src/dinary/api/controllers/catalog.py`,
+near `CategoryItem`):
 
 ```python
 class CatalogVersionResponse(BaseModel):
     catalog_version: int
+
+
+def _ref_count(con: sqlite3.Connection, row_id: int, tables_and_cols: tuple[tuple[str, str], ...]) -> int:
+    total = 0
+    for table, col in tables_and_cols:
+        (n,) = con.execute(f"SELECT COUNT(*) FROM {table} WHERE {col} = ?", [row_id]).fetchone()  # noqa: S608
+        total += n
+    return total
+
+
+_CATEGORY_REF_TABLES = (
+    ("expenses", "category_id"), ("sheet_mapping", "category_id"), ("import_mapping", "category_id"),
+)
 ```
+
+(`_ref_count`/`_CATEGORY_REF_TABLES` are the same helper §6b generalizes for
+groups/events/tags — defined once, here, and reused there. This is a
+single-row counterpart to the existing `_sum_counts_by_id`/`reference_counts()`
+in this module, which batch-compute `removable` for the whole snapshot via
+`GROUP BY`; for a single mutation response, `COUNT(*) WHERE col = ?` per table
+is cheaper than running the batched query just to look up one id.)
 
 **Result response, for the two endpoints that return a resolved category:**
 
@@ -244,26 +295,26 @@ Shared helper, also in `controllers/catalog.py` (used only by `activate` and
 ```python
 def _category_item(con: sqlite3.Connection, code: str) -> CategoryItem:
     row = con.execute(
-        "SELECT c.id, c.code, c.name, c.group_id, g.name, c.is_active, c.is_hidden"
+        "SELECT c.id, c.code, c.name, c.group_id, g.name AS group_name,"
+        " c.is_active, c.is_hidden, c.is_retired"
         " FROM categories c JOIN category_groups g ON g.id = c.group_id"
         " WHERE c.code = ?",
         [code],
-    ).fetchone()
-    refs = con.execute(
-        "SELECT (SELECT COUNT(*) FROM expenses WHERE category_id = ?)"
-        " + (SELECT COUNT(*) FROM sheet_mapping WHERE category_id = ?)"
-        " + (SELECT COUNT(*) FROM import_mapping WHERE category_id = ?)",
-        [row["id"], row["id"], row["id"]],
     ).fetchone()
     return CategoryItem(
         id=int(row["id"]), code=str(row["code"]), name=str(row["name"]),
         group_id=int(row["group_id"]), group=str(row["group_name"]),
         is_active=bool(row["is_active"]), is_hidden=bool(row["is_hidden"]),
-        removable=int(refs[0]) == 0,
+        is_retired=bool(row["is_retired"]),
+        removable=_ref_count(con, int(row["id"]), _CATEGORY_REF_TABLES) == 0,
     )
 ```
 
-In `src/dinary/api/controllers/category_templates.py`:
+`src/dinary/api/controllers/category_templates.py` already defines its own
+`CatalogVersionResponse` (currently lines ~106-108), with the same single
+`catalog_version: int` field — drop that definition and import
+`CatalogVersionResponse`, `CategoryResultResponse`, `CategoryItem`, and
+`_category_item` from `controllers.catalog` instead:
 
 ```python
 def activate_category_sync(con: sqlite3.Connection, code: str) -> CategoryResultResponse:
@@ -284,8 +335,12 @@ def hide_category_sync(con: sqlite3.Connection, code: str) -> CatalogVersionResp
 (same one-line shape for `unhide_category_sync`, `move_category_sync`,
 `rename_category_sync`)
 
-**`apply_template` keeps the full-snapshot response** (`category_groups` and
-many `categories` rows genuinely change):
+**`apply_template` switches to a full-snapshot response** (`category_groups`
+and many `categories` rows genuinely change). This replaces today's
+`ApplyTemplateResponse` (`{active_template, catalog_version}`); update the
+route's `response_model` in `src/dinary/api/category_templates.py` from
+`ApplyTemplateResponse` to `CategoryMutationResponse`, and remove
+`ApplyTemplateResponse`:
 
 ```python
 class CategoryMutationResponse(CatalogResponse):
@@ -341,18 +396,11 @@ class TagAddResponse(CatalogVersionResponse):
     tag: TagItem
 ```
 
-Shared per-id reference-count helper (generalizes the counting `_category_item`
-already does in §6), plus one item-builder per kind:
+`_ref_count` is defined once in §6 (shared with `_category_item`'s
+`_CATEGORY_REF_TABLES`). Add the remaining per-kind reference tables, plus one
+item-builder per kind:
 
 ```python
-def _ref_count(con: sqlite3.Connection, row_id: int, tables_and_cols: tuple[tuple[str, str], ...]) -> int:
-    total = 0
-    for table, col in tables_and_cols:
-        (n,) = con.execute(f"SELECT COUNT(*) FROM {table} WHERE {col} = ?", [row_id]).fetchone()  # noqa: S608
-        total += n
-    return total
-
-
 _GROUP_REF_TABLES = (("categories", "group_id"),)
 _EVENT_REF_TABLES = (
     ("expenses", "event_id"), ("sheet_mapping", "event_id"), ("import_mapping", "event_id"),
@@ -452,9 +500,10 @@ def add_group_endpoint(body: GroupAddBody, response: Response, con=Depends(get_d
 - Remove `getCategories()` and `searchCategories()`.
 - `activateCategory`/`createCategory` now return `{catalog_version, category}`;
   `hideCategory`/`unhideCategory`/`moveCategory`/`renameCategory` now return
-  `{catalog_version}`; `applyTemplate` unchanged (full snapshot +
-  `active_template`). No signature change — these wrappers already just return
-  the parsed JSON body.
+  `{catalog_version}`; `applyTemplate`'s response body changes shape — from
+  today's `{active_template, catalog_version}` to the full snapshot +
+  `active_template` (§6). No signature change for any of these — the
+  `catalogApi.*` wrappers already just return the parsed JSON body.
 - `adminAddGroup`/`adminAddEvent`/`adminAddTag` now return
   `{catalog_version, status, group|event|tag}`; `adminPatchGroup`/
   `adminPatchEvent`/`adminPatchTag` (and the `adminReactivate*`/
@@ -463,6 +512,33 @@ def add_group_endpoint(body: GroupAddBody, response: Response, con=Depends(get_d
   `{catalog_version, delete_status, usage_count}`. No signature change.
 
 ### 9. `webapp/src/stores/catalog.js`
+
+**Simplify `stripAdminEnvelope` → `_normalizeSnapshot`** (line ~40). Once
+`AdminCatalogResponse` is gone (§6b), `applySnapshot()`'s only callers are
+`load()` (`CatalogResponse`, always has `frequent_categories`) and
+`applyTemplate()` (`CategoryMutationResponse` extends `CatalogResponse`, also
+always has `frequent_categories`, plus the extra `active_template` field this
+function should still drop). The `existingFrequentCategories` fallback
+parameter and its "AdminCatalogResponse omits frequent_categories" comment are
+no longer reachable — drop both, and rename for clarity:
+
+```js
+function _normalizeSnapshot(snapshot) {
+  const { catalog_version, category_groups, categories, events, tags, frequent_categories } = snapshot ?? {};
+  return {
+    catalog_version,
+    category_groups: category_groups ?? [],
+    categories: categories ?? [],
+    events: events ?? [],
+    tags: tags ?? [],
+    frequent_categories: frequent_categories ?? [],
+  };
+}
+```
+
+Update its two call sites: `writeCachedSnapshot()` (line ~81) and
+`applySnapshot()` (line ~252, now a single-argument call — drop the
+`snapshot.value?.frequent_categories ?? []` fallback argument).
 
 Remove:
 - `visibleCategories` ref, `visibleCategoriesVersion` ref
@@ -500,7 +576,8 @@ function visibleCategoryByCode(code) {
 ```
 
 Add a synchronous local `searchCategories(q)`, replicating
-`search_categories.sql`'s old shape and order (`is_active DESC, name`):
+`search_categories.sql`'s old shape, retired-category filter
+(`NOT c.is_retired`), and order (`is_active DESC, name`):
 
 ```js
 function searchCategories(q) {
@@ -508,7 +585,7 @@ function searchCategories(q) {
   const needle = q.trim().toLowerCase();
   if (!needle) return [];
   return snapshot.value.categories
-    .filter((c) => c.name.toLowerCase().includes(needle))
+    .filter((c) => !c.is_retired && c.name.toLowerCase().includes(needle))
     .map((c) => ({ id: c.id, code: c.code, name: c.name, is_active: c.is_active, is_hidden: c.is_hidden }))
     .sort((a, b) => Number(b.is_active) - Number(a.is_active) || a.name.localeCompare(b.name));
 }
@@ -535,8 +612,17 @@ function _patchCategory(code, patch) {
 
 function _upsertCategory(category) {
   if (!snapshot.value) return;
+  const groupsById = new Map(snapshot.value.category_groups.map((g) => [g.id, g]));
   const categories = snapshot.value.categories.filter((c) => c.id !== category.id);
   categories.push(category);
+  // Match build_catalog_snapshot's `ORDER BY g.sort_order, c.name` — without
+  // this, a newly added/reactivated category lands at the end of the array,
+  // which `categories(groupId)` (ExpenseForm, CorrectionSheet) renders as-is.
+  categories.sort((a, b) => {
+    const sa = groupsById.get(a.group_id)?.sort_order ?? 0;
+    const sb = groupsById.get(b.group_id)?.sort_order ?? 0;
+    return sa - sb || a.name.localeCompare(b.name);
+  });
   snapshot.value = { ...snapshot.value, categories };
 }
 ```
@@ -576,8 +662,11 @@ async function createCategory(name, groupCode) {
 }
 ```
 
-`applyTemplate` keeps applying the full snapshot (most of the catalog
-genuinely changed):
+`applyTemplate` now applies the full snapshot from the response (most of the
+catalog genuinely changed). This replaces the current implementation, which
+calls `_refreshVisibleCategoriesIfChanged(resp.catalog_version)` — that
+helper, and the conditional `GET /api/categories` it triggers, are both
+removed by this plan:
 
 ```js
 async function applyTemplate(code, lang) {
@@ -630,7 +719,29 @@ async function add(kind, body) {
 `_patchEntry(kind, id, patch)`, `_removeEntry(kind, id)`, `_upsertEntry(kind, item)`
 mirror `_patchCategory`/`_upsertCategory` but operate on
 `snapshot.value.category_groups` / `events` / `tags` (keyed by `kind` →
-`{ group: "category_groups", event: "events", tag: "tags" }`).
+`{ group: "category_groups", event: "events", tag: "tags" }`). `_upsertEntry`
+re-sorts its array the same way `_upsertCategory` does, matching
+`build_catalog_snapshot`'s server-side ordering — otherwise a newly
+added/reactivated group/event/tag would sit at the end of the array (wrong
+position for `groups`, the events list, and the tags list, none of which
+re-sort themselves) until the next full `/api/catalog` refresh:
+
+```js
+const _ENTRY_COMPARATORS = {
+  category_groups: (a, b) => a.sort_order - b.sort_order || a.id - b.id,
+  events: (a, b) => a.date_from.localeCompare(b.date_from) || a.name.localeCompare(b.name),
+  tags: (a, b) => a.id - b.id,
+};
+
+function _upsertEntry(kind, item) {
+  if (!snapshot.value) return;
+  const key = { group: "category_groups", event: "events", tag: "tags" }[kind];
+  const list = snapshot.value[key].filter((x) => x.id !== item.id);
+  list.push(item);
+  list.sort(_ENTRY_COMPARATORS[key]);
+  snapshot.value = { ...snapshot.value, [key]: list };
+}
+```
 
 Export `visibleCategories`, `visibleCategoryByCode`, `searchCategories` in the
 returned object; drop `visibleCategoriesVersion`, `loadVisibleCategories`,
@@ -705,10 +816,11 @@ same shapes as before.
     - `TestSearchAndActivate`, `TestCreateCategory` — the mutation now returns
       `CategoryResultResponse` (`{catalog_version, category}`); assert on
       `category.{code,is_hidden,is_active,group_id,...}` directly.
-    - `TestApplyTemplate` — unchanged: the mutation returns the full
-      `CategoryMutationResponse` (`CatalogResponse` + `active_template`);
-      assert on `categories[].code` / `is_hidden` / `is_active` directly from
-      this response.
+    - `TestApplyTemplate` — response shape changes from `ApplyTemplateResponse`
+      (`{active_template, catalog_version}`) to the full `CategoryMutationResponse`
+      (`CatalogResponse` + `active_template`); update existing assertions and
+      add coverage for `categories[].code` / `is_hidden` / `is_active` directly
+      from this response.
   - `test_search_finds_hidden_category`: replace the
     `/api/categories/search` call with a `/api/catalog` check that the hidden
     category is present with `is_hidden: true`.
@@ -735,8 +847,9 @@ same shapes as before.
     directly and mock `catalogApi.getCategories()` /
     `catalogApi.searchCategories()`. Replace with seeding
     `store.snapshot.categories` (+ `category_groups`) with the new fields
-    (`code`, `is_hidden`), so `visibleCategories` and `searchCategories()`
-    derive correctly.
+    (`code`, `is_hidden`, `is_retired`), so `visibleCategories` and
+    `searchCategories()` derive correctly. Add a case with an `is_retired:
+    true` row to assert `searchCategories()` excludes it.
   - Remove the entire "CategorySheet — search while offline" describe block
     (the `SEARCH_RETRY_MS` / network-error / fake-timer tests added earlier
     this session) — local search can't fail at the network level.
@@ -811,6 +924,10 @@ Manual smoke (`uv run inv dev --rebuild`):
 - Switch to a category set that hides a category with existing expense
   history — it stays visible/pickable (was the point of `has_expenses`,
   now guaranteed by `apply_template`'s fix).
+- An expense whose category was later retired (`category_seed._retire_vanished`)
+  still shows its category name in Review/Edit/Correction sheets —
+  `findCategoryById` resolves it from the retired row, which the snapshot
+  retains.
 - In `ManageList` (groups/events/tags, via `ExpenseForm`/`CatalogSelectField`):
   add, rename, deactivate, reactivate, and delete an entry of each kind — the
   list updates immediately from each response's resolved row/local patch, no
