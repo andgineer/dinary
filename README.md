@@ -22,7 +22,7 @@
 | src/dinary/api/controllers/catalog\_writer\_errors.py          |       31 |        2 |     94% |     83-84 |
 | src/dinary/api/controllers/catalog\_writer\_events.py          |      187 |       33 |     82% |37, 199-201, 216, 226-231, 265, 267, 269, 271, 281, 297, 333-335, 359, 366, 376-378, 405, 409-411, 418-420, 442, 455-457 |
 | src/dinary/api/controllers/catalog\_writer\_groups.py          |       76 |       31 |     59% |37-41, 108-110, 130-170, 179, 203 |
-| src/dinary/api/controllers/category\_templates.py              |       77 |        0 |    100% |           |
+| src/dinary/api/controllers/category\_templates.py              |       90 |        1 |     99% |       146 |
 | src/dinary/api/controllers/expense\_corrections.py             |       70 |        1 |     99% |        94 |
 | src/dinary/api/controllers/expenses.py                         |      172 |       17 |     90% |231-232, 267-277, 324, 415-417, 430-432 |
 | src/dinary/api/controllers/income.py                           |       59 |        2 |     97% |   135-136 |
@@ -53,7 +53,7 @@
 | src/dinary/category\_templates/loader.py                       |       65 |        0 |    100% |           |
 | src/dinary/config.py                                           |      155 |       19 |     88% |38, 48, 111-113, 144, 150, 206-210, 212-216, 219-224, 227-231, 294-296 |
 | src/dinary/db/catalog.py                                       |      122 |        1 |     99% |       104 |
-| src/dinary/db/category\_apply.py                               |       35 |        0 |    100% |           |
+| src/dinary/db/category\_apply.py                               |       38 |        0 |    100% |           |
 | src/dinary/db/category\_seed.py                                |       91 |        7 |     92% |211-218, 256-257 |
 | src/dinary/db/classification\_rules.py                         |       37 |        2 |     95% |     66-67 |
 | src/dinary/db/currencies.py                                    |       34 |        5 |     85% |21-22, 59-64 |
@@ -77,7 +77,7 @@
 | src/dinary\_analytics/refresh.py                               |      100 |        2 |     98% |   50, 161 |
 | src/dinary\_analytics/settings.py                              |       49 |        1 |     98% |        56 |
 | src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        65 |
-| **TOTAL**                                                      | **5551** |  **696** | **87%** |           |
+| **TOTAL**                                                      | **5567** |  **697** | **87%** |           |
 
 
 ## Setup coverage badge
