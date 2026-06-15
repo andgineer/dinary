@@ -229,11 +229,15 @@ loop yourself? `llms.chat(messages, tools=schemas)` hands you the raw
 ### If you want a call history and a live admin view
 
 A file pool is perfect to start with, and a file already keeps your config across
-restarts. A database earns its place for a different reason: a full, queryable
-**history of every call** (which LLM served it, latency, tokens, quality) and
-**managing the pool at runtime** through an admin UI, instead of editing a file by
-hand. Point the broker at a DB backend instead of a file — your calling code
-doesn't change. A DB backend holds a connection open, so close it with `with`:
+restarts. A database earns its place for two *independent* reasons — pick either or
+both: a full, queryable **history of every call** (which LLM served it, latency,
+tokens, quality — also what the Optimizer uses to tune itself faster) via
+`telemetry=llmbroker.sqlite.Telemetry(...)`, or **managing the
+pool at runtime** through an admin UI via `registry=llmbroker.sqlite.Registry(...)`,
+instead of editing a file by hand. The example below uses both — the common
+admin-UI case; for **call history only**, keep `registry=llmbroker.Registry("llms.toml")`
+and add just `telemetry=`. Pointing the broker at a DB backend instead of a file
+doesn't change your calling code. A DB backend holds a connection open, so close it with `with`:
 ```python
 import llmbroker, llmbroker.sqlite
 
@@ -310,7 +314,11 @@ throwaway script on the default log telemetry can simply exit.
 
 ### Rung 1 — "if you have a database"
 
-Persist config and telemetry, build an admin UI through the broker. Connecting to
+Persist config and telemetry, build an admin UI through the broker — or take just
+one: `registry=llmbroker.sqlite.Registry(...)` alone gives DB-backed config + admin
+CRUD (telemetry stays the default log); `telemetry=llmbroker.sqlite.Telemetry(...)`
+alone gives a queryable call history while the pool stays in `llms.toml`. The
+example below takes both — the common admin-UI case. Connecting to
 the store and **populating** it are separate steps (see "Seeding a DB store" —
 the constructor never auto-seeds). One idempotent `sync_configs` call on every
 startup keeps the DB in step with the authors' set (default `policy="mirror"`).
