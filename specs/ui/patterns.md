@@ -139,7 +139,7 @@ switching the whole category template (RU: **набор категорий**).
 
 ### Search-activate
 
-Typing in the search box (debounced ~300ms) splits results into two groups:
+Typing in the search box filters the cached catalog instantly (no debounce, no network call) and splits results into two groups:
 
 - **In your set** — normal flat rows, selectable like the grouped list.
 - **Not in your set** — a fenced section for matches that are inactive or

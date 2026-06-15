@@ -1,4 +1,4 @@
-"""Tests for db.catalog.search_categories, activate_category, hide_category, unhide_category."""
+"""Tests for db.catalog.activate_category, hide_category, unhide_category."""
 
 import allure
 import pytest
@@ -9,7 +9,6 @@ from dinary.db.catalog import (
     get_catalog_version,
     hide_category,
     list_visible_categories,
-    search_categories,
     unhide_category,
 )
 from dinary.db.category_apply import apply_template
@@ -25,42 +24,6 @@ def con(db):  # noqa: ARG001
 
 def _visible_codes(con):
     return {row.code for row in list_visible_categories(con)}
-
-
-@allure.epic("Category templates")
-@allure.feature("Search")
-class TestSearchCategories:
-    def test_finds_hidden_category_by_name(self, con):
-        # 'fruit' is in 'simple's hidden bucket: is_active=0, is_hidden=0.
-        name = con.execute("SELECT name FROM categories WHERE code = 'fruit'").fetchone()[0]
-
-        results = search_categories(con, name)
-
-        fruit = next(r for r in results if r.code == "fruit")
-        assert fruit.is_active is False
-        assert fruit.is_hidden is False
-
-    def test_excludes_retired_categories(self, con):
-        name = con.execute("SELECT name FROM categories WHERE code = 'fruit'").fetchone()[0]
-        con.execute("UPDATE categories SET is_retired = 1 WHERE code = 'fruit'")
-
-        results = search_categories(con, name)
-
-        assert not any(r.code == "fruit" for r in results)
-
-    def test_finds_category_with_capitalized_query(self, con):
-        # 'sport' is stored as lowercase "спорт" under 'simple'.
-        results = search_categories(con, "Спо")
-
-        assert any(r.code == "sport" for r in results)
-
-    def test_finds_category_with_capitalized_name(self, con):
-        # Other templates rename 'sport' to capitalized "Спорт".
-        con.execute("UPDATE categories SET name = 'Спорт' WHERE code = 'sport'")
-
-        results = search_categories(con, "спо")
-
-        assert any(r.code == "sport" for r in results)
 
 
 @allure.epic("Category templates")
@@ -110,6 +73,14 @@ class TestActivateCategory:
             " WHERE c.code = 'fruit'",
         ).fetchone()
         assert row["group_code"] == "food"
+
+    def test_unplaced_category_with_no_active_template_raises(self, db):  # noqa: ARG002
+        with storage.connection() as connection:
+            category_seed.seed_category_templates(connection)
+            connection.execute("UPDATE categories SET group_id = NULL WHERE code = 'fruit'")
+
+            with pytest.raises(ValueError, match="no group could be resolved"):
+                activate_category(connection, "fruit")
 
 
 @allure.epic("Category templates")

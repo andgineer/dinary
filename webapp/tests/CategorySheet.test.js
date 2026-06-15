@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { nextTick } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
@@ -15,12 +15,6 @@ beforeEach(async () => {
 
 const TELEPORT_STUB = { props: ["to"], template: "<div><slot /></div>" };
 
-const VISIBLE_CATEGORIES = [
-  { id: 10, code: "groceries", name: "Groceries", group_id: 1, group_name: "Food", group_sort_order: 1, group_code: "food" },
-  { id: 11, code: "cafe", name: "Cafe", group_id: 1, group_name: "Food", group_sort_order: 1, group_code: "food" },
-  { id: 20, code: "taxi", name: "Taxi", group_id: 2, group_name: "Transport", group_sort_order: 2, group_code: "transport" },
-];
-
 const TEMPLATES = [
   {
     code: "simple",
@@ -36,12 +30,30 @@ const TEMPLATES = [
   },
 ];
 
+const CATALOG_SNAPSHOT = {
+  catalog_version: 1,
+  category_groups: [
+    { id: 1, code: "food", name: "Food", sort_order: 1, is_active: true, removable: true },
+    { id: 2, code: "transport", name: "Transport", sort_order: 2, is_active: true, removable: true },
+    { id: 3, code: "leisure", name: "Leisure", sort_order: 3, is_active: true, removable: true },
+  ],
+  categories: [
+    { id: 10, code: "groceries", name: "Groceries", group_id: 1, group: "Food", is_active: true, is_hidden: false, is_retired: false, removable: true },
+    { id: 11, code: "cafe", name: "Cafe", group_id: 1, group: "Food", is_active: true, is_hidden: false, is_retired: false, removable: true },
+    { id: 12, code: "coworking", name: "Coworking", group_id: 1, group: "Food", is_active: true, is_hidden: true, is_retired: false, removable: true },
+    { id: 20, code: "taxi", name: "Taxi", group_id: 2, group: "Transport", is_active: true, is_hidden: false, is_retired: false, removable: true },
+    { id: 30, code: "concerts", name: "Concerts", group_id: 3, group: "Leisure", is_active: false, is_hidden: false, is_retired: false, removable: true },
+  ],
+  events: [],
+  tags: [],
+  frequent_categories: [],
+};
+
 function mountSheet(props = {}) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const store = useCatalogStore(pinia);
-  store.visibleCategories = VISIBLE_CATEGORIES.map((c) => ({ ...c }));
-  store.visibleCategoriesVersion = 1;
+  store.replaceSnapshot(JSON.parse(JSON.stringify(CATALOG_SNAPSHOT)));
   const w = mount(CategorySheet, {
     props: { open: true, suggestions: [], ...props },
     global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB } },
@@ -57,11 +69,8 @@ beforeEach(() => {
   vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
 });
 
-const SEARCH_DEBOUNCE_MS = 300;
-
 async function search(w, text) {
   await w.find(".search-input").setValue(text);
-  await new Promise((resolve) => setTimeout(resolve, SEARCH_DEBOUNCE_MS + 50));
   await nextTick();
 }
 
@@ -72,11 +81,10 @@ describe("CategorySheet — grouped list (empty query)", () => {
     expect(groups).toHaveLength(2);
     expect(groups[0].find(".group-label").text()).toBe("Food");
     expect(groups[1].find(".group-label").text()).toBe("Transport");
-    expect(groups[0].findAll(".cat-btn").map((b) => b.text())).toEqual(["Groceries", "Cafe"]);
+    expect(groups[0].findAll(".cat-btn").map((b) => b.text())).toEqual(["Cafe", "Groceries"]);
   });
 
   it("shows flat results and hides groups when query is non-empty", async () => {
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([]);
     const { w } = mountSheet();
     await search(w, "gro");
     expect(w.find('[data-testid="flat-results"]').exists()).toBe(true);
@@ -84,7 +92,6 @@ describe("CategorySheet — grouped list (empty query)", () => {
   });
 
   it("clear button resets query and shows groups again", async () => {
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([]);
     const { w } = mountSheet();
     await search(w, "taxi");
     expect(w.find(".clear-btn").exists()).toBe(true);
@@ -110,7 +117,7 @@ describe("CategorySheet — grid tap emits select", () => {
     const { w } = mountSheet();
     const btn = w.find('[data-testid="category-group"] .cat-btn');
     await btn.trigger("click");
-    expect(w.emitted("select")?.[0]).toEqual([10]);
+    expect(w.emitted("select")?.[0]).toEqual([11]);
     expect(w.emitted("close")).toBeTruthy();
   });
 });
@@ -135,8 +142,7 @@ describe("CategorySheet — sticky search bar", () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const store = useCatalogStore(pinia);
-    store.visibleCategories = VISIBLE_CATEGORIES.map((c) => ({ ...c }));
-    store.visibleCategoriesVersion = 1;
+    store.replaceSnapshot(JSON.parse(JSON.stringify(CATALOG_SNAPSHOT)));
     const w = mount(CategorySheet, {
       props: { open: false, suggestions: [] },
       global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB } },
@@ -150,7 +156,6 @@ describe("CategorySheet — sticky search bar", () => {
 
 describe("CategorySheet — Escape key", () => {
   it("clears query when Escape pressed with non-empty query", async () => {
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([]);
     const { w } = mountSheet();
     await search(w, "taxi");
     expect(w.find('[data-testid="flat-results"]').exists()).toBe(true);
@@ -168,26 +173,19 @@ describe("CategorySheet — Escape key", () => {
 
 describe("CategorySheet — search: in-set results", () => {
   it("shows matches already in the set as flat-items with group › name", async () => {
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
-      { id: 10, code: "groceries", name: "Groceries", is_active: true, is_hidden: false },
-      { id: 20, code: "taxi", name: "Taxi", is_active: true, is_hidden: false },
-    ]);
     const { w } = mountSheet();
     await search(w, "a");
 
     const items = w.findAll(".flat-item");
     expect(items).toHaveLength(2);
     expect(items[0].text()).toContain("Food");
-    expect(items[0].text()).toContain("Groceries");
+    expect(items[0].text()).toContain("Cafe");
     expect(items[1].text()).toContain("Transport");
     expect(items[1].text()).toContain("Taxi");
     expect(w.find('[data-testid="addable-section"]').exists()).toBe(false);
   });
 
   it("emits select and close when an in-set flat result is tapped", async () => {
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
-      { id: 20, code: "taxi", name: "Taxi", is_active: true, is_hidden: false },
-    ]);
     const { w } = mountSheet();
     await search(w, "taxi");
 
@@ -197,45 +195,16 @@ describe("CategorySheet — search: in-set results", () => {
   });
 
   it("shows 'No matches' when nothing matches", async () => {
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([]);
     const { w } = mountSheet();
     await search(w, "zzz");
 
     expect(w.find(".no-results").text()).toBe("No matches");
     expect(w.find('[data-testid="addable-section"]').exists()).toBe(false);
   });
-
-  it("drops a stale response that resolves after the query changed", async () => {
-    let resolveFirst;
-    vi.spyOn(catalogApi, "searchCategories").mockImplementation((q) => {
-      if (q === "a") return new Promise((resolve) => { resolveFirst = resolve; });
-      return Promise.resolve([
-        { id: 20, code: "taxi", name: "Taxi", is_active: true, is_hidden: false },
-      ]);
-    });
-    const { w } = mountSheet();
-
-    await search(w, "a");
-    await search(w, "ab");
-
-    resolveFirst([
-      { id: 10, code: "groceries", name: "Groceries", is_active: true, is_hidden: false },
-    ]);
-    await flushPromises();
-    await nextTick();
-
-    const items = w.findAll(".flat-item");
-    expect(items).toHaveLength(1);
-    expect(items[0].text()).toContain("Taxi");
-  });
 });
 
 describe("CategorySheet — search: 'Not in your set' addable section", () => {
   it("renders inactive and hidden matches in a fenced addable section", async () => {
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
-      { id: 30, code: "concerts", name: "Concerts", is_active: false, is_hidden: false },
-      { id: 31, code: "coworking", name: "Coworking", is_active: true, is_hidden: true },
-    ]);
     const { w } = mountSheet();
     await search(w, "co");
 
@@ -244,16 +213,13 @@ describe("CategorySheet — search: 'Not in your set' addable section", () => {
     expect(section.text()).toContain("Not in your set");
     const rows = section.findAll(".addable-item");
     expect(rows).toHaveLength(2);
-    expect(rows[0].text()).toContain("Concerts");
-    expect(rows[1].text()).toContain("Coworking");
-    expect(rows[1].find(".hidden-tag").exists()).toBe(true);
-    expect(rows[0].find(".hidden-tag").exists()).toBe(false);
+    expect(rows[0].text()).toContain("Coworking");
+    expect(rows[0].find(".hidden-tag").exists()).toBe(true);
+    expect(rows[1].text()).toContain("Concerts");
+    expect(rows[1].find(".hidden-tag").exists()).toBe(false);
   });
 
   it("omits the section when every match is already in the set", async () => {
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
-      { id: 10, code: "groceries", name: "Groceries", is_active: true, is_hidden: false },
-    ]);
     const { w } = mountSheet();
     await search(w, "gro");
 
@@ -261,23 +227,23 @@ describe("CategorySheet — search: 'Not in your set' addable section", () => {
   });
 
   it("activating an inactive result calls activateCategory, toasts, and selects it", async () => {
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
-      { id: 30, code: "concerts", name: "Concerts", is_active: false, is_hidden: false },
-    ]);
-    const activate = vi
-      .spyOn(catalogApi, "activateCategory")
-      .mockResolvedValue({ catalog_version: 2 });
-    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+    const activate = vi.spyOn(catalogApi, "activateCategory").mockResolvedValue({
       catalog_version: 2,
-      categories: [
-        ...VISIBLE_CATEGORIES,
-        { id: 30, code: "concerts", name: "Concerts", group_id: 3, group_name: "Leisure", group_sort_order: 3, group_code: "leisure" },
-      ],
+      category: {
+        id: 30,
+        code: "concerts",
+        name: "Concerts",
+        group_id: 3,
+        group: "Leisure",
+        is_active: true,
+        is_hidden: false,
+        is_retired: false,
+        removable: true,
+      },
     });
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
 
     const { w } = mountSheet();
-    await search(w, "co");
+    await search(w, "concert");
 
     await w.find(".addable-item").trigger("click");
     await flushPromises();
@@ -295,21 +261,23 @@ describe("CategorySheet — search: 'Not in your set' addable section", () => {
       "dinary:catalog:oosActivations",
       JSON.stringify([Date.now(), Date.now()]),
     );
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
-      { id: 30, code: "concerts", name: "Concerts", is_active: false, is_hidden: false },
-    ]);
-    vi.spyOn(catalogApi, "activateCategory").mockResolvedValue({ catalog_version: 2 });
-    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+    vi.spyOn(catalogApi, "activateCategory").mockResolvedValue({
       catalog_version: 2,
-      categories: [
-        ...VISIBLE_CATEGORIES,
-        { id: 30, code: "concerts", name: "Concerts", group_id: 3, group_name: "Leisure", group_sort_order: 3, group_code: "leisure" },
-      ],
+      category: {
+        id: 30,
+        code: "concerts",
+        name: "Concerts",
+        group_id: 3,
+        group: "Leisure",
+        is_active: true,
+        is_hidden: false,
+        is_retired: false,
+        removable: true,
+      },
     });
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
 
     const { w, store } = mountSheet();
-    await search(w, "co");
+    await search(w, "concert");
 
     await w.find(".addable-item").trigger("click");
     await flushPromises();
@@ -320,38 +288,27 @@ describe("CategorySheet — search: 'Not in your set' addable section", () => {
   });
 
   it("activating a hidden result calls unhideCategory", async () => {
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
-      { id: 11, code: "cafe", name: "Cafe", is_active: true, is_hidden: true },
-    ]);
     const unhide = vi
       .spyOn(catalogApi, "unhideCategory")
       .mockResolvedValue({ catalog_version: 2 });
-    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
-      catalog_version: 2,
-      categories: VISIBLE_CATEGORIES,
-    });
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
 
     const { w } = mountSheet();
-    await search(w, "cafe");
+    await search(w, "coworking");
 
     await w.find(".addable-item").trigger("click");
     await flushPromises();
 
-    expect(unhide).toHaveBeenCalledWith("cafe");
-    expect(w.emitted("select")?.[0]).toEqual([11]);
+    expect(unhide).toHaveBeenCalledWith("coworking");
+    expect(w.emitted("select")?.[0]).toEqual([12]);
   });
 
   it("blocks activation while offline and keeps the sheet open", async () => {
     Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
     try {
-      vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
-        { id: 30, code: "concerts", name: "Concerts", is_active: false, is_hidden: false },
-      ]);
       const activate = vi.spyOn(catalogApi, "activateCategory");
 
       const { w } = mountSheet();
-      await search(w, "co");
+      await search(w, "concert");
 
       await w.find(".addable-item").trigger("click");
       await flushPromises();
@@ -366,44 +323,10 @@ describe("CategorySheet — search: 'Not in your set' addable section", () => {
       Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
     }
   });
-
-  it("an activated category still absent from visibleCategories (no group) shows inline as без группы", async () => {
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([
-      { id: 40, code: "u_misc", name: "Misc", is_active: false, is_hidden: false },
-    ]);
-    vi.spyOn(catalogApi, "activateCategory").mockResolvedValue({ catalog_version: 2 });
-    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
-      catalog_version: 2,
-      categories: VISIBLE_CATEGORIES,
-    });
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
-
-    const { w } = mountSheet();
-    await search(w, "misc");
-
-    await w.find(".addable-item").trigger("click");
-    await flushPromises();
-
-    // Stays open — not enough to appear in the grouped list (NULL group_id).
-    expect(w.emitted("select")).toBeFalsy();
-    expect(w.find('[data-testid="addable-section"]').exists()).toBe(false);
-    const item = w.find(".flat-item");
-    expect(item.text()).toContain("без группы / ungrouped");
-    expect(item.text()).toContain("Misc");
-
-    await item.trigger("click");
-    expect(w.emitted("select")?.[0]).toEqual([40]);
-    expect(w.emitted("close")).toBeTruthy();
-  });
 });
 
 describe("CategorySheet — Manage mode (§4)", () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
   it("toggle switches the body to the managed view and back", async () => {
-    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
     const { w, store } = mountSheet();
     store.activeTemplate = "simple";
 
@@ -418,13 +341,7 @@ describe("CategorySheet — Manage mode (§4)", () => {
   });
 
   it("hides a category, removing it from the grouped picker", async () => {
-    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
     const hide = vi.spyOn(catalogApi, "hideCategory").mockResolvedValue({ catalog_version: 2 });
-    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
-      catalog_version: 2,
-      categories: VISIBLE_CATEGORIES.filter((c) => c.code !== "groceries"),
-    });
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
 
     const { w, store } = mountSheet();
     store.activeTemplate = "simple";
@@ -441,15 +358,9 @@ describe("CategorySheet — Manage mode (§4)", () => {
   });
 
   it("renames a category, updating its label without changing its code", async () => {
-    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
-    const rename = vi.spyOn(catalogApi, "renameCategory").mockResolvedValue({ catalog_version: 2 });
-    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
-      catalog_version: 2,
-      categories: VISIBLE_CATEGORIES.map((c) =>
-        c.code === "groceries" ? { ...c, name: "Groceries 2" } : c,
-      ),
-    });
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+    const rename = vi
+      .spyOn(catalogApi, "renameCategory")
+      .mockResolvedValue({ catalog_version: 2 });
 
     const { w, store } = mountSheet();
     store.activeTemplate = "simple";
@@ -470,17 +381,7 @@ describe("CategorySheet — Manage mode (§4)", () => {
   });
 
   it("moves a category to another group via the move select", async () => {
-    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
     const move = vi.spyOn(catalogApi, "moveCategory").mockResolvedValue({ catalog_version: 2 });
-    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
-      catalog_version: 2,
-      categories: VISIBLE_CATEGORIES.map((c) =>
-        c.code === "groceries"
-          ? { ...c, group_id: 2, group_name: "Transport", group_sort_order: 2, group_code: "transport" }
-          : c,
-      ),
-    });
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
 
     const { w, store } = mountSheet();
     store.activeTemplate = "simple";
@@ -499,16 +400,20 @@ describe("CategorySheet — Manage mode (§4)", () => {
   });
 
   it("adds a category to a group via the '+ add category' row", async () => {
-    vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
-    const create = vi.spyOn(catalogApi, "createCategory").mockResolvedValue({ catalog_version: 2 });
-    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+    const create = vi.spyOn(catalogApi, "createCategory").mockResolvedValue({
       catalog_version: 2,
-      categories: [
-        ...VISIBLE_CATEGORIES,
-        { id: 50, code: "u_snacks", name: "Snacks", group_id: 1, group_name: "Food", group_sort_order: 1, group_code: "food" },
-      ],
+      category: {
+        id: 50,
+        code: "u_snacks",
+        name: "Snacks",
+        group_id: 1,
+        group: "Food",
+        is_active: true,
+        is_hidden: false,
+        is_retired: false,
+        removable: true,
+      },
     });
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
 
     const { w, store } = mountSheet();
     store.activeTemplate = "simple";
@@ -540,7 +445,6 @@ describe("CategorySheet — persistent bottom bar (§6)", () => {
 
   it("shows the active template name and stays present while searching and in manage mode", async () => {
     localStorage.setItem("dinary:catalog:lastLang", "en");
-    vi.spyOn(catalogApi, "searchCategories").mockResolvedValue([]);
     const { w, store } = mountSheet();
     store.activeTemplate = "simple";
     await flushPromises();
@@ -583,55 +487,5 @@ describe("CategorySheet — persistent bottom bar (§6)", () => {
     expect(w.find('[data-testid="switch-template-row"]').exists()).toBe(false);
     expect(w.find('[data-testid="switch-template-panel"]').exists()).toBe(false);
     expect(w.find('[data-testid="template-list"]').exists()).toBe(false);
-  });
-});
-
-describe("CategorySheet — search while offline", () => {
-  const SEARCH_RETRY_MS = 5000;
-
-  it("shows the search-unavailable message when the request fails at the network level", async () => {
-    const networkError = new TypeError("Failed to fetch");
-    const searchSpy = vi.spyOn(catalogApi, "searchCategories").mockRejectedValue(networkError);
-    const { w } = mountSheet();
-
-    await search(w, "gro");
-
-    expect(searchSpy).toHaveBeenCalledWith("gro");
-    const offline = w.find('[data-testid="search-offline"]');
-    expect(offline.exists()).toBe(true);
-    expect(offline.text()).toBe("Search is unavailable offline");
-    expect(w.find('[data-testid="flat-results"]').exists()).toBe(false);
-
-    w.unmount();
-  });
-
-  it("retries automatically and clears the offline message once the search succeeds", async () => {
-    vi.useFakeTimers();
-    try {
-      const networkError = new TypeError("Failed to fetch");
-      const searchSpy = vi
-        .spyOn(catalogApi, "searchCategories")
-        .mockRejectedValueOnce(networkError)
-        .mockResolvedValueOnce([
-          { id: 10, code: "groceries", name: "Groceries", is_active: true, is_hidden: false },
-        ]);
-      const { w } = mountSheet();
-
-      await w.find(".search-input").setValue("gro");
-      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
-
-      expect(w.find('[data-testid="search-offline"]').exists()).toBe(true);
-      expect(w.find('[data-testid="flat-results"]').exists()).toBe(false);
-
-      await vi.advanceTimersByTimeAsync(SEARCH_RETRY_MS);
-
-      expect(searchSpy).toHaveBeenCalledTimes(2);
-      expect(w.find('[data-testid="search-offline"]').exists()).toBe(false);
-      expect(w.find('[data-testid="flat-results"]').exists()).toBe(true);
-
-      w.unmount();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });

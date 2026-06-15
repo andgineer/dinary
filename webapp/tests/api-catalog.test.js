@@ -105,7 +105,11 @@ describe("fetchCatalog", () => {
 describe("admin POST helpers", () => {
   it("adminAddGroup posts name and sort_order with null defaults", async () => {
     globalThis.fetch = vi.fn(async () =>
-      okResponse({ new_id: 1, status: "added", catalog_version: 2 }),
+      okResponse({
+        catalog_version: 2,
+        status: "created",
+        group: { id: 1, code: "food", name: "food", sort_order: 1, is_active: true, removable: true },
+      }),
     );
 
     await adminAddGroup({ name: "food" });

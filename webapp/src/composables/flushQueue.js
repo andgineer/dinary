@@ -6,7 +6,6 @@
 
 import { postExpense } from "../api/expenses.js";
 import { useCatalogStore } from "../stores/catalog.js";
-import { useFrequentCategoriesStore } from "../stores/frequentCategories.js";
 import { useQueueStore } from "../stores/queue.js";
 import { useReviewStore } from "../stores/review.js";
 import { useToastStore } from "../stores/toast.js";
@@ -17,7 +16,6 @@ export async function flushQueue() {
   _inFlight = true;
   const queue = useQueueStore();
   const catalog = useCatalogStore();
-  const freq = useFrequentCategoriesStore();
   const review = useReviewStore();
   const toast = useToastStore();
   await queue.refresh();
@@ -52,7 +50,6 @@ export async function flushQueue() {
         if (Array.isArray(resp?.frequent_categories)) {
           catalog.applyFrequentCategories(resp.frequent_categories);
         }
-        freq.refresh(resp);
         await queue.remove(item.id);
         anyFlushed = true;
       } catch (err) {

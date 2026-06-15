@@ -23,8 +23,8 @@ class TestAdminAdd:
         resp = client.post("/api/catalog/tags", json={"name": "t1"})
         assert resp.status_code == 200, resp.text
         data = resp.json()
-        assert data["new_id"] >= 1
-        assert {t["name"] for t in data["tags"]} == {"t1"}
+        assert data["tag"]["id"] >= 1
+        assert data["tag"]["name"] == "t1"
         assert "etag" not in data
         assert resp.headers["ETag"].startswith('W/"catalog-v')
 
@@ -38,12 +38,11 @@ class TestAdminAdd:
             },
         )
         assert resp.status_code == 200, resp.text
-        events = resp.json()["events"]
-        assert any(e["name"] == "trip-2026" for e in events)
+        assert resp.json()["event"]["name"] == "trip-2026"
 
     def test_add_event_with_auto_tags(self, client):
         tag = client.post("/api/catalog/tags", json={"name": "путешествия"})
-        tid = tag.json()["new_id"]
+        tid = tag.json()["tag"]["id"]
         resp = client.post(
             "/api/catalog/events",
             json={
@@ -55,7 +54,8 @@ class TestAdminAdd:
             },
         )
         assert resp.status_code == 200, resp.text
-        ev = next(e for e in resp.json()["events"] if e["name"] == "отпуск-Доломиты")
+        ev = resp.json()["event"]
+        assert ev["name"] == "отпуск-Доломиты"
         assert ev["auto_tags"] == [tid]
         assert ev["auto_attach_enabled"] is True
 

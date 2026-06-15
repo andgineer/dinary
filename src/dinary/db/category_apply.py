@@ -39,6 +39,13 @@ def apply_template(con: sqlite3.Connection, template_code: str, lang: str) -> No
             placement[code] = (group_code, False)
 
     with storage.transaction(con):
+        used_codes = {
+            str(code)
+            for (code,) in con.execute(
+                "SELECT DISTINCT c.code FROM categories c JOIN expenses e ON e.category_id = c.id",
+            ).fetchall()
+        }
+
         for sort_order, (group_code, group_names) in enumerate(definition["groups"].items()):
             name = group_names.get(lang, group_names.get(DEFAULT_LANG, group_code))
             con.execute(
@@ -48,12 +55,13 @@ def apply_template(con: sqlite3.Connection, template_code: str, lang: str) -> No
 
         for code, (group_code, is_visible) in placement.items():
             name = resolve_category_name(translations, definition, code, lang)
+            is_active = 1 if (is_visible or code in used_codes) else 0
             con.execute(
                 "UPDATE categories SET "
                 "group_id = (SELECT id FROM category_groups WHERE code = ?), "
                 "is_active = ?, name = ? "
                 "WHERE code = ?",
-                [group_code, 1 if is_visible else 0, name, code],
+                [group_code, is_active, name, code],
             )
 
         catalog.set_catalog_version(con, catalog.get_catalog_version(con) + 1)

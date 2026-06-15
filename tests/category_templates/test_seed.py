@@ -113,6 +113,26 @@ class TestReconcile:
         fk_problems = con.execute("PRAGMA foreign_key_check").fetchall()
         assert fk_problems == []
 
+    def test_retired_rows_always_have_is_active_zero(self, con, monkeypatch):
+        """Invariant guard: ``VISIBLE_CATEGORY_PREDICATE`` and the frontend
+        ``visibleCategories`` computed both rely on ``_retire_vanished`` always
+        pairing ``is_retired=1`` with ``is_active=0``."""
+        vocab1, templates1 = _fixture(["alpha", "beta", "gamma"])
+        monkeypatch.setattr(loader, "load_vocabulary", lambda: vocab1)
+        monkeypatch.setattr(loader, "load_templates", lambda: templates1)
+        category_seed.seed_category_templates(con)
+
+        vocab2, templates2 = _fixture(["beta"])
+        monkeypatch.setattr(loader, "load_vocabulary", lambda: vocab2)
+        monkeypatch.setattr(loader, "load_templates", lambda: templates2)
+        category_seed.seed_category_templates(con)
+
+        rows = con.execute(
+            "SELECT code, is_active, is_retired FROM categories WHERE is_retired = 1",
+        ).fetchall()
+        assert {row["code"] for row in rows} == {"alpha", "gamma"}
+        assert all(row["is_active"] == 0 for row in rows)
+
     def test_user_categories_survive_reconcile(self, con, monkeypatch):
         vocab, templates = _fixture(["alpha", "beta"])
         monkeypatch.setattr(loader, "load_vocabulary", lambda: vocab)

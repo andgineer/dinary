@@ -184,15 +184,6 @@ class VisibleCategoryRow:
 
 
 @dataclasses.dataclass(slots=True)
-class CategorySearchRow:
-    id: int
-    code: str
-    name: str
-    is_active: bool
-    is_hidden: bool
-
-
-@dataclasses.dataclass(slots=True)
 class LoggingProjectionCandidateRow:
     """A single ``sheet_mapping`` candidate row with its required tag set."""
 

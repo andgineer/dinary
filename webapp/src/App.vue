@@ -75,7 +75,7 @@ function handleVisibilityChange() {
   if (document.visibilityState !== "visible" || !navigator.onLine) return;
   if (!isOnline.value) window.dispatchEvent(new Event("online"));
   if (reviewStore.dirtyFlag) void reviewStore.loadIfNeeded();
-  if (catalogStore.visibleCategoriesVersion >= 0) void catalogStore.loadVisibleCategories();
+  void catalogStore.load();
 }
 
 let _retryTimerId = null;

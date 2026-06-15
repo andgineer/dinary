@@ -25,7 +25,7 @@ class TestAdminPatch:
         """Renaming a tag must NOT change events.auto_tags: stored IDs are stable
         across renames so no cascade rewrite is needed."""
         tag = client.post("/api/catalog/tags", json={"name": "oldname"})
-        tid = tag.json()["new_id"]
+        tid = tag.json()["tag"]["id"]
         ev = client.post(
             "/api/catalog/events",
             json={
@@ -35,7 +35,7 @@ class TestAdminPatch:
                 "auto_tags": [tid],
             },
         )
-        eid = ev.json()["new_id"]
+        eid = ev.json()["event"]["id"]
         resp = client.patch(
             f"/api/catalog/tags/{tid}",
             json={"name": "newname"},
@@ -55,7 +55,7 @@ class TestAdminPatch:
 
     def test_patch_reactivates_soft_deleted_tag(self, client):
         add = client.post("/api/catalog/tags", json={"name": "retired"})
-        tid = add.json()["new_id"]
+        tid = add.json()["tag"]["id"]
         client.patch(
             f"/api/catalog/tags/{tid}",
             json={"is_active": False},
@@ -69,4 +69,6 @@ class TestAdminPatch:
             json={"is_active": True},
         )
         assert resp.status_code == 200
-        assert any(t["id"] == tid and t["is_active"] is True for t in resp.json()["tags"])
+
+        tags = client.get("/api/catalog").json()["tags"]
+        assert any(t["id"] == tid and t["is_active"] is True for t in tags)

@@ -3,7 +3,6 @@ import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import RuleRow from "../src/components/RuleRow.vue";
 import { useCatalogStore } from "../src/stores/catalog.js";
-import { useFrequentCategoriesStore } from "../src/stores/frequentCategories.js";
 
 beforeEach(async () => {
   await allure.epic("Review & Rules");
@@ -199,9 +198,7 @@ describe("RuleRow — frequent-category quick picks", () => {
   function mountWithFrequent(item, freqCats) {
     const pinia = createPinia();
     setActivePinia(pinia);
-    useCatalogStore(pinia).replaceSnapshot(CATALOG);
-    const freqStore = useFrequentCategoriesStore(pinia);
-    freqStore.categories = freqCats;
+    useCatalogStore(pinia).replaceSnapshot({ ...CATALOG, frequent_categories: freqCats });
     return mount(RuleRow, { global: { plugins: [pinia] }, props: { item } });
   }
 

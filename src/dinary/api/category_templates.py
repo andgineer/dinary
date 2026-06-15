@@ -2,31 +2,25 @@
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, Header, Response
+from fastapi import APIRouter, Depends
 
-from dinary.api.controllers.catalog import etag_for, if_none_match_matches
+from dinary.api.controllers.catalog import CatalogVersionResponse, CategoryResultResponse
 from dinary.api.controllers.category_templates import (
     ActiveTemplateResponse,
     ApplyTemplateBody,
-    ApplyTemplateResponse,
-    CatalogVersionResponse,
-    CategoriesResponse,
-    CategorySearchItem,
+    CategoryMutationResponse,
     CategoryTemplateItem,
     CreateCategoryBody,
-    CreateCategoryResponse,
     MoveCategoryBody,
     RenameCategoryBody,
     activate_category_sync,
     apply_template_sync,
     create_category_sync,
     get_active_template_response,
-    get_categories_response,
     hide_category_sync,
     list_category_templates,
     move_category_sync,
     rename_category_sync,
-    search_categories_response,
     unhide_category_sync,
 )
 from dinary.db.storage import get_db
@@ -48,51 +42,27 @@ def get_active_template_endpoint(
     return get_active_template_response(con)
 
 
-@router.post("/api/category-templates/apply", response_model=ApplyTemplateResponse)
+@router.post("/api/category-templates/apply", response_model=CategoryMutationResponse)
 def apply_category_template(
     body: ApplyTemplateBody,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> ApplyTemplateResponse:
+) -> CategoryMutationResponse:
     return apply_template_sync(con, body)
 
 
-@router.get("/api/categories", response_model=None)
-def get_categories(
-    response: Response,
-    if_none_match: str | None = Header(default=None),
-    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> CategoriesResponse | Response:
-    payload = get_categories_response(con)
-    etag = etag_for(payload.catalog_version)
-    if if_none_match is not None and if_none_match_matches(if_none_match, etag):
-        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
-
-    response.headers["ETag"] = etag
-    response.headers["Cache-Control"] = "no-cache"
-    return payload
-
-
-@router.get("/api/categories/search", response_model=list[CategorySearchItem])
-def search_categories_endpoint(
-    q: str = "",
-    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> list[CategorySearchItem]:
-    return search_categories_response(con, q)
-
-
-@router.post("/api/categories", response_model=CreateCategoryResponse, status_code=201)
+@router.post("/api/categories", response_model=CategoryResultResponse, status_code=201)
 def create_category_endpoint(
     body: CreateCategoryBody,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> CreateCategoryResponse:
+) -> CategoryResultResponse:
     return create_category_sync(con, body)
 
 
-@router.post("/api/categories/{code}/activate", response_model=CatalogVersionResponse)
+@router.post("/api/categories/{code}/activate", response_model=CategoryResultResponse)
 def activate_category_endpoint(
     code: str,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> CatalogVersionResponse:
+) -> CategoryResultResponse:
     return activate_category_sync(con, code)
 
 

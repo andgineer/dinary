@@ -10,7 +10,7 @@ from typing import Any, Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from dinary.api.controllers.catalog_writer_errors import AddResult, CatalogWriteError, DeleteResult
+from dinary.api.controllers.catalog_writer_errors import CatalogWriteError
 from dinary.db.catalog import VISIBLE_CATEGORY_PREDICATE, get_catalog_version
 from dinary.sheets.sheet_mapping import decode_auto_tags_value
 
@@ -21,6 +21,7 @@ from dinary.sheets.sheet_mapping import decode_auto_tags_value
 
 class CategoryGroupItem(BaseModel):
     id: int
+    code: str
     name: str
     sort_order: int
     is_active: bool
@@ -29,10 +30,13 @@ class CategoryGroupItem(BaseModel):
 
 class CategoryItem(BaseModel):
     id: int
+    code: str
     name: str
     group: str
     group_id: int
     is_active: bool
+    is_hidden: bool
+    is_retired: bool
     removable: bool
 
 
@@ -72,16 +76,32 @@ AddStatusLiteral = Literal["created", "reactivated", "noop"]
 DeleteStatusLiteral = Literal["hard", "soft"]
 
 
-class AdminCatalogResponse(BaseModel):
-    new_id: int | None = None
-    status: AddStatusLiteral | None = None
+class CatalogVersionResponse(BaseModel):
+    catalog_version: int
+
+
+class CategoryResultResponse(CatalogVersionResponse):
+    category: CategoryItem
+
+
+class AdminMutationResponse(CatalogVersionResponse):
     delete_status: DeleteStatusLiteral | None = None
     usage_count: int | None = None
-    catalog_version: int
-    category_groups: list[CategoryGroupItem]
-    categories: list[CategoryItem]
-    events: list[EventItem]
-    tags: list[TagItem]
+
+
+class GroupAddResponse(CatalogVersionResponse):
+    status: AddStatusLiteral
+    group: CategoryGroupItem
+
+
+class EventAddResponse(CatalogVersionResponse):
+    status: AddStatusLiteral
+    event: EventItem
+
+
+class TagAddResponse(CatalogVersionResponse):
+    status: AddStatusLiteral
+    tag: TagItem
 
 
 class ReloadMapResponse(BaseModel):
@@ -214,6 +234,100 @@ def reference_counts(
     return dict(cat_refs), dict(event_refs), dict(tag_refs), group_child_counts
 
 
+def _ref_count(
+    con: sqlite3.Connection,
+    row_id: int,
+    tables_and_cols: tuple[tuple[str, str], ...],
+) -> int:
+    total = 0
+    for table, col in tables_and_cols:
+        (n,) = con.execute(f"SELECT COUNT(*) FROM {table} WHERE {col} = ?", [row_id]).fetchone()  # noqa: S608
+        total += n
+    return total
+
+
+_CATEGORY_REF_TABLES = (
+    ("expenses", "category_id"),
+    ("sheet_mapping", "category_id"),
+    ("import_mapping", "category_id"),
+)
+_GROUP_REF_TABLES = (("categories", "group_id"),)
+_EVENT_REF_TABLES = (
+    ("expenses", "event_id"),
+    ("sheet_mapping", "event_id"),
+    ("import_mapping", "event_id"),
+)
+_TAG_REF_TABLES = (
+    ("expense_tags", "tag_id"),
+    ("sheet_mapping_tags", "tag_id"),
+    ("import_mapping_tags", "tag_id"),
+)
+
+
+def _category_item(con: sqlite3.Connection, code: str) -> CategoryItem:
+    row = con.execute(
+        "SELECT c.id, c.code, c.name, c.group_id, g.name AS group_name,"
+        " c.is_active, c.is_hidden, c.is_retired"
+        " FROM categories c JOIN category_groups g ON g.id = c.group_id"
+        " WHERE c.code = ?",
+        [code],
+    ).fetchone()
+    return CategoryItem(
+        id=int(row[0]),
+        code=str(row[1]),
+        name=str(row[2]),
+        group_id=int(row[3]),
+        group=str(row[4]),
+        is_active=bool(row[5]),
+        is_hidden=bool(row[6]),
+        is_retired=bool(row[7]),
+        removable=_ref_count(con, int(row[0]), _CATEGORY_REF_TABLES) == 0,
+    )
+
+
+def _group_item(con: sqlite3.Connection, group_id: int) -> CategoryGroupItem:
+    row = con.execute(
+        "SELECT id, code, name, sort_order, is_active FROM category_groups WHERE id = ?",
+        [group_id],
+    ).fetchone()
+    return CategoryGroupItem(
+        id=int(row[0]),
+        code=str(row[1]),
+        name=str(row[2]),
+        sort_order=int(row[3]),
+        is_active=bool(row[4]),
+        removable=_ref_count(con, group_id, _GROUP_REF_TABLES) == 0,
+    )
+
+
+def _event_item(con: sqlite3.Connection, event_id: int) -> EventItem:
+    row = con.execute(
+        "SELECT id, name, date_from, date_to, auto_attach_enabled, auto_tags, is_active"
+        " FROM events WHERE id = ?",
+        [event_id],
+    ).fetchone()
+    return EventItem(
+        id=int(row[0]),
+        name=str(row[1]),
+        date_from=str(row[2]),
+        date_to=str(row[3]),
+        auto_attach_enabled=bool(row[4]),
+        auto_tags=decode_auto_tags_value(row[5], context="event add response"),
+        is_active=bool(row[6]),
+        removable=_ref_count(con, event_id, _EVENT_REF_TABLES) == 0,
+    )
+
+
+def _tag_item(con: sqlite3.Connection, tag_id: int) -> TagItem:
+    row = con.execute("SELECT id, name, is_active FROM tags WHERE id = ?", [tag_id]).fetchone()
+    return TagItem(
+        id=int(row[0]),
+        name=str(row[1]),
+        is_active=bool(row[2]),
+        removable=_ref_count(con, tag_id, _TAG_REF_TABLES) == 0,
+    )
+
+
 _MANUAL_RECENCY = "e.receipt_id IS NULL AND e.datetime >= datetime('now', '-3 months')"
 
 _SQL_CAT_DEFAULTS = (
@@ -269,10 +383,10 @@ def build_catalog_snapshot(con: sqlite3.Connection) -> dict[str, Any]:
     freq_cats = frequent_categories_sync(con)
 
     group_rows = con.execute(
-        "SELECT id, name, sort_order, is_active FROM category_groups ORDER BY sort_order, id",
+        "SELECT id, code, name, sort_order, is_active FROM category_groups ORDER BY sort_order, id",
     ).fetchall()
     category_rows = con.execute(
-        "SELECT c.id, c.name, c.group_id, g.name, c.is_active"
+        "SELECT c.id, c.code, c.name, c.group_id, g.name, c.is_active, c.is_hidden, c.is_retired"
         " FROM categories c JOIN category_groups g ON g.id = c.group_id"
         " ORDER BY g.sort_order, c.name",
     ).fetchall()
@@ -290,9 +404,10 @@ def build_catalog_snapshot(con: sqlite3.Connection) -> dict[str, Any]:
         "category_groups": [
             {
                 "id": int(r[0]),
-                "name": str(r[1]),
-                "sort_order": int(r[2]),
-                "is_active": bool(r[3]),
+                "code": str(r[1]),
+                "name": str(r[2]),
+                "sort_order": int(r[3]),
+                "is_active": bool(r[4]),
                 "removable": group_children.get(int(r[0]), 0) == 0,
             }
             for r in group_rows
@@ -300,10 +415,13 @@ def build_catalog_snapshot(con: sqlite3.Connection) -> dict[str, Any]:
         "categories": [
             {
                 "id": int(r[0]),
-                "name": str(r[1]),
-                "group_id": int(r[2]),
-                "group": str(r[3]),
-                "is_active": bool(r[4]),
+                "code": str(r[1]),
+                "name": str(r[2]),
+                "group_id": int(r[3]),
+                "group": str(r[4]),
+                "is_active": bool(r[5]),
+                "is_hidden": bool(r[6]),
+                "is_retired": bool(r[7]),
                 "removable": cat_refs.get(int(r[0]), 0) == 0,
             }
             for r in category_rows
@@ -345,23 +463,3 @@ def handle_catalog_error() -> Iterator[None]:
         yield
     except CatalogWriteError as exc:
         raise wrap_catalog_error(exc) from None
-
-
-def snapshot_response(
-    con: sqlite3.Connection,
-    etag_fn: Any,
-    add_result: AddResult | None = None,
-    delete_result: DeleteResult | None = None,
-) -> tuple[AdminCatalogResponse, str]:
-    snapshot = build_catalog_snapshot(con)
-    etag = etag_fn(snapshot["catalog_version"])
-    return (
-        AdminCatalogResponse(
-            new_id=add_result.id if add_result else None,
-            status=add_result.status if add_result else None,
-            delete_status=delete_result.status if delete_result else None,
-            usage_count=delete_result.usage_count if delete_result else None,
-            **snapshot,
-        ),
-        etag,
-    )

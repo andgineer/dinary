@@ -33,17 +33,18 @@ from _admin_catalog_helpers import db  # noqa: F401  (autouse)
 class TestAdminDelete:
     def test_delete_unused_tag_is_hard(self, client):
         add = client.post("/api/catalog/tags", json={"name": "drop-me"})
-        tid = add.json()["new_id"]
+        tid = add.json()["tag"]["id"]
         resp = client.delete(f"/api/catalog/tags/{tid}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["delete_status"] == "hard"
         assert data["usage_count"] == 0
-        assert not any(t["id"] == tid for t in data["tags"])
+        tags = client.get("/api/catalog").json()["tags"]
+        assert not any(t["id"] == tid for t in tags)
 
     def test_delete_used_tag_is_soft(self, client):
         add = client.post("/api/catalog/tags", json={"name": "pinned-tag"})
-        tid = add.json()["new_id"]
+        tid = add.json()["tag"]["id"]
         con = storage.get_connection()
         try:
             con.execute(
@@ -75,7 +76,8 @@ class TestAdminDelete:
         data = resp.json()
         assert data["delete_status"] == "soft"
         assert data["usage_count"] >= 1
-        entry = next(t for t in data["tags"] if t["id"] == tid)
+        tags = client.get("/api/catalog").json()["tags"]
+        entry = next(t for t in tags if t["id"] == tid)
         assert entry["is_active"] is False
 
     def test_delete_group_hard_when_empty(self, client):
@@ -83,19 +85,20 @@ class TestAdminDelete:
             "/api/catalog/groups",
             json={"name": "EmptyGroup"},
         )
-        gid = group.json()["new_id"]
+        gid = group.json()["group"]["id"]
         resp = client.delete(f"/api/catalog/groups/{gid}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["delete_status"] == "hard"
-        assert not any(g["id"] == gid for g in data["category_groups"])
+        groups = client.get("/api/catalog").json()["category_groups"]
+        assert not any(g["id"] == gid for g in groups)
 
     def test_delete_group_refuses_while_it_has_categories(self, client):
         group = client.post(
             "/api/catalog/groups",
             json={"name": "Blocked"},
         )
-        gid = group.json()["new_id"]
+        gid = group.json()["group"]["id"]
         con = storage.get_connection()
         try:
             con.execute(
@@ -112,7 +115,7 @@ class TestAdminDelete:
 
     def test_delete_tag_referenced_by_sheet_mapping_tags_is_soft(self, client):
         tag = client.post("/api/catalog/tags", json={"name": "mapped-tag"})
-        tid = tag.json()["new_id"]
+        tid = tag.json()["tag"]["id"]
         con = storage.get_connection()
         try:
             con.execute(
@@ -131,7 +134,8 @@ class TestAdminDelete:
         data = resp.json()
         assert data["delete_status"] == "soft"
         assert data["usage_count"] == 0
-        assert any(t["id"] == tid and t["is_active"] is False for t in data["tags"])
+        tags = client.get("/api/catalog").json()["tags"]
+        assert any(t["id"] == tid and t["is_active"] is False for t in tags)
 
     def test_delete_tag_referenced_only_by_events_auto_tags_is_soft(self, client):
         """``events.auto_tags`` (a JSON integer array of tag IDs) also counts
@@ -141,7 +145,7 @@ class TestAdminDelete:
         an orphan ID in the event.
         """
         tag = client.post("/api/catalog/tags", json={"name": "auto-only"})
-        tid = tag.json()["new_id"]
+        tid = tag.json()["tag"]["id"]
         ev = client.post(
             "/api/catalog/events",
             json={
@@ -151,13 +155,14 @@ class TestAdminDelete:
                 "auto_tags": [tid],
             },
         )
-        eid = ev.json()["new_id"]
+        eid = ev.json()["event"]["id"]
         resp = client.delete(f"/api/catalog/tags/{tid}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["delete_status"] == "soft"
         assert data["usage_count"] == 0
-        assert any(t["id"] == tid and t["is_active"] is False for t in data["tags"])
+        tags = client.get("/api/catalog").json()["tags"]
+        assert any(t["id"] == tid and t["is_active"] is False for t in tags)
         con = storage.get_connection()
         try:
             row = con.execute(
@@ -178,7 +183,7 @@ class TestAdminDelete:
                 "date_to": "2026-12-31",
             },
         )
-        eid = ev.json()["new_id"]
+        eid = ev.json()["event"]["id"]
         con = storage.get_connection()
         try:
             con.execute(
@@ -194,4 +199,5 @@ class TestAdminDelete:
         data = resp.json()
         assert data["delete_status"] == "soft"
         assert data["usage_count"] == 0
-        assert any(e["id"] == eid and e["is_active"] is False for e in data["events"])
+        events = client.get("/api/catalog").json()["events"]
+        assert any(e["id"] == eid and e["is_active"] is False for e in events)

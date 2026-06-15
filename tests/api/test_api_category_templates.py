@@ -160,18 +160,23 @@ class TestActiveTemplate:
 @allure.feature("API")
 class TestApplyTemplate:
     def test_apply_switches_visibility_and_bumps_catalog_version(self, client):
-        before = client.get("/api/categories").json()
+        before = client.get("/api/catalog").json()
         assert before["categories"] == []
         version_before = before["catalog_version"]
-        etag_before = client.get("/api/categories").headers["ETag"]
+        etag_before = client.get("/api/catalog").headers["ETag"]
 
         resp = client.post("/api/category-templates/apply", json={"code": "simple", "lang": "ru"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["active_template"] == "simple"
         assert body["catalog_version"] == version_before + 1
+        codes = {c["code"] for c in body["categories"]}
+        assert "groceries" in codes
+        groceries = next(c for c in body["categories"] if c["code"] == "groceries")
+        assert groceries["is_active"] is True
+        assert groceries["is_hidden"] is False
 
-        after = client.get("/api/categories")
+        after = client.get("/api/catalog")
         assert after.json()["categories"]
         assert after.headers["ETag"] != etag_before
 
@@ -185,55 +190,26 @@ class TestApplyTemplate:
 
 @allure.epic("Category templates")
 @allure.feature("API")
-class TestGetCategories:
-    def test_returns_only_visible_grouped(self, client):
-        _apply("simple")
-
-        resp = client.get("/api/categories")
-        assert resp.status_code == 200
-        data = resp.json()
-        codes = {c["code"] for c in data["categories"]}
-        # 'groceries' is in 'simple's visible bucket.
-        assert "groceries" in codes
-        # 'fruit' is in 'simple's hidden bucket (is_active=0, unused).
-        assert "fruit" not in codes
-
-    def test_304_on_matching_etag(self, client):
-        _apply("simple")
-
-        first = client.get("/api/categories")
-        etag = first.headers["ETag"]
-        second = client.get("/api/categories", headers={"If-None-Match": etag})
-        assert second.status_code == 304
-        assert second.content == b""
-
-
-@allure.epic("Category templates")
-@allure.feature("API")
 class TestSearchAndActivate:
-    def test_search_finds_hidden_category(self, client):
+    def test_hidden_bucket_category_present_in_catalog(self, client):
         _apply("simple")
-        con = storage.get_connection()
-        try:
-            name = con.execute("SELECT name FROM categories WHERE code = 'fruit'").fetchone()[0]
-        finally:
-            con.close()
 
-        resp = client.get("/api/categories/search", params={"q": name})
-        assert resp.status_code == 200
-        results = resp.json()
-        fruit = next(r for r in results if r["code"] == "fruit")
+        cats = client.get("/api/catalog").json()["categories"]
+        # 'fruit' is in 'simple's hidden bucket: is_active=0, is_hidden=0.
+        fruit = next(c for c in cats if c["code"] == "fruit")
         assert fruit["is_active"] is False
         assert fruit["is_hidden"] is False
 
-    def test_activate_makes_category_appear_in_get_categories(self, client):
+    def test_activate_makes_category_appear_in_catalog(self, client):
         _apply("simple")
 
         resp = client.post("/api/categories/fruit/activate")
         assert resp.status_code == 200
-        assert "catalog_version" in resp.json()
+        body = resp.json()
+        assert body["category"]["code"] == "fruit"
+        assert body["category"]["is_active"] is True
 
-        codes = {c["code"] for c in client.get("/api/categories").json()["categories"]}
+        codes = {c["code"] for c in client.get("/api/catalog").json()["categories"]}
         assert "fruit" in codes
 
     def test_activate_unknown_code_returns_404(self, client):
@@ -262,17 +238,22 @@ class TestHideUnhide:
         finally:
             con.close()
 
+        version_before = client.get("/api/catalog").json()["catalog_version"]
+
         resp = client.post("/api/categories/groceries/hide")
         assert resp.status_code == 200
+        assert resp.json()["catalog_version"] == version_before + 1
 
-        codes = {c["code"] for c in client.get("/api/categories").json()["categories"]}
-        assert "groceries" not in codes, "hide is sticky even for used categories"
+        cats = client.get("/api/catalog").json()["categories"]
+        groceries = next(c for c in cats if c["code"] == "groceries")
+        assert groceries["is_hidden"] is True, "hide is sticky even for used categories"
 
         resp = client.post("/api/categories/groceries/unhide")
         assert resp.status_code == 200
 
-        codes = {c["code"] for c in client.get("/api/categories").json()["categories"]}
-        assert "groceries" in codes
+        cats = client.get("/api/catalog").json()["categories"]
+        groceries = next(c for c in cats if c["code"] == "groceries")
+        assert groceries["is_hidden"] is False
 
     def test_hide_unknown_code_returns_404(self, client):
         _apply("simple")
@@ -295,8 +276,9 @@ class TestMoveAndRename:
 
         resp = client.post("/api/categories/groceries/move", json={"group_code": "housing"})
         assert resp.status_code == 200
+        assert "catalog_version" in resp.json()
 
-        cats = client.get("/api/categories").json()["categories"]
+        cats = client.get("/api/catalog").json()["categories"]
         groceries = next(c for c in cats if c["code"] == "groceries")
         assert groceries["group_id"] == _group_id("housing")
 
@@ -318,7 +300,7 @@ class TestMoveAndRename:
         resp = client.post("/api/categories/groceries/rename", json={"name": "Продукты питания"})
         assert resp.status_code == 200
 
-        cats = client.get("/api/categories").json()["categories"]
+        cats = client.get("/api/catalog").json()["categories"]
         groceries = next(c for c in cats if c["code"] == "groceries")
         assert groceries["name"] == "Продукты питания"
 
@@ -338,10 +320,11 @@ class TestCreateCategory:
         resp = client.post("/api/categories", json={"name": "My Thing", "group_code": "food"})
         assert resp.status_code == 201
         body = resp.json()
-        assert body["code"] == "u_my_thing"
+        assert body["category"]["code"] == "u_my_thing"
+        assert body["category"]["group_id"] == _group_id("food")
         assert "catalog_version" in body
 
-        cats = client.get("/api/categories").json()["categories"]
+        cats = client.get("/api/catalog").json()["categories"]
         created = next(c for c in cats if c["code"] == "u_my_thing")
         assert created["group_id"] == _group_id("food")
 

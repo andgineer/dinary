@@ -1,6 +1,6 @@
 """Tests for the visibility predicate: db.catalog.list_visible_categories.
 
-Truth table for ``(is_active OR used) AND NOT is_hidden AND NOT is_retired``.
+Truth table for ``is_active AND NOT is_hidden AND NOT is_retired``.
 """
 
 import sqlite3
@@ -34,19 +34,6 @@ def _visible_codes(con: sqlite3.Connection) -> set[str]:
     return {row.code for row in list_visible_categories(con)}
 
 
-def _insert_expense(con: sqlite3.Connection, category_id: int) -> None:
-    con.execute(
-        "INSERT INTO expenses"
-        " (datetime, amount, amount_original, currency_original, category_id)"
-        " VALUES ('2026-05-01T10:00:00', 100.0, 100.0, 'EUR', ?)",
-        [category_id],
-    )
-
-
-def _category_id(con: sqlite3.Connection, code: str) -> int:
-    return con.execute("SELECT id FROM categories WHERE code = ?", [code]).fetchone()[0]
-
-
 @allure.epic("Category templates")
 @allure.feature("Visibility")
 class TestListVisibleCategories:
@@ -63,32 +50,15 @@ class TestListVisibleCategories:
 
         assert rows["groceries"].group_code
 
-    def test_inactive_unused_is_not_visible(self, con):
+    def test_inactive_is_not_visible(self, con):
         assert "fruit" not in _visible_codes(con)
-
-    def test_inactive_but_used_is_visible(self, con):
-        _insert_expense(con, _category_id(con, "fruit"))
-
-        assert "fruit" in _visible_codes(con)
 
     def test_hidden_overrides_active(self, con):
         con.execute("UPDATE categories SET is_hidden = 1 WHERE code = 'groceries'")
 
         assert "groceries" not in _visible_codes(con)
 
-    def test_hidden_overrides_used(self, con):
-        con.execute("UPDATE categories SET is_hidden = 1 WHERE code = 'fruit'")
-        _insert_expense(con, _category_id(con, "fruit"))
-
-        assert "fruit" not in _visible_codes(con)
-
     def test_retired_overrides_active(self, con):
         con.execute("UPDATE categories SET is_retired = 1 WHERE code = 'groceries'")
 
         assert "groceries" not in _visible_codes(con)
-
-    def test_retired_overrides_used(self, con):
-        con.execute("UPDATE categories SET is_retired = 1 WHERE code = 'fruit'")
-        _insert_expense(con, _category_id(con, "fruit"))
-
-        assert "fruit" not in _visible_codes(con)

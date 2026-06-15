@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch, nextTick, onBeforeUnmount } from "vue";
+import { computed, ref, watch, nextTick } from "vue";
 import {
   Check,
   ChevronRight,
@@ -17,9 +17,6 @@ import { useOnline } from "../composables/useOnline.js";
 import { recordOutOfSetActivation } from "../composables/oosNudge.js";
 import BaseSheet from "./BaseSheet.vue";
 
-const SEARCH_DEBOUNCE_MS = 300;
-const SEARCH_RETRY_MS = 5000;
-
 const props = defineProps({
   open: { type: Boolean, default: false },
   suggestions: { type: Array, default: () => [] },
@@ -36,18 +33,8 @@ const searchEl = ref(null);
 const bodyEl = ref(null);
 const query = ref("");
 const searchResults = ref([]);
-const searchUnavailable = ref(false);
 const activatingCode = ref(null);
 const manageMode = ref(false);
-
-let debounceTimer = null;
-let retryTimer = null;
-
-function clearSearchTimers() {
-  clearTimeout(debounceTimer);
-  clearTimeout(retryTimer);
-  retryTimer = null;
-}
 
 watch(
   () => props.open,
@@ -55,9 +42,8 @@ watch(
     if (isOpen) {
       query.value = "";
       searchResults.value = [];
-      searchUnavailable.value = false;
       manageMode.value = props.initialManage;
-      void catalog.loadVisibleCategoriesIfNeeded();
+      void catalog.loadIfNeeded();
       catalog.ensureTemplateCatalog().catch((e) => {
         toast.show(e?.message || "Failed to load category sets", "error");
       });
@@ -65,56 +51,14 @@ watch(
         if (bodyEl.value) bodyEl.value.scrollTop = 0;
         searchEl.value?.focus({ preventScroll: true });
       });
-    } else {
-      clearSearchTimers();
     }
   },
   { immediate: true },
 );
 
-async function attemptSearch(trimmed) {
-  try {
-    const results = await catalog.searchCategories(trimmed);
-    // Drop the response if the query changed while it was in flight —
-    // a newer debounce cycle is already handling the current text.
-    if (query.value.trim() !== trimmed) return;
-    searchResults.value = results;
-    searchUnavailable.value = false;
-    retryTimer = null;
-  } catch (e) {
-    if (query.value.trim() !== trimmed) return;
-    if (e?.status === undefined) {
-      // A network-level failure (no HTTP response at all) means the search
-      // request couldn't reach the server — keep retrying in the background
-      // until connectivity returns, rather than reporting "no matches".
-      searchResults.value = [];
-      searchUnavailable.value = true;
-      clearTimeout(retryTimer);
-      retryTimer = setTimeout(() => attemptSearch(trimmed), SEARCH_RETRY_MS);
-    } else {
-      toast.show(e?.message || "Search failed", "error");
-    }
-  }
-}
-
-function runSearch(trimmed) {
-  clearSearchTimers();
-  debounceTimer = setTimeout(() => attemptSearch(trimmed), SEARCH_DEBOUNCE_MS);
-}
-
 watch(query, (q) => {
-  clearSearchTimers();
   const trimmed = q.trim();
-  if (!trimmed) {
-    searchResults.value = [];
-    searchUnavailable.value = false;
-    return;
-  }
-  runSearch(trimmed);
-});
-
-onBeforeUnmount(() => {
-  clearSearchTimers();
+  searchResults.value = trimmed ? catalog.searchCategories(trimmed) : [];
 });
 
 const groupedCategories = computed(() => {
@@ -444,10 +388,7 @@ async function confirmAdd(groupCode) {
       </template>
 
       <template v-else-if="showSearch">
-        <div v-if="searchUnavailable" class="search-offline" data-testid="search-offline">
-          Search is unavailable offline
-        </div>
-        <div v-else class="flat-list" data-testid="flat-results">
+        <div class="flat-list" data-testid="flat-results">
           <button
             v-for="item in inSetResults"
             :key="item.id"
@@ -455,7 +396,7 @@ async function confirmAdd(groupCode) {
             class="flat-item"
             @click="select(item.id)"
           >
-            <span class="flat-group">{{ item.groupName ?? "без группы / ungrouped" }}</span>
+            <span class="flat-group">{{ item.groupName }}</span>
             <span class="flat-sep"> › </span>
             <span>{{ item.name }}</span>
           </button>
@@ -745,16 +686,6 @@ async function confirmAdd(groupCode) {
   font-size: 0.85rem;
   padding: 1rem 0;
   text-align: center;
-}
-
-.search-offline {
-  color: var(--muted);
-  font-size: 0.85rem;
-  padding: 1rem;
-  text-align: center;
-  background: var(--field);
-  border: 1px solid var(--border);
-  border-radius: 10px;
 }
 
 .addable-section {

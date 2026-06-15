@@ -87,7 +87,8 @@ class TestApplyTemplate:
 
     def test_used_category_dropped_from_visible_set_stays_visible(self, con):
         """A category with expenses keeps showing up via ``list_visible_categories``
-        even after a template switch moves it into the new template's hidden bucket."""
+        even after a template switch moves it into the new template's hidden bucket,
+        because ``apply_template`` never deactivates a category with expense history."""
         apply_template(con, "active", "ru")  # 'fruit' is visible here
 
         cat_id = con.execute("SELECT id FROM categories WHERE code = 'fruit'").fetchone()[0]
@@ -101,7 +102,7 @@ class TestApplyTemplate:
         apply_template(con, "simple", "ru")  # 'fruit' is hidden here
 
         row = con.execute("SELECT is_active FROM categories WHERE code = 'fruit'").fetchone()
-        assert row["is_active"] == 0
+        assert row["is_active"] == 1
 
         codes = {row.code for row in list_visible_categories(con)}
         assert "fruit" in codes

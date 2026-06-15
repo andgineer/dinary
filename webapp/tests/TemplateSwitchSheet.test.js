@@ -60,14 +60,15 @@ describe("TemplateSwitchSheet", () => {
   it("apply switches the template, persists the language, and closes the sheet", async () => {
     localStorage.setItem("dinary:catalog:lastLang", "en");
     vi.spyOn(catalogApi, "listTemplates").mockResolvedValue(TEMPLATES);
-    const apply = vi
-      .spyOn(catalogApi, "applyTemplate")
-      .mockResolvedValue({ active_template: "travel", catalog_version: 2 });
-    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
+    const apply = vi.spyOn(catalogApi, "applyTemplate").mockResolvedValue({
+      active_template: "travel",
       catalog_version: 2,
+      category_groups: [],
       categories: [],
+      events: [],
+      tags: [],
+      frequent_categories: [],
     });
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "travel" });
 
     const { w, store } = mountSheet();
     store.openTemplateSwitch();

@@ -62,35 +62,6 @@ export async function applyTemplate(code, lang) {
   });
 }
 
-/**
- * Fetch the visible-categories list. Pass the previous catalog_version
- * (if any) to enable conditional GET — the server returns 304 and this
- * helper returns ``{ notModified: true }`` so the caller keeps its
- * existing cache.
- *
- * Returns either ``{ catalog_version, categories }`` or a NotModified
- * instance.
- */
-export async function getCategories({ ifVersion } = {}) {
-  const headers = {};
-  if (typeof ifVersion === "number") {
-    headers["If-None-Match"] = etagFor(ifVersion);
-  }
-  const resp = await fetch("/api/categories", { headers });
-  if (resp.status === 304) {
-    return new NotModified();
-  }
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err.detail || `HTTP ${resp.status}`);
-  }
-  return resp.json();
-}
-
-export async function searchCategories(q) {
-  return apiRequest(`/api/categories/search?q=${encodeURIComponent(q)}`);
-}
-
 export async function createCategory(name, groupCode) {
   return apiRequest("/api/categories", {
     method: "POST",

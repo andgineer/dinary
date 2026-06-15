@@ -6,16 +6,21 @@ import sqlite3
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+from dinary.api.controllers.catalog import (
+    CatalogResponse,
+    CatalogVersionResponse,
+    CategoryResultResponse,
+    _category_item,
+    build_catalog_snapshot,
+)
 from dinary.db.catalog import (
     activate_category,
     create_category,
     get_active_template,
     get_catalog_version,
     hide_category,
-    list_visible_categories,
     move_category,
     rename_category,
-    search_categories,
     unhide_category,
 )
 from dinary.db.category_apply import (
@@ -57,42 +62,13 @@ class ApplyTemplateBody(BaseModel):
     lang: str
 
 
-class ApplyTemplateResponse(BaseModel):
+class CategoryMutationResponse(CatalogResponse):
     active_template: str
-    catalog_version: int
-
-
-class VisibleCategoryItem(BaseModel):
-    id: int
-    code: str
-    name: str
-    group_id: int
-    group_name: str
-    group_sort_order: int
-    group_code: str
-
-
-class CategoriesResponse(BaseModel):
-    catalog_version: int
-    categories: list[VisibleCategoryItem]
-
-
-class CategorySearchItem(BaseModel):
-    id: int
-    code: str
-    name: str
-    is_active: bool
-    is_hidden: bool
 
 
 class CreateCategoryBody(BaseModel):
     name: str = Field(min_length=1)
     group_code: str
-
-
-class CreateCategoryResponse(BaseModel):
-    code: str
-    catalog_version: int
 
 
 class MoveCategoryBody(BaseModel):
@@ -101,10 +77,6 @@ class MoveCategoryBody(BaseModel):
 
 class RenameCategoryBody(BaseModel):
     name: str = Field(min_length=1)
-
-
-class CatalogVersionResponse(BaseModel):
-    catalog_version: int
 
 
 # ---------------------------------------------------------------------------
@@ -169,67 +141,40 @@ def get_active_template_response(con: sqlite3.Connection) -> ActiveTemplateRespo
     return ActiveTemplateResponse(active_template=get_active_template(con))
 
 
-def apply_template_sync(con: sqlite3.Connection, body: ApplyTemplateBody) -> ApplyTemplateResponse:
+def apply_template_sync(
+    con: sqlite3.Connection,
+    body: ApplyTemplateBody,
+) -> CategoryMutationResponse:
     try:
         apply_template(con, body.code, body.lang)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
-    return ApplyTemplateResponse(
-        active_template=body.code,
-        catalog_version=get_catalog_version(con),
-    )
-
-
-def get_categories_response(con: sqlite3.Connection) -> CategoriesResponse:
-    rows = list_visible_categories(con)
-    return CategoriesResponse(
-        catalog_version=get_catalog_version(con),
-        categories=[
-            VisibleCategoryItem(
-                id=row.id,
-                code=row.code,
-                name=row.name,
-                group_id=row.group_id,
-                group_name=row.group_name,
-                group_sort_order=row.group_sort_order,
-                group_code=row.group_code,
-            )
-            for row in rows
-        ],
-    )
-
-
-def search_categories_response(con: sqlite3.Connection, query: str) -> list[CategorySearchItem]:
-    rows = search_categories(con, query)
-    return [
-        CategorySearchItem(
-            id=row.id,
-            code=row.code,
-            name=row.name,
-            is_active=row.is_active,
-            is_hidden=row.is_hidden,
-        )
-        for row in rows
-    ]
+    return CategoryMutationResponse(**build_catalog_snapshot(con), active_template=body.code)
 
 
 def create_category_sync(
     con: sqlite3.Connection,
     body: CreateCategoryBody,
-) -> CreateCategoryResponse:
+) -> CategoryResultResponse:
     try:
         code = create_category(con, body.name, body.group_code)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
-    return CreateCategoryResponse(code=code, catalog_version=get_catalog_version(con))
+    return CategoryResultResponse(
+        catalog_version=get_catalog_version(con),
+        category=_category_item(con, code),
+    )
 
 
-def activate_category_sync(con: sqlite3.Connection, code: str) -> CatalogVersionResponse:
+def activate_category_sync(con: sqlite3.Connection, code: str) -> CategoryResultResponse:
     try:
         activate_category(con, code)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
-    return CatalogVersionResponse(catalog_version=get_catalog_version(con))
+    return CategoryResultResponse(
+        catalog_version=get_catalog_version(con),
+        category=_category_item(con, code),
+    )
 
 
 def hide_category_sync(con: sqlite3.Connection, code: str) -> CatalogVersionResponse:

@@ -37,20 +37,16 @@ function namesEqual(a, b) {
   return String(a).localeCompare(String(b), undefined, { sensitivity: "accent" }) === 0;
 }
 
-function stripAdminEnvelope(snapshot, existingFrequentCategories = []) {
-  // build_catalog_snapshot returns dict-of-lists; admin* responses also
-  // include new_id / status / delete_status / usage_count. Strip those
-  // before persisting the snapshot.
-  // AdminCatalogResponse omits frequent_categories — fall back to the
-  // previously known list so catalog mutations don't silently clear the picks.
-  const { catalog_version, category_groups, categories, events, tags, frequent_categories } = snapshot ?? {};
+function _normalizeSnapshot(snapshot) {
+  const { catalog_version, category_groups, categories, events, tags, frequent_categories } =
+    snapshot ?? {};
   return {
     catalog_version,
     category_groups: category_groups ?? [],
     categories: categories ?? [],
     events: events ?? [],
     tags: tags ?? [],
-    frequent_categories: frequent_categories ?? existingFrequentCategories,
+    frequent_categories: frequent_categories ?? [],
   };
 }
 
@@ -78,7 +74,7 @@ function readCachedSnapshot() {
 
 function writeCachedSnapshot(snapshot) {
   try {
-    localStorage.setItem(SNAPSHOT_CACHE_KEY, JSON.stringify(stripAdminEnvelope(snapshot)));
+    localStorage.setItem(SNAPSHOT_CACHE_KEY, JSON.stringify(_normalizeSnapshot(snapshot)));
   } catch {
     // Quota / private mode: harmless, next load will refetch.
   }
@@ -114,7 +110,7 @@ export const useCatalogStore = defineStore("catalog", () => {
   async function applyTemplate(code, lang) {
     const resp = await catalogApi.applyTemplate(code, lang);
     activeTemplate.value = resp.active_template;
-    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    applySnapshot(resp);
     return resp;
   }
 
@@ -167,77 +163,115 @@ export const useCatalogStore = defineStore("catalog", () => {
 
   // ----- visible categories (picker / Manage mode) ------------------------
 
-  const visibleCategories = ref([]);
-  const visibleCategoriesVersion = ref(-1);
-
-  async function loadVisibleCategories() {
-    try {
-      const result = await catalogApi.getCategories({
-        ifVersion: visibleCategoriesVersion.value >= 0 ? visibleCategoriesVersion.value : undefined,
-      });
-      if (result instanceof catalogApi.NotModified) return;
-      visibleCategories.value = result.categories;
-      visibleCategoriesVersion.value = result.catalog_version;
-      await initActiveTemplate();
-    } catch (e) {
-      lastError.value = e;
-      useToastStore().show(e?.message || "Failed to load categories", "error");
-    }
-  }
-
-  async function loadVisibleCategoriesIfNeeded() {
-    if (visibleCategoriesVersion.value < 0) {
-      await loadVisibleCategories();
-    }
-  }
-
-  async function _refreshVisibleCategoriesIfChanged(catalogVersion) {
-    if (typeof catalogVersion === "number" && catalogVersion !== visibleCategoriesVersion.value) {
-      await loadVisibleCategories();
-    }
-  }
+  // Doesn't repeat !c.is_retired: category_seed._retire_vanished always
+  // pairs is_retired=1 with is_active=0, so isActive(c) alone excludes
+  // retired rows too.
+  const visibleCategories = computed(() => {
+    if (!snapshot.value) return [];
+    const groupsById = new Map(snapshot.value.category_groups.map((g) => [g.id, g]));
+    return snapshot.value.categories
+      .filter((c) => isActive(c) && !c.is_hidden)
+      .map((c) => {
+        const g = groupsById.get(c.group_id);
+        return {
+          id: c.id,
+          code: c.code,
+          name: c.name,
+          group_id: c.group_id,
+          group_name: c.group,
+          group_code: g?.code ?? "",
+          group_sort_order: g?.sort_order ?? 0,
+        };
+      })
+      .sort((a, b) => a.group_sort_order - b.group_sort_order || a.name.localeCompare(b.name));
+  });
 
   function visibleCategoryByCode(code) {
     return visibleCategories.value.find((c) => c.code === code) ?? null;
   }
 
-  async function searchCategories(q) {
-    return catalogApi.searchCategories(q);
+  function searchCategories(q) {
+    if (!snapshot.value) return [];
+    const needle = q.trim().toLowerCase();
+    if (!needle) return [];
+    return snapshot.value.categories
+      .filter((c) => !c.is_retired && c.name.toLowerCase().includes(needle))
+      .map((c) => ({
+        id: c.id,
+        code: c.code,
+        name: c.name,
+        is_active: c.is_active,
+        is_hidden: c.is_hidden,
+      }))
+      .sort((a, b) => Number(b.is_active) - Number(a.is_active) || a.name.localeCompare(b.name));
+  }
+
+  // ----- local-patch helpers ----------------------------------------------
+  //
+  // Each mutation already knows the new state it requested, so it patches
+  // snapshot.value directly and just takes catalog_version from the response.
+
+  function _setCatalogVersion(version) {
+    if (!snapshot.value) return;
+    snapshot.value = { ...snapshot.value, catalog_version: version };
+    writeCachedSnapshot(snapshot.value);
+  }
+
+  function _patchCategory(code, patch) {
+    if (!snapshot.value) return;
+    snapshot.value = {
+      ...snapshot.value,
+      categories: snapshot.value.categories.map((c) => (c.code === code ? { ...c, ...patch } : c)),
+    };
+  }
+
+  function _upsertCategory(category) {
+    if (!snapshot.value) return;
+    const categories = snapshot.value.categories.filter((c) => c.id !== category.id);
+    categories.push(category);
+    snapshot.value = { ...snapshot.value, categories };
   }
 
   async function activateCategory(code) {
     const resp = await catalogApi.activateCategory(code);
-    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    _upsertCategory(resp.category);
+    _setCatalogVersion(resp.catalog_version);
     return resp;
   }
 
   async function unhideCategory(code) {
     const resp = await catalogApi.unhideCategory(code);
-    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    _patchCategory(code, { is_hidden: false });
+    _setCatalogVersion(resp.catalog_version);
     return resp;
   }
 
   async function hideCategory(code) {
     const resp = await catalogApi.hideCategory(code);
-    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    _patchCategory(code, { is_hidden: true });
+    _setCatalogVersion(resp.catalog_version);
     return resp;
   }
 
   async function renameCategory(code, name) {
     const resp = await catalogApi.renameCategory(code, name);
-    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    _patchCategory(code, { name });
+    _setCatalogVersion(resp.catalog_version);
     return resp;
   }
 
   async function moveCategory(code, groupCode) {
     const resp = await catalogApi.moveCategory(code, groupCode);
-    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    const group = snapshot.value?.category_groups.find((g) => g.code === groupCode);
+    if (group) _patchCategory(code, { group_id: group.id, group: group.name });
+    _setCatalogVersion(resp.catalog_version);
     return resp;
   }
 
   async function createCategory(name, groupCode) {
     const resp = await catalogApi.createCategory(name, groupCode);
-    await _refreshVisibleCategoriesIfChanged(resp.catalog_version);
+    _upsertCategory(resp.category);
+    _setCatalogVersion(resp.catalog_version);
     return resp;
   }
 
@@ -249,7 +283,7 @@ export const useCatalogStore = defineStore("catalog", () => {
 
   function applySnapshot(rawSnapshot) {
     if (!rawSnapshot) return;
-    snapshot.value = stripAdminEnvelope(rawSnapshot, snapshot.value?.frequent_categories ?? []);
+    snapshot.value = _normalizeSnapshot(rawSnapshot);
     writeCachedSnapshot(snapshot.value);
     _stampFresh();
   }
@@ -283,12 +317,6 @@ export const useCatalogStore = defineStore("catalog", () => {
   async function loadIfNeeded() {
     const age = catalogFetchedAt.value ? Date.now() - catalogFetchedAt.value : Infinity;
     if (snapshot.value && catalogFetchedAt.value && age <= CATALOG_TTL_MS) {
-      // Cache hit, but if frequent_categories is empty the cached snapshot may
-      // be stale (e.g. wiped by a previous catalog mutation bug). Refetch in
-      // the background so picks appear without blocking the initial render.
-      if (!snapshot.value.frequent_categories?.length) {
-        load().catch(() => {});
-      }
       return snapshot.value;
     }
     return load();
@@ -317,15 +345,17 @@ export const useCatalogStore = defineStore("catalog", () => {
   function categories(groupId, { includeInactive = false } = {}) {
     if (!snapshot.value) return [];
     const gid = Number(groupId);
-    return snapshot.value.categories.filter(
-      (c) => c.group_id === gid && (includeInactive || isActive(c)),
-    );
+    return snapshot.value.categories
+      .filter((c) => c.group_id === gid && (includeInactive || isActive(c)))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   function inactiveCategories(groupId) {
     if (!snapshot.value) return [];
     const gid = Number(groupId);
-    return snapshot.value.categories.filter((c) => c.group_id === gid && !isActive(c));
+    return snapshot.value.categories
+      .filter((c) => c.group_id === gid && !isActive(c))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   function findCategoryById(id) {
@@ -442,28 +472,44 @@ export const useCatalogStore = defineStore("catalog", () => {
 
   // ----- mutating actions ------------------------------------------------
 
+  const _ENTRY_KEYS = { group: "category_groups", event: "events", tag: "tags" };
+
+  const _ENTRY_COMPARATORS = {
+    category_groups: (a, b) => a.sort_order - b.sort_order || a.id - b.id,
+    events: (a, b) => a.date_from.localeCompare(b.date_from) || a.name.localeCompare(b.name),
+    tags: (a, b) => a.id - b.id,
+  };
+
+  function _patchEntry(kind, id, patch) {
+    if (!snapshot.value) return;
+    const key = _ENTRY_KEYS[kind];
+    snapshot.value = {
+      ...snapshot.value,
+      [key]: snapshot.value[key].map((x) => (x.id === id ? { ...x, ...patch } : x)),
+    };
+  }
+
+  function _removeEntry(kind, id) {
+    if (!snapshot.value) return;
+    const key = _ENTRY_KEYS[kind];
+    snapshot.value = { ...snapshot.value, [key]: snapshot.value[key].filter((x) => x.id !== id) };
+  }
+
+  function _upsertEntry(kind, item) {
+    if (!snapshot.value) return;
+    const key = _ENTRY_KEYS[kind];
+    const list = snapshot.value[key].filter((x) => x.id !== item.id);
+    list.push(item);
+    list.sort(_ENTRY_COMPARATORS[key]);
+    snapshot.value = { ...snapshot.value, [key]: list };
+  }
+
   async function reactivate(kind, id) {
-    const fn = {
-      group: catalogApi.adminReactivateGroup,
-      event: catalogApi.adminReactivateEvent,
-      tag: catalogApi.adminReactivateTag,
-    }[kind];
-    if (!fn) throw new Error(`Unknown kind: ${kind}`);
-    const snap = await fn(id);
-    applySnapshot(snap);
-    return snap;
+    return patch(kind, id, { is_active: true });
   }
 
   async function deactivate(kind, id) {
-    const fn = {
-      group: catalogApi.adminDeactivateGroup,
-      event: catalogApi.adminDeactivateEvent,
-      tag: catalogApi.adminDeactivateTag,
-    }[kind];
-    if (!fn) throw new Error(`Unknown kind: ${kind}`);
-    const snap = await fn(id);
-    applySnapshot(snap);
-    return snap;
+    return patch(kind, id, { is_active: false });
   }
 
   async function remove(kind, id) {
@@ -473,9 +519,14 @@ export const useCatalogStore = defineStore("catalog", () => {
       tag: catalogApi.adminDeleteTag,
     }[kind];
     if (!fn) throw new Error(`Unknown kind: ${kind}`);
-    const snap = await fn(id);
-    applySnapshot(snap);
-    return snap;
+    const resp = await fn(id);
+    if (resp.delete_status === "hard") {
+      _removeEntry(kind, id);
+    } else {
+      _patchEntry(kind, id, { is_active: false });
+    }
+    _setCatalogVersion(resp.catalog_version);
+    return resp;
   }
 
   async function add(kind, body) {
@@ -485,9 +536,10 @@ export const useCatalogStore = defineStore("catalog", () => {
       tag: catalogApi.adminAddTag,
     }[kind];
     if (!fn) throw new Error(`Unknown kind: ${kind}`);
-    const snap = await fn(body);
-    applySnapshot(snap);
-    return snap;
+    const resp = await fn(body);
+    _upsertEntry(kind, resp[kind]);
+    _setCatalogVersion(resp.catalog_version);
+    return resp;
   }
 
   async function patch(kind, id, body) {
@@ -497,9 +549,10 @@ export const useCatalogStore = defineStore("catalog", () => {
       tag: catalogApi.adminPatchTag,
     }[kind];
     if (!fn) throw new Error(`Unknown kind: ${kind}`);
-    const snap = await fn(id, body);
-    applySnapshot(snap);
-    return snap;
+    const resp = await fn(id, body);
+    _patchEntry(kind, id, body);
+    _setCatalogVersion(resp.catalog_version);
+    return resp;
   }
 
   return {
@@ -550,9 +603,6 @@ export const useCatalogStore = defineStore("catalog", () => {
     showSetNudge,
     setSetNudge,
     visibleCategories,
-    visibleCategoriesVersion,
-    loadVisibleCategories,
-    loadVisibleCategoriesIfNeeded,
     visibleCategoryByCode,
     searchCategories,
     activateCategory,

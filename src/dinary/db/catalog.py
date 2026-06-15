@@ -11,20 +11,19 @@ import sqlite3
 from dinary.db import storage
 from dinary.db.sql_loader import fetchall_as, fetchone_as, load_sql
 from dinary.db.storage import (
-    CategorySearchRow,
     LoggingProjectionCandidateRow,
     MappingRow,
     VisibleCategoryRow,
 )
 
-#: The "pickable for new expenses" predicate (specs/reference/category-templates.md): a
-#: category in the active template's visible subset, or one with at least one
-#: expense, and never one the user hid or the vocabulary retired. Assumes the
-#: categories table is aliased ``c`` in the enclosing query.
-VISIBLE_CATEGORY_PREDICATE = (
-    "NOT c.is_retired AND NOT c.is_hidden "
-    "AND (c.is_active OR EXISTS (SELECT 1 FROM expenses ue WHERE ue.category_id = c.id))"
-)
+#: The "pickable for new expenses" predicate (specs/reference/category-templates.md).
+#: ``is_active`` already reflects template membership and historical use:
+#: ``apply_template`` is the only writer that can deactivate a category during
+#: normal operation, and it never does so for one with expenses.
+#: (``category_seed``'s retirement step also clears ``is_active``, but always
+#: alongside ``is_retired``, which this predicate excludes unconditionally.)
+#: Assumes the categories table is aliased ``c`` in the enclosing query.
+VISIBLE_CATEGORY_PREDICATE = "NOT c.is_retired AND NOT c.is_hidden AND c.is_active"
 
 
 # ---------------------------------------------------------------------------
@@ -35,11 +34,6 @@ VISIBLE_CATEGORY_PREDICATE = (
 def list_visible_categories(con: sqlite3.Connection) -> list[VisibleCategoryRow]:
     """Return the pickable category set, grouped and ordered for the picker."""
     return fetchall_as(VisibleCategoryRow, con, load_sql("list_visible_categories.sql"))
-
-
-def search_categories(con: sqlite3.Connection, query: str) -> list[CategorySearchRow]:
-    """Search all non-retired categories by name, including hidden / not-in-set ones."""
-    return fetchall_as(CategorySearchRow, con, load_sql("search_categories.sql"), [query])
 
 
 def get_active_template(con: sqlite3.Connection) -> str | None:
@@ -107,9 +101,11 @@ def _resolve_group_code_in_template(definition: dict, code: str) -> str | None:
 def activate_category(con: sqlite3.Connection, code: str) -> None:
     """Make ``code`` pickable: ``is_active=1, is_hidden=0``.
 
-    If ``group_id`` is ``NULL`` (e.g. a category activated with no active
-    template), place it using the active template's definition; if there is
-    no active template or the code is absent from it, leave ``group_id=NULL``.
+    If ``group_id`` is ``NULL``, resolve it from the active template's
+    definition. Raises ``ValueError`` if the code is unknown, or if
+    ``group_id`` is ``NULL`` and no group can be resolved (no active
+    template, or the template row is missing) — ``is_active=1`` with
+    ``group_id=NULL`` is never a valid catalog state.
     """
     with storage.transaction(con):
         row = con.execute(
@@ -120,28 +116,34 @@ def activate_category(con: sqlite3.Connection, code: str) -> None:
             msg = f"Unknown category code: {code!r}"
             raise ValueError(msg)
 
+        if row["group_id"] is None:
+            template_code = get_active_template(con)
+            template_row = (
+                con.execute(
+                    "SELECT definition_json FROM category_templates WHERE code = ?",
+                    [template_code],
+                ).fetchone()
+                if template_code is not None
+                else None
+            )
+            group_code = (
+                _resolve_group_code_in_template(json.loads(template_row["definition_json"]), code)
+                if template_row is not None
+                else None
+            )
+            if group_code is None:
+                msg = f"Cannot activate {code!r}: no group could be resolved"
+                raise ValueError(msg)
+            con.execute(
+                "UPDATE categories SET group_id = "
+                "(SELECT id FROM category_groups WHERE code = ?) WHERE code = ?",
+                [group_code, code],
+            )
+
         con.execute(
             "UPDATE categories SET is_active = 1, is_hidden = 0 WHERE code = ?",
             [code],
         )
-
-        if row["group_id"] is None:
-            template_code = get_active_template(con)
-            if template_code is not None:
-                template_row = con.execute(
-                    "SELECT definition_json FROM category_templates WHERE code = ?",
-                    [template_code],
-                ).fetchone()
-                if template_row is not None:
-                    definition = json.loads(template_row["definition_json"])
-                    group_code = _resolve_group_code_in_template(definition, code)
-                    if group_code is not None:
-                        con.execute(
-                            "UPDATE categories SET group_id = "
-                            "(SELECT id FROM category_groups WHERE code = ?) WHERE code = ?",
-                            [group_code, code],
-                        )
-
         set_catalog_version(con, get_catalog_version(con) + 1)
 
 

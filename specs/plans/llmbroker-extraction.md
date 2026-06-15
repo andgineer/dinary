@@ -159,6 +159,104 @@ on a public object, so `LLMConfig` is safe to expose as-is.
 
 ---
 
+## Quick Start (README draft)
+
+`llmbroker` gives you one client over a *pool* of LLM endpoints and quietly
+rotates away from any that are rate-limited or down. Start with a file and two
+lines of code; reach for a database, a cluster, or tools only if you need them.
+
+### Install and pick a pool of LLMs
+
+```bash
+pip install llmbroker
+python -m llmbroker preset smart-freetier > llms.toml   # a curated LLM list; or `freetier`
+python -m llmbroker env llms.toml > .env                # the API-key names to fill in
+```
+`preset` downloads one of the curated lists the project maintains — always the
+latest, independent of your installed `llmbroker` version — so you don't research
+endpoints yourself. `env` reads that list and writes a `.env` with the key *names*
+it needs (no values) — fill them in. Keys live in env vars, never in `llms.toml`
+and never in your code.
+
+### The simplest way to use it
+
+```python
+import llmbroker
+
+llms = llmbroker.Broker(registry=llmbroker.Registry("llms.toml"))
+print(llms.ask("Summarize this receipt: ...").text)
+```
+That's the whole thing: ask a question, get an answer. The broker picks an LLM
+from your pool, and if it's busy, tries another.
+
+You can tag each call with what it's for, so the broker learns which LLMs do that
+job best:
+```python
+llms.ask(prompt, operation="summary")
+```
+
+By default a call quietly waits out a short rate-limit instead of failing. If
+you'd rather give up after a few seconds, pass `wait=`:
+```python
+try:
+    llms.ask(prompt, wait=5)
+except llmbroker.NoLLMAvailable:
+    ...   # the whole llms pool was busy for 5 seconds
+```
+
+### The recommended way for real apps — async
+
+For anything serving requests (FastAPI, agents, background workers) use the async
+client. It's the same code with `await`:
+```python
+llms = llmbroker.AsyncBroker(registry=llmbroker.Registry("llms.toml"))
+text = (await llms.ask("Summarize this receipt: ...")).text
+```
+
+### Letting the model call your functions (tools)
+
+Pass your tool schemas to `chat` and let the shipped loop run the back-and-forth —
+call the model, run the tool it asked for, send the result back, repeat — until it
+returns a final answer:
+```python
+final = llmbroker.run_tool_loop(llms, messages, tools=schemas, dispatch=my_tools)         # sync
+final = await llmbroker.arun_tool_loop(llms, messages, tools=schemas, dispatch=my_tools)  # async
+```
+`dispatch` maps each tool name to the function that runs it. (Want to drive the
+loop yourself? `llms.chat(messages, tools=schemas)` hands you the raw
+`.tool_calls`.)
+
+### If you want a call history and a live admin view
+
+A file pool is perfect to start with, and a file already keeps your config across
+restarts. A database earns its place for a different reason: a full, queryable
+**history of every call** (which LLM served it, latency, tokens, quality) and
+**managing the pool at runtime** through an admin UI, instead of editing a file by
+hand. Point the broker at a DB backend instead of a file — your calling code
+doesn't change. A DB backend holds a connection open, so close it with `with`:
+```python
+import llmbroker, llmbroker.sqlite
+
+with llmbroker.Broker(
+    registry=llmbroker.sqlite.Registry("broker.db"),
+    telemetry=llmbroker.sqlite.Telemetry("broker.db"),
+) as llms:
+    llms.sync_configs(llmbroker.Registry("llms.toml"))   # bring the DB in step with your list
+    ...   # now llms.calls(limit=...) and llms.snapshot() give you the admin view
+```
+
+### If you run several copies at once
+
+Running more than one instance (say, behind a load balancer)? Give them a shared
+store so they agree on which LLMs are cooling down, instead of each
+re-discovering it the hard way. A single process never needs this:
+```python
+import llmbroker.redis
+shared = llmbroker.redis.SharedState("redis://...")   # → Broker(..., shared_state=shared)
+```
+
+---
+
 ## The usage ladder (this is the README and the doc structure)
 
 Documentation reads as a staircase, **not** as "orthogonal axes". Each rung is a
@@ -175,13 +273,16 @@ submodule classes **fully qualified** (`llmbroker.sqlite.Registry(...)`);
 stdlib mental model — an antipattern). The dividing line is just "does it have a
 dependency", so there is no list of "which submodules are eager" to memorize.
 
-### Rung 0 — copy, set env, one line (embedded, in-memory)
+### Rung 0 — install, pick a pool, one line (embedded, in-memory)
 
-1. Copy a shipped example: `llms.example.toml` → `llms.toml` (pick the variant
-   for your goal — see "example files").
+1. `pip install llmbroker`, then download a curated pool the project maintains
+   (latest, independent of your package version — see "example files"):
+   ```bash
+   python -m llmbroker preset smart-freetier > llms.toml
+   ```
 2. Generate a `.env` skeleton so you never hand-type key names:
    ```bash
-   python -m llmbroker env-template llms.toml > .env   # then fill in the values
+   python -m llmbroker env llms.toml > .env   # then fill in the values
    ```
 3. In your app — one registry, no backend menu:
    ```python
@@ -323,6 +424,13 @@ class LLMMetrics:                        # per-LLM admin read-model, derived fro
     last_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class Alert:                             # one human-actionable signal from the Optimizer (P4)
+    message: str                         # P1 placeholder shape — alerts() always returns [] until the
+                                          # Optimizer exists; the real fields (kind/severity/llm_name/…)
+                                          # are a P4 decision, same "not declared final" treatment as LLMState
+
+
 # Port interfaces are named `<Capability><Port>Protocol`; a custom backend implements
 # the level it supports. The bare names (Registry/Secrets/Telemetry) are the
 # default concrete batteries. `Protocol` is the invariant suffix marking "this is a
@@ -348,6 +456,16 @@ class MutableRegistryProtocol(RegistryProtocol, Protocol):
 
 class SecretsProtocol(Protocol):
     async def resolve(self, ref: str) -> str: ...
+
+
+# Admin extension for a writable secrets store (DB/vault/cloud batteries implement
+# it; the broker's own resolution never calls it). Mirrors MutableRegistryProtocol:
+# a typed contract a host admin function annotates against, with no concrete-type
+# lock-in. The read-only batteries (Secrets(), DictSecrets()) do NOT implement this —
+# calling .set() on them raises SecretsReadOnlyError.
+@runtime_checkable
+class MutableSecretsProtocol(SecretsProtocol, Protocol):
+    async def set(self, ref: str, value: str) -> None: ...
 
 
 # Optional, opt-in — only for clusters (several broker copies sharing one
@@ -682,9 +800,9 @@ for name, s in report.items():
   use implies a multi-turn loop, which is `chat`'s domain. The broker itself runs no
   tool-call loop: one call is one routed request, returning whatever the chosen LLM
   answered, tool calls included. Orchestrating "execute the tool, append the result,
-  call again" is the host's job — `llmbroker.chat.run_tool_loop` (see "Shipped
-  batteries" / package layout) is a host-agnostic helper for exactly that, built on
-  top of `chat(messages, tools=..., ...)`.
+  call again" is the host's job — `llmbroker.run_tool_loop` / `llmbroker.arun_tool_loop`
+  (see "Shipped batteries" / package layout) are host-agnostic helpers for exactly
+  that, built on top of `chat(messages, tools=..., ...)`.
 - **One pair of methods, a numeric `wait`, always raising — no `try_*` twins, no
   `wait` *flag*.** There is no honest "blocking vs non-blocking" split to make: even
   the so-called blocking call goes `await` and waits on the chosen LLM, which can
@@ -712,15 +830,20 @@ for name, s in report.items():
   request kind is "method" (and Python's is "method" too), so `operation` does not clash
   with either — it is an unclaimed, immediately legible name for "the kind of work this
   call is", exactly the host-defined routing/tuning axis the Optimizer keys on.
-- **`ask`/`chat` raise rather than returning a sentinel.** A `BrokerError`
+- **`ask`/`chat` raise rather than returning a sentinel.** An `LLMRequestError`
   hierarchy — `NoLLMAvailable` (no LLM slot came free within `wait`) and
   `AllLLMsFailed` (a slot was obtained but each tried LLM errored) — replaces a
-  `str | None` return, so "no capacity" is never confused with an empty answer and
-  callers distinguish "retry later" from "all dead". `NoLLMAvailable` means "`wait`
-  elapsed and the pool is still busy" — with `wait=0` that is immediate, with
-  `wait=None` it never fires (the call waits out cooldowns). `AllLLMsFailed` is
-  orthogonal: it fires whenever an LLM was actually tried and errored, regardless of
-  `wait`, because that is a real failure, not a capacity skip.
+  `str | None` return, so "no capacity" is never confused with an empty answer.
+  `NoLLMAvailable` means "`wait` elapsed and the pool is still busy" — with `wait=0`
+  that is immediate, with `wait=None` it never fires (the call waits out cooldowns).
+  `AllLLMsFailed` is orthogonal: it fires whenever an LLM was actually tried and
+  errored, regardless of `wait`, because that is a real failure, not a capacity skip.
+  **In practice `LLMRequestError` is the catch most callers reach for** — "this
+  request could not be completed" — since from a caller's perspective "no slot was
+  free" and "every LLM tried failed" are usually the same outcome (give up / fall
+  back / retry later). The two subclasses exist for the rarer caller that reacts
+  differently to a capacity skip vs. a real failure; everyone else catches the
+  common base.
 
 `Result.record_quality(score: float)` — `async`, since it writes to telemetry; the
 verb is honest about the side effect, parallel to `TelemetryProtocol.record(call)`, and
@@ -882,15 +1005,56 @@ llmbroker.Broker(registry=..., secrets=my_vault_resolver)                       
 - Keys are resolved when config is (re)loaded — on `llms.add`/`sync_configs` and the
   demand-driven config read; rotated secrets are picked up on the next load.
 
-### Example files + `env-template` (so key names are never hand-typed)
+### Admin-editable secrets
 
-- Ship `llms.example.toml` (and goal-specific variants, e.g. a broad free-tier
-  set vs a quality-first set; identical format, different LLM list) for users to
-  copy.
-- Ship a matching `.env.example` listing every `api_key_ref` the example TOML
-  references, with blank values.
-- Ship `python -m llmbroker env-template <toml> > .env`: scans any TOML for
-  `api_key_ref` and emits a `.env` skeleton — the robust answer for custom files.
+A host building an admin UI that lets a user type in a provider's API key needs a
+**writable** secrets store — the default env-backed `Secrets()` is read-only by
+design (a running process cannot write its own environment back to disk).
+
+- `MutableSecretsProtocol` extends `SecretsProtocol` with `set(ref, value)` (see
+  "Ports"). The read-only batteries (`Secrets()`, `DictSecrets()`) do not implement
+  it; calling `.set()` on them raises `SecretsReadOnlyError` with a clear message.
+- Shipped mutable implementations: `llmbroker.sqlite.Secrets("broker.db")` (P1,
+  no extra dependency beyond `aiosqlite`), `llmbroker.aws.Secrets(...)` (AWS
+  Secrets Manager, P3), `llmbroker.vault.Secrets(...)` (HashiCorp Vault KV, P3) —
+  the latter two each behind their own optional dependency extra (`llmbroker[aws]`,
+  `llmbroker[vault]`).
+- **Choosing a secrets backend is explicit and orthogonal to the registry choice.**
+  The default (no `secrets=` argument) is env, read-only — fine with either
+  `llmbroker.Registry` or `llmbroker.sqlite.Registry`. A host wanting an admin UI
+  that edits keys picks a mutable backend explicitly:
+
+  ```python
+  llmbroker.Broker(
+      registry=llmbroker.sqlite.Registry("broker.db"),
+      secrets=llmbroker.sqlite.Secrets("broker.db"),
+  )
+  ```
+
+  Plain examples elsewhere in this doc omit `secrets=` entirely — it is the
+  default, and showing it would suggest it is required.
+
+### Curated pools + the `env` command (so key names are never hand-typed)
+
+- **Curated pool lists live in the repo source, not in the wheel.** Keep them as
+  plain files in the project tree (`presets/freetier.toml`,
+  `presets/smart-freetier.toml`, …; identical format, different LLM list) and have
+  `python -m llmbroker preset <name> > llms.toml` **fetch the latest copy from the
+  default branch** (the raw `presets/<name>.toml` URL). The reasoning: the LLM
+  landscape (endpoints, free tiers) churns far faster than the broker code, so a
+  list bundled into the package would be frozen at the installed version and go
+  stale. Keeping the lists in source and fetching the branch tip means **updating a
+  pool is just a commit to `presets/` — no PyPI release, no GitHub Release** — and
+  every already-installed `llmbroker`, whatever its version, picks the new list up
+  on the next `preset`. A pinned `preset <name> --ref <tag>` for reproducibility can
+  be added later; the default is "latest".
+- **Network is needed only for `preset`.** Offline, a user hand-writes `llms.toml`
+  (the format is trivial) and everything else works; a failed fetch raises a clear
+  error naming the URL it could not reach.
+- Ship `python -m llmbroker env <toml> > .env`: scans any TOML (a fetched preset or
+  a hand-written file) for `api_key_ref` and emits a `.env` skeleton with the key
+  names and blank values — the single robust source, so there is no separate static
+  `.env.example` to drift out of sync with the presets.
 
 ---
 
@@ -930,6 +1094,23 @@ python -m llmbroker sync llms.toml --into sqlite:broker.db --policy mirror
 `sync_configs` needs a mutable registry (it reconciles via the backend's
 `add`/`update`/`remove`); the file `llmbroker.Registry` implements only `RegistryProtocol`,
 so on it it raises a clear "edit the file" error.
+
+### Seeding secrets alongside configs
+
+`sync_configs` reconciles `Registry` entries; for each synced `LLMConfig`, it also
+**fills gaps** in the broker's secrets store for that `api_key_ref` — "fill gap,
+don't overwrite":
+
+- if `secrets.resolve(api_key_ref)` already succeeds, leave it as-is — preserves an
+  admin's edited key or a pre-populated secrets store;
+- else, try the bootstrap source, `llmbroker.Secrets()` (env). If found **and**
+  `secrets` is `MutableSecretsProtocol`, `secrets.set(api_key_ref, value)`;
+- else — no special handling here. The broker's own config-load resolution (see
+  "Secrets") raises its usual clear error for that `api_key_ref`, exactly as it
+  would without `sync_configs`.
+
+This is a one-time bootstrap, not a runtime fallback: once seeded, the broker
+consults only its configured `secrets=`, never the env as a secondary source.
 
 ---
 
@@ -1118,7 +1299,7 @@ beyond `llmbroker`). A backend that carries an external dependency is a
 | Port (interface) | Top-level zero-dep classes | Dependency submodules | Phase |
 |---|---|---|---|
 | `RegistryProtocol` | `llmbroker.Registry(path)` (file: `.toml`/`.json`) | `llmbroker.sqlite.Registry`, `llmbroker.postgres.Registry`, `llmbroker.mongodb.Registry` | registry/sqlite: P1 · pg/mongo: P3 |
-| `SecretsProtocol` | `llmbroker.Secrets()` (env, default), `llmbroker.DictSecrets()`, callable adapter | — | P1 |
+| `SecretsProtocol` / `MutableSecretsProtocol` | `llmbroker.Secrets()` (env, default, read-only), `llmbroker.DictSecrets()`, callable adapter | `llmbroker.sqlite.Secrets` (mutable), `llmbroker.aws.Secrets` (mutable), `llmbroker.vault.Secrets` (mutable) | secrets/dictsecrets/sqlite.Secrets: P1 · aws/vault: P3 |
 | `SharedStateProtocol` | — (default = absent, internal in-memory) | `llmbroker.redis.SharedState`, `llmbroker.postgres.SharedState`, `llmbroker.mongodb.SharedState` | seam: P1 · backends: P3 |
 | `TelemetryProtocol` | `llmbroker.Telemetry()` (log, default), `llmbroker.NoTelemetry()`, `llmbroker.JsonlTelemetry(path)` | `llmbroker.sqlite.Telemetry`, `llmbroker.postgres.Telemetry`, `llmbroker.mongodb.Telemetry` | log/none/jsonl/sqlite: P1 · pg/mongo: P3 |
 
@@ -1274,8 +1455,8 @@ Create `src/llmbroker/` with the async broker core `AsyncBroker` (incl. its lazy
 `aclose()` / `async with` lifecycle — see "Lifecycle") **and the synchronous `Broker`
 wrapper** (a first-class shipped facade over `AsyncBroker` on a background event-loop
 thread — see "Sync wrapper"), the ports, and the file (`.toml`/
-`.json`) + `sqlite` `Registry` + `Secrets`/`DictSecrets` + internal in-memory live
-state + `Telemetry`/`NoTelemetry`/`JsonlTelemetry`/`sqlite.Telemetry` batteries —
+`.json`) + `sqlite` `Registry` + `Secrets`/`DictSecrets`/`sqlite.Secrets` + internal
+in-memory live state + `Telemetry`/`NoTelemetry`/`JsonlTelemetry`/`sqlite.Telemetry` batteries —
 enough to serve Rung 0/1 and carry dinary with unchanged request-path behavior. The
 `SharedStateProtocol` port (the cluster seam) is defined in P1; its backends land in
 P3. Also capture the Optimizer's future inputs on every call — `operation`
@@ -1298,28 +1479,28 @@ hands schema ownership to the package.
 src/llmbroker/
   __init__.py            # top-level surface — ONLY what an app uses:
                          #             AsyncBroker, Broker (sync wrapper), AsyncLLM, LLM, AsyncResult, Result,
-                         #             LifecyclePhase, Optimizer,
+                         #             LifecyclePhase, Optimizer, run_tool_loop, arun_tool_loop,
                          #             Registry/Secrets/DictSecrets/Telemetry/NoTelemetry/JsonlTelemetry,
-                         #             BrokerError/NoLLMAvailable/AllLLMsFailed.
+                         #             LLMRequestError/NoLLMAvailable/AllLLMsFailed.
                          #             Protocols (RegistryProtocol/MutableRegistryProtocol/SecretsProtocol/SharedStateProtocol/
                          #             TelemetryProtocol/QueryableTelemetryProtocol/AsyncResourceProtocol) and DTOs (LLMConfig/
-                         #             LLMState/LLMSnapshot/Usage/Call/CallStatus/LLMMetrics/SyncPolicy) are NOT exported here —
+                         #             LLMState/LLMSnapshot/Usage/Call/CallStatus/LLMMetrics/Alert/SyncPolicy) are NOT exported here —
                          #             backend/admin authors import them from their defining modules (registry.py/secrets.py/
                          #             shared_state.py/telemetry.py/models.py).
                          #             NEVER imports a dep-carrying backend submodule (sqlite/redis/postgres/mongodb).
   chat.py                # from adapters/llm_chat.py — LLMConfig moves to models.py; receives the resolved
                          #             key from the broker (not off a public field); parses response usage → Usage for Call; else verbatim
-                         #             also ships `run_tool_loop(llms, messages, *, tools, dispatch, **chat_kwargs)`
-                         #             (ported from complete_with_tools/run_tool_step/_run_tool_loop) — a host-agnostic
-                         #             helper that repeatedly calls `llms.chat(messages, tools=tools, **chat_kwargs)`,
-                         #             executes each `result.tool_calls` entry via the host-supplied `dispatch` mapping,
-                         #             appends the tool results to `messages`, and loops until a tool-call-free reply;
-                         #             written against the sync `Broker` (dinary_analytics' only current tool-calling
-                         #             consumer is sync) — an async `arun_tool_loop` for `AsyncBroker` is deferred until
-                         #             an async host needs tool-calling. NB: the module `llmbroker.chat` and the
-                         #             broker method `.chat()` share a name in different namespaces (a host does
-                         #             `import llmbroker.chat` for `run_tool_loop` and separately calls
-                         #             `llms.chat(...)`) — intentional, not a collision; the README calls it out.
+                         #             also defines the tool-loop helpers `run_tool_loop(llms, messages, *, tools,
+                         #             dispatch, **chat_kwargs)` and its async twin `arun_tool_loop(...)` (ported from
+                         #             complete_with_tools/run_tool_step/_run_tool_loop) — host-agnostic helpers that
+                         #             repeatedly call `llms.chat(messages, tools=tools, **chat_kwargs)`, execute each
+                         #             `result.tool_calls` entry via the host-supplied `dispatch` mapping, append the
+                         #             tool results to `messages`, and loop until a tool-call-free reply. BOTH ship from
+                         #             P1: the engine is async, so `arun_tool_loop` is the real implementation and
+                         #             `run_tool_loop` its sync wrapper (sync-first is about which surface a user reaches
+                         #             for, never an async feature gap). Exposed at the package root as
+                         #             `llmbroker.run_tool_loop` / `llmbroker.arun_tool_loop` (via __init__), so a host
+                         #             never imports `llmbroker.chat` and the helper name never collides with `.chat()`.
   broker.py              # from adapters/llmbroker.py — AsyncBroker(Mapping[str, AsyncLLM]), the AsyncLLM handle
                          #             (sync .config + async .state()/.metrics()), the single front door:
                          #             ask()/chat() + `wait` capacity bound; add/remove + sync_configs(policy)
@@ -1327,7 +1508,9 @@ src/llmbroker/
                          #             alerts(); cheap __init__ + lazy start + aclose()/async with;
                          #             private _resolved_keys (name→secret) + internal LLMState + demand-driven
                          #             shared-state sync (lazy read at selection, write-through on change);
-                         #             tokens/quality_score into Call
+                         #             tokens/quality_score into Call; LLMRequestError/NoLLMAvailable/
+                         #             AllLLMsFailed exception hierarchy; Optimizer (P1: shape only —
+                         #             `Optimizer(judge_fraction=0.0)`, no control loop)
   sync.py                # Broker / LLM / Result — synchronous wrappers over Async* on a dedicated background
                          #             event-loop thread; blocking proxies (no `await`), close()/with teardown
   models.py              # LLMConfig (config: name/base_url/model/api_key_ref — no secret),
@@ -1335,6 +1518,8 @@ src/llmbroker/
                          #             LLMSnapshot (frozen config+state+metrics), SyncPolicy (Literal),
                          #             Usage (provider token report), Call (llm_name/usage/…), CallStatus,
                          #             LLMMetrics (call_count/last_status/last_at),
+                         #             Alert (P1 placeholder for the Optimizer's human-only signals;
+                         #             alerts() always returns [] until P4 — see "Open design questions"),
                          #             AsyncResourceProtocol (shared port-lifecycle capability; aclose())
   state.py               # private in-memory per-LLM live state (always-on; not a public port) → LLMState
   schema.py              # ensure_schema for the sqlite battery: version-aware (creates + applies additive,
@@ -1343,18 +1528,27 @@ src/llmbroker/
   registry.py            # RegistryProtocol + MutableRegistryProtocol (admin layer) Protocols
                          #             + llmbroker.Registry file class (.toml/.json by extension; returns
                          #             pure LLMConfig — broker resolves api_key_ref)  [core, zero-dep: tomllib/json]
-  secrets.py             # SecretsProtocol Protocol, llmbroker.Secrets() (env, default), DictSecrets(), callable adapter  [core]
+  secrets.py             # SecretsProtocol + MutableSecretsProtocol (admin layer) Protocols,
+                         #             llmbroker.Secrets() (env, default, read-only), DictSecrets(), callable adapter,
+                         #             SecretsReadOnlyError (raised by .set() on the read-only batteries)  [core]
   shared_state.py        # SharedStateProtocol Protocol (cluster seam; backends in postgres/redis/mongodb submodules)  [core]
   telemetry.py           # TelemetryProtocol + QueryableTelemetryProtocol (read layer) Protocols,
                          #             llmbroker.Telemetry() (log, default), NoTelemetry(), JsonlTelemetry(path)  [core]
   sqlite.py              # llmbroker.sqlite.Registry (config; MutableRegistryProtocol CRUD — get/add/update/remove —
                          #             that the broker's sync_configs reconciles against)
-                         #             + llmbroker.sqlite.Telemetry (llmbroker_calls; record + queryable read surface)  [aiosqlite]
+                         #             + llmbroker.sqlite.Telemetry (llmbroker_calls; record + queryable read surface)
+                         #             + llmbroker.sqlite.Secrets (MutableSecretsProtocol; llmbroker_secrets table)  [aiosqlite]
   alembic.py             # llmbroker.alembic.include_object — host migration-tool coexistence (dependency-free)
-  cli.py                 # python -m llmbroker env-template <config> | sync <config> --into ... --policy ...
-  data/
-    llms.example.toml
-    .env.example
+  cli.py                 # P1: python -m llmbroker env <config> | sync <config> --into ... --policy ... — both
+                         #             offline, operate on any local TOML path (incl. presets/*.toml below).
+                         #             `preset <name>` (fetch the named list from the repo's presets/ on the
+                         #             default branch — see "Curated pools") ships in Phase 2.
+#  (repo root, NOT under src/ — deliberately not packaged into the wheel, so a list
+#   update is a plain commit independent of the package version; the Phase 2 `preset`
+#   command fetches the default-branch copy)
+# presets/
+#   freetier.toml
+#   smart-freetier.toml
 ```
 
 ```
@@ -1401,15 +1595,20 @@ broker via `Secrets` into its private `_resolved_keys` map.
 
 ### Phase 2 — example variants + catalog refresh
 
-Add goal-specific `llms.*.example.toml` variants. Optional: an `inv`/CLI command
-to refresh the example set from a documented source (e.g. a prompt sourced from
-`https://shir-man.com/free-llm/`) with latency/limits/quality notes.
+Add the `preset <name>` subcommand to `cli.py` and wire it to fetch the latest list
+from the repo's `presets/` on the default branch, and add more curated lists there
+beyond `freetier`/`smart-freetier` — each is a plain commit, no release. Optional: an `inv`/CLI maintainer command
+that regenerates the `presets/` set from a documented source (e.g. a prompt sourced
+from `https://shir-man.com/free-llm/`) with latency/limits/quality notes, committed
+like any other source change.
 
 ### Phase 3 — cluster + DB batteries
 
 `llmbroker.redis`/`postgres`/`mongodb` `.shared_state`; `llmbroker.postgres`/
 `mongodb` `.registry` (with the optional admin CRUD); `llmbroker.postgres`/
-`mongodb` `.telemetry`. Each behind an optional dependency extra.
+`mongodb` `.telemetry`; `llmbroker.aws`/`vault` `.secrets` (`MutableSecretsProtocol`
+backed by AWS Secrets Manager / HashiCorp Vault KV). Each behind an optional
+dependency extra.
 Demand-driven sync as specified (lazy read at selection + write-through on change, no
 poll); pub/sub push propagation left as a documented optimization.
 
@@ -1519,7 +1718,12 @@ columns), and the startup
 `sync_configs(..., policy="if_empty")` re-fills `llmbroker_registry` from `.deploy/llm_providers.toml`.
 This **discards existing local `llmbroker_call_log` history once** — acceptable and
 intentional: dinary is the package's single local instance, that table data is
-disposable, and config is re-imported from the TOML. This DROP is a **one-off
+disposable, and config is re-imported from the TOML. **Before applying this
+migration to the deployed DB**, confirm whether `llmbroker_call_log` actually holds
+history worth keeping (e.g. `SELECT count(*) FROM llmbroker_call_log` on the server)
+and back it up first if so — the "disposable" framing above reflects the current
+local-dev-only state, not a verified statement about the deployed DB. This DROP is a
+**one-off
 cleanup of dinary's pre-extraction tables**, not how the package upgrades in
 general — post-extraction `ensure_schema` evolves its schema non-destructively (see
 "The sqlite battery owns its schema"), and yoyo never touches `llmbroker_*` again.
@@ -1530,8 +1734,8 @@ already ships `src/dinary/db/migrations/`), so no deploy change.
 |---|---|
 | `src/dinary/background/classification/task.py` | `from dinary.adapters.llmbroker import LLMBroker` → `from llmbroker import AsyncBroker` (dinary is async); rename `LLMBroker` references to `AsyncBroker`. `await outcome.execution.mark_failed()` (the `execution_failed` branch) → `await outcome.execution.record_quality(0.0)` — same "mark this answer unusable" signal, now a telemetry write instead of `BrokerStorage.on_quality_feedback`; keep the existing `try/except` + warning log around the call (a telemetry write failing must not block the fallback-expense path) |
 | `src/dinary/background/classification/store_resolver.py` | same |
-| `src/dinary/background/classification/receipt_classifier.py` | `from dinary.adapters.llmbroker import Execution, LLMBroker` → `from llmbroker import AsyncBroker, AsyncResult` (rename `LLMBroker`→`AsyncBroker`, `Execution`→`AsyncResult`). The main `classify` call: `broker.execute(messages, execution_id=…)` → `await broker.chat(messages, operation="receipt_classification", trace_id=…)` (default `wait=None` blocks until served), and `if execution.output is None` (broker_unavailable) becomes a `try/except NoLLMAvailable` around it. `get_chain_name`'s `broker.execute(…, wait=False)` → `await broker.chat(…, operation="chain_name", wait=0)` inside `try/except NoLLMAvailable: return store_name_raw` — the same graceful skip, now one method with `wait=0` instead of a separate `try_chat`. `ClassificationOutcome.execution: Execution` → `execution: AsyncResult` |
-| `src/dinary_analytics/llm.py` | `from dinary.adapters.llm_chat import (AllProvidersBusyError, AllProvidersFailedError, ProviderConfig, complete_with_tools)` → `load_providers`'s `ProviderConfig` becomes `LLMConfig` from `llmbroker.models`; `run_chat_turn` (sync) constructs `llmbroker.Broker(registry=llmbroker.Registry(_providers_path()))` (the existing `_providers_path()`/`DINARY_LLM_PROVIDERS_FILE` override logic stays — it just picks the TOML path handed to `llmbroker.Registry`); `complete_with_tools(providers, messages, tools=schemas, dispatch=dispatch)` → `llmbroker.chat.run_tool_loop(llms, messages, tools=schemas, dispatch=dispatch, operation="analytics_chat")`; `AllProvidersBusyError`/`AllProvidersFailedError` → `llmbroker.NoLLMAvailable`/`llmbroker.AllLLMsFailed` (top-level) |
+| `src/dinary/background/classification/receipt_classifier.py` | `from dinary.adapters.llmbroker import Execution, LLMBroker` → `from llmbroker import AsyncBroker, AsyncResult, LLMRequestError` (rename `LLMBroker`→`AsyncBroker`, `Execution`→`AsyncResult`). The main `classify` call: `broker.execute(messages, execution_id=…)` → `await broker.chat(messages, operation="receipt_classification", trace_id=…)` (default `wait=None` blocks until served — `NoLLMAvailable` never fires here, only `AllLLMsFailed` can), and `if execution.output is None` (broker_unavailable) becomes a `try/except LLMRequestError` around it. `get_chain_name`'s `broker.execute(…, wait=False)` → `await broker.chat(…, operation="chain_name", wait=0)` inside `try/except LLMRequestError: return store_name_raw` — the same graceful skip (now covering both "no free slot" and "tried and failed"), one method with `wait=0` instead of a separate `try_chat`. `ClassificationOutcome.execution: Execution` → `execution: AsyncResult` |
+| `src/dinary_analytics/llm.py` | `from dinary.adapters.llm_chat import (AllProvidersBusyError, AllProvidersFailedError, ProviderConfig, complete_with_tools)` → `load_providers`'s `ProviderConfig` becomes `LLMConfig` from `llmbroker.models`; `run_chat_turn` (sync) constructs `llmbroker.Broker(registry=llmbroker.Registry(_providers_path()))` (the existing `_providers_path()`/`DINARY_LLM_PROVIDERS_FILE` override logic stays — it just picks the TOML path handed to `llmbroker.Registry`); `complete_with_tools(providers, messages, tools=schemas, dispatch=dispatch)` → `llmbroker.run_tool_loop(llms, messages, tools=schemas, dispatch=dispatch, operation="analytics_chat")` (sync — dinary_analytics' chat path is sync); `AllProvidersBusyError`/`AllProvidersFailedError` → `llmbroker.NoLLMAvailable`/`llmbroker.AllLLMsFailed` (top-level) |
 | `tasks/receipt.py` | `LLMBroker(TomlLLMBrokerStorage())` → `AsyncBroker(registry=llmbroker.Registry(_PROVIDERS_TOML))` (file registry is zero-dep — available from `import llmbroker`, no extra import) and `_PROVIDERS_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llm_providers.toml"`. **`AsyncBroker`, not the sync `Broker`** — `_run_all` already runs under `asyncio.run` and calls `llm_classify_receipt`/`get_chain_name`, which (per the `receipt_classifier.py` row) take an `AsyncBroker` and `await broker.chat(...)`; a sync `Broker` would be the wrong type at that call site. `await broker.start()`/`await broker.stop()` become: no `start()` call (lazy start on first `await ask`/`chat`) and `await llms.aclose()` in `_run_all`'s `finally` (or wrap the loop body in `async with llms:`) |
 | `src/dinary/api/controllers/llm.py` | drop all raw SQL over `llmbroker_*` and the registry/telemetry handles; config reads via the `llms` Mapping and CRUD via `llms.add`/`remove`, live cooldown/fail + usage via `await llms.snapshot()` |
 | `src/dinary/api/llm.py` | surface live state + usage via `await llms.snapshot()`; `llm_status()` assembles the unchanged payload keys from it |
@@ -1546,11 +1750,12 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
 
 - `tests/services/test_llm_chat.py` → `tests/llmbroker/test_chat.py`
   (`patch("dinary.adapters.llm_chat.httpx.Client")` → `patch("llmbroker.chat.httpx.Client")`).
-  Add coverage for `run_tool_loop`: a `tool_calls` response drives one `dispatch`
-  execution and a follow-up `chat(messages, tools=...)` call with the tool result
-  appended, looping until a tool-call-free reply; also cover `chat(messages,
-  tools=schemas)` passing `tools` through verbatim to the provider request and
-  `Result.tool_calls` reflecting the raw response `tool_calls` (`None` when absent).
+  Add coverage for both `run_tool_loop` (sync) and `arun_tool_loop` (async): a
+  `tool_calls` response drives one `dispatch` execution and a follow-up
+  `chat(messages, tools=...)` call with the tool result appended, looping until a
+  tool-call-free reply; also cover `chat(messages, tools=schemas)` passing `tools`
+  through verbatim to the provider request and `Result.tool_calls` reflecting the
+  raw response `tool_calls` (`None` when absent).
 - `tests/services/test_llmbroker.py` → `tests/llmbroker/test_broker.py` (against `AsyncBroker`);
   add coverage for the `Mapping` surface — `llms[name]` returns an `AsyncLLM` handle whose
   `await .state()` reports `COOLING` while cooling and `AVAILABLE` once cooldown passes;
@@ -1585,6 +1790,13 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
 - New `test_secrets.py`: `llmbroker.Secrets()` (env) resolves from `os.environ`;
   `llmbroker.DictSecrets()` from a map; the broker resolves `api_key_ref` into its
   private `_resolved_keys` (not onto `LLMConfig`); missing ref raises a clear error.
+  Cover `MutableSecretsProtocol`: `llmbroker.sqlite.Secrets("broker.db").set(ref, value)`
+  then `.resolve(ref)` round-trips; `Secrets().set(...)`/`DictSecrets().set(...)` raise
+  `SecretsReadOnlyError`. Cover `sync_configs`'s "fill gap, don't overwrite" secret
+  seeding: with a mutable `secrets=` and the referenced env var set, an unresolved
+  `api_key_ref` is seeded from env on `sync_configs`; an already-resolvable
+  `api_key_ref` is left untouched (admin edit preserved); with no env var and a
+  read-only `secrets=`, the existing missing-ref error fires unchanged.
 - New `test_state.py`: the broker's internal live state — a cooling LLM reports
   `LifecyclePhase.COOLING` (and is absent from rotation) until cooldown passes; idempotent
   records.
@@ -1658,7 +1870,7 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
   `from dinary.adapters.llm_chat import AllProvidersBusyError, AllProvidersFailedError`
   with `llmbroker.NoLLMAvailable`/`llmbroker.AllLLMsFailed`; the
   `monkeypatch.setattr(llm_module, "complete_with_tools", ...)` calls retarget
-  `llm_module.run_tool_loop` (now `llmbroker.chat.run_tool_loop`, imported into
+  `llm_module.run_tool_loop` (now `llmbroker.run_tool_loop`, imported into
   `dinary_analytics.llm`); `patch("dinary.adapters.llm_chat.httpx.Client", ...)`
   becomes `patch("llmbroker.chat.httpx.Client", ...)`.
 - `tests/api/test_api_delete_receipt.py` currently names `llmbroker_call_log` in raw
@@ -1671,7 +1883,7 @@ After: `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.ad
   tested at the broker level in `test_broker.py`, since the policy lives on the broker.)
 
 Every new battery, the `Secrets` resolvers, `ask()`, `sync_configs`, and the
-`env-template`/`sync` CLI ship with tests in the phase that introduces them.
+`preset`/`env`/`sync` CLI ship with tests in the phase that introduces them.
 
 ---
 
@@ -1761,9 +1973,9 @@ import name and the distribution name are `llmbroker`.
 1. `uv run inv pre` → "All checks passed!" + `0 errors`.
 2. `uv run pytest` → all green, incl. `tests/llmbroker/`.
 3. `grep -rn "dinary.adapters.llm_chat\|dinary.adapters.llmbroker\|dinary.adapters.llm_storage" src/ tests/ tasks/` → empty.
-4. `uv run python -c "import llmbroker, llmbroker.sqlite, llmbroker.alembic; print(llmbroker.AsyncBroker, llmbroker.Broker, llmbroker.AsyncLLM, llmbroker.LLM, llmbroker.LifecyclePhase, llmbroker.AsyncResult, llmbroker.Result, llmbroker.Registry, llmbroker.JsonlTelemetry, llmbroker.NoTelemetry, llmbroker.DictSecrets, llmbroker.Secrets, llmbroker.NoLLMAvailable, llmbroker.alembic.include_object)"`.
+4. `uv run python -c "import llmbroker, llmbroker.sqlite, llmbroker.alembic; print(llmbroker.AsyncBroker, llmbroker.Broker, llmbroker.AsyncLLM, llmbroker.LLM, llmbroker.LifecyclePhase, llmbroker.AsyncResult, llmbroker.Result, llmbroker.Registry, llmbroker.JsonlTelemetry, llmbroker.NoTelemetry, llmbroker.DictSecrets, llmbroker.Secrets, llmbroker.NoLLMAvailable, llmbroker.LLMRequestError, llmbroker.alembic.include_object)"`.
    Also assert: `import llmbroker` alone does **not** import `aiosqlite` (no dep-carrying submodule pulled); the protocols/DTOs are **not** top-level (`hasattr(llmbroker, "RegistryProtocol")` is `False`) and import from their modules (`from llmbroker.registry import RegistryProtocol, MutableRegistryProtocol; from llmbroker.telemetry import TelemetryProtocol, QueryableTelemetryProtocol; from llmbroker.shared_state import SharedStateProtocol; from llmbroker.models import LLMConfig, LLMState, LLMSnapshot, SyncPolicy, Usage, Call, LLMMetrics, AsyncResourceProtocol`).
-5. `uv run python -m llmbroker env-template src/llmbroker/data/llms.example.toml` prints a `.env` skeleton.
+5. `uv run python -m llmbroker env presets/smart-freetier.toml` prints a `.env` skeleton.
 6. Smoke: applying the drop migration leaves no legacy `llmbroker_providers`/
    `llmbroker_calls` tables; `uv run inv dev` then starts, `ensure_schema` creates
    `llmbroker_registry` + `llmbroker_calls` (current shape, all objects
@@ -1793,7 +2005,8 @@ import name and the distribution name are `llmbroker`.
 - **Optimizer design** (P4): the read API on queryable telemetry (warm-start + ad-hoc
   analysis); whether the in-memory aggregate is checkpointed to its own table or
   recomputed from the journal on start; the broker's selection-policy seam; how the
-  routing ranking is computed and how aggressively it overrides round-robin.
+  routing ranking is computed and how aggressively it overrides round-robin; the real
+  `Alert` shape (kind/severity/fields beyond the P1 placeholder `message`).
 - **LLM-in-the-loop cost/safety** (P5): sampling rate for LLM-as-judge quality
   scoring; the judge prompt/rubric per operation; guarding token spend; how the judge
   avoids starving real traffic on a busy pool. When the judge lands, add a

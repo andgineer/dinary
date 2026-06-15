@@ -3,7 +3,6 @@ import { computed, watch } from "vue";
 import { Pencil, Check, Sparkles } from "lucide-vue-next";
 import { useCatalogStore } from "../stores/catalog.js";
 import { useReviewStore } from "../stores/review.js";
-import { useFrequentCategoriesStore } from "../stores/frequentCategories.js";
 import { useSwipeRow } from "../composables/useSwipeRow.js";
 
 const PANEL_DOUBTFUL = 168;
@@ -16,7 +15,6 @@ const emit = defineEmits(["tap", "approve"]);
 
 const catalog = useCatalogStore();
 const reviewStore = useReviewStore();
-const frequentCategoriesStore = useFrequentCategoriesStore();
 
 const isDoubtful = computed(() => props.item.is_doubtful);
 const panelWidth = computed(() => (isDoubtful.value ? PANEL_DOUBTFUL : PANEL_CERTAIN));
@@ -74,7 +72,7 @@ const usedCategoryIds = computed(() => {
 });
 
 const frequentPicks = computed(() =>
-  frequentCategoriesStore.categories.filter((c) => !usedCategoryIds.value.has(Number(c.id))),
+  catalog.frequentCategories.filter((c) => !usedCategoryIds.value.has(Number(c.id))),
 );
 
 

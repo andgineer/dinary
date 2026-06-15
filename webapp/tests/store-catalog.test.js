@@ -196,33 +196,38 @@ describe("catalog store: getters", () => {
 });
 
 describe("catalog store: admin actions", () => {
-  it("add('group', body) calls adminAddGroup and updates snapshot", async () => {
-    const next = { ...SAMPLE, catalog_version: 2 };
-    vi.spyOn(catalogApi, "adminAddGroup").mockResolvedValue(next);
+  it("add('group', body) calls adminAddGroup and upserts the resolved group", async () => {
+    const newGroup = { id: 3, code: "new", name: "new", sort_order: 5, is_active: true, removable: true };
+    vi.spyOn(catalogApi, "adminAddGroup").mockResolvedValue({
+      catalog_version: 2,
+      status: "created",
+      group: newGroup,
+    });
 
     const store = useCatalogStore();
+    store.replaceSnapshot(SAMPLE);
     await store.add("group", { name: "new" });
 
     expect(store.catalogVersion).toBe(2);
+    expect(store.snapshot.category_groups.some((g) => g.id === 3)).toBe(true);
   });
 
   it("reactivate / deactivate / remove call the matching API", async () => {
-    const next = { ...SAMPLE, catalog_version: 5 };
-    const reactivate = vi
-      .spyOn(catalogApi, "adminReactivateEvent")
-      .mockResolvedValue(next);
-    const deactivate = vi
-      .spyOn(catalogApi, "adminDeactivateEvent")
-      .mockResolvedValue(next);
-    const del = vi.spyOn(catalogApi, "adminDeleteTag").mockResolvedValue(next);
+    const patchEvent = vi
+      .spyOn(catalogApi, "adminPatchEvent")
+      .mockResolvedValue({ catalog_version: 4 });
+    const del = vi
+      .spyOn(catalogApi, "adminDeleteTag")
+      .mockResolvedValue({ catalog_version: 5, delete_status: "hard", usage_count: 0 });
 
     const store = useCatalogStore();
-    await store.reactivate("event", 11);
+    store.replaceSnapshot(SAMPLE);
+    await store.reactivate("event", 100);
     await store.deactivate("event", 100);
     await store.remove("tag", 201);
 
-    expect(reactivate).toHaveBeenCalledWith(11);
-    expect(deactivate).toHaveBeenCalledWith(100);
+    expect(patchEvent).toHaveBeenCalledWith(100, { is_active: true });
+    expect(patchEvent).toHaveBeenCalledWith(100, { is_active: false });
     expect(del).toHaveBeenCalledWith(201);
     expect(store.catalogVersion).toBe(5);
   });
@@ -342,14 +347,15 @@ describe("catalog store: category templates", () => {
     expect(store.activeTemplate).toBeNull();
   });
 
-  it("applyTemplate updates activeTemplate in-memory from the response", async () => {
+  it("applyTemplate updates activeTemplate and applies the returned snapshot", async () => {
     vi.spyOn(catalogApi, "applyTemplate").mockResolvedValue({
       active_template: "family",
       catalog_version: 5,
-    });
-    vi.spyOn(catalogApi, "getCategories").mockResolvedValue({
-      catalog_version: 5,
+      category_groups: [],
       categories: [],
+      events: [],
+      tags: [],
+      frequent_categories: [],
     });
     vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "family" });
 
@@ -357,67 +363,63 @@ describe("catalog store: category templates", () => {
     await store.applyTemplate("family", "ru");
 
     expect(store.activeTemplate).toBe("family");
+    expect(store.catalogVersion).toBe(5);
   });
 });
 
 describe("catalog store: visible categories", () => {
-  const VISIBLE = {
+  const VISIBLE_SAMPLE = {
     catalog_version: 3,
+    category_groups: [{ id: 1, code: "food", name: "Food", sort_order: 1, is_active: true, removable: true }],
     categories: [
-      { id: 10, code: "groceries", name: "Groceries", group_id: 1, group_name: "Food", group_sort_order: 1, group_code: "food" },
+      { id: 10, code: "apple", name: "Apple", group: "Food", group_id: 1, is_active: true, is_hidden: false, is_retired: false, removable: true },
+      { id: 11, code: "apricot", name: "Apricot", group: "Food", group_id: 1, is_active: false, is_hidden: false, is_retired: false, removable: true },
+      { id: 12, code: "appletini", name: "Appletini", group: "Food", group_id: 1, is_active: false, is_hidden: false, is_retired: true, removable: true },
+      { id: 13, code: "hidden-cat", name: "Hidden Cat", group: "Food", group_id: 1, is_active: true, is_hidden: true, is_retired: false, removable: true },
     ],
+    events: [],
+    tags: [],
+    frequent_categories: [],
   };
 
-  it("loadVisibleCategories stores categories and version, then refreshes activeTemplate", async () => {
-    vi.spyOn(catalogApi, "getCategories").mockResolvedValueOnce({ ...VISIBLE });
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
-
+  it("visibleCategories returns active, non-hidden categories with group info", () => {
     const store = useCatalogStore();
-    await store.loadVisibleCategories();
+    store.replaceSnapshot(VISIBLE_SAMPLE);
 
-    expect(store.visibleCategoriesVersion).toBe(3);
-    expect(store.visibleCategories).toHaveLength(1);
-    expect(store.visibleCategoryByCode("groceries")?.name).toBe("Groceries");
-    expect(store.activeTemplate).toBe("simple");
+    expect(store.visibleCategories.map((c) => c.code)).toEqual(["apple"]);
+    expect(store.visibleCategoryByCode("apple")?.group_name).toBe("Food");
+    expect(store.visibleCategoryByCode("missing")).toBeNull();
   });
 
-  it("loadVisibleCategories on 304 keeps the cached list", async () => {
-    vi.spyOn(catalogApi, "getCategories")
-      .mockResolvedValueOnce({ ...VISIBLE })
-      .mockResolvedValueOnce(new catalogApi.NotModified());
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
-
+  it("searchCategories drops retired rows and sorts active-first then by name", () => {
     const store = useCatalogStore();
-    await store.loadVisibleCategories();
-    await store.loadVisibleCategories();
+    store.replaceSnapshot(VISIBLE_SAMPLE);
 
-    expect(store.visibleCategoriesVersion).toBe(3);
-    expect(store.visibleCategories).toHaveLength(1);
+    expect(store.searchCategories("ap").map((c) => c.code)).toEqual(["apple", "apricot"]);
+    expect(store.searchCategories("  ")).toEqual([]);
   });
 
-  it("activateCategory refetches visible categories when catalog_version changes", async () => {
-    vi.spyOn(catalogApi, "activateCategory").mockResolvedValue({ catalog_version: 4 });
-    const getCategories = vi
-      .spyOn(catalogApi, "getCategories")
-      .mockResolvedValue({ catalog_version: 4, categories: [] });
-    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+  it("activateCategory upserts the resolved category and bumps catalog_version", async () => {
+    vi.spyOn(catalogApi, "activateCategory").mockResolvedValue({
+      catalog_version: 4,
+      category: {
+        id: 11,
+        code: "apricot",
+        name: "Apricot",
+        group: "Food",
+        group_id: 1,
+        is_active: true,
+        is_hidden: false,
+        is_retired: false,
+        removable: true,
+      },
+    });
 
     const store = useCatalogStore();
-    await store.activateCategory("concerts");
+    store.replaceSnapshot(VISIBLE_SAMPLE);
+    await store.activateCategory("apricot");
 
-    expect(getCategories).toHaveBeenCalled();
-    expect(store.visibleCategoriesVersion).toBe(4);
-  });
-});
-
-describe("catalog store: admin actions stamp catalogFetchedAt", () => {
-  it("add() stamps catalogFetchedAt via applySnapshot", async () => {
-    vi.spyOn(catalogApi, "adminAddGroup").mockResolvedValue({ ...SAMPLE, catalog_version: 3 });
-
-    const store = useCatalogStore();
-    expect(store.catalogFetchedAt).toBeNull();
-    await store.add("group", { name: "new" });
-
-    expect(store.catalogFetchedAt).toBeGreaterThan(0);
+    expect(store.catalogVersion).toBe(4);
+    expect(store.visibleCategories.map((c) => c.code)).toContain("apricot");
   });
 });
