@@ -383,6 +383,7 @@ describe("ReviewView — stuck receipts section", () => {
     setActivePinia(pinia);
     const review = useReviewStore(pinia);
     vi.spyOn(review, "loadIfNeeded").mockResolvedValue();
+    vi.spyOn(review, "loadExpensesIfNeeded").mockResolvedValue();
     const wrapper = mountView(pinia);
     await flushPromises();
     expect(wrapper.find('[data-testid="stuck-section"]').exists()).toBe(false);
@@ -408,6 +409,7 @@ describe("ReviewView — stuck receipts section", () => {
         },
       ];
     });
+    vi.spyOn(review, "loadExpensesIfNeeded").mockResolvedValue();
     const wrapper = mountView(pinia);
     await flushPromises();
     expect(wrapper.find('[data-testid="stuck-section"]').exists()).toBe(true);
@@ -440,6 +442,7 @@ describe("ReviewView — stuck receipts section", () => {
         },
       ];
     });
+    vi.spyOn(review, "loadExpensesIfNeeded").mockResolvedValue();
     const wrapper = mountView(pinia);
     await flushPromises();
     const row = wrapper.find('[data-testid="stuck-row"]');
@@ -470,6 +473,7 @@ describe("ReviewView — stuck receipts section", () => {
         },
       ];
     });
+    vi.spyOn(review, "loadExpensesIfNeeded").mockResolvedValue();
     const resolveSpy = vi.spyOn(review, "resolveStuckReceipt").mockResolvedValue();
     const wrapper = mountView(pinia);
     await flushPromises();
