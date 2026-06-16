@@ -33,13 +33,10 @@ Each category carries:
   reseeding; never touched automatically),
 - whether the vocabulary has retired it (the category was dropped or split
   into finer categories; kept only for historical expenses, never pickable
-  again),
-- whether it has ever been used on an expense (derived from expense history).
+  again).
 
-**Pickable for new expenses** = active, not hidden, and not retired. A
-category stays active as long as it's in the active template's visible
-subset or has ever been used — applying a new template never deactivates a
-category with expense history.
+**Pickable for new expenses** = active, not hidden, and not retired. Applying
+a new template never deactivates a category with expense history.
 
 Analytics and history always resolve a category by its identity regardless of
 these flags: retiring or hiding a category never removes it from past reports

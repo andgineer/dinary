@@ -4,6 +4,14 @@
 
 Track expenses, scan receipts, analyze spending with AI
 
+<table>
+<tr>
+<td align="center" valign="top"><sub><b>Pick your category set</b></sub><br/><img src="docs/common/images/screenshots/IMG_2583.PNG" width="280"/></td>
+<td align="center" valign="top"><sub><b>AI Receipt classification</b></sub><br/><img src="docs/common/images/screenshots/IMG_2584.PNG" width="280"/></td>
+<td align="center" valign="top"><sub><b>Quick entry in any currency</b></sub><br/><img src="docs/common/images/screenshots/IMG_2586.PNG" width="280"/></td>
+</tr>
+</table>
+
 # Documentation
 
 [Dinary](https://andgineer.github.io/dinary/)

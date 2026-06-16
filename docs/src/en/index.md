@@ -10,6 +10,14 @@ Dinary server is a FastAPI backend that:
 - Serves a mobile PWA for quick expense entry in dinars
 - Provides an offline-capable queue for entries without connectivity
 
+<table>
+<tr>
+<td align="center" valign="top"><sub><b>Pick your category set on first launch</b></sub><br/><img src="images/screenshots/IMG_2583.PNG" width="280"/></td>
+<td align="center" valign="top"><sub><b>Receipts classified by AI</b></sub><br/><img src="images/screenshots/IMG_2584.PNG" width="280"/></td>
+<td align="center" valign="top"><sub><b>Entry in any currency — one tap</b></sub><br/><img src="images/screenshots/IMG_2585.PNG" width="280"/><br/><img src="images/screenshots/IMG_2586.PNG" width="280"/></td>
+</tr>
+</table>
+
 ### Quick start
 
 1. [Set up Google Sheets](google-sheets-setup.md) — create a service account and spreadsheet.

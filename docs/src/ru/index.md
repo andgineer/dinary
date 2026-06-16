@@ -10,6 +10,14 @@ Dinary server — бэкенд на FastAPI, который:
 - Раздаёт мобильное PWA-приложение для быстрого ввода расходов в динарах
 - Поддерживает офлайн-очередь записей при отсутствии связи
 
+<table>
+<tr>
+<td align="center" valign="top"><sub><b>Выберите набор категорий при первом запуске</b></sub><br/><img src="images/screenshots/IMG_2583.PNG" width="280"/></td>
+<td align="center" valign="top"><sub><b>Чеки классифицируются AI</b></sub><br/><img src="images/screenshots/IMG_2584.PNG" width="280"/></td>
+<td align="center" valign="top"><sub><b>Ввод в любой валюте — одно касание</b></sub><br/><img src="images/screenshots/IMG_2585.PNG" width="280"/><br/><img src="images/screenshots/IMG_2586.PNG" width="280"/></td>
+</tr>
+</table>
+
 ### Быстрый старт
 
 1. [Настройте Google Sheets](google-sheets-setup.md) — создайте сервисный аккаунт и таблицу.
