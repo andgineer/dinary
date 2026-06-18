@@ -31,7 +31,7 @@ class TestCreateCategory:
 
     def test_non_latin_name_falls_back_to_generic_code(self, con):
         """A name with no ASCII alphanumerics slugifies to a generic placeholder."""
-        code = create_category(con, "Моя категория", "food")
+        code = create_category(con, "!!! ???", "food")
 
         assert code == "u_category"
 
@@ -104,10 +104,10 @@ class TestMoveCategory:
 @allure.feature("Rename")
 class TestRenameCategory:
     def test_changes_name_keeps_code(self, con):
-        rename_category(con, "groceries", "Продукты питания")
+        rename_category(con, "groceries", "Food products")
 
         row = con.execute("SELECT name, code FROM categories WHERE code = 'groceries'").fetchone()
-        assert row["name"] == "Продукты питания"
+        assert row["name"] == "Food products"
         assert row["code"] == "groceries"
 
     def test_unknown_code_raises(self, con):

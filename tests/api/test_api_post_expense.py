@@ -111,7 +111,7 @@ class TestPostExpenseHappyPath:
         """POST ``/api/expenses`` must union ``events.auto_tags`` into
         the stored tag set so runtime writes carry the same invariant
         the historical importer applies: attaching a vacation event to
-        an expense guarantees both ``отпуск`` and ``путешествия`` show
+        an expense guarantees both ``vacation`` and ``travel`` show
         up regardless of what the client submitted. This mirrors the
         importer's ``_union_event_auto_tags`` behaviour and is the
         main "same-invariant-on-both-paths" contract tests around

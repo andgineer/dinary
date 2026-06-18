@@ -115,7 +115,7 @@ def pipeline(db, monkeypatch):  # noqa: ARG001
             try:
                 conn.execute(
                     "INSERT INTO category_groups (id, name, sort_order, is_active)"
-                    " VALUES (1, 'Еда', 1, 1)"
+                    " VALUES (1, 'Food', 1, 1)"
                 )
                 for i in range(1, 7):
                     conn.execute(

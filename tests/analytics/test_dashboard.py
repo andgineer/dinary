@@ -74,11 +74,11 @@ def ledger_db(tmp_path):
             sort_order INTEGER NOT NULL DEFAULT 0,
             is_active  INTEGER NOT NULL DEFAULT 1
         );
-        INSERT INTO category_groups VALUES (1, 'Питание', 0, 1);
-        INSERT INTO categories VALUES (1, 'еда', 1, 1);
-        INSERT INTO categories VALUES (2, 'аренда', 1, 1);
-        INSERT INTO tags VALUES (1, 'путешествия', 1);
-        INSERT INTO events VALUES (1, 'отпуск', '2025-06-01', '2025-07-31', 1, 1);
+        INSERT INTO category_groups VALUES (1, 'Nutrition', 0, 1);
+        INSERT INTO categories VALUES (1, 'food', 1, 1);
+        INSERT INTO categories VALUES (2, 'rent', 1, 1);
+        INSERT INTO tags VALUES (1, 'travel', 1);
+        INSERT INTO events VALUES (1, 'vacation', '2025-06-01', '2025-07-31', 1, 1);
         INSERT INTO expenses VALUES (1, '2025-06-10 10:00:00', 500.0, 55000.0, 'RSD', 1, 1, NULL, NULL, NULL);
         INSERT INTO expenses VALUES (2, '2025-06-15 12:00:00', 300.0, 33000.0, 'RSD', 2, 1, NULL, NULL, NULL);
         INSERT INTO expenses VALUES (3, '2025-07-05 09:00:00', 480.0, 52800.0, 'RSD', 1, 1, NULL, NULL, NULL);
@@ -94,7 +94,7 @@ def ledger_db(tmp_path):
 
 @pytest.fixture
 def chart_data(ledger_db):
-    top10 = ["еда", "аренда"]
+    top10 = ["food", "rent"]
     category_order = top10 + ["Other"]
     rank_df = pl.DataFrame(
         {"category": category_order, "cat_rank": list(range(len(category_order)))}
@@ -297,7 +297,7 @@ def test_dashboard_selectors_cell_runs(ledger_db, monkeypatch):
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
 def test_make_event_chart_builds_valid_spec(event_expense_df):
-    chart = make_event_chart(event_expense_df, "отпуск")
+    chart = make_event_chart(event_expense_df, "vacation")
     spec = chart.to_dict()
     # make_event_chart returns a LayerChart; the arc mark is in the first layer
     assert spec["layer"][0]["mark"]["type"] == "arc"
@@ -306,10 +306,10 @@ def test_make_event_chart_builds_valid_spec(event_expense_df):
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
 def test_make_event_chart_with_subtitle(event_expense_df):
-    chart = make_event_chart(event_expense_df, "отпуск")
+    chart = make_event_chart(event_expense_df, "vacation")
     spec = chart.to_dict()
     title = spec.get("title", {})
-    assert title.get("text") == "отпуск"
+    assert title.get("text") == "vacation"
     assert "€" in title.get("subtitle", "")
 
 
@@ -953,8 +953,8 @@ def test_view_data_cell_with_draft(ledger_db):
     data_cell = next(c for c in cells if "view_data_df" in c.defs)
 
     draft = {
-        "baskets": [{"name": "Отпуск", "triggers": {"events": [1], "tags": []}}],
-        "default_basket": "Прочее",
+        "baskets": [{"name": "Vacation", "triggers": {"events": [1], "tags": []}}],
+        "default_basket": "Other",
     }
 
     _, defs = data_cell.run(
@@ -968,7 +968,7 @@ def test_view_data_cell_with_draft(ledger_db):
     df = defs["view_data_df"]
     assert not df.is_empty()
     basket_names = set(df["basket_name"].to_list())
-    assert "Отпуск" in basket_names
+    assert "Vacation" in basket_names
 
 
 @allure.epic("Analytics")
@@ -1045,9 +1045,9 @@ def test_pinned_frames_cell_loads(ledger_db, tmp_path):
     settings_db = tmp_path / "settings.db"
     _real_save_view(
         {
-            "name": "Отпуск",
-            "baskets": [{"name": "Отпуск", "triggers": {"events": [1], "tags": []}}],
-            "default_basket": "Прочее",
+            "name": "Vacation",
+            "baskets": [{"name": "Vacation", "triggers": {"events": [1], "tags": []}}],
+            "default_basket": "Other",
         },
         db_path=settings_db,
     )
@@ -1067,8 +1067,8 @@ def test_pinned_frames_cell_loads(ledger_db, tmp_path):
     frames = defs["pinned_frames"]
     assert len(frames) == 1
     _vid, cfg, df = frames[0]
-    assert cfg["name"] == "Отпуск"
-    assert "Отпуск" in set(df["basket_name"].to_list())
+    assert cfg["name"] == "Vacation"
+    assert "Vacation" in set(df["basket_name"].to_list())
 
 
 @allure.epic("Analytics")

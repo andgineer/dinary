@@ -15,7 +15,7 @@ from dinary.background.classification.receipt_classifier import (
     get_chain_name,
 )
 
-_CATEGORIES = {1: "Еда: еда", 2: "Жильё: хозтовары", 3: "Красота и ЗОЖ: гигиена"}
+_CATEGORIES = {1: "Food: food", 2: "Housing: household-goods", 3: "Beauty: hygiene"}
 
 
 def _make_broker(raw_content: str | None) -> LLMBroker:
@@ -47,12 +47,12 @@ class TestBuildUserMessage:
     def test_contains_category_ids_and_names(self):
         msg = _build_user_message(["hleb"], "Lidl", _CATEGORIES, {})
         assert "1:" in msg
-        assert "Еда: еда" in msg
+        assert "Food: food" in msg
 
     def test_tags_block_included_when_tags_provided(self):
-        msg = _build_user_message(["hleb"], "Lidl", _CATEGORIES, {1: "собака"})
+        msg = _build_user_message(["hleb"], "Lidl", _CATEGORIES, {1: "dog"})
         assert "Tags:" in msg
-        assert "собака" in msg
+        assert "dog" in msg
 
     def test_tags_block_omitted_when_empty(self):
         msg = _build_user_message(["hleb"], "Lidl", _CATEGORIES, {})

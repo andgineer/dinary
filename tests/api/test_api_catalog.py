@@ -6,7 +6,7 @@ The PWA relies on two invariants:
    ``events``, ``tags``) matches exactly one primary-key-carrying
    item per row; **every** row is returned (active and inactive) and
    carries an ``is_active`` flag so the PWA can filter client-side
-   and expose per-picker "Показать неактивные" toggles.
+   and expose per-picker "Show inactive" toggles.
 2. ``If-None-Match`` matching the current ETag returns 304 with
    empty body; a mismatch returns the full payload plus a new
    ``ETag`` header. The ETag rides on the HTTP header only — the
@@ -71,7 +71,7 @@ class TestCatalogGet:
         assert "etag" not in data
         assert resp.headers["ETag"].startswith('W/"catalog-v')
         # Every row is surfaced, active and inactive alike; PWA
-        # filters client-side so it can toggle "Показать неактивные".
+        # filters client-side so it can toggle "Show inactive".
         groups = {g["name"]: g["is_active"] for g in data["category_groups"]}
         assert groups == {"Food": True, "RetiredGroup": False}
         cats = {c["name"]: c["is_active"] for c in data["categories"]}
@@ -128,9 +128,9 @@ class TestCatalogGet:
 class TestCatalogRemovableFlag:
     """``removable`` must be ``true`` exactly when a DELETE on the row
     would hard-delete (i.e. the row has no expense / mapping / auto_tags
-    reference anywhere). The PWA uses the flag to hide ``Удалить`` on
+    reference anywhere). The PWA uses the flag to hide ``Delete`` on
     rows that would silently soft-delete, which otherwise makes the
-    management UI look broken ("я нажал удалить и ничего не удалилось").
+    management UI look broken ("I pressed Delete and nothing happened").
     """
 
     def test_unreferenced_leaf_rows_are_removable(self, client):

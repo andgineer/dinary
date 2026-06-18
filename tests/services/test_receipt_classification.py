@@ -70,16 +70,18 @@ def conn(tmp_path, monkeypatch):
 
 def _seed_catalog(conn):
     conn.execute(
-        "INSERT INTO category_groups (id, name, sort_order, is_active) VALUES (1, 'Еда', 1, 1)"
+        "INSERT INTO category_groups (id, name, sort_order, is_active) VALUES (1, 'Food', 1, 1)"
     )
     conn.execute(
-        "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'продукты', 1, 1)"
+        "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'groceries', 1, 1)"
     )
-    conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (2, 'хоз', 1, 1)")
+    conn.execute(
+        "INSERT INTO categories (id, name, group_id, is_active) VALUES (2, 'household', 1, 1)"
+    )
     # Add more categories so _load_top_fallback_categories pre-check (>= 5) passes
-    conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (3, 'кат3', 1, 1)")
-    conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (4, 'кат4', 1, 1)")
-    conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (5, 'кат5', 1, 1)")
+    conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (3, 'cat3', 1, 1)")
+    conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (4, 'cat4', 1, 1)")
+    conn.execute("INSERT INTO categories (id, name, group_id, is_active) VALUES (5, 'cat5', 1, 1)")
 
 
 def _seed_receipt(conn, name_raw="hleb"):

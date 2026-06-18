@@ -2,7 +2,7 @@
 
 ## Terminology
 
-A **category template** (RU UI: **набор категорий**) is a curated arrangement
+A **category template** is a curated arrangement
 of the category vocabulary: which categories are visible, which group each
 belongs to, and what they're called. Categories are organised in two levels —
 **group** and **category** — with the group as the rollup: related fine

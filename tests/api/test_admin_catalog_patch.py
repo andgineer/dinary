@@ -63,7 +63,7 @@ class TestAdminPatch:
         snap = client.get("/api/catalog").json()
         assert not any(t["id"] == tid and t["is_active"] for t in snap["tags"])
 
-        # PATCH is_active=True is the PWA's "Активировать" affordance.
+        # PATCH is_active=True is the PWA's "Activate" affordance.
         resp = client.patch(
             f"/api/catalog/tags/{tid}",
             json={"is_active": True},

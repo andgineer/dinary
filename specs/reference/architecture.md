@@ -10,7 +10,7 @@ prioritises clean data, scriptability, and low hosting cost over UI polish.
 **Pain points in the prior Google Sheets workflow that motivated this:**
 
 - Monthly setup: ~33 category rows duplicated by hand every month.
-- Supermarket receipts are opaque — one receipt total mapped to `"еда&бытовые"`,
+- Supermarket receipts are opaque — one receipt total mapped to `"food&household"`,
   no line-item granularity.
 - No item-level data: impossible to answer "how much on coffee beans this year".
 - Category changes required retroactive manual edits to every historical row.
@@ -104,9 +104,9 @@ Evaluation criteria (a tool was disqualified if it failed any):
 ### 3D data model over the legacy 2D sheet model
 
 The legacy Google Sheets mixed several orthogonal concepts in the
-`(Расходы, Конверт)` pair: hierarchy (`здоровье` = `медицина` + `БАД` +
-`лекарства`), beneficiary (`ребенок`), temporary context (`путешествия`), and
-purpose (`профессиональное`). Cross-cutting queries — "how much for the child on
+`(sheet_category, envelope)` pair: hierarchy (`health` = `medicine` + `supplements` +
+`meds`), beneficiary (`child`), temporary context (`travel`), and
+purpose (`professional`). Cross-cutting queries — "how much for the child on
 the Bosnia trip?" — were impossible.
 
 The model collapses everything to three independent dimensions:

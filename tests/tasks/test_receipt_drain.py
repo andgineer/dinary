@@ -80,10 +80,10 @@ def drain_db(tmp_path, monkeypatch):
 def _seed_drain_db(conn):
     """Insert the minimum catalog rows required by the drain."""
     conn.execute(
-        "INSERT INTO category_groups (id, name, sort_order, is_active) VALUES (1, 'Еда', 1, 1)"
+        "INSERT INTO category_groups (id, name, sort_order, is_active) VALUES (1, 'Food', 1, 1)"
     )
     conn.execute(
-        "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'продукты', 1, 1)"
+        "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'groceries', 1, 1)"
     )
 
 
@@ -1146,8 +1146,8 @@ def _make_classify_outcome(
 def _seed_drain_db_with_tags(conn):
     """Seed minimal catalog + two active tags."""
     _seed_drain_db(conn)
-    conn.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'собака', 1)")
-    conn.execute("INSERT INTO tags (id, name, is_active) VALUES (2, 'аня', 1)")
+    conn.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'dog', 1)")
+    conn.execute("INSERT INTO tags (id, name, is_active) VALUES (2, 'anya', 1)")
 
 
 @allure.epic("Receipts")
@@ -1259,7 +1259,7 @@ class TestPerItemExpenses:
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
-            conn.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'собака', 1)")
+            conn.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'dog', 1)")
             conn.execute(
                 "INSERT INTO receipts (client_receipt_id, url) VALUES ('tag-r1', 'https://x')"
             )
@@ -1520,7 +1520,7 @@ class TestPerItemExpenses:
         conn = storage.get_connection()
         try:
             _seed_drain_db(conn)
-            conn.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'собака', 1)")
+            conn.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'dog', 1)")
             conn.execute(
                 "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
                 " VALUES (1, 'Dog Year', '2026-01-01', '2026-12-31', 1, 1, ?)",
@@ -1574,7 +1574,7 @@ class TestPerItemExpenses:
         finally:
             conn.close()
 
-        assert 1 in tag_ids, f"tag 'собака' (id=1) must be in expense_tags, got {tag_ids}"
+        assert 1 in tag_ids, f"tag 'dog' (id=1) must be in expense_tags, got {tag_ids}"
 
 
 # ---------------------------------------------------------------------------

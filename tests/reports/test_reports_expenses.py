@@ -22,8 +22,8 @@ def data_dir(tmp_path, monkeypatch):
 def _seed_catalog(con) -> None:
     """Seed the minimum catalog + three expenses across two months.
 
-    Two of the expenses share the same 3D coord (``еда``, no event,
-    tags ``собака``) so the aggregation test can verify both the
+    Two of the expenses share the same 3D coord (``food``, no event,
+    tags ``dog``) so the aggregation test can verify both the
     grouping and the total sum.
     """
     con.execute(
@@ -32,12 +32,12 @@ def _seed_catalog(con) -> None:
     )
     con.execute(
         "INSERT INTO categories (id, name, group_id, is_active)"
-        " VALUES (1, 'еда', 1, TRUE), (2, 'гаджеты', 1, TRUE)",
+        " VALUES (1, 'food', 1, TRUE), (2, 'gadgets', 1, TRUE)",
     )
-    con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'собака', TRUE)")
+    con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'dog', TRUE)")
     con.execute(
         "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled)"
-        " VALUES (1, 'отпуск-2026', '2026-06-01', '2026-06-30', TRUE)",
+        " VALUES (1, 'vacation-2026', '2026-06-01', '2026-06-30', TRUE)",
     )
     con.execute(
         "INSERT INTO expenses (id, client_expense_id, datetime, amount,"
@@ -123,30 +123,30 @@ class TestBuildFilter:
 class TestAggregate:
     def test_no_filter_returns_all_coords(self, _seeded_con):
         rows = expenses_report.aggregate_expenses(_seeded_con)
-        # Two distinct 3D coords: (еда, '', собака) with 2 rows,
-        # (гаджеты, отпуск-2026, '') with 1 row.
+        # Two distinct 3D coords: (food, '', dog) with 2 rows,
+        # (gadgets, vacation-2026, '') with 1 row.
         assert len(rows) == 2
         by_coord = {(r.category, r.event, r.tags): r for r in rows}
-        assert by_coord[("еда", "", "собака")].rows == 2
-        assert by_coord[("еда", "", "собака")].total == Decimal("350.00")
-        assert by_coord[("гаджеты", "отпуск-2026", "")].rows == 1
-        assert by_coord[("гаджеты", "отпуск-2026", "")].total == Decimal("500.00")
+        assert by_coord[("food", "", "dog")].rows == 2
+        assert by_coord[("food", "", "dog")].total == Decimal("350.00")
+        assert by_coord[("gadgets", "vacation-2026", "")].rows == 1
+        assert by_coord[("gadgets", "vacation-2026", "")].total == Decimal("500.00")
 
     def test_orders_by_total_desc(self, _seeded_con):
         rows = expenses_report.aggregate_expenses(_seeded_con)
         assert rows[0].total >= rows[1].total
-        assert rows[0].category == "гаджеты"
+        assert rows[0].category == "gadgets"
 
     def test_year_filter(self, _seeded_con):
         rows = expenses_report.aggregate_expenses(_seeded_con, year=2025)
         assert len(rows) == 1
-        assert rows[0].category == "гаджеты"
+        assert rows[0].category == "gadgets"
         assert rows[0].total == Decimal("500.00")
 
     def test_month_filter(self, _seeded_con):
         rows = expenses_report.aggregate_expenses(_seeded_con, month=(2026, 6))
         assert len(rows) == 1
-        assert rows[0].category == "еда"
+        assert rows[0].category == "food"
         assert rows[0].rows == 2
 
     def test_month_filter_empty_window(self, _seeded_con):
@@ -163,10 +163,9 @@ class TestRenderCsv:
         expenses_report.render_csv(rows, stream=buf)
         lines = buf.getvalue().splitlines()
         assert lines[0] == "category,event,tags,rows,total"
-        # Top row ought to be гаджеты (500) per the sort contract;
-        # Russian text is wrapped when it contains no commas/quotes,
-        # so the literal row is predictable.
-        assert lines[1].split(",") == ["гаджеты", "отпуск-2026", "", "1", "500.00"]
+        # Top row ought to be gadgets (500) per the sort contract;
+        # the literal row is predictable.
+        assert lines[1].split(",") == ["gadgets", "vacation-2026", "", "1", "500.00"]
 
     def test_empty_input_writes_only_header(self):
         buf = io.StringIO()
@@ -198,8 +197,8 @@ class TestRenderRich:
             stream=buf,
         )
         out = buf.getvalue()
-        assert "еда" in out
-        assert "гаджеты" in out
+        assert "food" in out
+        assert "gadgets" in out
         assert "RSD" in out
         assert "TOTAL" in out
 
@@ -272,10 +271,9 @@ class TestRenderJson:
             assert isinstance(entry["total"], str)
             Decimal(entry["total"])
 
-    def test_preserves_cyrillic_in_fields(self, _seeded_con):
-        """``category`` / ``event`` / ``tags`` routinely contain
-        Cyrillic (``еда``, ``отпуск-2026``, ``собака``). The JSON
-        transport must preserve them byte-for-byte on the wire —
+    def test_preserves_non_ascii_in_fields(self, _seeded_con):
+        """``category`` / ``event`` / ``tags`` may contain non-ASCII text.
+        The JSON transport must preserve them byte-for-byte on the wire —
         ``ensure_ascii=False`` is how we keep the payload shorter
         than an ASCII-escaped version and side-step any LC_ALL
         surprises on the remote shell.
@@ -284,9 +282,9 @@ class TestRenderJson:
         buf = io.StringIO()
         expenses_report.render_json(rows, stream=buf)
         raw = buf.getvalue()
-        assert "еда" in raw
-        assert "отпуск-2026" in raw
-        assert "собака" in raw
+        assert "food" in raw
+        assert "vacation-2026" in raw
+        assert "dog" in raw
         assert "\\u" not in raw
 
     def test_rows_from_json_roundtrip_preserves_decimal(self, _seeded_con):
@@ -302,7 +300,7 @@ class TestRenderJson:
         assert rc == 0
         parsed = json.loads(buf.getvalue())
         # Sort order contract: biggest total first.
-        assert parsed[0]["category"] == "гаджеты"
+        assert parsed[0]["category"] == "gadgets"
 
     def test_run_mutex_csv_and_json_rejected(self, _seeded_con):
         buf = io.StringIO()

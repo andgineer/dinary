@@ -85,7 +85,7 @@ file whose location is configurable via the providers TOML.
   latency and allows the model to use item context (a receipt from a clothing store
   disambiguates borderline items).
 - Category IDs are passed as `id: group: name` tuples. The group context helps
-  models correctly assign items to broadly-named categories (e.g. "фрукты" as the
+  models correctly assign items to broadly-named categories (e.g. "fruit" as the
   catch-all for all produce, not just fruit).
 - Alternatives are always requested unconditionally. See
   [classification-pipeline.md](classification-pipeline.md) for the rationale.

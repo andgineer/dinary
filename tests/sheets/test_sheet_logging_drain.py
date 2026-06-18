@@ -184,7 +184,7 @@ class TestDrainPendingPoisonsNullClientExpenseId:
                 " VALUES (1, 'g', 1, TRUE)",
             )
             con.execute(
-                "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'еда', 1, TRUE)",
+                "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'food', 1, TRUE)",
             )
             insert_expense(
                 con,
@@ -276,10 +276,10 @@ class TestDrainPendingCategoryFallback:
 
         ecr_call_args = mock_ecr.call_args
         # The helper takes ``(ws, all_values, month, category, group, ...)``
-        # positionally; the month is 4, the category is "еда", and the
+        # positionally; the month is 4, the category is "food", and the
         # fallback group is the empty string.
         assert ecr_call_args[0][2] == 4
-        assert ecr_call_args[0][3] == "еда"
+        assert ecr_call_args[0][3] == "food"
         assert ecr_call_args[0][4] == ""
 
 

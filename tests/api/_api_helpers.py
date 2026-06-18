@@ -81,21 +81,21 @@ def db(tmp_path, monkeypatch, blank_db):
         )
         con.execute(
             "INSERT INTO categories (id, name, group_id, is_active, code)"
-            " VALUES (1, 'еда', 1, TRUE, 'groceries')",
+            " VALUES (1, 'food', 1, TRUE, 'groceries')",
         )
         con.execute(
             "INSERT INTO categories (id, name, group_id, is_active, code)"
-            " VALUES (2, 'транспорт', 2, TRUE, 'transit')",
+            " VALUES (2, 'transit', 2, TRUE, 'transit')",
         )
         # Inactive (not hidden/retired) category: a write referencing it
         # exercises activation-on-use (db.catalog.activate_category), which
         # requires a `code`.
         con.execute(
             "INSERT INTO categories (id, name, group_id, is_active, code, is_hidden, is_retired)"
-            " VALUES (3, 'ретро-категория', 1, FALSE, 'retro_category', FALSE, FALSE)",
+            " VALUES (3, 'retro-category', 1, FALSE, 'retro_category', FALSE, FALSE)",
         )
-        con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'собака', TRUE)")
-        con.execute("INSERT INTO tags (id, name, is_active) VALUES (2, 'аня', TRUE)")
+        con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'dog', TRUE)")
+        con.execute("INSERT INTO tags (id, name, is_active) VALUES (2, 'anya', TRUE)")
         con.execute(
             "INSERT INTO events (id, name, date_from, date_to,"
             " auto_attach_enabled, is_active)"

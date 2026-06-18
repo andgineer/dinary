@@ -135,7 +135,7 @@ References: `CatalogSelectField.vue`, `ManageList.vue`, `ExpenseForm.vue`.
 `CategorySheet` is the single surface for everything in
 [category-templates.md](../reference/category-templates.md): picking a
 category, growing the active set, hiding/renaming/moving categories, and
-switching the whole category template (RU: **набор категорий**).
+switching the whole category template.
 
 ### Search-activate
 
@@ -149,7 +149,7 @@ Typing in the search box filters the cached catalog instantly (no debounce, no n
 
 A category that activates with no group yet resolved (no active template, or
 the code isn't placed by the active template) shows inline in the addable
-section labelled "без группы / ungrouped" instead of moving into the grouped
+section labelled "ungrouped" instead of moving into the grouped
 list.
 
 Each activation from "Not in your set" counts toward the out-of-set nudge
@@ -160,7 +160,7 @@ below.
 `CategorySheet` has a footer bar, visible in every mode (pick, search, and
 manage):
 
-- **Left** — "Category set: {active набор}", opens the template switcher.
+- **Left** — "Category template: {active template}", opens the template switcher.
 - **Right** — a toggle between "pick a category" and a managed view over the
   visible set: per category, hide / rename (label only) / move to another
   group; per group, "+ add category" (creates a new user category in that
@@ -172,13 +172,13 @@ On the Add view, a muted cog inside the category-pick row (left of the
 chevron) opens `CategorySheet` directly in Manage mode, without affecting the
 row's normal pick-mode tap.
 
-### Switch category set
+### Switch category template
 
 The footer's left button opens a shared template-switch sheet, also used by
-onboarding: a master-detail preview lets the user compare набор before
+onboarding: a master-detail preview lets the user compare templates before
 choosing. A chip row selects a template; below it, a detail panel shows that
 template's full contents — every group and all its visible categories — so
-the user sees what they'd get before applying. The active набор's chip is
+the user sees what they'd get before applying. The active template's chip is
 marked, and applying it is disabled. Applying re-themes groups for the new
 template's categories — the user's used categories stay visible and hidden
 categories stay hidden.

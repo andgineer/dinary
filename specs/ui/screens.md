@@ -52,7 +52,7 @@ category template is active (see
   local and sub-100ms, so no spinner.
 - **No template active** — render `OnboardingTemplate` full-screen instead of
   the header/tabs/main shell: a language selector above `TemplatePreviewPicker`
-  (master-detail набор preview), applying the selected one continues into the
+  (master-detail template preview), applying the selected one continues into the
   app.
 - **A template is active** — render the normal app (header + tabs + main) as
   described below.
@@ -70,9 +70,9 @@ The entry form. The most-used view — `tab` defaults to `'add'`.
 │  ────────             ───            │
 │                                      │
 │ ┌──────────────────────────────────┐ │ category-card shell (12-px radius)
-│ │ [Еда][Мясо][Перекус][Сладости] … │ │ CategoryQuickPicks pills
+│ │ [Food][Meat][Snack][Sweets] …    │ │ CategoryQuickPicks pills
 │ │ ──────────────────────────────── │ │ internal divider
-│ │ Мясо                          ›  │ │ category-pick-btn → CategorySheet
+│ │ Meat                          ›  │ │ category-pick-btn → CategorySheet
 │ └──────────────────────────────────┘ │
 │                                      │
 │  EVENT             [+] [⚙]           │
@@ -82,7 +82,7 @@ The entry form. The most-used view — `tab` defaults to `'add'`.
 │                                      │
 │  TAGS              [+] [⚙]           │
 │  ┌──────────────────────────────┐    │
-│  │ [собака][Аня][Лариса] …      │    │ TagPicker (selected = --accent)
+│  │ [dog][Anya][Larisa] …        │    │ TagPicker (selected = --accent)
 │  └──────────────────────────────┘    │
 │                                      │
 │  [ Comment                       ]   │ single-line input
@@ -216,11 +216,11 @@ Two ordered sections in a single scroll container: **NEEDS REVIEW** (one row per
 │                                      │
 │  ⚠ ┃ Karamel čoko prot.čok.          │ doubtful — c2 (warning) left-border
 │    ┃                Lidl Beograd     │
-│    ┃ [✨✓ Сладости][Еда][Перекус] ✎  │ approve + alts + edit
+│    ┃ [✨✓ Sweets][Food][Snack]   ✎  │ approve + alts + edit
 │                                      │
 │  ⚠ ┃ Energy drink unknown            │ c1 — error left-border (lowest)
 │    ┃                7-Eleven         │
-│    ┃ [✨✓ Напитки][Еда][Снеки]    ✎  │
+│    ┃ [✨✓ Drinks][Food][Snacks]   ✎  │
 │                                      │
 │         [ Confirm all (5) ]          │ shown at end of doubtful list
 │                                      │
@@ -228,7 +228,7 @@ Two ordered sections in a single scroll container: **NEEDS REVIEW** (one row per
 │  ┌────────────────────────────────┐  │
 │  │ Karamel čoko prot.čok.   220   │  │ ExpenseRow (item-name primary)
 │  │ Lidl Beograd · 17 May    RSD   │  │
-│  │ Еда › Сладости                 │  │
+│  │ Food › Sweets                  │  │
 │  └────────────────────────────────┘  │
 │  …more expenses…                     │
 │  [skeleton]                          │ infinite-scroll loading state

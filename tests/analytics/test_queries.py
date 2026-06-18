@@ -69,12 +69,12 @@ def full_ledger_db(tmp_path):
             PRIMARY KEY (currency, date)
         );
 
-        INSERT INTO category_groups VALUES (1, 'Питание', 0, 1);
-        INSERT INTO category_groups VALUES (2, 'Жильё', 1, 1);
-        INSERT INTO categories VALUES (1, 'еда', 1, 1);
-        INSERT INTO categories VALUES (2, 'аренда', 2, 1);
-        INSERT INTO events VALUES (1, 'отпуск', '2025-06-01', '2025-07-31', 1);
-        INSERT INTO tags VALUES (1, 'путешествия', 1);
+        INSERT INTO category_groups VALUES (1, 'Nutrition', 0, 1);
+        INSERT INTO category_groups VALUES (2, 'Housing', 1, 1);
+        INSERT INTO categories VALUES (1, 'food', 1, 1);
+        INSERT INTO categories VALUES (2, 'rent', 2, 1);
+        INSERT INTO events VALUES (1, 'vacation', '2025-06-01', '2025-07-31', 1);
+        INSERT INTO tags VALUES (1, 'travel', 1);
 
         -- Recent expenses (within last 12 months, use a far-future date to be safe)
         INSERT INTO expenses VALUES (1, '2026-01-10 10:00:00', 500.0, 55000.0, 'RSD', 1, 1, NULL, NULL, NULL);
@@ -181,9 +181,9 @@ def test_spending_summary_event_total_correct(full_ledger_db):
     finally:
         con.close()
     events = json.loads(row[0])["events"]
-    отпуск = next(e for e in events if e["name"] == "отпуск")
+    vacation = next(e for e in events if e["name"] == "vacation")
     # expenses 1 and 2 have event_id=1: 500+300=800
-    assert abs(отпуск["total_amount"] - 800.0) < 0.01
+    assert abs(vacation["total_amount"] - 800.0) < 0.01
 
 
 @allure.epic("Analytics")
@@ -230,7 +230,7 @@ def test_view_data_assigns_event_basket(full_ledger_db):
 @allure.feature("Queries")
 def test_view_data_assigns_tag_basket(full_ledger_db):
     sql = load_query("view_data")
-    # tag_id=1 (путешествия) is on expenses 1 and 3
+    # tag_id=1 (travel) is on expenses 1 and 3
     basket_cfg = json.dumps(
         {
             "baskets": [{"name": "Tagged", "triggers": {"events": [], "tags": [1]}}],

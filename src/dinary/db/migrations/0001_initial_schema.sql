@@ -21,7 +21,7 @@ CREATE TABLE categories (
     sheet_group TEXT
 );
 
--- ``auto_tags`` is a JSON array of tag names (e.g. '["отпуск"]'). When a
+-- ``auto_tags`` is a JSON array of tag names (e.g. '["vacation"]'). When a
 -- runtime expense attaches an event, the listed tags are unioned into the
 -- expense's tag set both at POST time and during historical import. Empty
 -- array (default) means the event contributes no automatic tags.
@@ -74,7 +74,7 @@ CREATE TABLE import_mapping_tags (
 
 -- ``sheet_mapping`` is the ordered, five-column runtime map that projects a
 -- 3D expense (category, event, tags) onto the 2D sheet columns
--- (Расходы, Конверт). Evaluated top-to-bottom by ``row_order``:
+-- (sheet_category, envelope). Evaluated top-to-bottom by ``row_order``:
 --
 --   * ``category_id IS NULL`` / ``event_id IS NULL`` mean "wildcard" (any).
 --     A row with explicit ids only matches when every id matches.

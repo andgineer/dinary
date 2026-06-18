@@ -41,12 +41,12 @@ class TestAdminAdd:
         assert resp.json()["event"]["name"] == "trip-2026"
 
     def test_add_event_with_auto_tags(self, client):
-        tag = client.post("/api/catalog/tags", json={"name": "путешествия"})
+        tag = client.post("/api/catalog/tags", json={"name": "travel"})
         tid = tag.json()["tag"]["id"]
         resp = client.post(
             "/api/catalog/events",
             json={
-                "name": "отпуск-Доломиты",
+                "name": "vacation-Dolomites",
                 "date_from": "2026-07-01",
                 "date_to": "2026-07-15",
                 "auto_attach_enabled": True,
@@ -55,7 +55,7 @@ class TestAdminAdd:
         )
         assert resp.status_code == 200, resp.text
         ev = resp.json()["event"]
-        assert ev["name"] == "отпуск-Доломиты"
+        assert ev["name"] == "vacation-Dolomites"
         assert ev["auto_tags"] == [tid]
         assert ev["auto_attach_enabled"] is True
 

@@ -170,12 +170,12 @@ View config stored in `analytics.db` under key `view:<uuid>`:
 ```json
 {
   "id": "<uuid>",
-  "name": "По смыслу жизни",
+  "name": "Life meaning",
   "baskets": [
-    { "name": "Релокация", "triggers": { "events": [3], "tags": [] } },
-    { "name": "Путешествия", "triggers": { "events": [], "tags": [7] } }
+    { "name": "Relocation", "triggers": { "events": [3], "tags": [] } },
+    { "name": "Travel", "triggers": { "events": [], "tags": [7] } }
   ],
-  "default_basket": "Основное",
+  "default_basket": "Main",
   "chart_type": "stacked_bar_monthly"
 }
 ```
@@ -198,13 +198,12 @@ message and shows an "analyzing" indicator while the reply is generated.
 **Creating a view.** The LLM calls `query_summary()` to examine actual
 spending patterns before saying anything. It then presents an initial basket proposal;
 the draft chart renders inline directly under that reply, captioned as a draft to pin,
-and the reply justifies each basket with concrete data: "Релокация — 45k за 3 мес
-(40% квартала), выделил в отдельный блок." Each reply offers 3–5 follow-up questions
+and the reply justifies each basket with concrete data: "Relocation — 45k over 3 months
+(40% of quarter), moved to a separate block." Each reply offers 3–5 follow-up questions
 as clickable buttons (the LLM emits them via a tool, not as prose); clicking one sends
 it straight into the conversation. The user never has to name categories, events, or tags.
 
-**Refining a view.** The user reacts to what they see in the draft chart ("поездки
-выглядят странно"). The LLM consults the data, proposes specific alternatives, and on
+**Refining a view.** The user reacts to what they see in the draft chart ("travel looks off"). The LLM consults the data, proposes specific alternatives, and on
 approval modifies the draft via in-session tools; the chart re-renders immediately.
 
 **Pinning a view.** The live draft becomes permanent either when the user presses the

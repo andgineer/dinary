@@ -53,7 +53,7 @@ def setup(tmp_path, blank_db) -> int:
             " VALUES (1, 'g', 1, TRUE)",
         )
         con.execute(
-            "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'еда', 1, TRUE)",
+            "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'food', 1, TRUE)",
         )
         con.execute(
             "INSERT INTO sheet_mapping (row_order, category_id, event_id,"

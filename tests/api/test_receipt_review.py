@@ -958,7 +958,7 @@ class TestRulesFeedAlternativesAndTags:
         resp = client.get("/api/rules/feed")
         item = resp.json()["items"][0]
         alt_cats = item["alternative_categories"]
-        # category id=2 (транспорт) is in the alternatives; should be resolved
+        # category id=2 (transit) is in the alternatives; should be resolved
         assert len(alt_cats) == 1
         assert alt_cats[0]["id"] == 2
         assert isinstance(alt_cats[0]["name"], str)

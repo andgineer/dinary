@@ -254,8 +254,8 @@ def render_json(rows: Iterable[ExpenseSummaryRow], *, stream: TextIO) -> None:
     matching :func:`dinary.reports.income.render_json` docstring for
     the shared rationale (Decimal-as-string, end-to-end UTF-8).
 
-    ``category`` / ``event`` / ``tags`` routinely contain Cyrillic
-    (``еда``, ``отпуск-2026``, ``собака``); ``ensure_ascii=False``
+    ``category`` / ``event`` / ``tags`` routinely contain non-ASCII text;
+    ``ensure_ascii=False``
     keeps them readable in raw ``--json`` output and avoids a ~6×
     payload blow-up from ``\\uXXXX`` escapes. UTF-8 on the wire is
     the contract regardless.

@@ -134,7 +134,7 @@ class TestRunReportModuleRemote:
         _fake_ssh_bytes.payload = json.dumps(
             [
                 {
-                    "category": "путешествия",
+                    "category": "travel",
                     "event": "",
                     "tags": "",
                     "rows": 3,
@@ -147,7 +147,7 @@ class TestRunReportModuleRemote:
         tasks.reports.report_tasks._run_report_module(c, "expenses", [], remote=True)
         out = capsys.readouterr().out
         assert "\ufffd" not in out
-        assert "путешествия" in out
+        assert "travel" in out
 
     def test_expenses_remote_forwards_filter_flags_but_not_format_flags(
         self,

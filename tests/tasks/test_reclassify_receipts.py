@@ -9,10 +9,10 @@ from dinary.db import storage
 def _seed(conn):
     """Seed two receipts with classified items and expenses. Returns (r1_id, r2_id)."""
     conn.execute(
-        "INSERT INTO category_groups (id, name, sort_order, is_active) VALUES (1, 'Еда', 1, 1)"
+        "INSERT INTO category_groups (id, name, sort_order, is_active) VALUES (1, 'Food', 1, 1)"
     )
     conn.execute(
-        "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'продукты', 1, 1)"
+        "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'groceries', 1, 1)"
     )
     conn.execute("INSERT OR IGNORE INTO shop_chains (name) VALUES ('Lidl')")
     chain_id_Lidl = conn.execute("SELECT id FROM shop_chains WHERE name='Lidl'").fetchone()[0]

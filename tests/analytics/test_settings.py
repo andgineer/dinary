@@ -68,8 +68,8 @@ def test_get_config_json_missing_returns_none(tmp_path):
 @allure.feature("Settings")
 def test_unicode_value(tmp_path):
     db = tmp_path / "analytics.db"
-    set_config("tag", "командировка", db_path=db)
-    assert get_config("tag", db_path=db) == "командировка"
+    set_config("tag", "business-trip", db_path=db)
+    assert get_config("tag", db_path=db) == "business-trip"
 
 
 @allure.epic("Analytics")

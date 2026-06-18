@@ -146,7 +146,7 @@ class TestPostExpenseInactiveCarveout:
             # rather than deleting (which would violate the FK held by
             # the expense we just inserted).
             con.execute(
-                "UPDATE categories SET is_active = FALSE, is_retired = TRUE WHERE name = 'еда'",
+                "UPDATE categories SET is_active = FALSE, is_retired = TRUE WHERE name = 'food'",
             )
             (kept,) = con.execute(
                 "SELECT COUNT(*) FROM expenses WHERE client_expense_id = 'e_pin_1'",
