@@ -212,10 +212,8 @@ def client(db):  # noqa: ARG001
 
     ``bootstrap_categories`` is stubbed too: most test modules seed their
     own minimal ``categories``/``category_groups`` rows before requesting
-    ``client``, and ``bootstrap_categories`` would either duplicate that
-    setup (fresh seed) or reject it (``migrate_personal_catalog`` only
-    recognises the real personal-DB taxonomy). Dedicated
-    ``tests/category_templates/`` tests call it explicitly.
+    ``client``, and ``bootstrap_categories`` would overwrite that setup.
+    Dedicated ``tests/category_templates/`` tests call it explicitly.
     """
     with (
         unittest.mock.patch.object(rate_helpers, "_get_json_or_none", return_value=None),

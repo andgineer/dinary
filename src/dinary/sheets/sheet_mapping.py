@@ -1,6 +1,6 @@
 """Runtime 3D→2D mapping from the ``map`` worksheet tab.
 
-Tab columns: A=category, B=event, C=tags, D=Расходы, E=Конверт.
+Tab columns: A=category, B=event, C=tags, D=sheet_category, E=envelope.
 Evaluation: first non-``*`` wins per column independently.
 Fallback: sheet_category→categories.name, sheet_group→"".
 DB tables are derived state; tab is source of truth. ``reload_now`` swaps atomically.
@@ -19,7 +19,6 @@ import gspread
 from dinary.adapters.sheets_client import drive_get_modified_time, get_sheet
 from dinary.config import settings, spreadsheet_id_from_setting
 from dinary.db import storage
-from dinary.db.catalog import VISIBLE_CATEGORY_PREDICATE
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +30,9 @@ _TAG_SEPARATOR_RE = re.compile(r"[,\s]+")
 #: with either ``*`` or an empty cell without changing the resolver.
 WILDCARD = "*"
 
-#: Header row written by the template generator and skipped when
+#: Header row written when creating a new empty tab and skipped when
 #: reading rows from the tab.
-MAP_TAB_HEADER: list[str] = ["category", "event", "tags", "Расходы", "Конверт"]
+MAP_TAB_HEADER: list[str] = ["category", "event", "tags", "sheet_category", "envelope"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,7 +271,7 @@ def _load_catalog(
     ``apply_template``, so a category referenced by the map can easily be
     ``is_active=0`` (or ``is_hidden``/``is_retired``) without breaking the
     mapping reload. Events and tags keep their original "hide from the
-    ручной пикер" ``is_active`` meaning, with the same "must stay
+    picker" ``is_active`` meaning, with the same "must stay
     resolvable" requirement. Hard-deleted rows are the only invariant —
     their names are simply absent and ``parse_rows`` will still raise
     ``MapTabError`` with the "did you mean" hint.
@@ -471,98 +470,8 @@ def _warn_if_existing_map_tab_is_stale(
 # ---------------------------------------------------------------------------
 
 
-# Tag-driven envelope rules (category=*, event=*, Расходы=*). Ordered:
-# beneficiary-specific tags first, then sphere-of-life tags. Any
-# expense carrying the tag lands in the matching envelope regardless
-# of category.
-_TAG_RULES: list[tuple[str, str]] = [
-    ("Лариса", "лариса"),
-    ("Аня", "ребенок"),
-    ("собака", "собака"),
-    # Vacation events attach both "отпуск" and "путешествия" auto-tags,
-    # so either on its own resolves to the "путешествия" envelope.
-    # Keep both rules so a manual tag-only classification (without
-    # attaching an event) still routes to the right envelope.
-    ("отпуск", "путешествия"),
-    ("путешествия", "путешествия"),
-    ("релокация", "релокация"),
-    ("дача", "дача"),
-    ("профессиональное", "профессиональное"),
-]
-
-
-# Per-category envelope overrides. Emitted only for categories whose
-# Конверт is not the resolver's default blank. ``Расходы`` is left as
-# ``WILDCARD`` because the "no rule matched" fallback in both
-# ``resolve_projection`` (sheet_mapping.py) and
-# ``logging_projection`` (db.py) already substitutes the
-# category's canonical name — so a literal ``cname`` here would just
-# be noise duplicating a fallback that is exercised by tests.
-_CATEGORY_ENVELOPES: dict[str, str] = {
-    "гигиена": "гигиена",
-    "ЗОЖ": "ЗОЖ",
-}
-
-
-def _default_template_rows(
-    category_names: list[str],
-    *,
-    active_tag_names: set[str] | None = None,
-) -> list[list[str]]:
-    """Produce the body rows for the default map tab, in evaluation order.
-
-    1. Generic tag → envelope rules (category=*, event=*, Расходы=*).
-       Rules referencing a tag name not in ``active_tag_names`` are
-       dropped with a WARN — a rename in the catalog without a
-       corresponding ``_TAG_RULES`` update would otherwise emit a
-       template that trips ``MapTabError`` on first read.
-    2. Per-category envelope overrides, *one row per entry in*
-       ``_CATEGORY_ENVELOPES``: Расходы stays ``*`` (the resolver falls
-       back to ``category.name``), Конверт takes the override value.
-       Pure identity rows (Расходы = category, Конверт = ``*``) are
-       deliberately not emitted — they would be indistinguishable from
-       the resolver's no-rule-matched fallback and only bloat the tab.
-
-    ``active_tag_names`` defaults to "skip filtering" so call sites
-    that only have category names (tests, older call sites) keep
-    working; callers that have the active catalog handy pass it in
-    to get the filtered template.
-
-    ``category_names`` is consulted only to filter
-    ``_CATEGORY_ENVELOPES`` against the active catalog: an override
-    for a category that is no longer active is dropped with a WARN
-    rather than emitted (the parser would reject it as an unknown
-    category name anyway).
-    """
-    rows: list[list[str]] = []
-    for tag, envelope in _TAG_RULES:
-        if active_tag_names is not None and tag not in active_tag_names:
-            logger.warning(
-                "ensure_default_map_tab: skipping tag rule %r -> %r "
-                "because the tag is not in the active catalog; "
-                "update sheet_mapping._TAG_RULES after renaming tags",
-                tag,
-                envelope,
-            )
-            continue
-        rows.append([WILDCARD, WILDCARD, tag, WILDCARD, envelope])
-    active_category_names = set(category_names)
-    for cname, envelope in _CATEGORY_ENVELOPES.items():
-        if cname not in active_category_names:
-            logger.warning(
-                "ensure_default_map_tab: skipping envelope override %r -> %r "
-                "because the category is not in the active catalog; "
-                "update sheet_mapping._CATEGORY_ENVELOPES after renaming categories",
-                cname,
-                envelope,
-            )
-            continue
-        rows.append([cname, WILDCARD, WILDCARD, WILDCARD, envelope])
-    return rows
-
-
 def ensure_default_map_tab() -> None:
-    """Create the ``map`` worksheet tab with a default template if missing.
+    """Create the ``map`` worksheet tab with an empty header if missing.
 
     Idempotent: a second call dry-runs the existing tab against the
     current active catalog and WARN-logs any stale references rather
@@ -582,28 +491,12 @@ def ensure_default_map_tab() -> None:
             _warn_if_existing_map_tab_is_stale(existing_ws, con)
         return
 
-    with storage.connection() as con:
-        cat_rows = con.execute(
-            "SELECT c.name FROM categories c"  # noqa: S608
-            " JOIN category_groups g ON g.id = c.group_id"
-            f" WHERE {VISIBLE_CATEGORY_PREDICATE}"
-            " ORDER BY g.sort_order, c.name",
-        ).fetchall()
-        tag_rows = con.execute(
-            "SELECT name FROM tags WHERE is_active",
-        ).fetchall()
-
-    category_names = [str(r[0]) for r in cat_rows]
-    active_tag_names = {str(r[0]) for r in tag_rows}
-    body = _default_template_rows(category_names, active_tag_names=active_tag_names)
-    values = [MAP_TAB_HEADER, *body]
-
     ws = sh.add_worksheet(
         title=settings.sheet_mapping_tab_name,
-        rows=max(len(values) + 10, 50),
+        rows=50,
         cols=len(MAP_TAB_HEADER),
     )
-    ws.update(range_name="A1", values=values)
+    ws.update(range_name="A1", values=[MAP_TAB_HEADER])
 
     try:
         ws.columns_auto_resize(0, len(MAP_TAB_HEADER) - 1)
@@ -619,13 +512,9 @@ def ensure_default_map_tab() -> None:
         )
 
     logger.info(
-        "ensure_default_map_tab: created %r with %d rows "
-        "(%d tag rules + %d category rules) — review before relying on "
-        "runtime logging",
+        "ensure_default_map_tab: created %r with header row only — "
+        "add mapping rules before relying on runtime logging",
         settings.sheet_mapping_tab_name,
-        len(body),
-        len(_TAG_RULES),
-        len(category_names),
     )
 
 

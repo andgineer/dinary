@@ -262,16 +262,16 @@ class TestMigration0006CategoryTemplates:
         con = _connect(fresh_db)
         try:
             con.execute(
-                "INSERT INTO category_groups (name, sort_order, code) VALUES ('Группа', 1, 'a')",
+                "INSERT INTO category_groups (name, sort_order, code) VALUES ('Group', 1, 'a')",
             )
             con.execute(
-                "INSERT INTO category_groups (name, sort_order, code) VALUES ('Группа', 2, 'b')",
+                "INSERT INTO category_groups (name, sort_order, code) VALUES ('Group', 2, 'b')",
             )
             con.execute(
-                "INSERT INTO categories (name, code) VALUES ('Категория', 'c1')",
+                "INSERT INTO categories (name, code) VALUES ('Category', 'c1')",
             )
             con.execute(
-                "INSERT INTO categories (name, code) VALUES ('Категория', 'c2')",
+                "INSERT INTO categories (name, code) VALUES ('Category', 'c2')",
             )
         finally:
             con.close()

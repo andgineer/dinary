@@ -39,34 +39,34 @@ def populated_catalog(fresh_db):
             " VALUES (1, 'Food', 1, 1)",
         )
         con.execute(
-            "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'еда', 1, 1)",
+            "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'food', 1, 1)",
         )
         con.execute(
-            "INSERT INTO categories (id, name, group_id, is_active) VALUES (2, 'кафе', 1, 1)",
+            "INSERT INTO categories (id, name, group_id, is_active) VALUES (2, 'cafe', 1, 1)",
         )
         con.execute(
             "INSERT INTO events (id, name, date_from, date_to,"
             " auto_attach_enabled, is_active)"
-            " VALUES (10, 'отпуск-2026', '2026-01-01', '2026-12-31', 1, 1)",
+            " VALUES (10, 'vacation-2026', '2026-01-01', '2026-12-31', 1, 1)",
         )
-        con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'собака', 1)")
+        con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'dog', 1)")
         con.execute(
-            "INSERT INTO tags (id, name, is_active) VALUES (2, 'релокация', 1)",
+            "INSERT INTO tags (id, name, is_active) VALUES (2, 'relocation', 1)",
         )
         con.execute(
             "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
-            " category_id, event_id) VALUES (1, 0, 'еда', 'собака', 1, NULL)",
+            " category_id, event_id) VALUES (1, 0, 'food', 'dog', 1, NULL)",
         )
         con.execute(
             "INSERT INTO import_mapping_tags (mapping_id, tag_id) VALUES (1, 1)",
         )
         con.execute(
             "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
-            " category_id, event_id) VALUES (2, 0, 'кафе', 'путешествия', 2, 10)",
+            " category_id, event_id) VALUES (2, 0, 'cafe', 'travel', 2, 10)",
         )
         con.execute(
             "INSERT INTO import_mapping (id, year, sheet_category, sheet_group,"
-            " category_id, event_id) VALUES (3, 2026, 'еда', 'собака', 2, 10)",
+            " category_id, event_id) VALUES (3, 2026, 'food', 'dog', 2, 10)",
         )
         con.commit()
     finally:

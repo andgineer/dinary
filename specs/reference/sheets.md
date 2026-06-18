@@ -1,18 +1,8 @@
 # Google Sheets Integration
 
-## Two distinct roles
-
-The sheets layer serves two separate use cases with different requirements:
-
-- **Historical import** — one-time destructive bootstrap. Reads a year's worth of
-  expenses from a source spreadsheet and overwrites the corresponding DB rows.
-  Does not enqueue sheet-logging jobs because the rows are already in the sheet.
-- **Runtime sheet logging** — ongoing append-only drain. Writes new expenses to the
-  spreadsheet as they are classified. Enabled when the logging spreadsheet is
-  configured.
-
-These paths share sheet-reading utilities but have separate concerns around
-idempotency and destructiveness.
+The sheets layer provides runtime sheet logging — an ongoing append-only drain that
+writes new expenses to the spreadsheet as they are classified. Enabled when the
+logging spreadsheet is configured.
 
 ## Year-aware row matching
 
@@ -65,4 +55,4 @@ The append path is at-least-once: a Sheets API call may succeed on the server ev
 
 **Last-key-only**: each successful append overwrites the previous J value with the new UUID. The cell size stays bounded (one UUID regardless of how many expenses share the row) at the cost of not recovering the full contributor list from the sheet — the SQLite ledger is the source of truth for that.
 
-A queue row whose expense has `client_expense_id = NULL` is marked `poisoned` rather than falling back to a synthetic marker. Writing a non-UUID value into J would corrupt duplicate detection for all subsequent appends to the same row. Bootstrap-imported rows carry `NULL` but are never enqueued for logging, so a `NULL` UUID in the drain is always a producer bug, not a normal state. See `src/dinary/background/sheet_logging/` for the implementation.
+A queue row whose expense has `client_expense_id = NULL` is marked `poisoned` rather than falling back to a synthetic marker. Writing a non-UUID value into J would corrupt duplicate detection for all subsequent appends to the same row. A `NULL` UUID in the drain is always a producer bug, not a normal state. See `src/dinary/background/sheet_logging/` for the implementation.

@@ -56,8 +56,7 @@ def get_catalog_version(con: sqlite3.Connection) -> int:
 def set_catalog_version(con: sqlite3.Connection, value: int) -> None:
     """Public write for ``app_metadata.catalog_version``.
 
-    Callers: ``seed_config._bump_catalog_version`` (the ``inv import-catalog``
-    path), ``catalog_writer._commit_with_bump`` (the admin-API path),
+    Callers: ``catalog_writer._commit_with_bump`` (the admin-API path),
     ``category_apply.apply_template``, and the category-ops writers below
     (``activate_category``, ``hide_category``, ``unhide_category``,
     ``move_category``, ``create_category``, ``rename_category``). Every other

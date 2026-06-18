@@ -41,12 +41,12 @@ class TestLoggingProjection:
         """Seed one category with three ``sheet_mapping`` rows exercising
         the "first non-``*`` wins per column" resolver:
 
-        row_order=1: category=еда, tag ``tag1`` required, Расходы=``*``,
-                     Конверт=``WithTag``
-        row_order=2: category=еда, event=``evt``, Расходы=``*``,
-                     Конверт=``WithEvt``
-        row_order=3: category=еда (catch-all), Расходы=``CatA``,
-                     Конверт=``*``
+        row_order=1: category=food, tag ``tag1`` required, sheet_category=``*``,
+                     sheet_group=``WithTag``
+        row_order=2: category=food, event=``evt``, sheet_category=``*``,
+                     sheet_group=``WithEvt``
+        row_order=3: category=food (catch-all), sheet_category=``CatA``,
+                     sheet_group=``*``
         """
         con = storage.get_connection()
         try:
@@ -54,7 +54,7 @@ class TestLoggingProjection:
                 "INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'g', 1)",
             )
             con.execute(
-                "INSERT INTO categories (id, name, group_id) VALUES (1, 'еда', 1)",
+                "INSERT INTO categories (id, name, group_id) VALUES (1, 'food', 1)",
             )
             con.execute("INSERT INTO tags (id, name) VALUES (1, 'tag1')")
             con.execute("INSERT INTO tags (id, name) VALUES (2, 'tag2')")
@@ -79,11 +79,11 @@ class TestLoggingProjection:
         finally:
             con.close()
 
-    def test_event_row_wins_конверт(self, logging_setup):
+    def test_event_row_wins_sheet_group(self, logging_setup):
         con = storage.get_connection()
         try:
             # No tags: row_order=1 skipped; row_order=2 matches on event_id
-            # and fills Конверт=WithEvt; row_order=3 supplies Расходы=CatA.
+            # and fills sheet_group=WithEvt; row_order=3 supplies sheet_category=CatA.
             result = logging_projection(
                 con,
                 category_id=1,
@@ -94,11 +94,11 @@ class TestLoggingProjection:
         finally:
             con.close()
 
-    def test_tag_row_wins_конверт(self, logging_setup):
+    def test_tag_row_wins_sheet_group(self, logging_setup):
         con = storage.get_connection()
         try:
-            # No event, tag 'tag1' present: row_order=1 fills Конверт=WithTag;
-            # row_order=3 supplies Расходы=CatA.
+            # No event, tag 'tag1' present: row_order=1 fills sheet_group=WithTag;
+            # row_order=3 supplies sheet_category=CatA.
             result = logging_projection(
                 con,
                 category_id=1,
@@ -113,7 +113,7 @@ class TestLoggingProjection:
         con = storage.get_connection()
         try:
             # tag 'tag2' is not required by any row, no event: rows 1 and 2
-            # are skipped, row 3 fills Расходы=CatA but leaves Конверт as
+            # are skipped, row 3 fills sheet_category=CatA but leaves sheet_group as
             # ``*``. The resolver keeps the partial match and fills the
             # missing ``sheet_group`` with the empty-string fallback —
             # dropping CatA would be strictly worse since we already
@@ -149,8 +149,8 @@ class TestLoggingProjection:
         try:
             # Same shape as ``test_partial_resolution_keeps_resolved_column``
             # but with no tags at all; rows 1 and 2 require tag/event and
-            # are skipped, row 3 assigns Расходы and leaves Конверт as
-            # ``*``. The resolver fills Конверт with the empty-string
+            # are skipped, row 3 assigns sheet_category and leaves sheet_group as
+            # ``*``. The resolver fills sheet_group with the empty-string
             # fallback while keeping the explicit ``CatA`` mapping.
             result = logging_projection(
                 con,
@@ -175,7 +175,7 @@ class TestLoggingProjection:
                 "INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'g', 1)",
             )
             con.execute(
-                "INSERT INTO categories (id, name, group_id) VALUES (1, 'еда', 1)",
+                "INSERT INTO categories (id, name, group_id) VALUES (1, 'food', 1)",
             )
             con.commit()
             assert logging_projection(
@@ -183,11 +183,11 @@ class TestLoggingProjection:
                 category_id=1,
                 event_id=None,
                 tag_ids=[],
-            ) == ("еда", "")
+            ) == ("food", "")
         finally:
             con.close()
 
-    def test_both_columns_resolved_when_wildcard_row_fills_конверт(self, fresh_db):
+    def test_both_columns_resolved_when_wildcard_row_fills_sheet_group(self, fresh_db):
         """A dedicated envelope-fill row + a category row together resolve
         both columns and produce a non-None result."""
         con = storage.get_connection()
@@ -196,7 +196,7 @@ class TestLoggingProjection:
                 "INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'g', 1)",
             )
             con.execute(
-                "INSERT INTO categories (id, name, group_id) VALUES (1, 'еда', 1)",
+                "INSERT INTO categories (id, name, group_id) VALUES (1, 'food', 1)",
             )
             con.execute(
                 "INSERT INTO sheet_mapping (row_order, category_id, event_id,"
@@ -225,11 +225,11 @@ class TestLoggingProjection:
                 "INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'g', 1)",
             )
             con.execute(
-                "INSERT INTO categories (id, name, group_id) VALUES (1, 'еда', 1)",
+                "INSERT INTO categories (id, name, group_id) VALUES (1, 'food', 1)",
             )
             con.execute(
                 "INSERT INTO events (id, name, date_from, date_to,"
-                " auto_attach_enabled) VALUES (1, 'отпуск-2026',"
+                " auto_attach_enabled) VALUES (1, 'vacation-2026',"
                 " '2026-01-01', '2026-04-20', 1)",
             )
             # Row 1 (specific event) must win over the wildcard row for

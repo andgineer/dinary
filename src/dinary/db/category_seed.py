@@ -8,13 +8,8 @@
 factory codes that dropped out of the vocabulary. ``u_``-prefixed
 (user-created) codes are never touched.
 
-``migrate_personal_catalog`` is a one-off for the pre-existing personal DB:
-it backfills ``code`` onto categories/groups that predate this schema (by
-name, via the hardcoded maps below), then runs the normal seed and applies
-the ``active`` template in Russian.
-
 ``bootstrap_categories`` is the single entry point, called on every app
-boot, that picks between the two.
+boot, to seed / reconcile the factory vocabulary and templates.
 """
 
 import json
@@ -23,7 +18,6 @@ import sqlite3
 from dinary.category_templates import loader
 from dinary.category_templates.loader import Template
 from dinary.db import storage
-from dinary.db.category_apply import apply_template
 
 _DEFAULT_LANG = "ru"
 
@@ -31,61 +25,6 @@ _DEFAULT_LANG = "ru"
 # first "so almost anyone finds a fit fast". Not load_templates()'s
 # alphabetical-by-filename order, which is a parsing convenience only.
 TEMPLATE_SORT_ORDER = {"simple": 0, "active": 1, "family": 2, "freelancer": 3}
-
-# Pre-existing personal DB: category name -> factory code (db/category_seed.py
-# only touches non-u_ rows, so this map never collides with user categories).
-CATEGORY_MAP = {
-    "алкоголь": "alcohol",
-    "деликатесы": "delicacies",
-    "еда": "groceries",
-    "фрукты": "fruit",
-    "кафе": "cafe",
-    "интернет": "internet",
-    "коммунальные": "utilities",
-    "мобильник": "mobile",
-    "сервисы": "subscriptions",
-    "аренда": "rent",
-    "бытовая техника": "appliances",
-    "мебель": "furniture",
-    "ремонт": "repairs",
-    "хозтовары": "household_goods",
-    "обучение": "education",
-    "продуктивность": "productivity",
-    "ЗОЖ": "wellness",
-    "гигиена": "hygiene",
-    "лекарства": "pharmacy",
-    "медицина": "doctor",
-    "карманные": "pocket_money",
-    "одежда": "clothing",
-    "подарки": "gifts",
-    "велосипед": "cycling",
-    "лыжи": "skiing",
-    "спорт": "sport",
-    "машина": "car",
-    "топливо": "fuel",
-    "транспорт": "transit",
-    "гаджеты": "gadgets",
-    "инструменты": "tools",
-    "развлечения": "entertainment",
-    "электроника": "electronics",
-    "налог": "tax",
-    "штрафы": "fines",
-}
-
-# Pre-existing personal DB: group name -> factory group code.
-GROUP_MAP = {
-    "Государство": "government",
-    "Еда": "food",
-    "ЖКХ и сервисы": "utilities",
-    "Жильё": "housing",
-    "Знания и продуктивность": "growth",
-    "Красота и ЗОЖ": "beauty",
-    "Медицина": "health",
-    "Семья и личное": "personal",
-    "Спорт": "sport",
-    "Транспорт": "transport",
-    "Хобби и отдых": "hobbies",
-}
 
 
 def seed_category_templates(con: sqlite3.Connection) -> None:
@@ -218,60 +157,6 @@ def _retire_vanished(
     con.execute(f"DELETE FROM category_templates WHERE code IN ({placeholders})", vanished)  # noqa: S608
 
 
-def migrate_personal_catalog(con: sqlite3.Connection) -> None:
-    """One-off: backfill factory codes onto the pre-existing personal catalog.
-
-    Guarded: returns immediately if any ``categories.code`` is already set
-    (``bootstrap_categories`` itself never reaches this on a re-run, since by
-    then every row has a code).
-    """
-    already_migrated = con.execute(
-        "SELECT 1 FROM categories WHERE code IS NOT NULL LIMIT 1",
-    ).fetchone()
-    if already_migrated is not None:
-        return
-
-    with storage.transaction(con):
-        _backfill_category_codes(con)
-        _backfill_group_codes(con)
-
-    seed_category_templates(con)
-    apply_template(con, "active", "ru")
-
-
-def _backfill_category_codes(con: sqlite3.Connection) -> None:
-    rows = con.execute("SELECT id, name FROM categories WHERE code IS NULL").fetchall()
-    unknown = sorted({name for _id, name in rows if name not in CATEGORY_MAP})
-    if unknown:
-        msg = f"migrate_personal_catalog: unrecognised category names: {unknown}"
-        raise ValueError(msg)
-    for cat_id, name in rows:
-        con.execute("UPDATE categories SET code = ? WHERE id = ?", [CATEGORY_MAP[name], cat_id])
-
-
-def _backfill_group_codes(con: sqlite3.Connection) -> None:
-    rows = con.execute("SELECT id, name FROM category_groups WHERE code IS NULL").fetchall()
-    unknown = sorted({name for _id, name in rows if name not in GROUP_MAP})
-    if unknown:
-        msg = f"migrate_personal_catalog: unrecognised group names: {unknown}"
-        raise ValueError(msg)
-    for group_id, name in rows:
-        con.execute(
-            "UPDATE category_groups SET code = ? WHERE id = ?",
-            [GROUP_MAP[name], group_id],
-        )
-
-
 def bootstrap_categories(con: sqlite3.Connection) -> None:
-    """Select fresh-seed / reconcile vs. one-off personal migration.
-
-    A non-empty ``categories`` table with at least one ``NULL`` code means
-    the pre-existing personal DB; everything else (empty, or every row
-    already coded) goes through the normal seed/reconcile path.
-    """
-    has_rows = con.execute("SELECT 1 FROM categories LIMIT 1").fetchone()
-    has_null_code = con.execute("SELECT 1 FROM categories WHERE code IS NULL LIMIT 1").fetchone()
-    if has_rows and has_null_code:
-        migrate_personal_catalog(con)
-    else:
-        seed_category_templates(con)
+    """Seed / reconcile the factory vocabulary and templates on every app boot."""
+    seed_category_templates(con)

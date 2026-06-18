@@ -111,7 +111,7 @@ class TestSheetMapping:
     def test_year_specific_overrides_default(self, populated_catalog):
         con = storage.get_connection()
         try:
-            row = resolve_mapping_for_year(con, "еда", "собака", 2026)
+            row = resolve_mapping_for_year(con, "food", "dog", 2026)
             assert row is not None
             assert row.category_id == 2
             assert row.event_id == 10
@@ -121,7 +121,7 @@ class TestSheetMapping:
     def test_year_falls_back_to_zero(self, populated_catalog):
         con = storage.get_connection()
         try:
-            row = resolve_mapping_for_year(con, "еда", "собака", 2024)
+            row = resolve_mapping_for_year(con, "food", "dog", 2024)
             assert row is not None
             assert row.category_id == 1
         finally:
@@ -146,10 +146,10 @@ class TestGetCategoryName:
                 "INSERT INTO category_groups (id, name, sort_order) VALUES (1, 'g', 1)",
             )
             con.execute(
-                "INSERT INTO categories (id, name, group_id) VALUES (1, 'еда', 1)",
+                "INSERT INTO categories (id, name, group_id) VALUES (1, 'food', 1)",
             )
             con.commit()
-            assert get_category_name(con, 1) == "еда"
+            assert get_category_name(con, 1) == "food"
         finally:
             con.close()
 

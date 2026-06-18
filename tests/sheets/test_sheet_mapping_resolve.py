@@ -34,7 +34,7 @@ from _sheet_mapping_helpers import (  # noqa: F401  (autouse + helpers)
 @allure.feature("Sheet mapping")
 class TestResolveProjection:
     def test_first_non_star_wins_per_column_independently(self):
-        """Column A sets Расходы; column B sets Конверт; the resolver
+        """Column A sets sheet_category; column B sets envelope; the resolver
         must take the first non-``*`` for each column independently
         even when they come from different rows."""
         rows = [
@@ -44,7 +44,7 @@ class TestResolveProjection:
                 event_id=None,
                 tag_ids=(3,),
                 sheet_category=sheet_mapping.WILDCARD,
-                sheet_group="путешествия",
+                sheet_group="travel",
             ),
             sheet_mapping.MapRow(
                 row_order=2,
@@ -60,9 +60,9 @@ class TestResolveProjection:
             category_id=1,
             event_id=None,
             tag_ids={3},
-            default_sheet_category="еда",
+            default_sheet_category="food",
         )
-        assert result == ("Food", "путешествия")
+        assert result == ("Food", "travel")
 
     def test_falls_back_to_default_when_no_row_decides(self):
         result = sheet_mapping.resolve_projection(
@@ -70,9 +70,9 @@ class TestResolveProjection:
             category_id=1,
             event_id=None,
             tag_ids=set(),
-            default_sheet_category="еда",
+            default_sheet_category="food",
         )
-        assert result == ("еда", "")
+        assert result == ("food", "")
 
     def test_category_mismatch_skips_row(self):
         rows = [
@@ -90,13 +90,13 @@ class TestResolveProjection:
             category_id=1,
             event_id=None,
             tag_ids=set(),
-            default_sheet_category="еда",
+            default_sheet_category="food",
         )
-        assert result == ("еда", "")
+        assert result == ("food", "")
 
     def test_tag_subset_required(self):
-        """Row requires both ``собака`` AND ``аня``; an expense with
-        only ``собака`` must not match — the resolver falls through
+        """Row requires both ``dog`` AND ``anna``; an expense with
+        only ``dog`` must not match — the resolver falls through
         to the default."""
         rows = [
             sheet_mapping.MapRow(
@@ -113,9 +113,9 @@ class TestResolveProjection:
             category_id=1,
             event_id=None,
             tag_ids={1},
-            default_sheet_category="еда",
+            default_sheet_category="food",
         )
-        assert result == ("еда", "")
+        assert result == ("food", "")
 
 
 @allure.epic("Sheets Sync")
@@ -124,7 +124,7 @@ class TestAtomicSwap:
     def test_swap_replaces_sheet_mapping(self):
         cats, events, tags = _catalog()
         rows = sheet_mapping.parse_rows(
-            [["еда", "*", "*", "Food", "Ess"]],
+            [["food", "*", "*", "Food", "Ess"]],
             cat_id_by_name=cats,
             event_id_by_name=events,
             tag_id_by_name=tags,
@@ -143,13 +143,13 @@ class TestAtomicSwap:
     def test_swap_wipes_previous_rows(self):
         cats, events, tags = _catalog()
         first = sheet_mapping.parse_rows(
-            [["еда", "*", "*", "Food", "*"]],
+            [["food", "*", "*", "Food", "*"]],
             cat_id_by_name=cats,
             event_id_by_name=events,
             tag_id_by_name=tags,
         )
         second = sheet_mapping.parse_rows(
-            [["машина", "*", "*", "Car", "*"]],
+            [["car", "*", "*", "Car", "*"]],
             cat_id_by_name=cats,
             event_id_by_name=events,
             tag_id_by_name=tags,
@@ -174,13 +174,13 @@ class TestAtomicSwap:
         """
         cats, events, tags = _catalog()
         first = sheet_mapping.parse_rows(
-            [["еда", "*", "собака, аня", "Food", "dog+kid"]],
+            [["food", "*", "dog, anna", "Food", "dog+kid"]],
             cat_id_by_name=cats,
             event_id_by_name=events,
             tag_id_by_name=tags,
         )
         second = sheet_mapping.parse_rows(
-            [["машина", "*", "путешествия", "Car", "путешествия"]],
+            [["car", "*", "travel", "Car", "travel"]],
             cat_id_by_name=cats,
             event_id_by_name=events,
             tag_id_by_name=tags,
@@ -203,7 +203,7 @@ class TestAtomicSwap:
         finally:
             con.close()
         assert [tuple(r) for r in first_tags] == [(1, 1), (1, 2)]
-        assert [tuple(r) for r in rows] == [(2, "Car", "путешествия")]
+        assert [tuple(r) for r in rows] == [(2, "Car", "travel")]
         assert [tuple(r) for r in new_tags] == [(1, 3)]
 
 
@@ -211,10 +211,10 @@ class TestAtomicSwap:
 @allure.feature("Sheet mapping")
 class TestLoadCatalog:
     """``_load_catalog`` must include inactive categories / events /
-    tags. ``is_active = FALSE`` is a "hide from the ручной пикер"
+    tags. ``is_active = FALSE`` is a "hide from the picker"
     affordance and must not break map-tab reload — otherwise the
-    operator hiding a single auto-tag (e.g. "отпуск") wedges the
-    whole reload pipeline with a ``MapTabError`` on every tick.
+    operator hiding a single auto-tag wedges the whole reload
+    pipeline with a ``MapTabError`` on every tick.
     """
 
     def test_loads_inactive_tags(self):
@@ -224,7 +224,7 @@ class TestLoadCatalog:
             _, _, tag_id_by_name = sheet_mapping._load_catalog(con)
         finally:
             con.close()
-        assert tag_id_by_name.get("путешествия") == 3
+        assert tag_id_by_name.get("travel") == 3
 
     def test_loads_inactive_categories(self):
         con = storage.get_connection()
@@ -233,7 +233,7 @@ class TestLoadCatalog:
             cat_id_by_name, _, _ = sheet_mapping._load_catalog(con)
         finally:
             con.close()
-        assert cat_id_by_name.get("машина") == 2
+        assert cat_id_by_name.get("car") == 2
 
     def test_loads_inactive_events(self):
         con = storage.get_connection()
@@ -242,14 +242,14 @@ class TestLoadCatalog:
             _, event_id_by_name, _ = sheet_mapping._load_catalog(con)
         finally:
             con.close()
-        assert event_id_by_name.get("отпуск-2026") == 1
+        assert event_id_by_name.get("vacation-2026") == 1
 
     def test_parse_rows_accepts_inactive_tag_reference(self):
         """End-to-end: when the catalog loader picks up an inactive tag,
         ``parse_rows`` must accept a map-tab row that references it.
         This pins the exact user-reported failure mode — a map-tab
-        row ``*,*,отпуск,*,путешествия`` surviving the operator
-        deactivating "отпуск" via the PWA "Управлять" list.
+        row ``*,*,travel,*,travel`` surviving the operator
+        deactivating "travel" via the PWA catalog manager.
         """
         con = storage.get_connection()
         try:
@@ -258,7 +258,7 @@ class TestLoadCatalog:
         finally:
             con.close()
         rows = sheet_mapping.parse_rows(
-            [["*", "*", "путешествия", "*", "путешествия"]],
+            [["*", "*", "travel", "*", "travel"]],
             cat_id_by_name=cats,
             event_id_by_name=events,
             tag_id_by_name=tags,

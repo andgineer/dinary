@@ -92,13 +92,13 @@ class TestReactivatePreserves:
             con.execute(
                 "INSERT INTO events"
                 " (id, name, date_from, date_to, auto_attach_enabled, is_active)"
-                " VALUES (1, 'отпуск-2024', '2024-06-01', '2024-06-30', TRUE, FALSE)",
+                " VALUES (1, 'vacation-2024', '2024-06-01', '2024-06-30', TRUE, FALSE)",
             )
             # Re-add with "default" dates; existing dates must not be
             # overwritten because the caller didn't explicitly PATCH them.
             result = add_event(
                 con,
-                name="отпуск-2024",
+                name="vacation-2024",
                 date_from=date(2026, 1, 1),
                 date_to=date(2026, 1, 1),
                 auto_attach_enabled=False,
@@ -151,12 +151,12 @@ class TestIntegrityRules:
             con.execute(
                 "INSERT INTO events"
                 " (id, name, date_from, date_to, auto_attach_enabled, is_active)"
-                " VALUES (1, 'отпуск-2024', '2024-06-01', '2024-06-30', FALSE, FALSE)",
+                " VALUES (1, 'vacation-2024', '2024-06-01', '2024-06-30', FALSE, FALSE)",
             )
             with pytest.raises(CatalogWriteError):
                 add_event(
                     con,
-                    name="отпуск-2024",
+                    name="vacation-2024",
                     date_from=date(2030, 1, 2),
                     date_to=date(2030, 1, 1),
                 )

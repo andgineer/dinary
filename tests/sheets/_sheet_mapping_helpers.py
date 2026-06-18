@@ -28,19 +28,19 @@ def db(tmp_path, monkeypatch, blank_db):
             " VALUES (1, 'g', 1, TRUE)",
         )
         con.execute(
-            "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'еда', 1, TRUE)",
+            "INSERT INTO categories (id, name, group_id, is_active) VALUES (1, 'food', 1, TRUE)",
         )
         con.execute(
-            "INSERT INTO categories (id, name, group_id, is_active) VALUES (2, 'машина', 1, TRUE)",
+            "INSERT INTO categories (id, name, group_id, is_active) VALUES (2, 'car', 1, TRUE)",
         )
         con.execute(
             "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled, is_active)"
-            " VALUES (1, 'отпуск-2026', '2026-01-01', '2026-04-20', TRUE, TRUE)",
+            " VALUES (1, 'vacation-2026', '2026-01-01', '2026-04-20', TRUE, TRUE)",
         )
-        con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'собака', TRUE)")
-        con.execute("INSERT INTO tags (id, name, is_active) VALUES (2, 'аня', TRUE)")
+        con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'dog', TRUE)")
+        con.execute("INSERT INTO tags (id, name, is_active) VALUES (2, 'anna', TRUE)")
         con.execute(
-            "INSERT INTO tags (id, name, is_active) VALUES (3, 'путешествия', TRUE)",
+            "INSERT INTO tags (id, name, is_active) VALUES (3, 'travel', TRUE)",
         )
     finally:
         con.close()
@@ -48,9 +48,9 @@ def db(tmp_path, monkeypatch, blank_db):
 
 def _catalog():
     return (
-        {"еда": 1, "машина": 2},
-        {"отпуск-2026": 1},
-        {"собака": 1, "аня": 2, "путешествия": 3},
+        {"food": 1, "car": 2},
+        {"vacation-2026": 1},
+        {"dog": 1, "anna": 2, "travel": 3},
     )
 
 

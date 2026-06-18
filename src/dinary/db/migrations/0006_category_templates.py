@@ -8,8 +8,7 @@ across categories) and add ``code`` / ``is_hidden`` / ``is_retired``
 vocabulary, plus an index on ``expenses.category_id`` for the visibility
 predicate.
 
-This is a deliberate one-off, applied once against the single personal dev
-DB: ``PRAGMA foreign_keys`` is a no-op while a transaction is open (the
+``PRAGMA foreign_keys`` is a no-op while a transaction is open (the
 project's ``SQLiteBackend.begin()`` opens one with ``BEGIN IMMEDIATE`` before
 running migration steps), so this migration disables yoyo's transaction
 wrapping (``__transactional__ = False``) and manages its own

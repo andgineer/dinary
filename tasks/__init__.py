@@ -27,18 +27,6 @@ from .devtools.constants import ALLOWED_VERSION_TYPES
 from .devtools.dev import build_static, dev, pre, reqs, test, uv, ver_task_factory, version
 from .dinary_ai import install_dinary_ai, setup_dinary_ai, uninstall_dinary_ai
 from .healthcheck import healthcheck
-from .imports.import_tasks import (
-    import_budget,
-    import_budget_all,
-    import_extract_income,
-    import_income,
-    import_income_all,
-    import_report_2d_3d,
-    verify_bootstrap_import,
-    verify_bootstrap_import_all,
-    verify_income_equivalence,
-    verify_income_equivalence_all,
-)
 from .receipt import classify_receipt, reclassify_receipts
 from .reports.report_tasks import report_expenses, report_income, sql_query
 from .server import logs, restart_server, ssh, ssh_replica, status
@@ -59,12 +47,6 @@ __all__ = [
     "dev",
     "docs_task_factory",
     "healthcheck",
-    "import_budget",
-    "import_budget_all",
-    "import_extract_income",
-    "import_income",
-    "import_income_all",
-    "import_report_2d_3d",
     "install_dinary_ai",
     "logs",
     "migrate",
@@ -91,11 +73,7 @@ __all__ = [
     "uninstall_dinary_ai",
     "uv",
     "ver_task_factory",
-    "verify_bootstrap_import",
-    "verify_bootstrap_import_all",
     "verify_db",
-    "verify_income_equivalence",
-    "verify_income_equivalence_all",
     "version",
 ]
 

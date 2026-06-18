@@ -34,8 +34,8 @@ class TestReloadNowOrdering:
 
         ws = _fake_worksheet(
             [
-                ["category", "event", "tags", "Расходы", "Конверт"],
-                ["еда", "*", "*", "Food", "*"],
+                ["category", "event", "tags", "sheet_category", "envelope"],
+                ["food", "*", "*", "Food", "*"],
             ],
         )
         sh = _fake_sheet(ws)
@@ -62,8 +62,8 @@ class TestReloadNowOrdering:
 
         ws = _fake_worksheet(
             [
-                ["category", "event", "tags", "Расходы", "Конверт"],
-                ["еда", "*", "*", "Food", "*"],
+                ["category", "event", "tags", "sheet_category", "envelope"],
+                ["food", "*", "*", "Food", "*"],
             ],
         )
         sh = _fake_sheet(ws)
@@ -91,8 +91,8 @@ class TestReloadNowOrdering:
 
         ws = _fake_worksheet(
             [
-                ["category", "event", "tags", "Расходы", "Конверт"],
-                ["еда", "*", "*", "Food", "*"],
+                ["category", "event", "tags", "sheet_category", "envelope"],
+                ["food", "*", "*", "Food", "*"],
             ],
         )
         sh = _fake_sheet(ws)
@@ -123,8 +123,8 @@ class TestEnsureFresh:
 
         ws = _fake_worksheet(
             [
-                ["category", "event", "tags", "Расходы", "Конверт"],
-                ["еда", "*", "*", "Food", "*"],
+                ["category", "event", "tags", "sheet_category", "envelope"],
+                ["food", "*", "*", "Food", "*"],
             ],
         )
         sh = _fake_sheet(ws)
@@ -163,8 +163,8 @@ class TestEnsureFresh:
 
         ws = _fake_worksheet(
             [
-                ["category", "event", "tags", "Расходы", "Конверт"],
-                ["еда", "*", "*", "Food", "*"],
+                ["category", "event", "tags", "sheet_category", "envelope"],
+                ["food", "*", "*", "Food", "*"],
             ],
         )
         sh = _fake_sheet(ws)

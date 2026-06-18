@@ -59,12 +59,12 @@ class TestTagUsage:
     def test_edit_event_accepts_inactive_tag_in_auto_tags(self, fresh_db):
         """Deactivating a tag must not block writes that reference it
         via event ``auto_tags``. ``is_active=FALSE`` means "hide from the
-        ручной пикер"; the ID is still valid for auto-attach.
+        picker"; the ID is still valid for auto-attach.
         """
         con = storage.get_connection()
         try:
             _seed_minimal(con)
-            con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'отпуск', FALSE)")
+            con.execute("INSERT INTO tags (id, name, is_active) VALUES (1, 'vacation', FALSE)")
             con.execute(
                 "INSERT INTO events"
                 " (id, name, date_from, date_to, auto_attach_enabled, is_active, auto_tags)"
@@ -94,7 +94,7 @@ class TestTagUsage:
         """Soft-retiring a tag still referenced by an expense is
         allowed (matches PATCH/DELETE symmetry). The expense keeps
         its tag_id row intact; the tag simply stops appearing in the
-        ручной пикер. Event-driven auto-attach keeps working against
+        picker. Event-driven auto-attach keeps working against
         inactive tags — that's the whole point of "hide from picker,
         keep as an event auto_tags anchor".
         """

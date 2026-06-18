@@ -22,7 +22,6 @@ from tasks.ssh_utils import (
 )
 
 _DEPLOY_FILES = [
-    (".deploy/import_sources.json", f"{REMOTE_DEPLOY_DIR}/import_sources.json"),
     (".deploy/llm_providers.toml", f"{REMOTE_DEPLOY_DIR}/llm_providers.toml"),
 ]
 
@@ -188,16 +187,11 @@ def deploy(c, ref="", no_start=False):
         print(
             "=== --no-start set: code deployed, service NOT started. ===\n"
             "=== DB restore flow:                                      ===\n"
-            "===   inv restore-yadisk                            ===\n"
+            "===   inv restore-yadisk                                  ===\n"
             "===   inv restart-server                                  ===\n"
             "=== Full reset flow:                                      ===\n"
             "===   ssh $HOST 'rm -f ~/dinary/data/dinary.db*'          ===\n"
-            "===   inv restart-server          # creates schema + categories ===\n"
-            "===   inv import-budget-all --yes                          ===\n"
-            "===   inv import-income-all --yes                          ===\n"
-            "===   inv import-verify-bootstrap-all                      ===\n"
-            "===   inv import-verify-income-all                         ===\n"
-            "===   inv restart-server                                   ===",
+            "===   inv restart-server          # creates schema + categories ===",
         )
         return
 
