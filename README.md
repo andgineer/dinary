@@ -6,9 +6,6 @@
 |--------------------------------------------------------------- | -------: | -------: | ------: | --------: |
 | src/dinary/\_\_about\_\_.py                                    |        1 |        0 |    100% |           |
 | src/dinary/adapters/exchange\_rates.py                         |       43 |        1 |     98% |        41 |
-| src/dinary/adapters/llm\_chat.py                               |       76 |        6 |     92% |89-90, 140-142, 164 |
-| src/dinary/adapters/llm\_storage.py                            |      137 |       18 |     87% |74-76, 114-117, 174, 203-206, 219, 227, 231, 254, 258-259 |
-| src/dinary/adapters/llmbroker.py                               |      112 |        8 |     93% |110-111, 244-245, 257-260 |
 | src/dinary/adapters/nbp.py                                     |       37 |        0 |    100% |           |
 | src/dinary/adapters/nbs.py                                     |       47 |        0 |    100% |           |
 | src/dinary/adapters/rate\_helpers.py                           |       27 |        0 |    100% |           |
@@ -26,7 +23,7 @@
 | src/dinary/api/controllers/expense\_corrections.py             |       70 |        1 |     99% |        94 |
 | src/dinary/api/controllers/expenses.py                         |      172 |       17 |     90% |231-232, 267-277, 324, 415-417, 430-432 |
 | src/dinary/api/controllers/income.py                           |       59 |        2 |     97% |   135-136 |
-| src/dinary/api/controllers/llm.py                              |       69 |        6 |     91% |86-87, 89-90, 95-96 |
+| src/dinary/api/controllers/llm.py                              |       42 |        0 |    100% |           |
 | src/dinary/api/controllers/qr\_parser.py                       |       23 |        0 |    100% |           |
 | src/dinary/api/controllers/receipt\_queue.py                   |       68 |        3 |     96% |99, 122, 196 |
 | src/dinary/api/controllers/rules.py                            |       54 |        2 |     96% |     41-42 |
@@ -35,15 +32,15 @@
 | src/dinary/api/expenses.py                                     |       23 |        0 |    100% |           |
 | src/dinary/api/http\_errors.py                                 |        9 |        0 |    100% |           |
 | src/dinary/api/income.py                                       |       26 |        2 |     92% |    41, 53 |
-| src/dinary/api/llm.py                                          |       20 |        0 |    100% |           |
+| src/dinary/api/llm.py                                          |       21 |        0 |    100% |           |
 | src/dinary/api/qr.py                                           |       17 |        6 |     65% |     26-31 |
 | src/dinary/api/receipts.py                                     |       57 |        5 |     91% |   107-112 |
 | src/dinary/api/rules.py                                        |       18 |        0 |    100% |           |
 | src/dinary/background/classification/item\_normalizer.py       |       13 |        0 |    100% |           |
-| src/dinary/background/classification/persist.py                |       82 |        1 |     99% |       153 |
-| src/dinary/background/classification/receipt\_classifier.py    |       55 |        0 |    100% |           |
+| src/dinary/background/classification/persist.py                |       81 |        1 |     99% |       152 |
+| src/dinary/background/classification/receipt\_classifier.py    |       57 |        0 |    100% |           |
 | src/dinary/background/classification/store\_resolver.py        |       31 |        1 |     97% |        68 |
-| src/dinary/background/classification/task.py                   |      258 |       19 |     93% |80, 133-134, 140-147, 215-229, 332, 381, 529 |
+| src/dinary/background/classification/task.py                   |      259 |       19 |     93% |80, 133-134, 140-147, 215-229, 332, 381, 530 |
 | src/dinary/background/rate\_prefetch/task.py                   |       51 |        2 |     96% |   81, 109 |
 | src/dinary/background/sheet\_logging/income\_sheet\_logging.py |      176 |       44 |     75% |58-63, 89-90, 97-98, 106-108, 119, 152, 165-168, 176-179, 204-205, 217, 234, 240-242, 270-277, 289, 293, 317-325 |
 | src/dinary/background/sheet\_logging/logging\_jobs.py          |       63 |        9 |     86% |88-89, 105-111 |
@@ -61,23 +58,38 @@
 | src/dinary/db/expenses.py                                      |      130 |       12 |     91% |126, 168, 201-208, 227-233, 316, 420, 462 |
 | src/dinary/db/income.py                                        |       55 |        5 |     91% |103, 117-124 |
 | src/dinary/db/migrations/0006\_category\_templates.py          |       35 |        5 |     86% |118-119, 122-124 |
-| src/dinary/db/receipts.py                                      |       94 |        3 |     97% |   119-121 |
+| src/dinary/db/migrations/0007\_drop\_legacy\_llmbroker.py      |        3 |        0 |    100% |           |
+| src/dinary/db/receipts.py                                      |       92 |        3 |     97% |   119-121 |
 | src/dinary/db/sql\_loader.py                                   |       31 |        0 |    100% |           |
 | src/dinary/db/storage.py                                       |      129 |        7 |     95% |72, 266-269, 277-283 |
-| src/dinary/main.py                                             |       91 |        8 |     91% |45-47, 124, 130, 136, 146, 156 |
+| src/dinary/main.py                                             |       96 |        8 |     92% |47-49, 132, 138, 144, 154, 164 |
 | src/dinary/sheets/sheet\_mapping.py                            |      224 |       47 |     79% |239, 314-316, 343-344, 351-357, 404, 407-419, 433-434, 444-462, 480-514, 538, 549-554, 559-560 |
 | src/dinary/sheets/sheets.py                                    |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
 | src/dinary\_analytics/ai\_service.py                           |       77 |       10 |     87% |60, 66, 139-145, 149 |
 | src/dinary\_analytics/backup.py                                |       66 |       21 |     68% |24-25, 43-44, 62-63, 77-95, 99 |
 | src/dinary\_analytics/charts.py                                |       57 |        0 |    100% |           |
 | src/dinary\_analytics/connection.py                            |       11 |        0 |    100% |           |
-| src/dinary\_analytics/llm.py                                   |       62 |        4 |     94% |85, 88, 143-144 |
+| src/dinary\_analytics/llm.py                                   |       63 |       10 |     84% |39-44, 66, 69, 131-132 |
 | src/dinary\_analytics/notebooks/dashboard.py                   |      425 |      166 |     61% |32, 76, 85, 98, 115, 131-134, 148-190, 212-214, 216, 220-221, 270-340, 352, 443, 455-525, 538-549, 554-584, 589-619, 631-644, 649-651, 683-691, 702, 707-711, 716-720, 746, 762, 895, 911-913, 980-1016, 1021-1044, 1065-1068, 1072-1076, 1080-1084, 1088-1090, 1104-1105, 1110, 1149 |
 | src/dinary\_analytics/paths.py                                 |       17 |        0 |    100% |           |
 | src/dinary\_analytics/refresh.py                               |      100 |        2 |     98% |   50, 161 |
 | src/dinary\_analytics/settings.py                              |       49 |        1 |     98% |        56 |
 | src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        65 |
-| **TOTAL**                                                      | **5428** |  **680** | **87%** |           |
+| src/llmbroker/\_\_main\_\_.py                                  |        4 |        4 |      0% |       3-8 |
+| src/llmbroker/alembic.py                                       |        2 |        0 |    100% |           |
+| src/llmbroker/broker.py                                        |      271 |       36 |     87% |101, 129-130, 151, 155, 174, 190, 192-193, 255, 260, 326, 344-362, 369, 377, 401-402, 465, 470-471, 475-477, 494-495, 503-505, 519, 528 |
+| src/llmbroker/chat.py                                          |       72 |       10 |     86% |92, 142-152 |
+| src/llmbroker/cli.py                                           |       52 |       52 |      0% |      7-76 |
+| src/llmbroker/models.py                                        |       44 |        0 |    100% |           |
+| src/llmbroker/registry.py                                      |       34 |        0 |    100% |           |
+| src/llmbroker/schema.py                                        |       19 |        0 |    100% |           |
+| src/llmbroker/secrets.py                                       |       38 |        3 |     92% |59, 66, 71 |
+| src/llmbroker/shared\_state.py                                 |        3 |        0 |    100% |           |
+| src/llmbroker/sqlite.py                                        |      107 |       41 |     62% |38-49, 70, 83-86, 90-99, 120-146, 149-155, 161-162, 174-184, 192-202, 205-212 |
+| src/llmbroker/state.py                                         |       24 |        0 |    100% |           |
+| src/llmbroker/sync.py                                          |      103 |       12 |     88% |59, 98-99, 136, 175, 178, 181, 184, 187, 190, 193, 198 |
+| src/llmbroker/telemetry.py                                     |       36 |        2 |     94% |    37, 48 |
+| **TOTAL**                                                      | **5895** |  **808** | **86%** |           |
 
 
 ## Setup coverage badge
