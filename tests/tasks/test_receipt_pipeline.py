@@ -22,9 +22,9 @@ from fastapi.testclient import TestClient
 
 from unittest.mock import AsyncMock, MagicMock
 
-from conftest import NullStorage
+import llmbroker
+
 from dinary.adapters import rate_helpers
-from dinary.adapters.llmbroker import Execution, LLMBroker
 from dinary.adapters.serbian_receipt_parser import (
     ParsedReceipt,
     ParserNotIndexedError,
@@ -47,8 +47,8 @@ from dinary.main import create_app
 # ---------------------------------------------------------------------------
 
 
-def _broker() -> LLMBroker:
-    return LLMBroker(NullStorage())
+def _broker() -> llmbroker.AsyncBroker:
+    return llmbroker.AsyncBroker(registry=llmbroker.Registry("/nonexistent.toml"))
 
 
 def _item(name: str, price: float) -> ReceiptItem:
@@ -79,13 +79,12 @@ def _make_classify_outcome(
     results: list[ClassificationResult],
     broker_unavailable: bool = False,
 ) -> ClassifyOutcome:
-    storage_mock = MagicMock()
-    storage_mock.on_quality_feedback = AsyncMock()
-    execution = Execution(
-        output=None if broker_unavailable else "ok",
-        provider_label=None if broker_unavailable else "P1",
-        storage=storage_mock,
-    )
+    if broker_unavailable:
+        execution = None
+    else:
+        execution = MagicMock()
+        execution.text = "ok"
+        execution.record_quality = AsyncMock()
     execution_failed = not broker_unavailable and any(r.category_id is None for r in results)
     return ClassifyOutcome(
         results=results,

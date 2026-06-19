@@ -1,9 +1,8 @@
 """LLM provider API: /api/llm/*"""
 
-import sqlite3
+from fastapi import APIRouter, Request
 
-from fastapi import APIRouter, Depends
-
+import llmbroker
 from dinary.api.controllers.llm import (
     ProviderIn,
     ProviderPatch,
@@ -13,38 +12,34 @@ from dinary.api.controllers.llm import (
     llm_status,
     update_provider,
 )
-from dinary.db.storage import get_db
 
 router = APIRouter()
 
 
+def _get_llms(request: Request) -> llmbroker.AsyncBroker:
+    return request.app.state.llms
+
+
 @router.get("/api/llm/providers")
-def get_providers(con: sqlite3.Connection = Depends(get_db)) -> list[dict]:  # noqa: B008
-    return list_providers(con)
+async def get_providers(request: Request) -> list[dict]:
+    return await list_providers(_get_llms(request))
 
 
 @router.post("/api/llm/providers", status_code=201)
-def create_provider(body: ProviderIn, con: sqlite3.Connection = Depends(get_db)) -> dict:  # noqa: B008
-    return add_provider(body, con)
+async def create_provider(body: ProviderIn, request: Request) -> dict:
+    return await add_provider(body, _get_llms(request))
 
 
-@router.patch("/api/llm/providers/{provider_id}")
-def patch_provider(
-    provider_id: int,
-    body: ProviderPatch,
-    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> dict:
-    return update_provider(provider_id, body, con)
+@router.patch("/api/llm/providers/{provider_name}")
+async def patch_provider(provider_name: str, body: ProviderPatch, request: Request) -> dict:
+    return await update_provider(provider_name, body, _get_llms(request))
 
 
-@router.delete("/api/llm/providers/{provider_id}")
-def remove_provider(
-    provider_id: int,
-    con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> dict:
-    return delete_provider(provider_id, con)
+@router.delete("/api/llm/providers/{provider_name}")
+async def remove_provider(provider_name: str, request: Request) -> dict:
+    return await delete_provider(provider_name, _get_llms(request))
 
 
 @router.get("/api/llm/status")
-def get_llm_status(con: sqlite3.Connection = Depends(get_db)) -> dict:  # noqa: B008
-    return llm_status(con)
+async def get_llm_status(request: Request) -> dict:
+    return await llm_status(_get_llms(request))

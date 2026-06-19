@@ -12,7 +12,6 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from dinary.adapters.llmbroker import LLMBroker
 from dinary.adapters.serbian_receipt_parser import (
     ParsedReceipt,
     ParserNotIndexedError,
@@ -46,6 +45,7 @@ from dinary.db.receipts import (
     release_job,
     save_parsed_receipt,
 )
+from llmbroker import AsyncBroker
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +147,7 @@ def _schedule_wakeup(delay_sec: float) -> None:
         return
 
 
-async def receipt_classification_task(broker: LLMBroker) -> None:
+async def receipt_classification_task(broker: AsyncBroker) -> None:
     event = asyncio.Event()
     loop = asyncio.get_running_loop()
     _register_wake_channel(event, loop)
@@ -178,7 +178,7 @@ def _claim_all_pending() -> list[ReceiptJobRow]:
         return jobs
 
 
-async def _drain_all_pending(broker: LLMBroker) -> None:
+async def _drain_all_pending(broker: AsyncBroker) -> None:
     jobs = await asyncio.to_thread(_claim_all_pending)
     if not jobs:
         return
@@ -232,7 +232,7 @@ async def _drain_all_pending(broker: LLMBroker) -> None:
                 )
 
 
-async def _process_job(job: ReceiptJobRow, broker: LLMBroker) -> None:
+async def _process_job(job: ReceiptJobRow, broker: AsyncBroker) -> None:
     logger.info("Receipt drain: processing receipt_id=%s", job.receipt_id)
     try:
         if job.parsed_at is None:
@@ -372,7 +372,7 @@ def _save_store_to_receipt(receipt_id: int, store_id: int) -> None:
         )
 
 
-async def _ensure_store(job: ReceiptJobRow, broker: LLMBroker) -> tuple[int, int | None] | None:
+async def _ensure_store(job: ReceiptJobRow, broker: AsyncBroker) -> tuple[int, int | None] | None:
     if not job.store_name_raw and not job.store_pib_raw:
         return None
 
@@ -455,7 +455,7 @@ def _load_top_fallback_categories(n: int) -> list[int]:
 
 
 async def _run_llm_pass(
-    broker: LLMBroker,
+    broker: AsyncBroker,
     job: ReceiptJobRow,
     llm_queue: list[tuple[int, str]],
     categories: dict[int, str],
@@ -471,7 +471,7 @@ async def _run_llm_pass(
     if not llm_queue:
         return {}
     normalized_names = [name for _, name in llm_queue]
-    max_attempts = max(1, min(3, broker.provider_count))
+    max_attempts = max(1, min(3, len(broker)))
     for attempt in range(max_attempts):
         outcome = await classify_receipt(
             broker,
@@ -491,14 +491,15 @@ async def _run_llm_pass(
                 item_id: result
                 for (item_id, _), result in zip(llm_queue, outcome.results, strict=True)
             }
-        try:
-            await outcome.execution.mark_failed()
-        except Exception:
-            logger.exception(
-                "mark_failed raised for receipt_id=%s attempt %d — continuing",
-                job.receipt_id,
-                attempt + 1,
-            )
+        if outcome.execution is not None:
+            try:
+                await outcome.execution.record_quality(0.0)
+            except Exception:
+                logger.exception(
+                    "record_quality raised for receipt_id=%s attempt %d — continuing",
+                    job.receipt_id,
+                    attempt + 1,
+                )
         logger.warning(
             "classification execution_failed attempt %d/%d receipt_id=%s",
             attempt + 1,
@@ -544,7 +545,7 @@ def _get_items(receipt_id: int) -> list[ReceiptItemRow]:
 
 
 async def _classify_and_persist(
-    broker: LLMBroker,
+    broker: AsyncBroker,
     job: ReceiptJobRow,
     items: list[ReceiptItemRow],
     store_id: int | None,

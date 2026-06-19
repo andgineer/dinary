@@ -1,11 +1,11 @@
 """Receipt tasks: classify-receipt experiment and reclassify-receipts operator tool."""
 
 import asyncio
+from pathlib import Path
 
 from invoke import task
 
-from dinary.adapters.llm_storage import TomlLLMBrokerStorage
-from dinary.adapters.llmbroker import LLMBroker
+import llmbroker
 from dinary.adapters.serbian_receipt_parser import (
     ParserParseError,
     ParserRequestError,
@@ -18,6 +18,8 @@ from dinary.background.classification.receipt_classifier import (
 from dinary.db.catalog import list_visible_categories
 from dinary.db.receipts import requeue_receipts
 from dinary.db.storage import get_connection
+
+_PROVIDERS_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llm_providers.toml"
 
 
 @task(name="classify-receipt", iterable=["url"])
@@ -34,7 +36,7 @@ def classify_receipt(c, url):  # noqa: ARG001
         print("Usage: inv classify-receipt --url URL [--url URL2 ...]")
         return
 
-    broker = LLMBroker(TomlLLMBrokerStorage())
+    llms = llmbroker.AsyncBroker(registry=llmbroker.Registry(_PROVIDERS_TOML))
 
     con = get_connection()
     try:
@@ -46,20 +48,17 @@ def classify_receipt(c, url):  # noqa: ARG001
     categories = {row.id: f"{row.group_name}: {row.name}" for row in cats}
 
     async def _run_all() -> None:
-        await broker.start()
-        try:
+        async with llms:
             for receipt_url in url:
                 print(f"\n{'=' * 70}")
-                await _run_receipt(receipt_url, broker, categories, tags)
-        finally:
-            await broker.stop()
+                await _run_receipt(receipt_url, llms, categories, tags)
 
     asyncio.run(_run_all())
 
 
 async def _run_receipt(
     url: str,
-    broker: LLMBroker,
+    broker: llmbroker.AsyncBroker,
     categories: dict[int, str],
     tags: dict[int, str],
 ) -> None:

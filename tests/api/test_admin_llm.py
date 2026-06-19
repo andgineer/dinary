@@ -1,4 +1,4 @@
-"""LLM admin API tests."""
+"""LLM admin API tests — broker-only (no raw SQL over llmbroker_* tables)."""
 
 import allure
 
@@ -7,17 +7,17 @@ from _api_helpers import db  # noqa: F401
 
 def _add_provider(
     client,
-    label="Groq",
+    name="groq-llama",
     base_url="https://api.groq.com/openai/v1",
-    api_key="key",
+    api_key_ref="GROQ_API_KEY",
     model="llama-3.3-70b",
 ):
     return client.post(
         "/api/llm/providers",
         json={
-            "label": label,
+            "name": name,
             "base_url": base_url,
-            "api_key": api_key,
+            "api_key_ref": api_key_ref,
             "model": model,
         },
     )
@@ -34,48 +34,46 @@ class TestLLMProvidersCRUD:
     def test_add_provider(self, client, db):  # noqa: ARG002
         resp = _add_provider(client)
         assert resp.status_code == 201
-        assert "id" in resp.json()
+        assert resp.json()["name"] == "groq-llama"
 
     def test_list_shows_added(self, client, db):  # noqa: ARG002
-        _add_provider(client, label="Groq")
+        _add_provider(client, name="groq-llama")
         providers = client.get("/api/llm/providers").json()
         assert len(providers) == 1
-        assert providers[0]["label"] == "Groq"
-
-    def test_patch_label(self, client, db):  # noqa: ARG002
-        pid = _add_provider(client).json()["id"]
-        resp = client.patch(f"/api/llm/providers/{pid}", json={"label": "Groq Updated"})
-        assert resp.status_code == 200
-        updated = client.get("/api/llm/providers").json()[0]
-        assert updated["label"] == "Groq Updated"
+        assert providers[0]["name"] == "groq-llama"
 
     def test_patch_model(self, client, db):  # noqa: ARG002
-        pid = _add_provider(client).json()["id"]
-        client.patch(f"/api/llm/providers/{pid}", json={"model": "new-model"})
+        _add_provider(client, name="groq-llama")
+        resp = client.patch("/api/llm/providers/groq-llama", json={"model": "new-model"})
+        assert resp.status_code == 200
         updated = client.get("/api/llm/providers").json()[0]
         assert updated["model"] == "new-model"
 
+    def test_patch_base_url(self, client, db):  # noqa: ARG002
+        _add_provider(client, name="groq-llama")
+        client.patch("/api/llm/providers/groq-llama", json={"base_url": "https://x/v1"})
+        updated = client.get("/api/llm/providers").json()[0]
+        assert updated["base_url"] == "https://x/v1"
+
     def test_delete_provider(self, client, db):  # noqa: ARG002
-        _add_provider(client, label="P1")
-        _add_provider(client, label="P2")
-        providers = client.get("/api/llm/providers").json()
-        pid = providers[0]["id"]
-        resp = client.delete(f"/api/llm/providers/{pid}")
+        _add_provider(client, name="p1")
+        _add_provider(client, name="p2")
+        resp = client.delete("/api/llm/providers/p1")
         assert resp.status_code == 200
         remaining = client.get("/api/llm/providers").json()
         assert len(remaining) == 1
 
-    def test_delete_only_enabled_provider_refused(self, client, db):  # noqa: ARG002
-        pid = _add_provider(client).json()["id"]
-        resp = client.delete(f"/api/llm/providers/{pid}")
+    def test_delete_only_provider_refused(self, client, db):  # noqa: ARG002
+        _add_provider(client, name="groq-llama")
+        resp = client.delete("/api/llm/providers/groq-llama")
         assert resp.status_code == 409
 
     def test_delete_nonexistent(self, client, db):  # noqa: ARG002
-        resp = client.delete("/api/llm/providers/9999")
+        resp = client.delete("/api/llm/providers/ghost")
         assert resp.status_code == 404
 
     def test_patch_nonexistent(self, client, db):  # noqa: ARG002
-        resp = client.patch("/api/llm/providers/9999", json={"label": "x"})
+        resp = client.patch("/api/llm/providers/ghost", json={"model": "x"})
         assert resp.status_code == 404
 
 
@@ -107,7 +105,6 @@ class TestLLMStatus:
         assert "last_status" in p
         assert "execution_fail_count" in p
         assert "api_key" not in p
-        assert "priority" not in p
 
     def test_health_single_provider(self, client, db):  # noqa: ARG002
         _add_provider(client)
@@ -118,8 +115,8 @@ class TestLLMStatus:
         assert h["strategy"] is None
 
     def test_health_two_providers_strategy_failover(self, client, db):  # noqa: ARG002
-        _add_provider(client, label="P1")
-        _add_provider(client, label="P2")
+        _add_provider(client, name="p1")
+        _add_provider(client, name="p2")
         data = client.get("/api/llm/status").json()
         h = data["health"]
         assert h["total"] == 2

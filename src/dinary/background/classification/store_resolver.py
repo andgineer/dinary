@@ -3,10 +3,10 @@
 import logging
 import sqlite3
 
-from dinary.adapters.llmbroker import LLMBroker
 from dinary.background.classification.receipt_classifier import get_chain_name
 from dinary.db import storage
 from dinary.db.storage import transaction
+from llmbroker import AsyncBroker
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def _select_store(
 
 
 async def resolve_store(
-    broker: LLMBroker,
+    broker: AsyncBroker,
     store_pib: str,
     store_name_raw: str,
 ) -> tuple[int, int | None]:

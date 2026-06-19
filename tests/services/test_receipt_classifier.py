@@ -2,11 +2,10 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import allure
+import llmbroker
 import pytest
 
-import allure
-
-from dinary.adapters.llmbroker import Execution, LLMBroker
 from dinary.background.classification.receipt_classifier import (
     ClassifyOutcome,
     _build_user_message,
@@ -18,16 +17,15 @@ from dinary.background.classification.receipt_classifier import (
 _CATEGORIES = {1: "Food: food", 2: "Housing: household-goods", 3: "Beauty: hygiene"}
 
 
-def _make_broker(raw_content: str | None) -> LLMBroker:
-    broker = MagicMock(spec=LLMBroker)
-    storage_mock = MagicMock()
-    storage_mock.on_quality_feedback = AsyncMock()
-    execution = Execution(
-        output=raw_content,
-        provider_label="P1" if raw_content is not None else None,
-        storage=storage_mock,
-    )
-    broker.execute = AsyncMock(return_value=execution)
+def _make_broker(raw_content: str | None) -> llmbroker.AsyncBroker:
+    broker = MagicMock(spec=llmbroker.AsyncBroker)
+    if raw_content is None:
+        broker.chat = AsyncMock(side_effect=llmbroker.NoLLMAvailableError("no slot"))
+    else:
+        result = MagicMock()
+        result.text = raw_content
+        result.record_quality = AsyncMock()
+        broker.chat = AsyncMock(return_value=result)
     return broker
 
 
@@ -162,9 +160,10 @@ class TestClassifyReceiptAdapter:
 
         asyncio.run(classify_receipt(broker, ["hleb"], "Lidl", _CATEGORIES, execution_id=42))
 
-        broker.execute.assert_awaited_once()
-        _, kwargs = broker.execute.call_args
-        assert kwargs.get("execution_id") == "42"
+        broker.chat.assert_awaited_once()
+        _, kwargs = broker.chat.call_args
+        assert kwargs.get("trace_id") == "42"
+        assert kwargs.get("operation") == "receipt_classification"
 
     def test_broker_unavailable_when_output_is_none(self):
         broker = _make_broker(None)
@@ -237,12 +236,12 @@ class TestGetChainNameAdapter:
 
         assert result == "UNKNOWN STORE"
 
-    def test_passes_chain_name_prompt_to_execute_no_wait(self):
+    def test_passes_chain_name_prompt_to_chat_no_wait(self):
         broker = _make_broker("Maxi")
 
         asyncio.run(get_chain_name(broker, "MAXI AD"))
 
-        _, kwargs = broker.execute.call_args
-        assert kwargs.get("wait") is False
-        messages = broker.execute.call_args.args[0]
+        _, kwargs = broker.chat.call_args
+        assert kwargs.get("wait") == 0
+        messages = broker.chat.call_args.args[0]
         assert any("MAXI AD" in str(m) for m in messages)

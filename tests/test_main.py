@@ -6,8 +6,6 @@ from unittest.mock import Mock, patch
 import allure
 import pytest
 
-from dinary.adapters.llm_chat import ProviderConfig
-from dinary.adapters.llm_storage import SqliteLLMBrokerStorage
 from dinary.config import settings
 from dinary.main import _lifespan, create_app
 from dinary.db import category_seed, storage
@@ -25,7 +23,7 @@ def _lifespan_stubs(db, monkeypatch):
 
     ``init_db`` re-runs yoyo migrations on each test — ~300 ms of SQLite
     overhead that has nothing to do with the drain-loop contract.
-    ``load_providers`` queries ``llmbroker_providers``.
+    The autouse ``_disable_llm_broker_sync`` fixture no-ops broker seeding.
     ``bootstrap_categories`` reconciles the category catalog from the
     packaged templates — also irrelevant here.
     ``rate_prefetch_task`` opens a DB connection and may make network
@@ -33,11 +31,6 @@ def _lifespan_stubs(db, monkeypatch):
     """
     monkeypatch.setattr(storage, "init_db", lambda: None)
     monkeypatch.setattr(category_seed, "bootstrap_categories", lambda con: None)
-
-    async def _empty_providers(self) -> list[ProviderConfig]:  # noqa: ARG001
-        return []
-
-    monkeypatch.setattr(SqliteLLMBrokerStorage, "load_providers", _empty_providers)
 
     async def _noop_rate_prefetch():
         await asyncio.sleep(9999)

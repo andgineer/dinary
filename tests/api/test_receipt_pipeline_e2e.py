@@ -12,8 +12,8 @@ import pytest
 
 from unittest.mock import AsyncMock, MagicMock
 
-from conftest import NullStorage
-from dinary.adapters.llmbroker import Execution, LLMBroker
+import llmbroker
+
 from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
 from dinary.background.classification.receipt_classifier import (
     ClassificationResult,
@@ -46,14 +46,14 @@ _PARSED = ParsedReceipt(
 )
 
 
-def _broker() -> LLMBroker:
-    return LLMBroker(NullStorage())
+def _broker() -> llmbroker.AsyncBroker:
+    return llmbroker.AsyncBroker(registry=llmbroker.Registry("/nonexistent.toml"))
 
 
 def _make_classify_outcome(results: list[ClassificationResult]) -> ClassifyOutcome:
-    storage_mock = MagicMock()
-    storage_mock.on_quality_feedback = AsyncMock()
-    execution = Execution(output="ok", provider_label="P1", storage=storage_mock)
+    execution = MagicMock()
+    execution.text = "ok"
+    execution.record_quality = AsyncMock()
     return ClassifyOutcome(
         results=results,
         broker_unavailable=False,

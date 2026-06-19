@@ -190,7 +190,7 @@ class TestMigration0005FKSafety:
         """DROP TABLE tags must not raise FK constraint when expense_tags references it."""
         db_path = tmp_path / "fk_upgrade.db"
         all_migrations = read_migrations(str(db_migrations._migrations_dir()))
-        pre0005 = MigrationList([m for m in all_migrations if not m.id.startswith("0005")], [])
+        pre0005 = MigrationList([m for m in all_migrations if m.id < "0005"], [])
 
         with db_migrations._backend_for(db_path) as backend, backend.lock():
             backend.apply_migrations(backend.to_apply(pre0005))

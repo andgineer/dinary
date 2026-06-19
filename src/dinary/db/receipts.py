@@ -250,18 +250,6 @@ def release_job(
     )
 
 
-def trim_llm_call_log(conn: sqlite3.Connection, keep: int = 200) -> None:
-    conn.execute(
-        """
-        DELETE FROM llmbroker_call_log
-         WHERE id NOT IN (
-             SELECT id FROM llmbroker_call_log ORDER BY id DESC LIMIT ?
-         )
-        """,
-        [keep],
-    )
-
-
 def requeue_receipts(
     conn: sqlite3.Connection,
     receipt_ids: list[int],

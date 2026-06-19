@@ -19,7 +19,6 @@ from dinary.db.receipts import (
     ReceiptItemRow,
     ReceiptJobRow,
     complete_job,
-    trim_llm_call_log,
     update_receipt_item,
 )
 from dinary.db.storage import connection, transaction
@@ -198,7 +197,6 @@ def persist_classification_results(
                 norm = norms.get(item.id) or normalize_item_name(item.name_raw)
                 _write_single_item(conn, item, cat_id, conf, norm, ctx)
 
-            trim_llm_call_log(conn)
             complete_job(conn, job.receipt_id)
     try:
         sheet_logging.notify_new_work()

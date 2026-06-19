@@ -9,10 +9,9 @@ from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import allure
+import llmbroker
 import pytest
 
-from conftest import NullStorage
-from dinary.adapters.llmbroker import Execution, LLMBroker
 from dinary.adapters.rate_helpers import save_db_rate
 from dinary.background.classification.receipt_classifier import (
     ClassificationResult,
@@ -112,14 +111,15 @@ def _make_job(receipt_id: int, claim_token: str = "tok") -> ReceiptJobRow:
     )
 
 
-def _broker() -> LLMBroker:
-    return LLMBroker(NullStorage())
+def _broker() -> llmbroker.AsyncBroker:
+    return llmbroker.AsyncBroker(registry=llmbroker.Registry("/nonexistent.toml"))
 
 
-def _make_execution() -> Execution:
-    storage_mock = MagicMock()
-    storage_mock.on_quality_feedback = AsyncMock()
-    return Execution(output="ok", provider_label="P1", storage=storage_mock)
+def _make_execution():
+    execution = MagicMock()
+    execution.text = "ok"
+    execution.record_quality = AsyncMock()
+    return execution
 
 
 def _classify_patch(results: list[ClassificationResult], execution_failed: bool = False):
@@ -527,18 +527,18 @@ class TestClassifyAndPersist:
 
         assert exp_count == 1
 
-    def test_mark_failed_raises_fallback_creates_expense(self, conn):
-        """mark_failed() raising on the last attempt must not prevent fallback expense creation."""
+    def test_record_quality_raises_fallback_creates_expense(self, conn):
+        """record_quality(0.0) raising on the last attempt must not block fallback creation."""
         _seed_catalog(conn)
         receipt_id = _seed_receipt(conn)
         job = claim_next_job(conn)
         items = get_receipt_items(conn, receipt_id)
         conn.close()
 
-        async def _failing_mark_failed(*_args, **_kwargs):
-            storage_mock = MagicMock()
-            storage_mock.on_quality_feedback = AsyncMock(side_effect=RuntimeError("storage down"))
-            execution = Execution(output="bad json", provider_label="P1", storage=storage_mock)
+        async def _failing_record_quality(*_args, **_kwargs):
+            execution = MagicMock()
+            execution.text = "bad json"
+            execution.record_quality = AsyncMock(side_effect=RuntimeError("telemetry down"))
             return ClassifyOutcome(
                 results=[],
                 broker_unavailable=False,
@@ -548,7 +548,7 @@ class TestClassifyAndPersist:
 
         with patch(
             "dinary.background.classification.task.classify_receipt",
-            side_effect=_failing_mark_failed,
+            side_effect=_failing_record_quality,
         ):
             asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
 
@@ -560,7 +560,7 @@ class TestClassifyAndPersist:
         finally:
             conn2.close()
 
-        assert exp_count == 1, "fallback must create an expense even when mark_failed raises"
+        assert exp_count == 1, "fallback must create an expense even when record_quality raises"
 
     def test_rate_missing_raises_and_no_expense(self, conn, monkeypatch):
         """When no rate is available RateMissingError is raised and no expense is stored."""
@@ -604,9 +604,9 @@ def _exhausted_classify_side_effect():
     """Return a side_effect that always returns execution_failed=True, simulating exhaustion."""
 
     async def _side_effect(*_args, **_kwargs):
-        storage_mock = MagicMock()
-        storage_mock.on_quality_feedback = AsyncMock()
-        execution = Execution(output="bad json", provider_label="P1", storage=storage_mock)
+        execution = MagicMock()
+        execution.text = "bad json"
+        execution.record_quality = AsyncMock()
         return ClassifyOutcome(
             results=[],
             broker_unavailable=False,
@@ -712,8 +712,8 @@ class TestRunLLMPass:
         """provider_count=1 → max_attempts=1; success on first attempt."""
         from unittest.mock import MagicMock
 
-        broker = MagicMock(spec=LLMBroker)
-        broker.provider_count = 1
+        broker = MagicMock(spec=llmbroker.AsyncBroker)
+        broker.__len__.return_value = 1
         job = _make_job(receipt_id=1)
         expected = ClassificationResult(
             item_name_normalized="hleb", category_id=1, confidence_level=3
@@ -734,8 +734,8 @@ class TestRunLLMPass:
 
     def test_three_providers_all_fail_raises_exhausted_after_3_calls(self):
         """provider_count=3 → max_attempts=3; all fail → ClassificationExhaustedError after 3 calls."""
-        broker = MagicMock(spec=LLMBroker)
-        broker.provider_count = 3
+        broker = MagicMock(spec=llmbroker.AsyncBroker)
+        broker.__len__.return_value = 3
         job = _make_job(receipt_id=1)
         with patch(
             "dinary.background.classification.task.classify_receipt",
@@ -747,8 +747,8 @@ class TestRunLLMPass:
 
     def test_provider_count_above_3_caps_attempts_at_3(self):
         """provider_count=5 → max_attempts capped at 3, not 5."""
-        broker = MagicMock(spec=LLMBroker)
-        broker.provider_count = 5
+        broker = MagicMock(spec=llmbroker.AsyncBroker)
+        broker.__len__.return_value = 5
         job = _make_job(receipt_id=1)
         with patch(
             "dinary.background.classification.task.classify_receipt",
@@ -758,16 +758,16 @@ class TestRunLLMPass:
                 asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
         assert mock_classify.call_count == 3
 
-    def test_mark_failed_raises_still_raises_exhausted(self):
-        """mark_failed() raising must not prevent ClassificationExhaustedError from propagating."""
-        broker = MagicMock(spec=LLMBroker)
-        broker.provider_count = 1
+    def test_record_quality_raises_still_raises_exhausted(self):
+        """record_quality(0.0) raising must not prevent ClassificationExhaustedError."""
+        broker = MagicMock(spec=llmbroker.AsyncBroker)
+        broker.__len__.return_value = 1
         job = _make_job(receipt_id=1)
 
-        async def _failing_mark_failed(*_args, **_kwargs):
-            storage_mock = MagicMock()
-            storage_mock.on_quality_feedback = AsyncMock(side_effect=RuntimeError("storage down"))
-            execution = Execution(output="bad json", provider_label="P1", storage=storage_mock)
+        async def _failing_record_quality(*_args, **_kwargs):
+            execution = MagicMock()
+            execution.text = "bad json"
+            execution.record_quality = AsyncMock(side_effect=RuntimeError("telemetry down"))
             return ClassifyOutcome(
                 results=[],
                 broker_unavailable=False,
@@ -777,15 +777,15 @@ class TestRunLLMPass:
 
         with patch(
             "dinary.background.classification.task.classify_receipt",
-            side_effect=_failing_mark_failed,
+            side_effect=_failing_record_quality,
         ):
             with pytest.raises(ClassificationExhaustedError):
                 asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
 
     def test_second_attempt_succeeds_after_first_fails(self):
         """provider_count=2 → max_attempts=2; first fails, second succeeds."""
-        broker = MagicMock(spec=LLMBroker)
-        broker.provider_count = 2
+        broker = MagicMock(spec=llmbroker.AsyncBroker)
+        broker.__len__.return_value = 2
         job = _make_job(receipt_id=1)
         expected = ClassificationResult(
             item_name_normalized="hleb", category_id=1, confidence_level=3
@@ -794,9 +794,9 @@ class TestRunLLMPass:
 
         async def _side_effect(*_args, **_kwargs):
             call_count["n"] += 1
-            storage_mock = MagicMock()
-            storage_mock.on_quality_feedback = AsyncMock()
-            execution = Execution(output="ok", provider_label="P1", storage=storage_mock)
+            execution = MagicMock()
+            execution.text = "ok"
+            execution.record_quality = AsyncMock()
             if call_count["n"] == 1:
                 return ClassifyOutcome(
                     results=[], broker_unavailable=False, execution_failed=True, execution=execution
@@ -822,7 +822,7 @@ class TestRunLLMPass:
 class TestDrainAllPending:
     def test_cancelled_job_does_not_propagate(self):
         """CancelledError from a gather result must be logged, not propagated."""
-        broker = MagicMock(spec=LLMBroker)
+        broker = MagicMock(spec=llmbroker.AsyncBroker)
         job = _make_job(receipt_id=99)
 
         async def _raise_cancelled(*_args, **_kwargs):

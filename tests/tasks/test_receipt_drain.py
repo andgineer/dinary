@@ -18,8 +18,7 @@ from dinary.background.classification.receipt_classifier import (
     ClassificationResult,
     ClassifyOutcome,
 )
-from conftest import NullStorage
-from dinary.adapters.llmbroker import Execution, LLMBroker
+import llmbroker
 import httpx
 
 from dinary.adapters.serbian_receipt_parser import (
@@ -1116,9 +1115,9 @@ class TestReceiptSheetLogging:
 # ---------------------------------------------------------------------------
 
 
-def _make_broker() -> LLMBroker:
-    """Return a minimal broker instance (NullStorage, never called in unit tests)."""
-    return LLMBroker(NullStorage())
+def _make_broker() -> llmbroker.AsyncBroker:
+    """Return a minimal broker instance (never called in unit tests)."""
+    return llmbroker.AsyncBroker(registry=llmbroker.Registry("/nonexistent.toml"))
 
 
 def _make_classify_outcome(
@@ -1127,13 +1126,12 @@ def _make_classify_outcome(
 ) -> ClassifyOutcome:
     from unittest.mock import AsyncMock, MagicMock
 
-    storage_mock = MagicMock()
-    storage_mock.on_quality_feedback = AsyncMock()
-    execution = Execution(
-        output=None if broker_unavailable else "ok",
-        provider_label=None if broker_unavailable else "P1",
-        storage=storage_mock,
-    )
+    if broker_unavailable:
+        execution = None
+    else:
+        execution = MagicMock()
+        execution.text = "ok"
+        execution.record_quality = AsyncMock()
     execution_failed = not broker_unavailable and (any(r.category_id is None for r in results))
     return ClassifyOutcome(
         results=results,

@@ -12,9 +12,9 @@ from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+import llmbroker
+import llmbroker.sqlite
 from dinary import __version__
-from dinary.adapters.llm_storage import SqliteLLMBrokerStorage
-from dinary.adapters.llmbroker import LLMBroker
 from dinary.api import (
     analytics,
     catalog,
@@ -36,6 +36,8 @@ from dinary.db import category_seed, storage
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _STATIC_DIR = _PROJECT_ROOT / "_static"
+_DEPLOY_DIR = _PROJECT_ROOT / ".deploy"
+_LLM_PROVIDERS_TOML = _DEPLOY_DIR / "llm_providers.toml"
 
 
 def _read_deployed_version() -> str:
@@ -70,13 +72,17 @@ async def _lifespan(_app: FastAPI):
     storage.init_db()
     with storage.connection() as con:
         category_seed.bootstrap_categories(con)
-    broker = LLMBroker(SqliteLLMBrokerStorage())
-    await broker.start()
+    llms = llmbroker.AsyncBroker(
+        registry=llmbroker.sqlite.Registry(storage.DB_PATH),
+        telemetry=llmbroker.sqlite.Telemetry(storage.DB_PATH),
+    )
+    await llms.sync_configs(llmbroker.Registry(_LLM_PROVIDERS_TOML), policy="if_empty")
+    _app.state.llms = llms
     await warm_sheet_mapping()
     sheet_logging_bg = asyncio.create_task(sheet_logging_task(), name="sheet-logging-task")
     rate_prefetch_bg = asyncio.create_task(rate_prefetch_task(), name="rate-prefetch-task")
     receipt_classification_bg = asyncio.create_task(
-        receipt_classification_task(broker),
+        receipt_classification_task(llms),
         name="receipt-classification-task",
     )
     try:
@@ -91,7 +97,8 @@ async def _lifespan(_app: FastAPI):
             await rate_prefetch_bg
         with contextlib.suppress(asyncio.CancelledError):
             await receipt_classification_bg
-        await broker.stop()
+        await llms.aclose()
+        _app.state.llms = None
 
 
 def create_app() -> FastAPI:
@@ -102,6 +109,7 @@ def create_app() -> FastAPI:
         version=__version__,
         lifespan=_lifespan,
     )
+    app.state.llms = None
 
     app.include_router(analytics.router)
     app.include_router(expenses.router)

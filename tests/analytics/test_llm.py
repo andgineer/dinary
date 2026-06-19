@@ -1,31 +1,27 @@
 """Tests for the analytics LLM chat turn (dinary_analytics.llm)."""
 
 import allure
+import llmbroker
 
 import dinary_analytics.llm as llm_module
-from dinary.adapters.llm_chat import AllProvidersBusyError, AllProvidersFailedError
 from dinary_analytics.llm import (
     _tool_schema,
-    load_providers,
-    providers_available,
     run_chat_turn,
     tool_name,
 )
 
 _TOML = """
-[[providers]]
-label = "Groq"
+[[llms]]
+name = "groq"
 base_url = "https://api.groq.com/openai/v1"
-api_key = "k1"
 model = "llama-3.3-70b-versatile"
-rate_limit_sec = 60
+api_key_ref = "GROQ_API_KEY"
 
-[[providers]]
-label = "OpenRouter"
+[[llms]]
+name = "openrouter"
 base_url = "https://openrouter.ai/api/v1"
-api_key = "k2"
 model = "openai/gpt-oss-120b:free"
-rate_limit_sec = 30
+api_key_ref = "OPENROUTER_API_KEY"
 """
 
 
@@ -33,24 +29,9 @@ def _write_providers(tmp_path, monkeypatch, body=_TOML):
     path = tmp_path / "llm_providers.toml"
     path.write_text(body)
     monkeypatch.setenv("DINARY_LLM_PROVIDERS_FILE", str(path))
+    monkeypatch.setenv("GROQ_API_KEY", "k1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k2")
     return path
-
-
-@allure.epic("Analytics")
-@allure.feature("Chat")
-def test_load_providers_reads_toml_in_order(tmp_path, monkeypatch):
-    _write_providers(tmp_path, monkeypatch)
-    providers = load_providers()
-    assert [p.label for p in providers] == ["Groq", "OpenRouter"]
-    assert providers[0].model == "llama-3.3-70b-versatile"
-    assert providers[1].rate_limit_sec == 30
-
-
-@allure.epic("Analytics")
-@allure.feature("Chat")
-def test_providers_available_false_when_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv("DINARY_LLM_PROVIDERS_FILE", str(tmp_path / "nope.toml"))
-    assert providers_available() is False
 
 
 @allure.epic("Analytics")
@@ -104,16 +85,14 @@ def test_run_chat_turn_returns_reply(tmp_path, monkeypatch):
     _write_providers(tmp_path, monkeypatch)
     captured = {}
 
-    def _fake_complete(providers, messages, *, tools, dispatch):
+    def _fake_loop(llms, messages, *, tools, dispatch, operation):
         captured["messages"] = messages
-        captured["providers"] = providers
         return "the answer"
 
-    monkeypatch.setattr(llm_module, "complete_with_tools", _fake_complete)
+    monkeypatch.setattr(llm_module.llmbroker, "run_tool_loop", _fake_loop)
     reply = run_chat_turn("system", [], [{"role": "model", "content": "earlier"}], "now")
 
     assert reply == "the answer"
-    # system + prior (mapped to assistant) + new user
     assert captured["messages"][0] == {"role": "system", "content": "system"}
     assert captured["messages"][1] == {"role": "assistant", "content": "earlier"}
     assert captured["messages"][-1] == {"role": "user", "content": "now"}
@@ -125,9 +104,9 @@ def test_run_chat_turn_rate_limited(tmp_path, monkeypatch):
     _write_providers(tmp_path, monkeypatch)
 
     def _raise(*_a, **_k):
-        raise AllProvidersBusyError
+        raise llmbroker.NoLLMAvailableError
 
-    monkeypatch.setattr(llm_module, "complete_with_tools", _raise)
+    monkeypatch.setattr(llm_module.llmbroker, "run_tool_loop", _raise)
     reply = run_chat_turn("system", [], [], "now")
     assert "busy" in reply.lower()
 
@@ -138,74 +117,17 @@ def test_run_chat_turn_all_failed(tmp_path, monkeypatch):
     _write_providers(tmp_path, monkeypatch)
 
     def _raise(*_a, **_k):
-        raise AllProvidersFailedError
+        raise llmbroker.AllLLMsFailedError
 
-    monkeypatch.setattr(llm_module, "complete_with_tools", _raise)
+    monkeypatch.setattr(llm_module.llmbroker, "run_tool_loop", _raise)
     reply = run_chat_turn("system", [], [], "now")
     assert "unavailable" in reply.lower()
 
 
 @allure.epic("Analytics")
 @allure.feature("Chat")
-def test_run_chat_turn_executes_no_arg_tool_with_null_arguments(tmp_path, monkeypatch):
-    """End-to-end: model calls a no-arg tool with arguments 'null', then answers.
-
-    Regression for ``argument after ** must be a mapping, not NoneType``.
-    """
-    from unittest.mock import MagicMock, patch
-
-    _write_providers(tmp_path, monkeypatch)
-    ran: list = []
-
-    def _query_summary_fn() -> str:
-        """Return a spending summary."""
-        ran.append(True)
-        return "{}"
-
-    def _tool_resp():
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": "c1",
-                                "function": {"name": "query_summary", "arguments": "null"},
-                            },
-                        ],
-                    },
-                },
-            ],
-        }
-        return resp
-
-    def _final_resp():
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {"choices": [{"message": {"content": "here is your summary"}}]}
-        return resp
-
-    client = MagicMock()
-    client.post = MagicMock(side_effect=[_tool_resp(), _final_resp()])
-    ctx = MagicMock()
-    ctx.__enter__ = MagicMock(return_value=client)
-    ctx.__exit__ = MagicMock(return_value=False)
-
-    with patch("dinary.adapters.llm_chat.httpx.Client", return_value=ctx):
-        reply = run_chat_turn("system", [_query_summary_fn], [], "summarise my spending")
-
-    assert ran == [True]
-    assert reply == "here is your summary"
-
-
-@allure.epic("Analytics")
-@allure.feature("Chat")
 def test_run_chat_turn_empty_reply_falls_back(tmp_path, monkeypatch):
     _write_providers(tmp_path, monkeypatch)
-    monkeypatch.setattr(llm_module, "complete_with_tools", lambda *_a, **_k: "")
+    monkeypatch.setattr(llm_module.llmbroker, "run_tool_loop", lambda *_a, **_k: "")
     reply = run_chat_turn("system", [], [], "now")
     assert "view updated" in reply

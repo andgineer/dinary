@@ -4,10 +4,9 @@ import unittest.mock
 from unittest.mock import AsyncMock, patch
 
 import allure
+import llmbroker
 import pytest
 
-from conftest import NullStorage
-from dinary.adapters.llmbroker import LLMBroker
 from dinary.background.classification.store_resolver import resolve_store
 from dinary.db import db_migrations, storage
 
@@ -38,8 +37,8 @@ def conn(tmp_path, monkeypatch):
     c.close()
 
 
-def _broker() -> LLMBroker:
-    return LLMBroker(NullStorage())
+def _broker() -> llmbroker.AsyncBroker:
+    return llmbroker.AsyncBroker(registry=llmbroker.Registry("/nonexistent.toml"))
 
 
 @allure.epic("Receipts")

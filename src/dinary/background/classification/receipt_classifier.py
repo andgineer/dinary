@@ -5,8 +5,8 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 
-from dinary.adapters.llmbroker import Execution, LLMBroker
 from dinary.db.catalog import list_visible_categories
+from llmbroker import AsyncBroker, AsyncResult, LLMRequestError
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class ClassifyOutcome:
     results: list[ClassificationResult]
     broker_unavailable: bool
     execution_failed: bool
-    execution: Execution
+    execution: AsyncResult | None
 
 
 def load_categories(conn: sqlite3.Connection) -> dict[int, str]:
@@ -104,7 +104,7 @@ def _parse_response(
 
 
 async def classify_receipt(
-    broker: LLMBroker,
+    broker: AsyncBroker,
     items: list[str],
     store_name_raw: str,
     categories: dict[int, str],
@@ -118,22 +118,24 @@ async def classify_receipt(
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": user_msg},
     ]
-    execution = await broker.execute(
-        messages,
-        execution_id=str(execution_id) if execution_id is not None else None,
-    )
-    if execution.output is None:
+    try:
+        execution = await broker.chat(
+            messages,
+            operation="receipt_classification",
+            trace_id=str(execution_id) if execution_id is not None else None,
+        )
+    except LLMRequestError:
         return ClassifyOutcome(
             results=[],
             broker_unavailable=True,
             execution_failed=False,
-            execution=execution,
+            execution=None,
         )
 
     try:
-        results = _parse_response(execution.output, set(tags.keys()))
+        results = _parse_response(execution.text, set(tags.keys()))
     except (json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
-        logger.warning("LLM parse error (%s): %.200s", exc, execution.output)
+        logger.warning("LLM parse error (%s): %.200s", exc, execution.text)
         return ClassifyOutcome(
             results=[],
             broker_unavailable=False,
@@ -150,9 +152,14 @@ async def classify_receipt(
     )
 
 
-async def get_chain_name(broker: LLMBroker, store_name_raw: str) -> str:
+async def get_chain_name(broker: AsyncBroker, store_name_raw: str) -> str:
     prompt = _CHAIN_NAME_PROMPT.format(store_name_raw=store_name_raw)
-    execution = await broker.execute([{"role": "user", "content": prompt}], wait=False)
-    if execution.output is None:
+    try:
+        execution = await broker.chat(
+            [{"role": "user", "content": prompt}],
+            operation="chain_name",
+            wait=0,
+        )
+    except LLMRequestError:
         return store_name_raw
-    return next((ln.strip() for ln in execution.output.splitlines() if ln.strip()), "")
+    return next((ln.strip() for ln in execution.text.splitlines() if ln.strip()), "")

@@ -1,8 +1,7 @@
 # LLM providers for receipt classification.
 # Copy this file to .deploy/llm_providers.toml.
-# Priority follows declaration order: first provider is tried first on rate-limit/error.
-# Changes take effect on next server start when llm_providers table is empty.
-# To update a live deployment use the admin UI (/llm screen).
+# Seeded into the broker on first start (sync_configs policy="if_empty");
+# manage a live deployment via the admin UI (/llm screen).
 # api_key_ref names an env var (set in .deploy/.env) holding the actual key.
 #
 # Free-tier options (all OpenAI-compatible):
@@ -10,23 +9,20 @@
 #   OpenRouter: https://openrouter.ai/keys
 #   Gemini:     https://aistudio.google.com/apikey
 
-[[providers]]
-label           = "Groq Llama-3.3-70b"
-base_url        = "https://api.groq.com/openai/v1"
-api_key_ref     = "GROQ_API_KEY"
-model           = "llama-3.3-70b-versatile"
-rate_limit_sec  = 60
+[[llms]]
+name        = "groq-llama-3.3-70b"
+base_url    = "https://api.groq.com/openai/v1"
+model       = "llama-3.3-70b-versatile"
+api_key_ref = "GROQ_API_KEY"
 
-[[providers]]
-label           = "OpenRouter GPT-OSS-120b"
-base_url        = "https://openrouter.ai/api/v1"
-api_key_ref     = "OPENROUTER_API_KEY"
-model           = "openai/gpt-oss-120b:free"
-rate_limit_sec  = 60
+[[llms]]
+name        = "openrouter-gpt-oss-120b"
+base_url    = "https://openrouter.ai/api/v1"
+model       = "openai/gpt-oss-120b:free"
+api_key_ref = "OPENROUTER_API_KEY"
 
-[[providers]]
-label           = "Google Gemini 2.5 Flash"
-base_url        = "https://generativelanguage.googleapis.com/v1beta/openai"
-api_key_ref     = "GEMINI_API_KEY"
-model           = "gemini-2.5-flash"
-rate_limit_sec  = 60
+[[llms]]
+name        = "google-gemini-2.5-flash"
+base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
+model       = "gemini-2.5-flash"
+api_key_ref = "GEMINI_API_KEY"

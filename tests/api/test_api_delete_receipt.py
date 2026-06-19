@@ -181,20 +181,6 @@ class TestDeleteReceipt:
         resp = client.delete(f"/api/receipts/{rid}")
         assert resp.status_code == 204
 
-    def test_delete_receipt_with_llm_call_log(self, client, db):  # noqa: ARG002
-        """llmbroker_call_log FK to receipts must be cleared before receipts are deleted."""
-        rid, _ = _insert_receipt_with_expenses(1)
-        con = storage.get_connection()
-        try:
-            con.execute(
-                "INSERT INTO llmbroker_call_log (execution_id, status) VALUES (?, 'ok')",
-                [str(rid)],
-            )
-        finally:
-            con.close()
-        resp = client.delete(f"/api/receipts/{rid}")
-        assert resp.status_code == 204
-
     def test_delete_nonexistent_receipt_returns_404(self, client, db):  # noqa: ARG002
         resp = client.delete("/api/receipts/999999")
         assert resp.status_code == 404

@@ -2,39 +2,17 @@ import shutil
 import socket
 import sqlite3
 import unittest.mock
-from datetime import datetime
 from pathlib import Path
 
+import llmbroker
 import pytest
 from fastapi.testclient import TestClient
 
 from dinary.adapters import rate_helpers
-from dinary.adapters.llm_chat import ProviderConfig
-from dinary.adapters.llm_storage import SqliteLLMBrokerStorage
-from dinary.adapters.llmbroker import CallEvent
 from dinary.config import settings
 from dinary.db import category_seed, db_migrations, storage
 from dinary.main import create_app
 from dinary.sheets import sheet_mapping
-
-_REAL_LLM_SEED = SqliteLLMBrokerStorage._seed
-
-
-class NullStorage:
-    """No-op BrokerStorage for tests — no providers, no persistence."""
-
-    async def load_providers(self) -> list[ProviderConfig]:
-        return []
-
-    async def on_call_logged(self, event: CallEvent) -> None:
-        pass
-
-    async def on_rate_limited(self, provider_label: str, until: datetime) -> None:
-        pass
-
-    async def on_quality_feedback(self, provider_label: str, *, usable: bool) -> None:
-        pass
-
 
 # Tests that need the built Vue PWA must depend on ``built_static_dir``;
 # the fixture FAILS LOUDLY when ``_static/`` is absent (instead of
@@ -43,6 +21,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _BUILT_STATIC = _PROJECT_ROOT / "_static"
 
 _REAL_ENSURE_FRESH = sheet_mapping.ensure_fresh
+_REAL_BROKER_SYNC_CONFIGS = llmbroker.AsyncBroker.sync_configs
 
 
 def _migration_connect(self, dburi):
@@ -85,23 +64,17 @@ def _reset_db_connection():
 
 
 @pytest.fixture(autouse=True)
-def _disable_llm_seed(monkeypatch):
-    """Prevent SqliteLLMBrokerStorage from auto-seeding providers from .deploy/llm_providers.toml.
+def _disable_llm_broker_sync(monkeypatch):
+    """Prevent the lifespan from seeding the broker pool from .deploy/llm_providers.toml.
 
-    Tests that specifically assert on llmbroker_providers state start from an empty
-    table; the operator's real credentials or local TOML must not interfere.
+    Tests that assert on broker state start from an empty pool; the operator's real
+    credentials or local TOML must not interfere.
     """
 
-    async def _no_op(self, db):  # noqa: ARG001
-        pass
+    async def _no_op(self, *args, **kwargs):  # noqa: ARG001
+        return
 
-    monkeypatch.setattr(SqliteLLMBrokerStorage, "_seed", _no_op)
-
-
-@pytest.fixture
-def real_llm_seed(monkeypatch):
-    """Opt out of _disable_llm_seed for tests that specifically verify provider seeding."""
-    monkeypatch.setattr(SqliteLLMBrokerStorage, "_seed", _REAL_LLM_SEED)
+    monkeypatch.setattr(llmbroker.AsyncBroker, "sync_configs", _no_op)
 
 
 @pytest.fixture(autouse=True)
@@ -157,6 +130,17 @@ def _stub_sheet_mapping_ensure_fresh(monkeypatch):
     default does not weaken their coverage.
     """
     monkeypatch.setattr(sheet_mapping, "ensure_fresh", lambda: None)
+
+
+@pytest.fixture
+def real_broker_sync(monkeypatch):
+    """Restore the real ``AsyncBroker.sync_configs`` for tests that exercise it directly.
+
+    ``_disable_llm_broker_sync`` stubs it out to prevent lifespan seeding from
+    interfering with other tests; tests that specifically validate ``sync_configs``
+    behaviour declare this fixture to get the original back.
+    """
+    monkeypatch.setattr(llmbroker.AsyncBroker, "sync_configs", _REAL_BROKER_SYNC_CONFIGS)
 
 
 @pytest.fixture
