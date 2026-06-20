@@ -39,7 +39,7 @@
 | src/dinary/background/classification/item\_normalizer.py       |       13 |        0 |    100% |           |
 | src/dinary/background/classification/persist.py                |       81 |        1 |     99% |       152 |
 | src/dinary/background/classification/receipt\_classifier.py    |       57 |        0 |    100% |           |
-| src/dinary/background/classification/store\_resolver.py        |       31 |        1 |     97% |        68 |
+| src/dinary/background/classification/store\_resolver.py        |       31 |        1 |     97% |        69 |
 | src/dinary/background/classification/task.py                   |      259 |       19 |     93% |80, 133-134, 140-147, 215-229, 332, 381, 530 |
 | src/dinary/background/rate\_prefetch/task.py                   |       51 |        2 |     96% |   81, 109 |
 | src/dinary/background/sheet\_logging/income\_sheet\_logging.py |      176 |       44 |     75% |58-63, 89-90, 97-98, 106-108, 119, 152, 165-168, 176-179, 204-205, 217, 234, 240-242, 270-277, 289, 293, 317-325 |
