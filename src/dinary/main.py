@@ -7,13 +7,13 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import llmbroker.sqlite
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 import llmbroker
-import llmbroker.sqlite
 from dinary import __version__
 from dinary.api import (
     analytics,
@@ -36,8 +36,6 @@ from dinary.db import category_seed, storage
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _STATIC_DIR = _PROJECT_ROOT / "_static"
-_DEPLOY_DIR = _PROJECT_ROOT / ".deploy"
-_LLM_PROVIDERS_TOML = _DEPLOY_DIR / "llm_providers.toml"
 
 
 def _read_deployed_version() -> str:
@@ -76,7 +74,6 @@ async def _lifespan(_app: FastAPI):
         registry=llmbroker.sqlite.Registry(storage.DB_PATH),
         telemetry=llmbroker.sqlite.Telemetry(storage.DB_PATH),
     )
-    await llms.sync_configs(llmbroker.Registry(_LLM_PROVIDERS_TOML), policy="if_empty")
     _app.state.llms = llms
     await warm_sheet_mapping()
     sheet_logging_bg = asyncio.create_task(sheet_logging_task(), name="sheet-logging-task")

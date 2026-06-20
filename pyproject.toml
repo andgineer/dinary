@@ -24,6 +24,7 @@ dependencies = [
     "cachetools>=7.0.6",
     "tzdata>=2024.1",
     "pyyaml>=6.0.2",
+    "llmbroker==0.0.3",
     # ``invoke`` is a runtime dependency on the prod VM: deploy / admin /
     # import operations (``inv build-static``, ``inv bootstrap-catalog``,
     # ``inv import-*``, ``inv migrate``) all run on the server through
