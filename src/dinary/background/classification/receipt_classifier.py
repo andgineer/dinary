@@ -5,8 +5,9 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 
-from dinary.db.catalog import list_visible_categories
 from llmbroker import AsyncBroker, AsyncResult, LLMRequestError
+
+from dinary.db.catalog import list_visible_categories
 
 logger = logging.getLogger(__name__)
 

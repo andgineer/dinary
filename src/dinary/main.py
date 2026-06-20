@@ -7,13 +7,13 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import llmbroker
 import llmbroker.sqlite
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-import llmbroker
 from dinary import __version__
 from dinary.api import (
     analytics,
