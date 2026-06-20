@@ -644,7 +644,6 @@ def test_status_bar_cell_hides_refresh_requested_feedback_once_refresh_completes
 def test_address_gate_cell_shows_field_above_instructions_in_one_panel():
     """The address field comes first, with the lookup instructions below it, in one panel."""
     import marimo as mo
-    from marimo import MarimoStopError
 
     cells = list(_dash_module.app._cell_manager.cells())
     cell = next(
@@ -653,19 +652,16 @@ def test_address_gate_cell_shows_field_above_instructions_in_one_panel():
         if {"address_configured", "address_warning", "save_server_address"} <= c.refs
     )
 
-    try:
-        cell.run(
-            address_configured=lambda: False,
-            address_warning=lambda: False,
-            get_app_url=lambda: None,
-            mo=mo,
-            save_server_address=lambda *a, **kw: None,
-            set_address_configured=lambda _v: None,
-            set_address_warning=lambda _v: None,
-            set_refresh_requested=lambda _v: None,
-        )
-    except MarimoStopError as e:
-        output = e.output
+    output, _ = cell.run(
+        address_configured=lambda: False,
+        address_warning=lambda: False,
+        get_app_url=lambda: None,
+        mo=mo,
+        save_server_address=lambda *a, **kw: None,
+        set_address_configured=lambda _v: None,
+        set_address_warning=lambda _v: None,
+        set_refresh_requested=lambda _v: None,
+    )
 
     _, html = output._mime_()
     assert "marimo-callout-output" in html
