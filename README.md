@@ -62,7 +62,7 @@
 | src/dinary/db/receipts.py                                      |       92 |        3 |     97% |   119-121 |
 | src/dinary/db/sql\_loader.py                                   |       31 |        0 |    100% |           |
 | src/dinary/db/storage.py                                       |      129 |        7 |     95% |72, 266-269, 277-283 |
-| src/dinary/main.py                                             |       96 |        8 |     92% |47-49, 132, 138, 144, 154, 164 |
+| src/dinary/main.py                                             |       93 |        8 |     91% |45-47, 129, 135, 141, 151, 161 |
 | src/dinary/sheets/sheet\_mapping.py                            |      224 |       47 |     79% |239, 314-316, 343-344, 351-357, 404, 407-419, 433-434, 444-462, 480-514, 538, 549-554, 559-560 |
 | src/dinary/sheets/sheets.py                                    |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
 | src/dinary\_analytics/ai\_service.py                           |       77 |       10 |     87% |60, 66, 139-145, 149 |
@@ -75,21 +75,7 @@
 | src/dinary\_analytics/refresh.py                               |      100 |        2 |     98% |   50, 161 |
 | src/dinary\_analytics/settings.py                              |       49 |        1 |     98% |        56 |
 | src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        65 |
-| src/llmbroker/\_\_main\_\_.py                                  |        4 |        4 |      0% |       3-8 |
-| src/llmbroker/alembic.py                                       |        2 |        0 |    100% |           |
-| src/llmbroker/broker.py                                        |      271 |       36 |     87% |101, 129-130, 151, 155, 174, 190, 192-193, 255, 260, 326, 344-362, 369, 377, 401-402, 465, 470-471, 475-477, 494-495, 503-505, 519, 528 |
-| src/llmbroker/chat.py                                          |       72 |       10 |     86% |92, 142-152 |
-| src/llmbroker/cli.py                                           |       52 |       52 |      0% |      7-76 |
-| src/llmbroker/models.py                                        |       44 |        0 |    100% |           |
-| src/llmbroker/registry.py                                      |       34 |        0 |    100% |           |
-| src/llmbroker/schema.py                                        |       19 |        0 |    100% |           |
-| src/llmbroker/secrets.py                                       |       38 |        3 |     92% |59, 66, 71 |
-| src/llmbroker/shared\_state.py                                 |        3 |        0 |    100% |           |
-| src/llmbroker/sqlite.py                                        |      107 |       41 |     62% |38-49, 70, 83-86, 90-99, 120-146, 149-155, 161-162, 174-184, 192-202, 205-212 |
-| src/llmbroker/state.py                                         |       24 |        0 |    100% |           |
-| src/llmbroker/sync.py                                          |      103 |       12 |     88% |59, 98-99, 136, 175, 178, 181, 184, 187, 190, 193, 198 |
-| src/llmbroker/telemetry.py                                     |       36 |        2 |     94% |    37, 48 |
-| **TOTAL**                                                      | **5895** |  **808** | **86%** |           |
+| **TOTAL**                                                      | **5083** |  **648** | **87%** |           |
 
 
 ## Setup coverage badge
