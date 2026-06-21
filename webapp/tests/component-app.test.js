@@ -49,6 +49,7 @@ let _origFetch;
 
 beforeEach(async () => {
   await resetQueueDb();
+  localStorage.clear();
   _origFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(async () => ({
     ok: true,
@@ -503,6 +504,31 @@ describe("App — category template gating", () => {
 
   it("renders the normal app when activeTemplate is a template code", async () => {
     vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const wrapper = mount(App, { global: { plugins: [createPinia()] } });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="onboarding-template"]').exists()).toBe(false);
+    expect(wrapper.find(".app-header").exists()).toBe(true);
+    expect(wrapper.find(".app-main").exists()).toBe(true);
+  });
+
+  it("renders the app offline from a cached catalog while the active template is still unresolved", async () => {
+    // Returning install (e.g. first launch after upgrade) whose active-template
+    // fetch never lands because it's offline. A cached catalog snapshot must be
+    // enough to render the app instead of a permanent blank screen.
+    localStorage.setItem(
+      "dinary:catalog:v1",
+      JSON.stringify({
+        catalog_version: 0,
+        category_groups: [],
+        categories: [],
+        events: [],
+        tags: [],
+        frequent_categories: [],
+      }),
+    );
+    vi.spyOn(catalogApi, "getActiveTemplate").mockReturnValue(new Promise(() => {}));
 
     const wrapper = mount(App, { global: { plugins: [createPinia()] } });
     await flushPromises();

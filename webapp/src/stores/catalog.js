@@ -12,6 +12,7 @@ const FETCHED_KEY = "dinary:catalog:fetchedAt";
 const CATALOG_TTL_MS = MS_PER_DAY;
 const LAST_LANG_KEY = "dinary:catalog:lastLang";
 const NUDGE_FLAG_KEY = "dinary:catalog:nudgeActive";
+const ACTIVE_TEMPLATE_KEY = "dinary:catalog:activeTemplate";
 
 function isActive(item) {
   // Lenient: treat missing is_active as active so older cached snapshots
@@ -80,6 +81,28 @@ function writeCachedSnapshot(snapshot) {
   }
 }
 
+// The active template is persisted so a returning client renders the
+// correct screen (onboarding vs. main app) offline, without a network
+// round-trip on every launch. undefined = never resolved (must fetch
+// once, online); null = resolved to "no active template" (onboarding);
+// string = the active template code.
+function readStoredActiveTemplate() {
+  try {
+    const raw = localStorage.getItem(ACTIVE_TEMPLATE_KEY);
+    return raw === null ? undefined : JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+function writeStoredActiveTemplate(value) {
+  try {
+    localStorage.setItem(ACTIVE_TEMPLATE_KEY, JSON.stringify(value));
+  } catch {
+    // Quota / private mode: harmless, next launch refetches.
+  }
+}
+
 export const useCatalogStore = defineStore("catalog", () => {
   const snapshot = ref(readCachedSnapshot());
   const lastError = ref(null);
@@ -88,20 +111,38 @@ export const useCatalogStore = defineStore("catalog", () => {
 
   // ----- category templates (наборы категорий) ---------------------------
 
-  // undefined = not yet known, null = no active template (onboarding),
-  // string = the active template's code.
-  const activeTemplate = ref(undefined);
+  const activeTemplate = ref(readStoredActiveTemplate());
   let _resolveTemplateReady;
   const templateReady = new Promise((resolve) => {
     _resolveTemplateReady = resolve;
   });
 
-  async function initActiveTemplate() {
+  async function _refreshActiveTemplate() {
     try {
       const resp = await catalogApi.getActiveTemplate();
       activeTemplate.value = resp.active_template;
+      writeStoredActiveTemplate(resp.active_template);
     } catch (e) {
       lastError.value = e;
+    }
+  }
+
+  async function initActiveTemplate() {
+    // templateReady must resolve on every path — never leave it pending,
+    // even if a future change makes the refresh throw.
+    try {
+      // A cached value lets us render immediately and offline. The active
+      // template only ever changes through applyTemplate() in this app, so
+      // we don't poll it per launch — a daily background refresh (shared
+      // with the catalog TTL) is enough to pick up a switch made elsewhere.
+      if (activeTemplate.value !== undefined) {
+        if (navigator.onLine && _isCatalogStale()) void _refreshActiveTemplate();
+        return;
+      }
+      // First launch with nothing cached: we must learn the template before
+      // we can choose onboarding vs. main app. Offline this fetch simply fails
+      // and we render nothing — unavoidable until the first online load seeds.
+      await _refreshActiveTemplate();
     } finally {
       _resolveTemplateReady();
     }
@@ -110,6 +151,7 @@ export const useCatalogStore = defineStore("catalog", () => {
   async function applyTemplate(code, lang) {
     const resp = await catalogApi.applyTemplate(code, lang);
     activeTemplate.value = resp.active_template;
+    writeStoredActiveTemplate(resp.active_template);
     applySnapshot(resp);
     return resp;
   }
@@ -314,9 +356,13 @@ export const useCatalogStore = defineStore("catalog", () => {
     }
   }
 
+  function _isCatalogStale() {
+    const at = catalogFetchedAt.value;
+    return !at || Date.now() - at > CATALOG_TTL_MS;
+  }
+
   async function loadIfNeeded() {
-    const age = catalogFetchedAt.value ? Date.now() - catalogFetchedAt.value : Infinity;
-    if (snapshot.value && catalogFetchedAt.value && age <= CATALOG_TTL_MS) {
+    if (snapshot.value && !_isCatalogStale()) {
       return snapshot.value;
     }
     return load();

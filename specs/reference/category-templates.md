@@ -96,6 +96,20 @@ The onboarding choices, in display order:
 3. **Family & home** — kids + household, the broad mainstream choice.
 4. **Freelancer** — separates personal and business spending in one wallet.
 
+## Active template persistence
+
+The active template selection is cached on the client so a returning
+installation renders the correct screen — onboarding versus the main app —
+offline, without a network round-trip on every launch. The selection only
+changes through onboarding or the in-app template switch, so it is re-fetched
+at most once per day.
+
+When the selection has never been resolved and no catalog snapshot is cached,
+the app defers rendering until the selection is known. Once a catalog snapshot
+is cached, the main app renders from that snapshot even while the active
+template is still being resolved, so a slow or absent network never produces a
+blank screen for an install that has loaded once before.
+
 ## User edits
 
 Beyond picking a template, a user can: rename a category (label only, identity

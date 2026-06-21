@@ -53,6 +53,20 @@ const SAMPLE = {
   frequent_categories: [{ id: 10, name: "cafe" }],
 };
 
+function setOnline(value) {
+  Object.defineProperty(navigator, "onLine", {
+    configurable: true,
+    get: () => value,
+  });
+}
+
+// fake-indexeddb aside, fire-and-forget refreshes resolve on the
+// microtask queue; drain a couple of rounds so assertions see them.
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 beforeEach(() => {
   setActivePinia(createPinia());
   localStorage.clear();
@@ -60,6 +74,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  setOnline(true);
 });
 
 describe("catalog store: load + caching", () => {
@@ -364,6 +379,98 @@ describe("catalog store: category templates", () => {
 
     expect(store.activeTemplate).toBe("family");
     expect(store.catalogVersion).toBe(5);
+  });
+
+  it("initActiveTemplate persists the resolved template to localStorage", async () => {
+    vi.spyOn(catalogApi, "getActiveTemplate").mockResolvedValue({ active_template: "simple" });
+
+    const store = useCatalogStore();
+    await store.initActiveTemplate();
+
+    expect(localStorage.getItem("dinary:catalog:activeTemplate")).toBe('"simple"');
+  });
+
+  it("applyTemplate persists the active template to localStorage", async () => {
+    vi.spyOn(catalogApi, "applyTemplate").mockResolvedValue({
+      active_template: "family",
+      catalog_version: 5,
+      category_groups: [],
+      categories: [],
+      events: [],
+      tags: [],
+      frequent_categories: [],
+    });
+
+    const store = useCatalogStore();
+    await store.applyTemplate("family", "ru");
+
+    expect(localStorage.getItem("dinary:catalog:activeTemplate")).toBe('"family"');
+  });
+
+  it("seeds activeTemplate synchronously from localStorage on store init", () => {
+    localStorage.setItem("dinary:catalog:activeTemplate", '"simple"');
+
+    const store = useCatalogStore();
+
+    expect(store.activeTemplate).toBe("simple");
+  });
+
+  it("initActiveTemplate renders offline from cache without any network call", async () => {
+    localStorage.setItem("dinary:catalog:activeTemplate", '"simple"');
+    localStorage.setItem("dinary:catalog:fetchedAt", String(Date.now()));
+    const spy = vi.spyOn(catalogApi, "getActiveTemplate");
+    setOnline(false);
+
+    const store = useCatalogStore();
+    await store.initActiveTemplate();
+
+    expect(store.activeTemplate).toBe("simple");
+    expect(spy).not.toHaveBeenCalled();
+    await expect(store.templateReady).resolves.toBeUndefined();
+  });
+
+  it("initActiveTemplate skips the network when cache is fresh, even online", async () => {
+    localStorage.setItem("dinary:catalog:activeTemplate", '"simple"');
+    localStorage.setItem("dinary:catalog:fetchedAt", String(Date.now()));
+    const spy = vi.spyOn(catalogApi, "getActiveTemplate");
+    setOnline(true);
+
+    const store = useCatalogStore();
+    await store.initActiveTemplate();
+    await flushMicrotasks();
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("initActiveTemplate refreshes a stale cached template in the background", async () => {
+    localStorage.setItem("dinary:catalog:activeTemplate", '"simple"');
+    localStorage.setItem(
+      "dinary:catalog:fetchedAt",
+      String(Date.now() - 25 * 60 * 60 * 1000),
+    );
+    const spy = vi
+      .spyOn(catalogApi, "getActiveTemplate")
+      .mockResolvedValue({ active_template: "family" });
+    setOnline(true);
+
+    const store = useCatalogStore();
+    await store.initActiveTemplate();
+    await flushMicrotasks();
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(store.activeTemplate).toBe("family");
+    expect(localStorage.getItem("dinary:catalog:activeTemplate")).toBe('"family"');
+  });
+
+  it("first launch offline: fetch fails, activeTemplate stays undefined, ready resolves", async () => {
+    vi.spyOn(catalogApi, "getActiveTemplate").mockRejectedValue(new Error("offline"));
+    setOnline(false);
+
+    const store = useCatalogStore();
+    await store.initActiveTemplate();
+
+    expect(store.activeTemplate).toBeUndefined();
+    await expect(store.templateReady).resolves.toBeUndefined();
   });
 });
 

@@ -53,6 +53,18 @@ After each `refresh()` the LLM store always calls `stampFresh()`, regardless of
 provider rate-limit state.  Rate-limit display is informational; it does not
 justify re-fetching on every page open.
 
+## Catalog store
+
+The catalog store keeps its own freshness timestamp rather than a boolean dirty
+flag, because catalog mutations made on this device patch the cached snapshot in
+place and bump its version locally. Cross-device changes are picked up on the
+same TTL-based refresh.
+
+Foreground and visibility events refresh the catalog only when that TTL has
+expired — they never force an unconditional refetch. Combined with the
+ETag-based conditional GET, returning to the app within the freshness window
+costs no catalog traffic.
+
 ## Badge visibility
 
 `showReviewBadge` (App.vue computed) is true when **any** of:

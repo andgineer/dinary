@@ -52,6 +52,18 @@ const showReviewBadge = computed(() => {
     || q.poisoned > 0;
 });
 
+// Screen gating. A null active template is authoritative: show onboarding.
+// Otherwise render the app when we know a template code, or when the code
+// is still unknown but a catalog snapshot is cached — the latter lets a
+// returning install render offline instead of hanging on a blank screen
+// while the active-template fetch is in flight or has failed offline.
+const showOnboarding = computed(() => catalogStore.activeTemplate === null);
+const showApp = computed(
+  () =>
+    typeof catalogStore.activeTemplate === "string"
+    || (catalogStore.activeTemplate === undefined && catalogStore.snapshot != null),
+);
+
 watch(isOnline, (online) => {
   if (online) {
     void flushQueue();
@@ -75,7 +87,7 @@ function handleVisibilityChange() {
   if (document.visibilityState !== "visible" || !navigator.onLine) return;
   if (!isOnline.value) window.dispatchEvent(new Event("online"));
   if (reviewStore.dirtyFlag) void reviewStore.loadIfNeeded();
-  void catalogStore.load();
+  void catalogStore.loadIfNeeded();
 }
 
 let _retryTimerId = null;
@@ -108,12 +120,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <template v-if="catalogStore.activeTemplate === undefined">
-    <!-- Still resolving the active category template — render nothing to
-         avoid a flash of either the onboarding screen or the main app. -->
-  </template>
-  <OnboardingTemplate v-else-if="catalogStore.activeTemplate === null" />
-  <template v-else>
+  <OnboardingTemplate v-if="showOnboarding" />
+  <template v-else-if="showApp">
     <div v-if="isDev" class="dev-banner">DEV MODE</div>
     <header class="app-header" :class="{ 'below-banner': isDev }">
       <div class="header-row">
@@ -168,6 +176,11 @@ onBeforeUnmount(() => {
       <IncomeView v-else-if="tab === 'income'" />
       <LLMView v-else-if="tab === 'llm'" />
     </main>
+  </template>
+  <template v-else>
+    <!-- Active template not yet resolved and no cached catalog to fall back
+         on — render nothing to avoid a flash of either the onboarding screen
+         or the main app. -->
   </template>
 
   <QueueModal :open="queueModalOpen" @close="queueModalOpen = false" />

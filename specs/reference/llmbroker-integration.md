@@ -40,7 +40,8 @@ This path is appropriate for tasks where no long-lived database process is runni
   runtime through the admin API
 - `llmbroker.sqlite.Telemetry` on the same database — append-only call journal
 - `llmbroker.sqlite.Secrets` on the same database — persists API keys resolved from env vars
-- No `shared_state` — dinary is single-process; per-LLM live state stays in broker memory
+- `llmbroker.sqlite.StateStore` on the same database — persists per-LLM live state
+  (cooldowns, health) so it survives restarts and is shared across worker processes
 
 The broker's `ensure_schema` owns all `llmbroker_*` tables. dinary never issues SQL
 against them directly; all reads and writes go through the broker object.

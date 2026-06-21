@@ -76,6 +76,7 @@ async def _lifespan(_app: FastAPI):
         registry=llmbroker.sqlite.Registry(storage.DB_PATH),
         telemetry=llmbroker.sqlite.Telemetry(storage.DB_PATH),
         secrets=llmbroker.sqlite.Secrets(storage.DB_PATH),
+        state_store=llmbroker.sqlite.StateStore(storage.DB_PATH),
         seed=llmbroker.Registry(_PROJECT_ROOT / ".deploy" / "llms.toml"),
         seed_policy=llmbroker.SeedPolicy.ADD,
     )
