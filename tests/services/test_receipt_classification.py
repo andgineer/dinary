@@ -710,10 +710,8 @@ class TestLoadTopFallbackCategories:
 class TestRunLLMPass:
     def test_single_provider_one_attempt_on_success(self):
         """provider_count=1 → max_attempts=1; success on first attempt."""
-        from unittest.mock import MagicMock
-
         broker = MagicMock(spec=llmbroker.AsyncBroker)
-        broker.__len__.return_value = 1
+        broker.count = AsyncMock(return_value=1)
         job = _make_job(receipt_id=1)
         expected = ClassificationResult(
             item_name_normalized="hleb", category_id=1, confidence_level=3
@@ -735,7 +733,7 @@ class TestRunLLMPass:
     def test_three_providers_all_fail_raises_exhausted_after_3_calls(self):
         """provider_count=3 → max_attempts=3; all fail → ClassificationExhaustedError after 3 calls."""
         broker = MagicMock(spec=llmbroker.AsyncBroker)
-        broker.__len__.return_value = 3
+        broker.count = AsyncMock(return_value=3)
         job = _make_job(receipt_id=1)
         with patch(
             "dinary.background.classification.task.classify_receipt",
@@ -748,7 +746,7 @@ class TestRunLLMPass:
     def test_provider_count_above_3_caps_attempts_at_3(self):
         """provider_count=5 → max_attempts capped at 3, not 5."""
         broker = MagicMock(spec=llmbroker.AsyncBroker)
-        broker.__len__.return_value = 5
+        broker.count = AsyncMock(return_value=5)
         job = _make_job(receipt_id=1)
         with patch(
             "dinary.background.classification.task.classify_receipt",
@@ -761,7 +759,7 @@ class TestRunLLMPass:
     def test_record_quality_raises_still_raises_exhausted(self):
         """record_quality(0.0) raising must not prevent ClassificationExhaustedError."""
         broker = MagicMock(spec=llmbroker.AsyncBroker)
-        broker.__len__.return_value = 1
+        broker.count = AsyncMock(return_value=1)
         job = _make_job(receipt_id=1)
 
         async def _failing_record_quality(*_args, **_kwargs):
@@ -785,7 +783,7 @@ class TestRunLLMPass:
     def test_second_attempt_succeeds_after_first_fails(self):
         """provider_count=2 → max_attempts=2; first fails, second succeeds."""
         broker = MagicMock(spec=llmbroker.AsyncBroker)
-        broker.__len__.return_value = 2
+        broker.count = AsyncMock(return_value=2)
         job = _make_job(receipt_id=1)
         expected = ClassificationResult(
             item_name_normalized="hleb", category_id=1, confidence_level=3

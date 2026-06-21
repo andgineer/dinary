@@ -68,6 +68,11 @@ class TestLLMProvidersCRUD:
         resp = client.delete("/api/llm/providers/groq-llama")
         assert resp.status_code == 409
 
+    def test_add_duplicate_rejected(self, client, db):  # noqa: ARG002
+        assert _add_provider(client, name="groq-llama").status_code == 201
+        resp = _add_provider(client, name="groq-llama")
+        assert resp.status_code == 409
+
     def test_delete_nonexistent(self, client, db):  # noqa: ARG002
         resp = client.delete("/api/llm/providers/ghost")
         assert resp.status_code == 404

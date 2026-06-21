@@ -471,7 +471,7 @@ async def _run_llm_pass(
     if not llm_queue:
         return {}
     normalized_names = [name for _, name in llm_queue]
-    max_attempts = max(1, min(3, len(broker)))
+    max_attempts = max(1, min(3, await broker.count()))
     for attempt in range(max_attempts):
         outcome = await classify_receipt(
             broker,

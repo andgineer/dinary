@@ -49,22 +49,25 @@ async def add_provider(body: ProviderIn, llms: llmbroker.AsyncBroker) -> dict:
         model=body.model,
         api_key_ref=body.api_key_ref,
     )
-    await llms.add(cfg)
+    try:
+        await llms.add(cfg)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Provider already exists") from exc
     return {"name": body.name}
 
 
 async def update_provider(name: str, body: ProviderPatch, llms: llmbroker.AsyncBroker) -> dict:
-    snapshot = await llms.snapshot()
-    if name not in snapshot:
-        raise HTTPException(status_code=404, detail="Provider not found")
-    old = snapshot[name].config
+    try:
+        old = (await llms.get(name)).config
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Provider not found") from exc
     updated = LLMConfig(
         name=name,
         base_url=body.base_url if body.base_url is not None else old.base_url,
         model=body.model if body.model is not None else old.model,
         api_key_ref=body.api_key_ref if body.api_key_ref is not None else old.api_key_ref,
     )
-    await llms.add(updated)
+    await llms.update(updated)
     return {"status": "ok"}
 
 

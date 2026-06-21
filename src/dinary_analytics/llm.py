@@ -102,7 +102,7 @@ def run_chat_turn(
     errors (including rate limits) are returned as user-facing text, not raised.
     """
     with llmbroker.Broker(registry=llmbroker.Registry(_providers_path())) as llms:
-        if len(llms) == 0:
+        if llms.count() == 0:
             return _NO_PROVIDERS_MESSAGE
 
         schemas = [_tool_schema(fn) for fn in tools]

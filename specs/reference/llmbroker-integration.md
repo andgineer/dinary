@@ -93,7 +93,9 @@ deliberately: update the pin, run the full test suite, commit.
 All admin reads and writes go through the `AsyncBroker` instance on `app.state.llms`:
 
 - Provider list and live state: `await llms.snapshot()`
-- Add / remove a provider: `llms.add(...)` / `llms.remove(...)`
+- Add a provider (create-only): duplicate names are rejected; the HTTP layer returns 409
+- Modify an existing provider: a distinct update operation; unknown names return 404
+- Remove a provider: `llms.remove(...)`
 - Call history: `await llms.calls(limit=...)` (requires `sqlite.Telemetry`)
 
 ## DB schema ownership
