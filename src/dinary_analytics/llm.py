@@ -1,7 +1,7 @@
 """LLM chat turn for the analytics dashboard.
 
 Uses the standalone ``llmbroker`` package for OpenAI-compatible completion with
-provider failover. Providers come from ``.deploy/llm_providers.toml`` — the same
+provider failover. Providers come from ``.deploy/llms.toml`` — the same
 static config the server seeds from — so analytics never calls the running
 dinary server. Tool calling drives the draft view (propose_view, query_ledger, …).
 """
@@ -17,9 +17,9 @@ from pathlib import Path
 import llmbroker
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_PROVIDERS_FILE = _REPO_ROOT / ".deploy" / "llm_providers.toml"
+_DEFAULT_PROVIDERS_FILE = _REPO_ROOT / ".deploy" / "llms.toml"
 
-_NO_PROVIDERS_MESSAGE = "**No LLM providers configured.** Add them to `.deploy/llm_providers.toml`."
+_NO_PROVIDERS_MESSAGE = "**No LLM providers configured.** Add them to `.deploy/llms.toml`."
 
 _JSON_TYPES: dict[type, str] = {
     str: "string",
@@ -101,8 +101,7 @@ def run_chat_turn(
     history items are {"role": "user"|"model", "content": str}. Provider/network
     errors (including rate limits) are returned as user-facing text, not raised.
     """
-    llms = llmbroker.Broker(registry=llmbroker.Registry(_providers_path()))
-    try:
+    with llmbroker.Broker(registry=llmbroker.Registry(_providers_path())) as llms:
         if len(llms) == 0:
             return _NO_PROVIDERS_MESSAGE
 
@@ -127,10 +126,8 @@ def run_chat_turn(
         except llmbroker.NoLLMAvailableError:
             return "**All providers are busy right now.** Press 🔁 Retry in a moment."
         except llmbroker.AllLLMsFailedError:
-            return "**AI providers unavailable.** Check `.deploy/llm_providers.toml`."
+            return "**AI providers unavailable.** Check `.deploy/llms.toml`."
         except Exception as exc:  # noqa: BLE001 - surfaced to the user, not swallowed
             return f"**AI error:** {str(exc)[:300]}"
 
         return reply or "*(view updated — see the draft below)*"
-    finally:
-        llms.close()

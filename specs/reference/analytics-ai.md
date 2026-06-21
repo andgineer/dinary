@@ -74,7 +74,7 @@ DuckDB-WASM without rewrite.
 
 **Default — shared provider pool.** The Marimo dashboard chat uses the same
 OpenAI-compatible providers as the receipt pipeline, read from
-`.deploy/llm_providers.toml` (path overridable via `DINARY_LLM_PROVIDERS_FILE`).
+`.deploy/llms.toml` (path overridable via `DINARY_LLM_PROVIDERS_FILE`).
 Providers are tried in declaration order; a rate-limited (429/503) provider is
 skipped for the next. The request/response transport and tool-calling loop are
 shared with the server's LLM broker — analytics never calls the running server.

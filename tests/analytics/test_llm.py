@@ -26,7 +26,7 @@ api_key_ref = "OPENROUTER_API_KEY"
 
 
 def _write_providers(tmp_path, monkeypatch, body=_TOML):
-    path = tmp_path / "llm_providers.toml"
+    path = tmp_path / "llms.toml"
     path.write_text(body)
     monkeypatch.setenv("DINARY_LLM_PROVIDERS_FILE", str(path))
     monkeypatch.setenv("GROQ_API_KEY", "k1")
@@ -81,7 +81,7 @@ def test_run_chat_turn_no_providers(tmp_path, monkeypatch):
 
 @allure.epic("Analytics")
 @allure.feature("Chat")
-def test_run_chat_turn_returns_reply(tmp_path, monkeypatch):
+def test_run_chat_turn_returns_reply(tmp_path, monkeypatch, real_ensure_pool):  # noqa: ARG001
     _write_providers(tmp_path, monkeypatch)
     captured = {}
 
@@ -100,7 +100,7 @@ def test_run_chat_turn_returns_reply(tmp_path, monkeypatch):
 
 @allure.epic("Analytics")
 @allure.feature("Chat")
-def test_run_chat_turn_rate_limited(tmp_path, monkeypatch):
+def test_run_chat_turn_rate_limited(tmp_path, monkeypatch, real_ensure_pool):  # noqa: ARG001
     _write_providers(tmp_path, monkeypatch)
 
     def _raise(*_a, **_k):
@@ -113,7 +113,7 @@ def test_run_chat_turn_rate_limited(tmp_path, monkeypatch):
 
 @allure.epic("Analytics")
 @allure.feature("Chat")
-def test_run_chat_turn_all_failed(tmp_path, monkeypatch):
+def test_run_chat_turn_all_failed(tmp_path, monkeypatch, real_ensure_pool):  # noqa: ARG001
     _write_providers(tmp_path, monkeypatch)
 
     def _raise(*_a, **_k):
@@ -126,7 +126,7 @@ def test_run_chat_turn_all_failed(tmp_path, monkeypatch):
 
 @allure.epic("Analytics")
 @allure.feature("Chat")
-def test_run_chat_turn_empty_reply_falls_back(tmp_path, monkeypatch):
+def test_run_chat_turn_empty_reply_falls_back(tmp_path, monkeypatch, real_ensure_pool):  # noqa: ARG001
     _write_providers(tmp_path, monkeypatch)
     monkeypatch.setattr(llm_module.llmbroker, "run_tool_loop", lambda *_a, **_k: "")
     reply = run_chat_turn("system", [], [], "now")

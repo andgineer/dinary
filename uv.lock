@@ -404,6 +404,7 @@ dependencies = [
     { name = "invoke" },
     { name = "llmbroker" },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "tenacity" },
     { name = "tzdata" },
@@ -446,8 +447,9 @@ requires-dist = [
     { name = "holidays", specifier = ">=0.94" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "invoke", specifier = ">=2.2.0" },
-    { name = "llmbroker", specifier = "==0.0.4" },
+    { name = "llmbroker", specifier = "==0.0.5" },
     { name = "pydantic-settings", specifier = ">=2.8.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "tzdata", specifier = ">=2024.1" },
@@ -837,17 +839,15 @@ wheels = [
 
 [[package]]
 name = "llmbroker"
-version = "0.0.4"
+version = "0.0.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiosqlite" },
-    { name = "click" },
     { name = "httpx" },
-    { name = "rich-click" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/91/2d/81eaf4181b11bd5291680e83764b737b3b7a1a771a325437d3a26a08493e/llmbroker-0.0.4.tar.gz", hash = "sha256:b12c16af38eada16096002913ef0ab0e97c7cac858a48a425af205f5cd3bce75", size = 113883, upload-time = "2026-06-20T09:11:56.651Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e5/9b/dc7abf8e569f32ee17105a6f5a6cca4e70d2adf1f4a0d4bb0ce83758f640/llmbroker-0.0.5.tar.gz", hash = "sha256:a8d96b5d942a2126887e4f2d0d392d45e389d02a973a0550a609ece40865f0df", size = 118675, upload-time = "2026-06-20T18:50:39.901Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/f2/a39e225eac883e4f4ea47694adb08e7112c61706ec5065c80fcc585b0017/llmbroker-0.0.4-py3-none-any.whl", hash = "sha256:2cf6a52d9107467cef92a5c3869fc678863382ea49b32d1cf4cfd24c57a77c37", size = 24118, upload-time = "2026-06-20T09:11:55.586Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/59/e25fac4de617a62a75dff54e7493bc24bc41802f7e4d66d25696bb3cf9cc/llmbroker-0.0.5-py3-none-any.whl", hash = "sha256:f567cd796cb6eb614d77b569a50c4a059749d04a6020da237324489eea7915d0", size = 23874, upload-time = "2026-06-20T18:50:38.443Z" },
 ]
 
 [[package]]
@@ -1775,20 +1775,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c0/8f/0722ca900cc807c13a6a0c696dacf35430f72e0ec571c4275d2371fca3e9/rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36", size = 230680, upload-time = "2026-04-12T08:24:00.75Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/82/3b/64d4899d73f91ba49a8c18a8ff3f0ea8f1c1d75481760df8c68ef5235bf5/rich-15.0.0-py3-none-any.whl", hash = "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb", size = 310654, upload-time = "2026-04-12T08:24:02.83Z" },
-]
-
-[[package]]
-name = "rich-click"
-version = "1.9.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "rich" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f7/ea/21e4867ea0ef881ffd4c0550fc21a061435e50d6324bcd034396633cbc18/rich_click-1.9.8.tar.gz", hash = "sha256:4008f921da88b5d91646c134ec881c1500e5a6b3f093e90e8f29400e09608371", size = 75363, upload-time = "2026-05-28T19:54:59.144Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/97/a87901aef6b7e7e4a34c6dd6cc17dca8594a592ef9d9dd765fca2b7facf7/rich_click-1.9.8-py3-none-any.whl", hash = "sha256:12873865396e6927835d4eabb1cc3996edcd65b7ac9b2391a29eca4f335a2f93", size = 72189, upload-time = "2026-05-28T19:54:57.867Z" },
 ]
 
 [[package]]

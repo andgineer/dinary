@@ -1,19 +1,24 @@
 """inv analytics — ensure dinary-ai is running, start Marimo dashboard."""
 
+import asyncio
 import time
-import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
 
+import llmbroker
+from dotenv import dotenv_values
 from invoke import task
 
 from dinary_analytics.paths import MCP_PORT
+from tasks.devtools.constants import LOCAL_ENV_PATH
 
-_LLM_PROVIDERS_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llm_providers.toml"
+_LLM_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llms.toml"
 
 _NOTEBOOKS_DIR = Path("src/dinary_analytics/notebooks")
 _DEFAULT_MARIMO_PORT = 2718
+
+_GEMINI_URLS = ("generativelanguage.googleapis.com", "aistudio.google.com")
 
 
 def _ensure_dinary_ai(c) -> None:
@@ -36,16 +41,25 @@ def _ensure_dinary_ai(c) -> None:
     raise SystemExit(f"dinary-ai did not start on port {MCP_PORT} after setup")
 
 
-def _gemini_api_key() -> str | None:
-    if not _LLM_PROVIDERS_TOML.exists():
-        return None
-    with _LLM_PROVIDERS_TOML.open("rb") as f:
-        data = tomllib.load(f)
-    for provider in data.get("providers", []):
-        url = provider.get("base_url", "").lower()
-        if "gemini" in url or "googleapis" in url or "aistudio" in url:
-            return provider.get("api_key")
+async def _find_gemini_key_ref() -> str | None:
+    configs = await llmbroker.Registry(_LLM_TOML).load()
+    for cfg in configs:
+        if any(u in cfg.base_url for u in _GEMINI_URLS):
+            return cfg.api_key_ref
     return None
+
+
+def _gemini_api_key() -> str | None:
+    if not _LLM_TOML.exists():
+        raise SystemExit(f".deploy/llms.toml not found at {_LLM_TOML} — cannot resolve LLM keys")
+    ref = asyncio.run(_find_gemini_key_ref())
+    if ref is None:
+        return None
+    env = dotenv_values(LOCAL_ENV_PATH)
+    key = env.get(ref)
+    if key is None:
+        raise SystemExit(f"{ref!r} not found in {LOCAL_ENV_PATH} — add it and retry")
+    return key
 
 
 @task(help={"port": f"Marimo dashboard port (default {_DEFAULT_MARIMO_PORT})."})
@@ -57,7 +71,7 @@ def analytics(c, port=_DEFAULT_MARIMO_PORT):
     if gemini_key:
         extra_env["GOOGLE_AI_STUDIO_API_KEY"] = gemini_key
     else:
-        print("Warning: no Gemini provider found in .deploy/llm_providers.toml — AI chat disabled.")
+        print("Warning: no Gemini provider in .deploy/llms.toml — AI chat disabled.")
     c.run(
         f"uv run marimo run {_NOTEBOOKS_DIR / 'dashboard.py'} --port {port} --no-token "
         "--no-skew-protection",

@@ -22,12 +22,18 @@ from tasks.ssh_utils import (
 )
 
 _DEPLOY_FILES = [
-    (".deploy/llm_providers.toml", f"{REMOTE_DEPLOY_DIR}/llm_providers.toml"),
+    (".deploy/llms.toml", f"{REMOTE_DEPLOY_DIR}/llms.toml"),
+]
+
+_LEGACY_REMOTE_FILES = [
+    f"{REMOTE_DEPLOY_DIR}/llm_providers.toml",
 ]
 
 
 def sync_remote_deploy_files(c) -> None:
     """Sync .deploy/ config and secrets files to the server."""
+    for path in _LEGACY_REMOTE_FILES:
+        ssh_run(c, f"rm -f {path}")
     for local, remote in _DEPLOY_FILES:
         sync_remote_file(c, local, remote)
 

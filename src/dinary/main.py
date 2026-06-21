@@ -10,6 +10,7 @@ from pathlib import Path
 import llmbroker
 import llmbroker.sqlite
 import uvicorn
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -70,11 +71,16 @@ async def _lifespan(_app: FastAPI):
     storage.init_db()
     with storage.connection() as con:
         category_seed.bootstrap_categories(con)
+    load_dotenv(_PROJECT_ROOT / ".deploy" / ".env", override=False)
     llms = llmbroker.AsyncBroker(
         registry=llmbroker.sqlite.Registry(storage.DB_PATH),
         telemetry=llmbroker.sqlite.Telemetry(storage.DB_PATH),
+        secrets=llmbroker.sqlite.Secrets(storage.DB_PATH),
+        seed=llmbroker.Registry(_PROJECT_ROOT / ".deploy" / "llms.toml"),
+        seed_policy=llmbroker.SeedPolicy.ADD,
     )
     _app.state.llms = llms
+    await llms.ensure_pool()
     await warm_sheet_mapping()
     sheet_logging_bg = asyncio.create_task(sheet_logging_task(), name="sheet-logging-task")
     rate_prefetch_bg = asyncio.create_task(rate_prefetch_task(), name="rate-prefetch-task")

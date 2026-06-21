@@ -19,14 +19,14 @@ from dinary.db.catalog import list_visible_categories
 from dinary.db.receipts import requeue_receipts
 from dinary.db.storage import get_connection
 
-_PROVIDERS_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llm_providers.toml"
+_PROVIDERS_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llms.toml"
 
 
 @task(name="classify-receipt", iterable=["url"])
 def classify_receipt(c, url):  # noqa: ARG001
     """Classify items from one or more Serbian fiscal receipt URLs using a real LLM.
 
-    Providers are read from .deploy/llm_providers.toml.
+    Providers are read from .deploy/llms.toml.
 
     Example:
         inv classify-receipt --url https://suf.purs.gov.rs/v/?vl=...

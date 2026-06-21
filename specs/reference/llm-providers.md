@@ -1,23 +1,5 @@
 # LLM Provider Strategy
 
-## Broker design
-
-`LLMBroker` knows nothing about receipts or categories. It accepts OpenAI-style
-messages and returns a string. This isolation is intentional: the broker is
-designed to be extractable as a standalone package. All receipt and category
-business logic lives in the classification layer above it. See
-[classification-pipeline.md](classification-pipeline.md) for how the pipeline
-uses the broker.
-
-The broker depends on a Protocol for storage, not a concrete DB module. This
-keeps the broker's hot path (provider selection, HTTP call, rate-limit tracking)
-free of any SQLite dependency.
-
-Rate-limit state is tracked in memory for immediate response and persisted to DB
-for survival across restarts. The in-memory path avoids a DB write on every
-provider call; the persistence path ensures a restarted process doesn't hammer a
-provider that was already cooling down.
-
 ## Provider identity
 
 `label` is the stable identifier for a provider. It is used as the primary key in
@@ -26,20 +8,6 @@ linking. Once a provider is in use, its `label` must not be changed — doing so
 orphans all historical records for that provider. The label is also what is shown
 in the UI, so pick a short, human-readable name when adding a provider
 (e.g. `"Groq"`, `"OpenRouter-GPT"`, `"Gemini"`).
-
-## Storage implementations
-
-`SqliteLLMBrokerStorage` is the production implementation: persists call events
-and rate-limit state to SQLite, seeds providers from `.deploy/llm_providers.toml`
-on startup when the table is empty.
-
-`TomlLLMBrokerStorage` is the CLI/standalone path: reads providers from TOML
-directly, logs calls via Python's logging module, writes nothing to a database.
-Used by the `inv classify-receipt` task where no long-lived DB process is
-running.
-
-`NullStorage` (no-op) is test infrastructure only; it lives in `tests/conftest.py`,
-not in production code.
 
 ## Provider pool rationale
 

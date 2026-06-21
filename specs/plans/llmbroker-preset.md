@@ -3,37 +3,43 @@
 ## Context
 
 dinary's initial provider seeding currently requires the operator to manually create
-`.deploy/llm_providers.toml`. The `preset` CLI command (Phase 2 of llmbroker) will
-automate fetching a curated provider list from the llmbroker repository.
+`.deploy/llms.toml`. The llmbroker repository already ships curated preset TOML files
+at `presets/freetier.toml` and `presets/smart-freetier.toml`, but has no CLI command
+to print them to stdout.
+
+Once a `preset` subcommand is added to the llmbroker CLI, the operator can replace
+manual file authoring with:
+
+```bash
+python -m llmbroker preset freetier > .deploy/llms.toml
+```
+
+No separate sync step is needed — `main.py` already seeds the SQLite registry
+programmatically from `.deploy/llms.toml` on first boot via
+`AsyncBroker(seed=Registry(...), seed_policy=SeedPolicy.ADD)`.
+
+To scaffold the required API-key env vars after generating the file:
+
+```bash
+python -m llmbroker env .deploy/llms.toml >> .deploy/.env
+```
+
+(`env` already exists in the CLI.)
 
 ## When to apply
 
-Once `python -m llmbroker preset freetier` is released (llmbroker Phase 2).
+Once `python -m llmbroker preset <name>` is released in llmbroker.
 
 ## Changes
 
-Remove the manual step from the deployment instructions and replace with:
-
-```bash
-python -m llmbroker preset freetier > .deploy/llm_providers.toml
-python -m llmbroker sync .deploy/llm_providers.toml \
-    --into sqlite:.deploy/dinary.db --policy if_empty
-```
-
-The `sync` step can also be wired into the deploy task so first-boot seeding is
-automatic. Admin edits survive because `--policy if_empty` is a no-op on a
-non-empty registry.
-
-To update the provider list without clobbering admin edits:
-
-```bash
-python -m llmbroker preset freetier > .deploy/llm_providers.toml
-python -m llmbroker sync .deploy/llm_providers.toml \
-    --into sqlite:.deploy/dinary.db --policy add
-```
+- Remove the manual file-authoring step from deployment instructions.
+- Replace with the two commands above.
+- Update `.deploy.example/llms.toml` header comment to reference the preset command.
 
 ## What does not change
 
-The lifespan does not auto-seed — seeding remains an explicit operator step.
-The `specs/reference/llmbroker-integration.md` spec describes the stable wiring;
-only the provisioning workflow changes.
+- The seeding mechanism in `main.py` — `seed` + `SeedPolicy.ADD` stays as-is.
+- Admin edits survive reboots because `SeedPolicy.ADD` is a no-op for names already
+  in the SQLite registry.
+- `specs/reference/llmbroker-integration.md` describes the stable wiring; only
+  the provisioning workflow changes.

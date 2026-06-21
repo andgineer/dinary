@@ -21,7 +21,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _BUILT_STATIC = _PROJECT_ROOT / "_static"
 
 _REAL_ENSURE_FRESH = sheet_mapping.ensure_fresh
-_REAL_BROKER_SYNC_CONFIGS = llmbroker.AsyncBroker.sync_configs
+_REAL_ENSURE_POOL = llmbroker.AsyncBroker.ensure_pool
 
 
 def _migration_connect(self, dburi):
@@ -65,7 +65,7 @@ def _reset_db_connection():
 
 @pytest.fixture(autouse=True)
 def _disable_llm_broker_sync(monkeypatch):
-    """Prevent the lifespan from seeding the broker pool from .deploy/llm_providers.toml.
+    """Prevent the lifespan from seeding the broker pool from .deploy/llms.toml.
 
     Tests that assert on broker state start from an empty pool; the operator's real
     credentials or local TOML must not interfere.
@@ -74,7 +74,7 @@ def _disable_llm_broker_sync(monkeypatch):
     async def _no_op(self, *args, **kwargs):  # noqa: ARG001
         return
 
-    monkeypatch.setattr(llmbroker.AsyncBroker, "sync_configs", _no_op)
+    monkeypatch.setattr(llmbroker.AsyncBroker, "ensure_pool", _no_op)
 
 
 @pytest.fixture(autouse=True)
@@ -133,14 +133,14 @@ def _stub_sheet_mapping_ensure_fresh(monkeypatch):
 
 
 @pytest.fixture
-def real_broker_sync(monkeypatch):
-    """Restore the real ``AsyncBroker.sync_configs`` for tests that exercise it directly.
+def real_ensure_pool(monkeypatch):
+    """Restore the real ``AsyncBroker.ensure_pool`` for tests that exercise it directly.
 
     ``_disable_llm_broker_sync`` stubs it out to prevent lifespan seeding from
-    interfering with other tests; tests that specifically validate ``sync_configs``
+    interfering with other tests; tests that specifically validate pool-init
     behaviour declare this fixture to get the original back.
     """
-    monkeypatch.setattr(llmbroker.AsyncBroker, "sync_configs", _REAL_BROKER_SYNC_CONFIGS)
+    monkeypatch.setattr(llmbroker.AsyncBroker, "ensure_pool", _REAL_ENSURE_POOL)
 
 
 @pytest.fixture
