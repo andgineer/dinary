@@ -62,7 +62,7 @@
 | src/dinary/db/receipts.py                                      |       92 |        3 |     97% |   119-121 |
 | src/dinary/db/sql\_loader.py                                   |       31 |        0 |    100% |           |
 | src/dinary/db/storage.py                                       |      129 |        7 |     95% |72, 266-269, 277-283 |
-| src/dinary/main.py                                             |       96 |        8 |     92% |46-48, 135, 141, 147, 157, 167 |
+| src/dinary/main.py                                             |       96 |        8 |     92% |46-48, 136, 142, 148, 158, 168 |
 | src/dinary/sheets/sheet\_mapping.py                            |      224 |       47 |     79% |239, 314-316, 343-344, 351-357, 404, 407-419, 433-434, 444-462, 480-514, 538, 549-554, 559-560 |
 | src/dinary/sheets/sheets.py                                    |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
 | src/dinary\_analytics/ai\_service.py                           |       77 |       10 |     87% |60, 66, 139-145, 149 |
