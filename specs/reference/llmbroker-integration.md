@@ -83,6 +83,17 @@ https://raw.githubusercontent.com/andgineer/llmbroker/main/presets/<name>.toml
 A preset update is a plain commit to the llmbroker repo — independent of any
 package version. dinary does not keep a local copy of preset files.
 
+To provision a fresh deployment, generate `.deploy/llms.toml` from a preset instead
+of authoring it manually:
+
+```bash
+python -m llmbroker preset freetier > .deploy/llms.toml
+python -m llmbroker env .deploy/llms.toml >> .deploy/.env
+```
+
+The second command appends only the env-var stubs needed by that preset; fill in
+the actual API keys before starting the server.
+
 ## Version pinning
 
 dinary pins `llmbroker` with an exact version (`==`). llmbroker is evolving

@@ -31,7 +31,7 @@ dependencies = [
     # produce a lean prod env that still has the orchestrator those flows
     # need, instead of silently re-pulling the full ``dev`` group.
     "invoke>=2.2.0",
-    "llmbroker==0.0.9",
+    "llmbroker==0.0.10",
     "python-dotenv>=1.0.0",
 ]
 [[project.authors]]
