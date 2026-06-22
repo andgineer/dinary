@@ -20,7 +20,14 @@ from .backups.backups_replica import (
 from .backups.backups_restore import restore_from_yadisk
 from .backups.backups_status import backup_status
 from .backups.backups_yandex import setup_yadisk
-from .db import migrate, restore_primary, seed_categories, verify_db
+from .db import (
+    migrate,
+    restore_litestream,
+    restore_primary,
+    restore_yoyo,
+    seed_categories,
+    verify_db,
+)
 from .deploy import deploy
 from .devtools.build_docs import ALLOWED_DOC_LANGUAGES, build_docs, docs_task_factory
 from .devtools.constants import ALLOWED_VERSION_TYPES
@@ -58,7 +65,9 @@ __all__ = [
     "replica_reset_trust",
     "replica_resync",
     "restore_from_yadisk",
+    "restore_litestream",
     "restore_primary",
+    "restore_yoyo",
     "restore_replica",
     "seed_categories",
     "setup_dinary_ai",

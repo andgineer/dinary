@@ -1,7 +1,7 @@
 ## Database Migrations
 
 Schema versioning for SQLite via [yoyo-migrations](https://ollycope.com/software/yoyo/latest/),
-driven by the `SQLiteBackend` in `src/dinary/services/db_migrations.py`.
+driven by the `SQLiteBackend` in `src/dinary/db/db_migrations.py`.
 
 ### Layout
 

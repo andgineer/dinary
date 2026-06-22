@@ -14,7 +14,6 @@ from tasks.ssh_utils import (
     build_data_dir_permissions_script,
     render_service,
     sqlite_backup_prologue,
-    ssh_capture,
     ssh_run,
     ssh_sudo,
     sync_remote_env,
@@ -36,78 +35,6 @@ def sync_remote_deploy_files(c) -> None:
         ssh_run(c, f"rm -f {path}")
     for local, remote in _DEPLOY_FILES:
         sync_remote_file(c, local, remote)
-
-
-def _target_migration_head(ref: str) -> str | None:
-    """Return the last migration ID present in ``ref`` via git ls-tree."""
-    result = subprocess.run(
-        ["git", "ls-tree", "--name-only", ref, "src/dinary/db/migrations/"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    stems = sorted(
-        Path(line).stem
-        for line in result.stdout.splitlines()
-        if line.endswith(".sql") and not line.endswith(".rollback.sql")
-    )
-    return stems[-1] if stems else None
-
-
-def _migrations_to_rollback(applied: list[str], target_head: str) -> list[str]:
-    """Return applied migration IDs that sort after target_head."""
-    return sorted(m for m in applied if m > target_head)
-
-
-def _server_applied_migrations(c) -> list[str]:
-    """Return migration IDs currently tracked in the server's _yoyo_migration table."""
-    raw = ssh_capture(
-        c,
-        f"sqlite3 {_REMOTE_DB_PATH}"  # noqa: S608
-        ' "SELECT id FROM _yoyo_migration ORDER BY id" 2>/dev/null || true',
-    )
-    return [line.strip() for line in raw.splitlines() if line.strip()]
-
-
-def _downgrade_if_needed(c, ref: str, backup_dir: Path) -> None:
-    """Detect schema downgrade requirement and run yoyo rollback before checkout.
-
-    Must be called while the server still has its *current* code checked out so
-    the .rollback.sql files for any extra migrations are still on disk.
-    """
-    target_head = _target_migration_head(ref)
-    if target_head is None:
-        return
-
-    applied = _server_applied_migrations(c)
-    to_roll_back = _migrations_to_rollback(applied, target_head)
-    if not to_roll_back:
-        return
-
-    server_head = applied[-1] if applied else "(none)"
-    print(
-        f"\n=== WARNING: DB DOWNGRADE REQUIRED ===\n"
-        f"Server applied migrations up to:     {server_head}\n"
-        f"Target version has migrations up to: {target_head}\n"
-        f"\nMigrations to be rolled back: {', '.join(to_roll_back)}\n"
-        f"This will PERMANENTLY DESTROY any data in columns/tables\n"
-        f"added by those migrations.\n"
-        f"\nPre-deploy backup saved to: {backup_dir / 'dinary.db'}\n",
-    )
-    answer = input('Type "yes" to proceed with rollback, or Ctrl-C to abort: ').strip()
-    if answer != "yes":
-        print("Aborted.", file=sys.stderr)
-        sys.exit(1)
-
-    first_extra = to_roll_back[0]
-    print(f"=== Rolling back to {target_head} ===")
-    ssh_run(
-        c,
-        f"cd ~/dinary && source ~/.local/bin/env && "
-        f"uv run yoyo rollback --batch -r {first_extra} "
-        f"--database 'sqlite:///{_REMOTE_DB_PATH}' "
-        f"src/dinary/db/migrations",
-    )
 
 
 @task
@@ -164,9 +91,6 @@ def deploy(c, ref="", no_start=False):
         need_cleanup = True
     if need_cleanup:
         local_db.unlink(missing_ok=True)
-
-    if not need_cleanup:
-        _downgrade_if_needed(c, ref, backup_dir)
 
     print("=== Deploying dinary ===")
     ssh_run(

@@ -126,9 +126,25 @@ def _backend_for(path: Path) -> SQLiteBackend:
     return backend
 
 
+def migration_ids() -> list[str]:
+    """Return sorted migration IDs from the migrations directory."""
+    return sorted(m.id for m in _read_migrations())
+
+
+def _purge_orphan_yoyo_rows(backend: SQLiteBackend, migrations) -> None:
+    known = [m.id for m in migrations]
+    ph = ",".join("?" * len(known))
+    con = backend.connection
+    con.execute("BEGIN IMMEDIATE")
+    con.execute(f"DELETE FROM _yoyo_migration WHERE migration_id NOT IN ({ph})", known)  # noqa: S608
+    con.execute(f"DELETE FROM _yoyo_log WHERE migration_id NOT IN ({ph})", known)  # noqa: S608
+    con.execute("COMMIT")
+
+
 def migrate_db(path: Path) -> None:
     """Apply all pending migrations for the given SQLite file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     migrations = _read_migrations()
     with _backend_for(path) as backend, backend.lock():
         backend.apply_migrations(backend.to_apply(migrations))
+        _purge_orphan_yoyo_rows(backend, migrations)

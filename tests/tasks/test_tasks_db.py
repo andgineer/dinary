@@ -1,9 +1,9 @@
-"""Tests for ``inv verify-db`` (local + remote) in :mod:`tasks.db`.
+"""Tests for ``inv verify-db``, ``inv restore-yoyo``, and ``inv restore-litestream``
+in :mod:`tasks.db`.
 
-Local path uses real SQLite files on ``tmp_path`` so the two
-ship-blocker pragmas run through the stdlib bindings the task
-actually calls. Remote path is shell-only so the assertions there
-pin the snapshot-wrapper command shape.
+Local verify-db path uses real SQLite files on ``tmp_path``. The restore tasks
+are shell-only: SSH calls are stubbed so tests pin command shape and guard
+conditions without touching a real server.
 """
 
 import sqlite3
@@ -178,3 +178,142 @@ class TestVerifyDbRemote:
         tasks.verify_db.body(MagicMock(), remote=True)
         out = capsys.readouterr().out
         assert "=== verify-db OK ===" in out
+
+
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+class TestRestoreYoyo:
+    """``inv restore-yoyo --to=<prefix>`` rolls back server migrations.
+
+    SSH calls are stubbed so these tests run without a live server. The
+    service-running guard must refuse to proceed and emit a clear message.
+    """
+
+    _TWO_MIGRATIONS = ["0001_initial_schema", "0002_add_something"]
+
+    @pytest.fixture
+    def _two_migrations(self, monkeypatch):
+        monkeypatch.setattr(tasks.db, "migration_ids", lambda: self._TWO_MIGRATIONS)
+
+    @pytest.fixture
+    def _service_inactive(self, monkeypatch):
+        monkeypatch.setattr(tasks.db, "ssh_capture", lambda c, cmd: "inactive\n")
+
+    @pytest.fixture
+    def _service_active(self, monkeypatch):
+        monkeypatch.setattr(tasks.db, "ssh_capture", lambda c, cmd: "active\n")
+
+    @pytest.fixture
+    def _ssh_run_spy(self, monkeypatch):
+        calls: list[str] = []
+        monkeypatch.setattr(tasks.db, "ssh_run", lambda c, cmd: calls.append(cmd))
+        return calls
+
+    def test_invalid_prefix_exits_1(self, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            tasks.restore_yoyo.body(MagicMock(), to="9999")
+        assert excinfo.value.code == 1
+        assert "9999" in capsys.readouterr().err
+
+    def test_nothing_to_rollback_prints_message(self, capsys):
+        """With only one migration file, --to=0001 finds the target but
+        nothing to roll back. Must print a message and return without
+        contacting the server at all.
+        """
+        tasks.restore_yoyo.body(MagicMock(), to="0001")
+        out = capsys.readouterr().out
+        assert "nothing to roll back" in out
+
+    def test_service_running_exits_1_without_rollback(
+        self, _two_migrations, _service_active, _ssh_run_spy, capsys
+    ):
+        """If dinary is active the task must refuse to proceed — the operator
+        must stop the service first to avoid mid-migration crashes.
+        """
+        with pytest.raises(SystemExit) as excinfo:
+            tasks.restore_yoyo.body(MagicMock(), to="0001")
+        assert excinfo.value.code == 1
+        err = capsys.readouterr().err
+        assert "dinary" in err
+        assert "stop" in err.lower()
+        assert _ssh_run_spy == []
+
+    def test_happy_path_runs_yoyo_rollback_command(
+        self, _two_migrations, _service_inactive, _ssh_run_spy
+    ):
+        tasks.restore_yoyo.body(MagicMock(), to="0001")
+        assert len(_ssh_run_spy) == 1
+        cmd = _ssh_run_spy[0]
+        assert "yoyo rollback" in cmd
+        assert "--batch" in cmd
+        assert "-r 0002_add_something" in cmd
+
+
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+class TestRestoreLitestream:
+    """``inv restore-litestream --at=<iso8601>`` restores the server DB from WAL.
+
+    SSH calls are stubbed. Both dinary and litestream must be stopped before
+    the task proceeds; tests verify each guard independently.
+    """
+
+    @pytest.fixture
+    def _services_inactive(self, monkeypatch):
+        monkeypatch.setattr(tasks.db, "ssh_capture", lambda c, cmd: "inactive\n")
+
+    @pytest.fixture
+    def _dinary_active(self, monkeypatch):
+        def _capture(c, cmd):
+            return "active\n" if "dinary" in cmd else "inactive\n"
+
+        monkeypatch.setattr(tasks.db, "ssh_capture", _capture)
+
+    @pytest.fixture
+    def _litestream_active(self, monkeypatch):
+        def _capture(c, cmd):
+            return "active\n" if "litestream" in cmd else "inactive\n"
+
+        monkeypatch.setattr(tasks.db, "ssh_capture", _capture)
+
+    @pytest.fixture
+    def _ssh_run_spy(self, monkeypatch):
+        calls: list[str] = []
+        monkeypatch.setattr(tasks.db, "ssh_run", lambda c, cmd: calls.append(cmd))
+        return calls
+
+    def test_invalid_at_exits_1(self, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            tasks.restore_litestream.body(MagicMock(), at="not-a-date")
+        assert excinfo.value.code == 1
+        assert "not-a-date" in capsys.readouterr().err
+
+    def test_dinary_running_exits_1_without_restore(self, _dinary_active, _ssh_run_spy, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            tasks.restore_litestream.body(MagicMock(), at="2026-06-22 14:30")
+        assert excinfo.value.code == 1
+        err = capsys.readouterr().err
+        assert "dinary" in err
+        assert _ssh_run_spy == []
+
+    def test_litestream_running_exits_1_without_restore(
+        self, _litestream_active, _ssh_run_spy, capsys
+    ):
+        with pytest.raises(SystemExit) as excinfo:
+            tasks.restore_litestream.body(MagicMock(), at="2026-06-22 14:30")
+        assert excinfo.value.code == 1
+        err = capsys.readouterr().err
+        assert "litestream" in err
+        assert _ssh_run_spy == []
+
+    def test_happy_path_runs_litestream_restore_then_mv(self, _services_inactive, _ssh_run_spy):
+        tasks.restore_litestream.body(MagicMock(), at="2026-06-22 14:30")
+        assert len(_ssh_run_spy) == 2
+        assert "litestream restore" in _ssh_run_spy[0]
+        assert "2026-06-22T14:30:00Z" in _ssh_run_spy[0]
+        assert "mv" in _ssh_run_spy[1]
+
+    def test_z_suffix_in_at_is_accepted(self, _services_inactive, _ssh_run_spy):
+        tasks.restore_litestream.body(MagicMock(), at="2026-06-22T14:30:00Z")
+        assert len(_ssh_run_spy) == 2
+        assert "2026-06-22T14:30:00Z" in _ssh_run_spy[0]
