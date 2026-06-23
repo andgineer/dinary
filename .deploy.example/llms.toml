@@ -1,8 +1,8 @@
 # LLM providers for receipt classification.
 # Generate this file from a curated preset instead of editing manually:
-#   python -m llmbroker preset freetier > .deploy/llms.toml
+#   llmbroker preset freetier > .deploy/llms.toml
 # Then scaffold the required API-key env vars:
-#   python -m llmbroker env .deploy/llms.toml >> .deploy/.env
+#   llmbroker env .deploy/llms.toml >> .deploy/.env
 #
 # Seeded into the broker on first start; manage a live deployment via the
 # admin UI (/llm screen).  api_key_ref names an env var holding the actual key.

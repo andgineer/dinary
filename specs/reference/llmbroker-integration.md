@@ -87,8 +87,8 @@ To provision a fresh deployment, generate `.deploy/llms.toml` from a preset inst
 of authoring it manually:
 
 ```bash
-python -m llmbroker preset freetier > .deploy/llms.toml
-python -m llmbroker env .deploy/llms.toml >> .deploy/.env
+llmbroker preset freetier > .deploy/llms.toml
+llmbroker env .deploy/llms.toml >> .deploy/.env
 ```
 
 The second command appends only the env-var stubs needed by that preset; fill in
