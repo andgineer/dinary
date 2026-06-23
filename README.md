@@ -54,7 +54,7 @@
 | src/dinary/db/category\_seed.py                                |       59 |        6 |     90% |150-157, 162 |
 | src/dinary/db/classification\_rules.py                         |       37 |        2 |     95% |     66-67 |
 | src/dinary/db/currencies.py                                    |       34 |        5 |     85% |21-22, 59-64 |
-| src/dinary/db/db\_migrations.py                                |       65 |        2 |     97% |    86, 89 |
+| src/dinary/db/db\_migrations.py                                |       56 |        2 |     96% |    86, 89 |
 | src/dinary/db/expenses.py                                      |      130 |       12 |     91% |126, 168, 201-208, 227-233, 316, 420, 462 |
 | src/dinary/db/income.py                                        |       55 |        5 |     91% |103, 117-124 |
 | src/dinary/db/receipts.py                                      |       92 |        3 |     97% |   119-121 |
@@ -73,7 +73,7 @@
 | src/dinary\_analytics/refresh.py                               |      100 |        2 |     98% |   50, 161 |
 | src/dinary\_analytics/settings.py                              |       49 |        1 |     98% |        56 |
 | src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        65 |
-| **TOTAL**                                                      | **5060** |  **643** | **87%** |           |
+| **TOTAL**                                                      | **5051** |  **643** | **87%** |           |
 
 
 ## Setup coverage badge
