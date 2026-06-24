@@ -447,7 +447,7 @@ requires-dist = [
     { name = "holidays", specifier = ">=0.94" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "invoke", specifier = ">=2.2.0" },
-    { name = "llmbroker", specifier = "==0.0.10" },
+    { name = "llmbroker", specifier = "==0.0.11" },
     { name = "pydantic-settings", specifier = ">=2.8.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
@@ -839,15 +839,15 @@ wheels = [
 
 [[package]]
 name = "llmbroker"
-version = "0.0.10"
+version = "0.0.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "httpx" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/36/21/5c78284457c8fa99f65cfde848fa70b87d66227646c56554d15de83d0153/llmbroker-0.0.10.tar.gz", hash = "sha256:e553c1d6d15dc09e6f8f16191698cee8fe3550d3ddf7b7eaff07db86a1b521b7", size = 104406, upload-time = "2026-06-22T10:04:03.983Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9a/67/eb0bba55d0f6be5b233fd396765c0e33756a9cdbb58673d4a4ade0f3fb64/llmbroker-0.0.11.tar.gz", hash = "sha256:30f3020e2e4ffc73b713e3b9d91535722a14bb471935fe8a68d7bf33af0790bf", size = 106970, upload-time = "2026-06-24T04:41:49.963Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2e/c1/a44802b0a90281135e287334325b5ab39f123217b3ed0a26df913c7fece1/llmbroker-0.0.10-py3-none-any.whl", hash = "sha256:507bc6af7ac3b820749887009e32d7421a2f462abfccba53ad1c9449ceba051f", size = 36974, upload-time = "2026-06-22T10:04:02.992Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/05/0b9025f77ac0c219fafa2579a5dac7856f00eb73114ccaf1e3fe29107083/llmbroker-0.0.11-py3-none-any.whl", hash = "sha256:0445e51ea33e8a8e43317a0857a0383d01a7a206062fe147ee96ca4d7f6a2225", size = 38132, upload-time = "2026-06-24T04:41:48.873Z" },
 ]
 
 [[package]]
