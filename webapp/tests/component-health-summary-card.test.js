@@ -41,23 +41,6 @@ describe("HealthSummaryCard — status dot", () => {
   });
 });
 
-describe("HealthSummaryCard — strategy subtitle", () => {
-  it("shows strategy when present", () => {
-    const w = mountCard({
-      healthy: 1,
-      total: 1,
-      strategy: "round-robin failover",
-      last_switch: null,
-    });
-    expect(w.find(".health-sub").exists()).toBe(true);
-    expect(w.text()).toContain("round-robin failover");
-  });
-
-  it("omits the subtitle row when strategy is absent", () => {
-    const w = mountCard({ healthy: 1, total: 1, strategy: null, last_switch: null });
-    expect(w.find(".health-sub").exists()).toBe(false);
-  });
-});
 
 describe("HealthSummaryCard — add button", () => {
   it("emits add when the + button is clicked", async () => {

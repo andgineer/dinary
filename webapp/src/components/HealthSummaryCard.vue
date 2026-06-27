@@ -13,17 +13,6 @@ const dotKind = computed(() => {
   return props.health.healthy > 0 ? "ok" : "error";
 });
 
-function relativeTime(value) {
-  if (!value) return "";
-  const ts = typeof value === "number" ? value * 1000 : new Date(value).getTime();
-  const diff = Math.floor((Date.now() - ts) / 1000);
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
-
-const lastSwitch = computed(() => relativeTime(props.health?.last_switch));
 </script>
 
 <template>
@@ -43,9 +32,6 @@ const lastSwitch = computed(() => relativeTime(props.health?.last_switch));
     >
       <Plus :size="16" />
     </button>
-  </div>
-  <div v-if="health?.strategy" class="health-sub">
-    {{ health.strategy }} · last switch {{ lastSwitch }}
   </div>
 </template>
 
@@ -92,9 +78,4 @@ const lastSwitch = computed(() => relativeTime(props.health?.last_switch));
   background: rgba(233, 69, 96, 0.08);
 }
 
-.health-sub {
-  font-size: 0.75rem;
-  color: var(--muted);
-  padding: 0 0.25rem 0.5rem;
-}
 </style>
