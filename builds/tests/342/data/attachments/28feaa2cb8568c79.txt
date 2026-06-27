@@ -1,0 +1,1 @@
+2026-06-18 07:47:26,728 INFO     dinary.background.sheet_logging.sheets_write — Inserted logging row at 5 for month 2 (Food/Essentials)

@@ -1,0 +1,1 @@
+2026-06-21 06:54:03,351 INFO     dinary.background.rate_prefetch.task — prefetched RSD/EUR rate for 2025-03-01: 117.32

@@ -1,0 +1,2 @@
+2026-06-24 06:08:16,679 WARNING  dinary_analytics.refresh — ledger replica refresh failed: first
+2026-06-24 06:08:16,689 WARNING  dinary_analytics.refresh — ledger replica refresh failed: second

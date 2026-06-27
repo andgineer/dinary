@@ -1,0 +1,2 @@
+2026-06-16 11:15:17,679 INFO     tasks.imports.income_extract — Extracting year 2021 from worksheet 'Balance'
+2026-06-16 11:15:17,680 INFO     tasks.imports.income_extract — Extracting year 2023 from worksheet 'Income'

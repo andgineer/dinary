@@ -1,0 +1,1 @@
+2026-06-21 14:30:33,882 WARNING  llmbroker.broker — LLM test-llm: api_key_ref 'TEST_LLMBROKER_API_KEY' could not be resolved — calls will fail until the env var / secret is set

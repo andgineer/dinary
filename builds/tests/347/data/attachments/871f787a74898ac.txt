@@ -1,0 +1,2 @@
+2026-06-20 08:17:44,703 WARNING  dinary.adapters.serbian_receipt_parser — Empty /specifications for https://suf.purs.gov.rs/v/?vl=test, falling back to journal
+2026-06-20 08:17:44,704 INFO     dinary.adapters.serbian_receipt_parser — Using journal fallback for https://suf.purs.gov.rs/v/?vl=test

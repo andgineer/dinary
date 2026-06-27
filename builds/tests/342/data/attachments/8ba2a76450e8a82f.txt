@@ -1,0 +1,1 @@
+2026-06-18 07:47:25,996 INFO     dinary.background.sheet_logging.sheet_logging — Appended +1500.0 for еда/ in 2026-04 (pk=1)

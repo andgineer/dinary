@@ -1,0 +1,1 @@
+2026-06-22 12:14:49,900 ERROR    dinary.background.sheet_logging.sheet_logging — Logging projection: unknown category_id=1 for expense pk=1

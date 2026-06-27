@@ -1,0 +1,4 @@
+INFO     dinary.db.storage:storage.py:272 anchored accounting_currency=EUR in app_metadata
+INFO     dinary.background.sheet_logging.task:task.py:66 sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+INFO     dinary.background.rate_prefetch.task:task.py:101 prefetched RSD/EUR rate for 2026-06-21: 0.008518
+WARNING  llmbroker.broker:broker.py:204 LLM groq-llama: api_key_ref 'GROQ_API_KEY' could not be resolved — calls will fail until the env var / secret is set
