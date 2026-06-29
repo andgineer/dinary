@@ -5,6 +5,7 @@ import { useQueueStore, _resetForTest as resetQueueStore } from "../src/stores/q
 import { useCatalogStore } from "../src/stores/catalog.js";
 import * as expensesApi from "../src/api/expenses.js";
 import * as catalogApi from "../src/api/catalog.js";
+import * as swHealth from "../src/composables/swHealth.js";
 
 beforeEach(async () => {
   await allure.epic("Expenses");
@@ -156,5 +157,40 @@ describe("flushQueue", () => {
 
     expect(llmSpy).not.toHaveBeenCalled();
     expect(reviewSpy).not.toHaveBeenCalled();
+  });
+
+  it("calls reportNetworkSuccess after a successful send", async () => {
+    const queue = useQueueStore();
+    await queue.enqueue({ amount: 1, currency: "RSD", category_id: 10, date: "2026-05-04" });
+    vi.spyOn(expensesApi, "postExpense").mockResolvedValue({});
+    const spy = vi.spyOn(swHealth, "reportNetworkSuccess");
+
+    await flushQueue();
+
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it("calls reportNetworkFailure on network-level TypeError", async () => {
+    const queue = useQueueStore();
+    await queue.enqueue({ amount: 1, currency: "RSD", category_id: 10, date: "2026-05-04" });
+    vi.spyOn(expensesApi, "postExpense").mockRejectedValue(new TypeError("Failed to fetch"));
+    const spy = vi.spyOn(swHealth, "reportNetworkFailure");
+
+    await flushQueue();
+
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it("does not call reportNetworkFailure on HTTP errors", async () => {
+    const queue = useQueueStore();
+    await queue.enqueue({ amount: 1, currency: "RSD", category_id: 10, date: "2026-05-04" });
+    vi.spyOn(expensesApi, "postExpense").mockRejectedValue(
+      Object.assign(new Error("server error"), { status: 500 }),
+    );
+    const spy = vi.spyOn(swHealth, "reportNetworkFailure");
+
+    await flushQueue();
+
+    expect(spy).not.toHaveBeenCalled();
   });
 });

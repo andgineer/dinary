@@ -18,6 +18,7 @@ import { useCatalogStore } from "./stores/catalog.js";
 import { flushQueue } from "./composables/flushQueue.js";
 import { flushReceiptQueue } from "./composables/flushReceiptQueue.js";
 import { useOnline } from "./composables/useOnline.js";
+import { RECONNECT_DELAY_MS } from "./composables/reconnect.js";
 
 const APP_VERSION =
   typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
@@ -64,11 +65,15 @@ const showApp = computed(
     || (catalogStore.activeTemplate === undefined && catalogStore.snapshot != null),
 );
 
+let _reconnectTimer = null;
 watch(isOnline, (online) => {
   if (online) {
-    void flushQueue();
-    void flushReceiptQueue();
-    if (reviewStore.dirtyFlag) void reviewStore.loadIfNeeded();
+    clearTimeout(_reconnectTimer);
+    _reconnectTimer = setTimeout(() => {
+      void flushQueue();
+      void flushReceiptQueue();
+      if (reviewStore.dirtyFlag) void reviewStore.loadIfNeeded();
+    }, RECONNECT_DELAY_MS);
   }
 });
 
@@ -115,6 +120,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopRetryTimer();
+  clearTimeout(_reconnectTimer);
   document.removeEventListener("visibilitychange", handleVisibilityChange);
 });
 </script>

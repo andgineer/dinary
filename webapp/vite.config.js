@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { VitePWA } from "vite-plugin-pwa";
 import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 function readBuildVersion() {
   try {
@@ -37,6 +38,19 @@ const APP_VERSION = readBuildVersion();
 // - runtimeCaching adds a NetworkOnly policy for /api/* as a belt-
 //   and-braces guarantee that no API response is ever cached.
 export default defineConfig({
+  resolve: {
+    alias: {
+      // Point directly at the browser-inlined build (WASM as base64, no CDN,
+      // no separate .wasm fetch) instead of letting Vite pick via export
+      // conditions, which resolves to the Node.js entry and emits a warning.
+      "@undecaf/zbar-wasm": fileURLToPath(
+        new URL(
+          "node_modules/@undecaf/zbar-wasm/dist/inlined/index.mjs",
+          import.meta.url,
+        ),
+      ),
+    },
+  },
   plugins: [
     vue(),
     VitePWA({
@@ -53,7 +67,6 @@ export default defineConfig({
           {
             urlPattern: ({ url }) => url.pathname.startsWith("/api/"),
             handler: "NetworkOnly",
-            method: "GET",
           },
         ],
       },

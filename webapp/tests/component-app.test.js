@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia } from "pinia";
 import App from "../src/App.vue";
+
+vi.mock("../src/composables/reconnect.js", () => ({ RECONNECT_DELAY_MS: 0 }));
 import * as catalogApi from "../src/api/catalog.js";
 import * as flushReceiptQueueModule from "../src/composables/flushReceiptQueue.js";
 import { _resetForTest as resetFlushReceiptQueue } from "../src/composables/flushReceiptQueue.js";

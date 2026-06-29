@@ -302,26 +302,20 @@ describe("CategorySheet — search: 'Not in your set' addable section", () => {
     expect(w.emitted("select")?.[0]).toEqual([12]);
   });
 
-  it("blocks activation while offline and keeps the sheet open", async () => {
-    Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
-    try {
-      const activate = vi.spyOn(catalogApi, "activateCategory");
+  it("attempts activation even while offline; on failure keeps the sheet open and shows error", async () => {
+    const activate = vi.spyOn(catalogApi, "activateCategory").mockRejectedValue(new Error("Connection error"));
 
-      const { w } = mountSheet();
-      await search(w, "concert");
+    const { w } = mountSheet();
+    await search(w, "concert");
 
-      await w.find(".addable-item").trigger("click");
-      await flushPromises();
+    await w.find(".addable-item").trigger("click");
+    await flushPromises();
 
-      expect(activate).not.toHaveBeenCalled();
-      const toast = useToastStore();
-      expect(toast.message).toBe("Not available offline");
-      expect(toast.type).toBe("error");
-      expect(w.emitted("select")).toBeFalsy();
-      expect(w.emitted("close")).toBeFalsy();
-    } finally {
-      Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
-    }
+    expect(activate).toHaveBeenCalledWith("concerts");
+    const toast = useToastStore();
+    expect(toast.type).toBe("error");
+    expect(w.emitted("select")).toBeFalsy();
+    expect(w.emitted("close")).toBeFalsy();
   });
 });
 

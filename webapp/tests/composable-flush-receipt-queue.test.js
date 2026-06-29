@@ -8,6 +8,7 @@ import {
   useReceiptQueueStore,
   _resetForTest as resetReceiptQueueStore,
 } from "../src/stores/receiptQueue.js";
+import * as swHealth from "../src/composables/swHealth.js";
 import { useToastStore } from "../src/stores/toast.js";
 import { useLlmStore } from "../src/stores/llm.js";
 import { useReviewStore } from "../src/stores/review.js";
@@ -194,5 +195,40 @@ describe("flushReceiptQueue", () => {
 
     expect(llmSpy).not.toHaveBeenCalled();
     expect(reviewSpy).not.toHaveBeenCalled();
+  });
+
+  it("calls reportNetworkSuccess after a successful send", async () => {
+    const queue = useReceiptQueueStore();
+    await queue.enqueue("https://example.com/r");
+    vi.spyOn(receiptsApi, "postReceipt").mockResolvedValue({ status: "ok" });
+    const spy = vi.spyOn(swHealth, "reportNetworkSuccess");
+
+    await flushReceiptQueue();
+
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it("calls reportNetworkFailure on network-level TypeError", async () => {
+    const queue = useReceiptQueueStore();
+    await queue.enqueue("https://example.com/r");
+    vi.spyOn(receiptsApi, "postReceipt").mockRejectedValue(new TypeError("Failed to fetch"));
+    const spy = vi.spyOn(swHealth, "reportNetworkFailure");
+
+    await flushReceiptQueue();
+
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it("does not call reportNetworkFailure on HTTP errors", async () => {
+    const queue = useReceiptQueueStore();
+    await queue.enqueue("https://example.com/r");
+    vi.spyOn(receiptsApi, "postReceipt").mockRejectedValue(
+      Object.assign(new Error("server error"), { status: 500 }),
+    );
+    const spy = vi.spyOn(swHealth, "reportNetworkFailure");
+
+    await flushReceiptQueue();
+
+    expect(spy).not.toHaveBeenCalled();
   });
 });

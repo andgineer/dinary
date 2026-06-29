@@ -55,9 +55,10 @@ function closeEdit() {
 }
 
 async function forceRefresh() {
-  if (!isOnline.value || incomeStore.loading) return;
+  if (!navigator.onLine || incomeStore.loading) return;
   incomeStore.reset();
   await incomeStore.loadNextPage();
+  window.dispatchEvent(new Event("online"));
 }
 
 function saveIncome() {
@@ -94,7 +95,7 @@ onBeforeUnmount(() => {
   <KeyboardSaveBar v-if="keyboardVisible" :bottom="keyboardBottom" accent-color="var(--success)" @save="saveIncome" />
 
   <div class="income-view">
-    <IncomeForm ref="incomeForm" :disabled="!isOnline" />
+    <IncomeForm ref="incomeForm" />
 
     <div class="section-header">
       <span class="section-label">INCOMES</span>
@@ -103,7 +104,7 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="refresh-btn"
-        :disabled="!isOnline || incomeStore.loading"
+        :disabled="incomeStore.loading || !isOnline.value"
         aria-label="Refresh"
         @click="forceRefresh"
       >
@@ -147,8 +148,8 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="btn-save-income"
-        :class="{ 'btn-save-income--disabled': !isOnline }"
-        :disabled="!isOnline"
+        :class="{ 'btn-save-income--disabled': !isOnline.value }"
+        :disabled="!isOnline.value"
         @click="saveIncome"
       >
         Save

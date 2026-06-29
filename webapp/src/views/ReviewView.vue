@@ -71,14 +71,16 @@ function closeExpenseEdit() {
 }
 
 async function approveItem({ item, categoryId }) {
-  if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
+  if (!navigator.onLine) { toast.show("Not available offline", "info"); return; }
   await reviewStore.correct(item, categoryId, "all");
+  window.dispatchEvent(new Event("online"));
 }
 
 async function handleConfirmAll() {
-  if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
+  if (!navigator.onLine) { toast.show("Not available offline", "info"); return; }
   const ruleIds = doubtfulItems.value.map((i) => i.id);
   await reviewStore.confirmAll(ruleIds);
+  window.dispatchEvent(new Event("online"));
 }
 
 function formatDate(iso) {
@@ -133,9 +135,10 @@ async function onStuckCategorySelect(categoryId) {
 }
 
 async function forceRefresh() {
-  if (!isOnline.value) { toast.show("Not available offline", "info"); return; }
+  if (!navigator.onLine) { toast.show("Not available offline", "info"); return; }
   reviewStore.reset();
   await Promise.all([reviewStore.loadNextPage(), reviewStore.loadExpensesNextPage()]);
+  window.dispatchEvent(new Event("online"));
 }
 
 function setupObservers() {
@@ -232,7 +235,7 @@ onBeforeUnmount(() => {
             type="button"
             class="stuck-resolve-btn"
             data-testid="stuck-resolve-btn"
-            :disabled="item.amount == null || !isOnline"
+            :disabled="item.amount == null"
             @click="openStuckResolve(item)"
           >
             Save as expense
@@ -255,7 +258,7 @@ onBeforeUnmount(() => {
         icon="refresh"
         tone="muted"
         label="Refresh"
-        :disabled="!isOnline || reviewStore.loading"
+        :disabled="reviewStore.loading || !isOnline.value"
         @click="forceRefresh()"
       />
     </div>

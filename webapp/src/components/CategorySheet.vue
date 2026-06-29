@@ -13,7 +13,6 @@ import {
 } from "lucide-vue-next";
 import { useCatalogStore } from "../stores/catalog.js";
 import { useToastStore } from "../stores/toast.js";
-import { useOnline } from "../composables/useOnline.js";
 import { recordOutOfSetActivation } from "../composables/oosNudge.js";
 import BaseSheet from "./BaseSheet.vue";
 
@@ -27,7 +26,6 @@ const emit = defineEmits(["select", "close"]);
 
 const catalog = useCatalogStore();
 const toast = useToastStore();
-const { isOnline } = useOnline();
 
 const searchEl = ref(null);
 const bodyEl = ref(null);
@@ -103,7 +101,7 @@ function select(id) {
 
 async function selectAddable(item) {
   if (activatingCode.value) return;
-  if (!isOnline.value) {
+  if (!navigator.onLine) {
     toast.show("Not available offline", "error");
     return;
   }
@@ -114,6 +112,7 @@ async function selectAddable(item) {
     } else {
       await catalog.activateCategory(item.code);
     }
+    window.dispatchEvent(new Event("online"));
     const nudged = recordOutOfSetActivation();
     if (!nudged) {
       toast.show(`"${item.name}" added to your set`, "info");

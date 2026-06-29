@@ -33,6 +33,16 @@ user to manually dismiss an update prompt. Silent auto-update is the right
 trade-off — there is no multi-tab coordination concern and no risk of
 disrupting concurrent sessions.
 
+## Online flag and request gating
+
+`isOnline` (derived from `navigator.onLine` and browser `online`/`offline` events) gates background and automatic requests only — infinite scroll, auto-loads on mount, and the retry timer. These are suppressed when `isOnline = false` to avoid flooding the user with connection errors when the device is genuinely offline.
+
+User-initiated actions (pressing Save, Refresh, Confirm, Delete, etc.) always proceed regardless of `isOnline`. On success they dispatch a synthetic `online` event, which clears the flag if it was stuck and triggers queue flush. This ensures that a stuck offline state — e.g. caused by a stale service worker or a browser event that fired without a corresponding reconnect event — can always be escaped by a single user action without requiring a page reload.
+
+## QR scanner is fully offline
+
+The `zbar-wasm` library is bundled into the PWA build (not loaded from a CDN). Workbox precaches it on first load. The scanner requires no network access after initial install.
+
 ## Rollback is image-level
 
 There is no in-tree rollback path for the PWA. Rollback means redeploying a

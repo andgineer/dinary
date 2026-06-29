@@ -1,13 +1,11 @@
 import { ref } from "vue";
 import { useReviewStore } from "../stores/review.js";
 import { useToastStore } from "../stores/toast.js";
-import { useOnline } from "./useOnline.js";
 import { getReceipt } from "../api/receipts.js";
 
 export function useExpenseDeleteFlow({ getExpense, isManual, isReceiptBacked, onClose }) {
   const reviewStore = useReviewStore();
   const toast = useToastStore();
-  const { isOnline } = useOnline();
 
   const confirmingDelete = ref(false);
   const deleting = ref(false);
@@ -32,10 +30,6 @@ export function useExpenseDeleteFlow({ getExpense, isManual, isReceiptBacked, on
   }
 
   function openDeleteConfirm() {
-    if (!isOnline.value) {
-      toast.show("Not available offline", "error");
-      return;
-    }
     if (isReceiptBacked.value && !cascade.value) {
       _fetchCascade();
     }
@@ -43,7 +37,7 @@ export function useExpenseDeleteFlow({ getExpense, isManual, isReceiptBacked, on
   }
 
   async function confirmDelete() {
-    if (!isOnline.value) {
+    if (!navigator.onLine) {
       toast.show("Not available offline", "error");
       return;
     }
@@ -59,6 +53,7 @@ export function useExpenseDeleteFlow({ getExpense, isManual, isReceiptBacked, on
         await reviewStore.deleteReceipt(receiptId);
         toast.show(`Receipt deleted (${count} expense${count !== 1 ? "s" : ""} removed)`, "info");
       }
+      window.dispatchEvent(new Event("online"));
       confirmingDelete.value = false;
       onClose();
     } catch (err) {

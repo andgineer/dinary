@@ -4,12 +4,10 @@ import CurrencyPicker from "./CurrencyPicker.vue";
 import { useCurrencyStore } from "../stores/currency.js";
 import { useIncomeStore } from "../stores/income.js";
 import { useToastStore } from "../stores/toast.js";
-import { useOnline } from "../composables/useOnline.js";
 
 const currency = useCurrencyStore();
 const incomeStore = useIncomeStore();
 const toast = useToastStore();
-const { isOnline } = useOnline();
 
 const props = defineProps({
   disabled: { type: Boolean, default: false },
@@ -46,7 +44,11 @@ onMounted(async () => {
 });
 
 async function save() {
-  if (props.disabled || !isOnline.value) return;
+  if (props.disabled) return;
+  if (!navigator.onLine) {
+    toast.show("Not available offline", "info");
+    return;
+  }
   const rawAmount = String(amount.value).replace(",", ".").trim();
   const parsed = Number.parseFloat(rawAmount);
   if (!rawAmount || Number.isNaN(parsed) || parsed <= 0) {
@@ -71,6 +73,7 @@ async function save() {
     comment.value = "";
     monthValue.value = defaultIncomeMonth();
     dateValue.value = today();
+    window.dispatchEvent(new Event("online"));
     emit("saved");
   } catch {
     // errors handled by store

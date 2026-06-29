@@ -9,6 +9,7 @@ import { useToastStore } from "../stores/toast.js";
 import { useLlmStore } from "../stores/llm.js";
 import { useReviewStore } from "../stores/review.js";
 import { parseReceiptUrl } from "./receipt.js";
+import { reportNetworkFailure, reportNetworkSuccess } from "./swHealth.js";
 
 let _inFlight = false;
 
@@ -24,6 +25,7 @@ export async function flushReceiptQueue() {
       try {
         const body = await postReceipt({ client_receipt_id: item.client_receipt_id, url: item.url });
         await queue.remove(item.id);
+        reportNetworkSuccess();
         let amountLabel = "";
         try {
           const { amount } = parseReceiptUrl(item.url);
@@ -43,6 +45,7 @@ export async function flushReceiptQueue() {
           continue;
         }
         // Transient error — keep item, stop this sweep.
+        if (err instanceof TypeError) reportNetworkFailure();
         queue.lastFlushError = err;
         toast.show(err?.message || "Receipt send failed", "error");
         break;

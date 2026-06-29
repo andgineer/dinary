@@ -9,6 +9,7 @@ import { useCatalogStore } from "../stores/catalog.js";
 import { useQueueStore } from "../stores/queue.js";
 import { useReviewStore } from "../stores/review.js";
 import { useToastStore } from "../stores/toast.js";
+import { reportNetworkFailure, reportNetworkSuccess } from "./swHealth.js";
 let _inFlight = false;
 
 export async function flushQueue() {
@@ -51,6 +52,7 @@ export async function flushQueue() {
           catalog.applyFrequentCategories(resp.frequent_categories);
         }
         await queue.remove(item.id);
+        reportNetworkSuccess();
         anyFlushed = true;
       } catch (err) {
         if (err?.status === 409) {
@@ -62,6 +64,7 @@ export async function flushQueue() {
           toast.show("Session expired — please re-open the app to log in", "error");
           break;
         }
+        if (err instanceof TypeError) reportNetworkFailure();
         queue.lastFlushError = err;
         toast.show(err?.message || "Send failed", "error");
         break;
