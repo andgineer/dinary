@@ -464,14 +464,21 @@ describe("App review probe — dirty review cache", () => {
     localStorage.setItem("dinary:review:dirty", "1");
     const pinia = createPinia();
     const loadSpy = mountWithSpy(pinia, false);
-    await drainAsync();
+    await drainAsync(); // mount + init with real timers
     loadSpy.mockClear();
 
-    window.dispatchEvent(new Event("online"));
-    await new Promise((r) => setTimeout(r, 0));
-    await drainAsync();
+    // Switch to fake timers AFTER mount so IDB/init real timers are unaffected.
+    vi.useFakeTimers();
+    try {
+      window.dispatchEvent(new Event("online"));
+      await flushPromises(); // Vue watch fires → schedules fake setTimeout(fn, 0)
+      vi.advanceTimersByTime(1); // fire the reconnect timer
+      await flushPromises(); // drain loadIfNeeded
 
-    expect(loadSpy).toHaveBeenCalledTimes(1);
+      expect(loadSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
