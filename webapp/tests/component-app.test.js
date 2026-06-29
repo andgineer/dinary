@@ -468,6 +468,7 @@ describe("App review probe — dirty review cache", () => {
     loadSpy.mockClear();
 
     window.dispatchEvent(new Event("online"));
+    await new Promise((r) => setTimeout(r, 0));
     await drainAsync();
 
     expect(loadSpy).toHaveBeenCalledTimes(1);
