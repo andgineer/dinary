@@ -1,0 +1,1 @@
+WARNING  llmbroker.broker:broker.py:212 LLM test-llm: api_key_ref 'TEST_LLMBROKER_API_KEY' could not be resolved — calls will fail until the env var / secret is set

@@ -1,0 +1,4 @@
+INFO     dinary.db.storage:storage.py:272 anchored accounting_currency=EUR in app_metadata
+INFO     dinary.background.sheet_logging.task:task.py:66 sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+INFO     dinary.api.controllers.catalog_writer:catalog_writer.py:82 catalog_writer add_tag(name='drop-me'): bumped catalog_version
+INFO     dinary.api.controllers.catalog_writer:catalog_writer.py:82 catalog_writer delete_tag(hard id=1): bumped catalog_version

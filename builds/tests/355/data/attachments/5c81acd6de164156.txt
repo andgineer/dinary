@@ -1,0 +1,1 @@
+2026-06-22 12:14:44,016 WARNING  dinary.adapters.exchange_rates — NBS could not resolve RSD/EUR on 2025-02-24, falling back to NBP

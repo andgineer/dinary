@@ -1,0 +1,5 @@
+2026-06-29 15:07:09,538 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-06-29 15:07:09,540 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-06-29 15:07:09,605 INFO     dinary.background.rate_prefetch.task — prefetched RSD/EUR rate for 2026-06-29: 0.008520
+2026-06-29 15:07:09,615 WARNING  llmbroker.broker — LLM groq-llama: api_key_ref 'GROQ_API_KEY' could not be resolved — calls will fail until the env var / secret is set
+2026-06-29 15:07:09,622 WARNING  llmbroker.broker — LLM groq-llama: api_key_ref 'GROQ_API_KEY' could not be resolved — calls will fail until the env var / secret is set

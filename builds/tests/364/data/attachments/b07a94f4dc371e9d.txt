@@ -1,0 +1,1 @@
+2026-06-29 15:22:20,101 INFO     dinary.adapters.nbp — Got rate from NBP table A for USD
