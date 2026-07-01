@@ -1,1 +1,0 @@
-2026-06-19 04:32:28,345 INFO     dinary.background.sheet_logging.income_sheet_logging — Income (2026, 5) appended to sheet

@@ -1,1 +1,0 @@
-2026-06-19 04:32:20,548 WARNING  dinary.adapters.exchange_rates — NBS could not resolve BAM/EUR on 2025-02-24, falling back to NBP

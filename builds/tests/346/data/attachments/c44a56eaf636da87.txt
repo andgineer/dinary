@@ -1,4 +1,0 @@
-2026-06-19 04:32:34,981 INFO     dinary.db.storage — anchored accounting_currency=RSD in app_metadata
-2026-06-19 04:32:34,983 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
-2026-06-19 04:32:34,998 INFO     dinary.background.classification.task — Receipt drain: processing receipt_id=1
-2026-06-19 04:32:35,004 INFO     dinary.background.classification.task — Receipt drain: completed receipt_id=1
