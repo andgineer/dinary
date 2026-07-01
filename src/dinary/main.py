@@ -25,7 +25,6 @@ from dinary.api import (
     expenses,
     income,
     llm,
-    qr,
     receipts,
     rules,
 )
@@ -119,7 +118,6 @@ def create_app() -> FastAPI:
     app.include_router(expenses.router)
     app.include_router(expense_corrections.router)
     app.include_router(income.router)
-    app.include_router(qr.router)
     app.include_router(catalog.router)
     app.include_router(category_templates.router)
     app.include_router(currencies.router)

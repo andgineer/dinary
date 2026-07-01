@@ -71,7 +71,7 @@ def _row_to_response(row: IncomeRow) -> IncomeResponse:
     )
 
 
-def create_income_sync(req: IncomeCreateRequest, con: sqlite3.Connection) -> IncomeResponse:
+def create_income_sync(req: IncomeCreateRequest, con: sqlite3.Connection) -> None:
     with value_error_as_422():
         amount = float(
             convert_to_accounting_amount(
@@ -91,15 +91,14 @@ def create_income_sync(req: IncomeCreateRequest, con: sqlite3.Connection) -> Inc
         comment=req.comment,
     )
     with transaction(con):
-        row = insert_income(con, data, enqueue_logging=settings.sheet_logging_enabled)
-    return _row_to_response(row)
+        insert_income(con, data, enqueue_logging=settings.sheet_logging_enabled)
 
 
 def update_income_sync(
     income_id: int,
     req: IncomeUpdateRequest,
     con: sqlite3.Connection,
-) -> IncomeResponse:
+) -> None:
     existing = get_income_by_id(con, income_id)
     if existing is None:
         raise HTTPException(status_code=404, detail=f"Income {income_id} not found")
@@ -126,7 +125,7 @@ def update_income_sync(
     )
     try:
         with transaction(con):
-            row = update_income(
+            update_income(
                 con,
                 income_id,
                 data,
@@ -134,7 +133,6 @@ def update_income_sync(
             )
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Income {income_id} not found") from None
-    return _row_to_response(row)
 
 
 def delete_income_sync(income_id: int, con: sqlite3.Connection) -> None:

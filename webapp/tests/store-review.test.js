@@ -1015,7 +1015,7 @@ describe("review store: loadStuckReceipts()", () => {
 
 describe("review store: resolveStuckReceipt()", () => {
   it("calls resolveReceipt and removes the item from stuckReceipts", async () => {
-    vi.spyOn(receiptsApi, "resolveReceipt").mockResolvedValueOnce({ status: "ok", expense_id: 1 });
+    vi.spyOn(receiptsApi, "resolveReceipt").mockResolvedValueOnce(null);
     vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
       items: [],
       doubtful_count: 0,
@@ -1040,7 +1040,7 @@ describe("review store: resolveStuckReceipt()", () => {
   });
 
   it("shows a success toast and refreshes the review feed and expenses", async () => {
-    vi.spyOn(receiptsApi, "resolveReceipt").mockResolvedValueOnce({ status: "ok", expense_id: 1 });
+    vi.spyOn(receiptsApi, "resolveReceipt").mockResolvedValueOnce(null);
     const feedSpy = vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
       items: [],
       doubtful_count: 0,

@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends, Query, Response
 from dinary.api.controllers.income import (
     IncomeCreateRequest,
     IncomeListResponse,
-    IncomeResponse,
     IncomeUpdateRequest,
     create_income_sync,
     delete_income_sync,
@@ -31,27 +30,27 @@ def get_incomes(
     return list_incomes_sync(con, page, page_size)
 
 
-@router.post("/api/incomes", response_model=IncomeResponse, status_code=201)
+@router.post("/api/incomes", status_code=204)
 def create_income(
     req: IncomeCreateRequest,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> IncomeResponse:
-    resp = create_income_sync(req, con)
+) -> Response:
+    create_income_sync(req, con)
     if settings.sheet_logging_enabled:
         notify_new_work()
-    return resp
+    return Response(status_code=204)
 
 
-@router.patch("/api/incomes/{income_id}", response_model=IncomeResponse)
+@router.patch("/api/incomes/{income_id}", status_code=204)
 def patch_income(
     income_id: int,
     req: IncomeUpdateRequest,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> IncomeResponse:
-    resp = update_income_sync(income_id, req, con)
+) -> Response:
+    update_income_sync(income_id, req, con)
     if settings.sheet_logging_enabled:
         notify_new_work()
-    return resp
+    return Response(status_code=204)
 
 
 @router.delete("/api/incomes/{income_id}", status_code=204)

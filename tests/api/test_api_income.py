@@ -18,7 +18,7 @@ def _mock_get_rate(con, rate_date, source, target, *, offline=False):
 @allure.epic("Income")
 @allure.feature("API")
 class TestIncomeApi:
-    def test_post_creates_201(self, client):
+    def test_post_creates_204(self, client):
         with patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate):
             resp = client.post(
                 "/api/incomes",
@@ -30,13 +30,13 @@ class TestIncomeApi:
                     "currency_original": "EUR",
                 },
             )
-        assert resp.status_code == 201, resp.text
-        data = resp.json()
-        assert data["year"] == 2026
-        assert data["month"] == 5
-        assert data["income_date"] == "2026-05-15"
-        assert data["amount"] > 0
-        assert "id" in data
+        assert resp.status_code == 204, resp.text
+        item = client.get("/api/incomes?page=1&page_size=20").json()["items"][0]
+        assert item["year"] == 2026
+        assert item["month"] == 5
+        assert item["income_date"] == "2026-05-15"
+        assert item["amount"] > 0
+        assert "id" in item
 
     def test_post_passthrough_accounting_currency(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
@@ -50,8 +50,9 @@ class TestIncomeApi:
                 "currency_original": "EUR",
             },
         )
-        assert resp.status_code == 201, resp.text
-        assert resp.json()["amount"] == pytest.approx(540.0)
+        assert resp.status_code == 204, resp.text
+        item = client.get("/api/incomes?page=1&page_size=20").json()["items"][0]
+        assert item["amount"] == pytest.approx(540.0)
 
     def test_post_with_comment(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
@@ -66,8 +67,9 @@ class TestIncomeApi:
                 "comment": "salary",
             },
         )
-        assert resp.status_code == 201, resp.text
-        assert resp.json()["comment"] == "salary"
+        assert resp.status_code == 204, resp.text
+        item = client.get("/api/incomes?page=1&page_size=20").json()["items"][0]
+        assert item["comment"] == "salary"
 
     def test_post_multiple_same_month_allowed(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
@@ -78,7 +80,7 @@ class TestIncomeApi:
             "amount_original": 540.0,
             "currency_original": "EUR",
         }
-        assert client.post("/api/incomes", json=payload).status_code == 201
+        assert client.post("/api/incomes", json=payload).status_code == 204
         payload2 = {
             "year": 2026,
             "month": 5,
@@ -86,7 +88,7 @@ class TestIncomeApi:
             "amount_original": 300.0,
             "currency_original": "EUR",
         }
-        assert client.post("/api/incomes", json=payload2).status_code == 201
+        assert client.post("/api/incomes", json=payload2).status_code == 204
 
     def test_get_returns_items(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
@@ -109,7 +111,7 @@ class TestIncomeApi:
 
     def test_patch_updates_amount(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        created = client.post(
+        client.post(
             "/api/incomes",
             json={
                 "year": 2026,
@@ -118,17 +120,19 @@ class TestIncomeApi:
                 "amount_original": 540.0,
                 "currency_original": "EUR",
             },
-        ).json()
+        )
+        created_id = client.get("/api/incomes?page=1&page_size=20").json()["items"][0]["id"]
         resp = client.patch(
-            f"/api/incomes/{created['id']}",
+            f"/api/incomes/{created_id}",
             json={"amount_original": 600.0, "currency_original": "EUR"},
         )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["amount"] == pytest.approx(600.0)
+        assert resp.status_code == 204, resp.text
+        item = client.get("/api/incomes?page=1&page_size=20").json()["items"][0]
+        assert item["amount"] == pytest.approx(600.0)
 
     def test_patch_updates_comment(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        created = client.post(
+        client.post(
             "/api/incomes",
             json={
                 "year": 2026,
@@ -137,10 +141,12 @@ class TestIncomeApi:
                 "amount_original": 540.0,
                 "currency_original": "EUR",
             },
-        ).json()
-        resp = client.patch(f"/api/incomes/{created['id']}", json={"comment": "bonus"})
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["comment"] == "bonus"
+        )
+        created_id = client.get("/api/incomes?page=1&page_size=20").json()["items"][0]["id"]
+        resp = client.patch(f"/api/incomes/{created_id}", json={"comment": "bonus"})
+        assert resp.status_code == 204, resp.text
+        item = client.get("/api/incomes?page=1&page_size=20").json()["items"][0]
+        assert item["comment"] == "bonus"
 
     def test_patch_404_if_missing(self, client):
         resp = client.patch(
@@ -150,7 +156,7 @@ class TestIncomeApi:
 
     def test_delete_removes_income(self, client, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
-        created = client.post(
+        client.post(
             "/api/incomes",
             json={
                 "year": 2026,
@@ -159,8 +165,9 @@ class TestIncomeApi:
                 "amount_original": 540.0,
                 "currency_original": "EUR",
             },
-        ).json()
-        assert client.delete(f"/api/incomes/{created['id']}").status_code == 204
+        )
+        created_id = client.get("/api/incomes?page=1&page_size=20").json()["items"][0]["id"]
+        assert client.delete(f"/api/incomes/{created_id}").status_code == 204
         assert len(client.get("/api/incomes?page=1&page_size=20").json()["items"]) == 0
 
     def test_delete_404_if_missing(self, client):

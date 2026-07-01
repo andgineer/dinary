@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { postExpense, parseQr, deleteExpense } from "../src/api/expenses.js";
+import { postExpense, deleteExpense } from "../src/api/expenses.js";
 
 beforeEach(async () => {
   await allure.epic("Expenses");
@@ -101,24 +101,6 @@ describe("postExpense", () => {
       message: "amount must be positive",
       status: 422,
     });
-  });
-});
-
-describe("parseQr", () => {
-  it("POSTs the URL and returns parsed body", async () => {
-    mockFetch(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ amount: 350, items: [] }),
-    }));
-
-    const out = await parseQr("https://example/receipt");
-
-    expect(out).toEqual({ amount: 350, items: [] });
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/qr/parse",
-      expect.objectContaining({ method: "POST" }),
-    );
   });
 });
 

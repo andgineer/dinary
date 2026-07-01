@@ -12,18 +12,18 @@ import allure
 from _api_helpers import _mock_get_rate, db  # noqa: F401
 
 
-def _post_expense(client, *, expense_id="e1", amount=250.0, currency="RSD"):
+def _post_expense(client, *, expense_id="e1", amount=250.0, currency="RSD", comment=None):
+    payload = {
+        "client_expense_id": expense_id,
+        "amount": amount,
+        "currency": currency,
+        "category_id": 1,
+        "expense_datetime": "2026-04-15T12:00:00+02:00",
+    }
+    if comment is not None:
+        payload["comment"] = comment
     with patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate):
-        resp = client.post(
-            "/api/expenses",
-            json={
-                "client_expense_id": expense_id,
-                "amount": amount,
-                "currency": currency,
-                "category_id": 1,
-                "expense_datetime": "2026-04-15T12:00:00+02:00",
-            },
-        )
+        resp = client.post("/api/expenses", json=payload)
     assert resp.status_code == 200, resp.text
 
 
@@ -54,3 +54,15 @@ class TestGetExpensesList:
         data = resp.json()
         assert data["has_more"] is True
         assert len(data["items"]) == 2
+
+    def test_returns_comment(self, client, db):  # noqa: ARG002
+        _post_expense(client, comment="business trip")
+        resp = client.get("/api/expenses?page=1&page_size=20")
+        item = resp.json()["items"][0]
+        assert item["comment"] == "business trip"
+
+    def test_comment_null_when_absent(self, client, db):  # noqa: ARG002
+        _post_expense(client)
+        resp = client.get("/api/expenses?page=1&page_size=20")
+        item = resp.json()["items"][0]
+        assert item["comment"] is None

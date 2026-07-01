@@ -70,15 +70,7 @@ class ExpenseEditRequest(BaseModel):
     update_rule: bool = False
     amount_original: Decimal | None = None
     currency_original: str | None = None
-
-
-class ExpenseEditResponse(BaseModel):
-    id: int
-    category_id: int
-    category_name: str
-    tag_ids: list[int]
-    event_id: int | None
-    event_name: str | None
+    comment: str | None = None
 
 
 class ExpenseListTag(BaseModel):
@@ -103,6 +95,7 @@ class ExpenseListItem(BaseModel):
     item_name: str | None = None
     amount_original: float
     currency_original: str
+    comment: str | None = None
 
 
 def create_expense_sync(req: ExpenseRequest, con: sqlite3.Connection) -> ExpenseResponse:
@@ -204,6 +197,7 @@ def list_expenses_sync(
             e.rule_id,
             e.amount_original,
             e.currency_original,
+            e.comment,
             COALESCE((
                 SELECT json_group_array(json_object('id', t.id, 'name', t.name))
                   FROM expense_tags et JOIN tags t ON t.id = et.tag_id
@@ -250,6 +244,7 @@ def list_expenses_sync(
                 item_name=str(r["item_name"]) if r["item_name"] is not None else None,
                 amount_original=float(r["amount_original"]),
                 currency_original=str(r["currency_original"]),
+                comment=str(r["comment"]) if r["comment"] else None,
             ),
         )
     return {
@@ -301,7 +296,7 @@ def edit_expense_sync(
     expense_id: int,
     req: ExpenseEditRequest,
     con: sqlite3.Connection,
-) -> ExpenseEditResponse:
+) -> None:
     row = con.execute(
         "SELECT id, receipt_id FROM expenses WHERE id = ?",
         [expense_id],
@@ -322,6 +317,11 @@ def edit_expense_sync(
     with transaction(con):
         if req.amount_original is not None and receipt_id is None:
             _update_amount(con, expense_id, req.amount_original, req.currency_original)
+        if req.comment is not None:
+            con.execute(
+                "UPDATE expenses SET comment = ? WHERE id = ?",
+                [req.comment, expense_id],
+            )
         con.execute("DELETE FROM expense_tags WHERE expense_id = ?", [expense_id])
         for tag_id in req.tag_ids:
             con.execute(
@@ -339,31 +339,6 @@ def edit_expense_sync(
 
         if req.update_rule:
             _apply_rule_update(con, expense_id, req.category_id, req.tag_ids)
-
-    updated = con.execute(
-        """
-        SELECT e.id, e.category_id, c.name, e.event_id, ev.name
-          FROM expenses e
-          JOIN categories c ON c.id = e.category_id
-          LEFT JOIN events ev ON ev.id = e.event_id
-         WHERE e.id = ?
-        """,
-        [expense_id],
-    ).fetchone()
-
-    tag_rows = con.execute(
-        "SELECT tag_id FROM expense_tags WHERE expense_id = ? ORDER BY tag_id",
-        [expense_id],
-    ).fetchall()
-
-    return ExpenseEditResponse(
-        id=int(updated[0]),
-        category_id=int(updated[1]),
-        category_name=str(updated[2]),
-        tag_ids=[int(r[0]) for r in tag_rows],
-        event_id=int(updated[3]) if updated[3] is not None else None,
-        event_name=str(updated[4]) if updated[4] is not None else None,
-    )
 
 
 def _apply_rule_update(

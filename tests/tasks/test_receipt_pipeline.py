@@ -304,7 +304,7 @@ class TestReceiptPipelineNeverLost:
             f"/api/receipts/{receipt_id}/resolve",
             json={"category_id": 1},
         )
-        assert resolve_resp.status_code == 200, resolve_resp.text
+        assert resolve_resp.status_code == 204, resolve_resp.text
 
         _assert_not_lost(receipt_id)
         assert _expense_count(receipt_id) == 1

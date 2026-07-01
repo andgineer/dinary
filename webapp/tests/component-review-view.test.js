@@ -166,6 +166,63 @@ describe("ReviewView offline", () => {
       restore();
     }
   });
+
+  it("enables the Refresh button while online (regression: isOnline.value in template)", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const restore = mockOnLine(true);
+    try {
+      const review = useReviewStore(pinia);
+      vi.spyOn(review, "loadNextPage").mockResolvedValue();
+      const wrapper = mountView(pinia);
+      await flushPromises();
+
+      const btn = wrapper.find('[aria-label="Refresh"]');
+      expect(btn.attributes("disabled")).toBeUndefined();
+      wrapper.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps the Refresh button enabled while offline (user-initiated actions always proceed, per specs/reference/pwa-offline.md)", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const restore = mockOnLine(false);
+    try {
+      const review = useReviewStore(pinia);
+      vi.spyOn(review, "loadNextPage").mockResolvedValue();
+      const wrapper = mountView(pinia);
+      await flushPromises();
+
+      const btn = wrapper.find('[aria-label="Refresh"]');
+      expect(btn.attributes("disabled")).toBeUndefined();
+      wrapper.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("disables the Refresh button while a load is already in flight", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const restore = mockOnLine(true);
+    try {
+      const review = useReviewStore(pinia);
+      vi.spyOn(review, "loadNextPage").mockResolvedValue();
+      const wrapper = mountView(pinia);
+      await flushPromises();
+
+      review.loading = true;
+      await flushPromises();
+
+      const btn = wrapper.find('[aria-label="Refresh"]');
+      expect(btn.attributes("disabled")).toBeDefined();
+      wrapper.unmount();
+    } finally {
+      restore();
+    }
+  });
 });
 
 describe("ReviewView", () => {

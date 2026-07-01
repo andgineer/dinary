@@ -94,6 +94,18 @@ describe("ExpenseEditSheet — pre-fill", () => {
     const tagToggle2 = wrapper.find('[data-testid="tag-toggle-2"]');
     expect(tagToggle2.classes()).not.toContain("is-on");
   });
+
+  it("pre-fills comment from expense.comment", () => {
+    const { wrapper } = mountSheet({ expense: { ...EXPENSE, comment: "business trip" } });
+    const input = wrapper.find('[data-testid="comment-input"]');
+    expect(input.element.value).toBe("business trip");
+  });
+
+  it("leaves comment empty when expense.comment is absent", () => {
+    const { wrapper } = mountSheet();
+    const input = wrapper.find('[data-testid="comment-input"]');
+    expect(input.element.value).toBe("");
+  });
 });
 
 describe("ExpenseEditSheet — tag toggle", () => {
@@ -332,6 +344,25 @@ describe("ExpenseEditSheet — save (expense path)", () => {
 
     expect(spy).toHaveBeenCalledWith(42, expect.objectContaining({ category_id: 10 }));
     expect(wrapper.emitted("close")).toBeTruthy();
+  });
+
+  it("includes edited comment in the update payload", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    useCatalogStore(pinia).replaceSnapshot(CATALOG);
+    const reviewStore = useReviewStore(pinia);
+    const spy = vi.spyOn(reviewStore, "updateExpense").mockResolvedValue();
+
+    const wrapper = mount(ExpenseEditSheet, {
+      props: { open: true, expense: EXPENSE, suggestions: [] },
+      global: { plugins: [pinia], stubs: { Teleport: TELEPORT_STUB, CategorySheet: true } },
+    });
+
+    await wrapper.find('[data-testid="comment-input"]').setValue("updated comment");
+    await wrapper.find('[data-testid="save-btn"]').trigger("click");
+    await flushPromises();
+
+    expect(spy).toHaveBeenCalledWith(42, expect.objectContaining({ comment: "updated comment" }));
   });
 });
 

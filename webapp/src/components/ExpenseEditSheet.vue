@@ -35,6 +35,7 @@ const categorySheetOpen = ref(false);
 const submitting = ref(false);
 const amount = ref("");
 const selectedCurrency = ref("");
+const comment = ref("");
 
 const SCOPE_OPTIONS = [
   { value: "single", label: "Only this" },
@@ -81,6 +82,7 @@ watch(
     amount.value = props.expense?.amount_original != null ? String(props.expense.amount_original) : "";
     selectedCurrency.value =
       props.expense?.currency_original || currencyStore.preferredCode || "";
+    comment.value = props.expense?.comment ?? "";
   },
   { immediate: true },
 );
@@ -154,6 +156,7 @@ async function save() {
         clear_event: selectedEventId.value === null,
         scope: scope.value,
         update_rule: updateRule.value,
+        comment: comment.value.trim(),
       };
       if (isManual.value) {
         patch.amount_original = Number.parseFloat(String(amount.value).replace(",", "."));
@@ -169,6 +172,7 @@ async function save() {
         tags: _resolvedTags(),
         event_id: selectedEventId.value,
         event_name: ev?.name ?? null,
+        comment: comment.value.trim(),
         ...(isManual.value
           ? {
               amount_original: Number.parseFloat(String(amount.value).replace(",", ".")),
@@ -280,6 +284,20 @@ function onReceiptResolved() {
           {{ ev.name }}{{ ev.is_active === false ? " (inactive)" : "" }}
         </option>
       </select>
+    </div>
+
+    <!-- Comment -->
+    <div class="field-block">
+      <div class="field-label">COMMENT</div>
+      <input
+        v-model="comment"
+        type="text"
+        class="comment-input"
+        placeholder="Comment"
+        aria-label="Comment"
+        autocomplete="off"
+        data-testid="comment-input"
+      />
     </div>
 
     <!-- Scope selector (receipt-backed only) -->
@@ -475,6 +493,23 @@ function onReceiptResolved() {
 .event-select {
   width: 100%;
   font-size: 0.9rem;
+}
+
+.comment-input {
+  display: block;
+  width: 100%;
+  background: var(--field);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.comment-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
 }
 
 .scope-block {

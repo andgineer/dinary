@@ -63,10 +63,7 @@ class TestPatchExpense:
             con.close()
 
         resp = client.patch("/api/expenses/1", json={"category_id": 2})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["id"] == 1
-        assert data["category_id"] == 2
+        assert resp.status_code == 204
 
         con = storage.get_connection()
         try:
@@ -83,9 +80,7 @@ class TestPatchExpense:
             con.close()
 
         resp = client.patch("/api/expenses/1", json={"tag_ids": [1, 2]})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert sorted(data["tag_ids"]) == [1, 2]
+        assert resp.status_code == 204
 
         con = storage.get_connection()
         try:
@@ -107,10 +102,14 @@ class TestPatchExpense:
             con.close()
 
         resp = client.patch("/api/expenses/1", json={"event_id": 1})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["event_id"] == 1
-        assert data["event_name"] == "evt-2026"
+        assert resp.status_code == 204
+
+        con = storage.get_connection()
+        try:
+            row = con.execute("SELECT event_id FROM expenses WHERE id = 1").fetchone()
+        finally:
+            con.close()
+        assert row[0] == 1
 
     def test_clear_event(self, client, db):  # noqa: ARG002
         con = storage.get_connection()
@@ -121,8 +120,14 @@ class TestPatchExpense:
             con.close()
 
         resp = client.patch("/api/expenses/1", json={"clear_event": True})
-        assert resp.status_code == 200
-        assert resp.json()["event_id"] is None
+        assert resp.status_code == 204
+
+        con = storage.get_connection()
+        try:
+            row = con.execute("SELECT event_id FROM expenses WHERE id = 1").fetchone()
+        finally:
+            con.close()
+        assert row[0] is None
 
     def test_update_rule_false_does_not_touch_rules(self, client, db):  # noqa: ARG002
         """PATCH with only tag changes and update_rule=False must not create any rules."""
@@ -135,7 +140,7 @@ class TestPatchExpense:
         # Only change tags, no category_id → correct_category_sync is NOT called,
         # update_rule=False → the rule upsert block is also skipped.
         resp = client.patch("/api/expenses/1", json={"tag_ids": [1], "update_rule": False})
-        assert resp.status_code == 200
+        assert resp.status_code == 204
 
         con = storage.get_connection()
         try:
@@ -162,7 +167,7 @@ class TestPatchExpense:
             con.close()
 
         resp = client.patch("/api/expenses/1", json={"tag_ids": [1], "update_rule": True})
-        assert resp.status_code == 200
+        assert resp.status_code == 204
 
         con = storage.get_connection()
         try:
@@ -204,7 +209,7 @@ class TestPatchExpense:
             con.close()
 
         resp = client.patch("/api/expenses/1", json={"category_id": 2, "update_rule": True})
-        assert resp.status_code == 200
+        assert resp.status_code == 204
 
         con = storage.get_connection()
         try:
@@ -227,7 +232,7 @@ class TestPatchExpense:
 
         with caplog.at_level(logging.ERROR, logger="dinary.api.controllers.expenses"):
             resp = client.patch("/api/expenses/1", json={"update_rule": True})
-        assert resp.status_code == 200
+        assert resp.status_code == 204
 
         con = storage.get_connection()
         try:
@@ -246,7 +251,7 @@ class TestPatchExpense:
             con.close()
 
         resp = client.patch("/api/expenses/1", json={"tag_ids": [1], "update_rule": True})
-        assert resp.status_code == 200
+        assert resp.status_code == 204
 
         con = storage.get_connection()
         try:
@@ -255,18 +260,40 @@ class TestPatchExpense:
             con.close()
         assert rule_count == 0, "non-receipt expense has no receipt_items → no rule created"
 
-    def test_response_includes_category_name(self, client, db):  # noqa: ARG002
+    def test_comment_update(self, client, db):  # noqa: ARG002
         con = storage.get_connection()
         try:
             self._seed_receipt_expense(con)
         finally:
             con.close()
 
-        resp = client.patch("/api/expenses/1", json={})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "category_name" in data
-        assert isinstance(data["category_name"], str)
+        resp = client.patch("/api/expenses/1", json={"comment": "updated comment"})
+        assert resp.status_code == 204
+
+        con = storage.get_connection()
+        try:
+            row = con.execute("SELECT comment FROM expenses WHERE id = 1").fetchone()
+        finally:
+            con.close()
+        assert row[0] == "updated comment"
+
+    def test_comment_omitted_leaves_existing_value_untouched(self, client, db):  # noqa: ARG002
+        con = storage.get_connection()
+        try:
+            self._seed_receipt_expense(con)
+            con.execute("UPDATE expenses SET comment = 'original' WHERE id = 1")
+        finally:
+            con.close()
+
+        resp = client.patch("/api/expenses/1", json={"category_id": 2})
+        assert resp.status_code == 204
+
+        con = storage.get_connection()
+        try:
+            row = con.execute("SELECT comment FROM expenses WHERE id = 1").fetchone()
+        finally:
+            con.close()
+        assert row[0] == "original"
 
     def test_category_and_update_rule_true_writes_rule_once_with_tags(self, client, db):  # noqa: ARG002
         """PATCH with category_id + update_rule=True writes the rule once, carrying tag_ids."""
@@ -287,7 +314,7 @@ class TestPatchExpense:
             "/api/expenses/1",
             json={"category_id": 2, "tag_ids": [1], "update_rule": True},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 204
 
         con = storage.get_connection()
         try:

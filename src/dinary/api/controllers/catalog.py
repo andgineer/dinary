@@ -104,13 +104,6 @@ class TagAddResponse(CatalogVersionResponse):
     tag: TagItem
 
 
-class ReloadMapResponse(BaseModel):
-    row_count: int
-    modified_time: str
-    tab: str
-    modified_time_cached: bool
-
-
 # Request bodies
 class EventAddBody(BaseModel):
     name: str = Field(min_length=1)

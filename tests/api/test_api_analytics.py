@@ -45,7 +45,7 @@ def _insert_income(client, year, month, amount):
                 "currency_original": "EUR",
             },
         )
-    assert resp.status_code == 201, resp.text
+    assert resp.status_code == 204, resp.text
 
 
 @allure.epic("Analytics")

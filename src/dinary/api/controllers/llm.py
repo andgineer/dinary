@@ -37,12 +37,7 @@ def _snapshot_to_dict(name: str, snap: LLMSnapshot) -> dict:
     }
 
 
-async def list_providers(llms: llmbroker.AsyncBroker) -> list[dict]:
-    snapshot = await llms.snapshot()
-    return [_snapshot_to_dict(name, snap) for name, snap in snapshot.items()]
-
-
-async def add_provider(body: ProviderIn, llms: llmbroker.AsyncBroker) -> dict:
+async def add_provider(body: ProviderIn, llms: llmbroker.AsyncBroker) -> None:
     cfg = LLMConfig(
         name=body.name,
         base_url=body.base_url,
@@ -53,7 +48,6 @@ async def add_provider(body: ProviderIn, llms: llmbroker.AsyncBroker) -> dict:
         await llms.add(cfg)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail="Provider already exists") from exc
-    return {"name": body.name}
 
 
 async def update_provider(name: str, body: ProviderPatch, llms: llmbroker.AsyncBroker) -> dict:
@@ -71,7 +65,7 @@ async def update_provider(name: str, body: ProviderPatch, llms: llmbroker.AsyncB
     return {"status": "ok"}
 
 
-async def delete_provider(name: str, llms: llmbroker.AsyncBroker) -> dict:
+async def delete_provider(name: str, llms: llmbroker.AsyncBroker) -> None:
     snapshot = await llms.snapshot()
     if name not in snapshot:
         raise HTTPException(status_code=404, detail="Provider not found")
@@ -79,7 +73,6 @@ async def delete_provider(name: str, llms: llmbroker.AsyncBroker) -> dict:
     if len(enabled) <= 1 and name in enabled:
         raise HTTPException(status_code=409, detail="Cannot delete the only enabled provider")
     await llms.remove(name)
-    return {"status": "ok"}
 
 
 async def llm_status(llms: llmbroker.AsyncBroker) -> dict:

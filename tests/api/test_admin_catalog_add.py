@@ -7,8 +7,8 @@ new ``catalog_version``, the ``status`` field that distinguishes
 validation on event creation.
 
 Sibling files cover patch (:file:`test_admin_catalog_patch.py`),
-delete (:file:`test_admin_catalog_delete.py`), and version /
-reload-map plumbing (:file:`test_admin_catalog_meta.py`).
+delete (:file:`test_admin_catalog_delete.py`), and version
+plumbing (:file:`test_admin_catalog_meta.py`).
 """
 
 import allure

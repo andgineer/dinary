@@ -14,7 +14,6 @@ from dinary.api.controllers.catalog import (
     GroupAddBody,
     GroupAddResponse,
     GroupPatchBody,
-    ReloadMapResponse,
     TagAddBody,
     TagAddResponse,
     TagPatchBody,
@@ -35,11 +34,9 @@ from dinary.api.controllers.catalog_writer_events import (
     edit_tag,
 )
 from dinary.api.controllers.catalog_writer_groups import add_group, delete_group, edit_group
-from dinary.config import settings, spreadsheet_id_from_setting
 from dinary.db import storage
 from dinary.db.catalog import get_catalog_version
 from dinary.db.storage import get_db
-from dinary.sheets import sheet_mapping
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -221,17 +218,3 @@ def delete_tag_endpoint(
     with handle_catalog_error():
         result = delete_tag(con, tag_id)
     return _etag_response(con, response, delete_result=result)
-
-
-@router.post("/api/catalog/reload-map", response_model=ReloadMapResponse)
-def reload_map() -> ReloadMapResponse:
-    if spreadsheet_id_from_setting(settings.sheet_logging_spreadsheet) is None:
-        raise HTTPException(
-            status_code=503,
-            detail="sheet_logging_spreadsheet not configured; reload-map unavailable",
-        )
-    try:
-        summary = sheet_mapping.reload_now(check_after=False)
-    except sheet_mapping.MapTabError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
-    return ReloadMapResponse(**summary)

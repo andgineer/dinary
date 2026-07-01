@@ -157,7 +157,7 @@ def resolve_receipt_manually(
     receipt_id: int,
     req: ResolveReceiptRequest,
     con: sqlite3.Connection,
-) -> dict:
+) -> None:
     row = _load_active_job_receipt(con, receipt_id)
 
     payload = decode_qr_payload(str(row["url"]))
@@ -181,7 +181,7 @@ def resolve_receipt_manually(
     tag_ids = resolve_effective_tag_ids(con, req.tag_ids, req.event_id)
 
     with transaction(con):
-        expense_id = _insert_resolved_expense(
+        _insert_resolved_expense(
             con,
             receipt_id,
             row,
@@ -194,11 +194,3 @@ def resolve_receipt_manually(
 
     if settings.sheet_logging_enabled:
         notify_new_work()
-
-    return {
-        "status": "ok",
-        "expense_id": expense_id,
-        "amount_original": float(payload.amount),
-        "currency_original": RECEIPT_CURRENCY,
-        "category_id": req.category_id,
-    }

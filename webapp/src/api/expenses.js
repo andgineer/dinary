@@ -49,16 +49,3 @@ export async function postExpense({
 export function deleteExpense(id) {
   return apiRequest(`/api/expenses/${id}`, { method: "DELETE" });
 }
-
-export async function parseQr(url) {
-  const resp = await fetch("/api/qr/parse", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err.detail || `HTTP ${resp.status}`);
-  }
-  return resp.json();
-}

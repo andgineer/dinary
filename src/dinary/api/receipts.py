@@ -54,13 +54,14 @@ def receipt_queue(
     return list_stuck_receipts(con, page, page_size)
 
 
-@router.post("/api/receipts/{receipt_id}/resolve")
+@router.post("/api/receipts/{receipt_id}/resolve", status_code=204)
 def resolve_receipt(
     receipt_id: int,
     body: ResolveReceiptRequest,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> dict:
-    return resolve_receipt_manually(receipt_id, body, con)
+) -> Response:
+    resolve_receipt_manually(receipt_id, body, con)
+    return Response(status_code=204)
 
 
 @router.get("/api/receipts/{receipt_id}")

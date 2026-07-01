@@ -14,8 +14,8 @@ A group with surviving categories cannot be deleted at all (409) —
 the operator must drain the group first.
 
 Sibling files cover add (:file:`test_admin_catalog_add.py`),
-patch (:file:`test_admin_catalog_patch.py`), and version /
-reload-map plumbing (:file:`test_admin_catalog_meta.py`).
+patch (:file:`test_admin_catalog_patch.py`), and version
+plumbing (:file:`test_admin_catalog_meta.py`).
 """
 
 from datetime import datetime

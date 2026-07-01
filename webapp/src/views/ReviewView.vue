@@ -258,7 +258,7 @@ onBeforeUnmount(() => {
         icon="refresh"
         tone="muted"
         label="Refresh"
-        :disabled="reviewStore.loading || !isOnline.value"
+        :disabled="reviewStore.loading"
         @click="forceRefresh()"
       />
     </div>

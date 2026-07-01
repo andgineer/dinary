@@ -104,7 +104,7 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="refresh-btn"
-        :disabled="incomeStore.loading || !isOnline.value"
+        :disabled="incomeStore.loading"
         aria-label="Refresh"
         @click="forceRefresh"
       >
@@ -148,8 +148,6 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="btn-save-income"
-        :class="{ 'btn-save-income--disabled': !isOnline.value }"
-        :disabled="!isOnline.value"
         @click="saveIncome"
       >
         Save
@@ -329,10 +327,4 @@ onBeforeUnmount(() => {
   transition: box-shadow 0.15s, background 0.15s;
 }
 
-.btn-save-income--disabled {
-  background: var(--surface-2);
-  color: var(--muted);
-  cursor: not-allowed;
-  box-shadow: none;
-}
 </style>

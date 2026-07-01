@@ -187,20 +187,15 @@ class TestResolveReceipt:
         _insert_job(rid, status="poisoned", retry_count=4, last_error="boom")
 
         resp = client.post(f"/api/receipts/{rid}/resolve", json={"category_id": 1})
-        assert resp.status_code == 200, resp.text
-        data = resp.json()
-        assert data["status"] == "ok"
-        assert data["category_id"] == 1
-        assert data["currency_original"] == "RSD"
-        assert Decimal(str(data["amount_original"])) == Decimal("123.45")
+        assert resp.status_code == 204, resp.text
 
         con = storage.get_connection()
         try:
             exp = con.execute(
-                "SELECT category_id, confidence_level, rule_id, amount_original,"
+                "SELECT id, category_id, confidence_level, rule_id, amount_original,"
                 "       currency_original, receipt_id"
-                "  FROM expenses WHERE id = ?",
-                [data["expense_id"]],
+                "  FROM expenses WHERE receipt_id = ?",
+                [rid],
             ).fetchone()
             assert exp["category_id"] == 1
             assert exp["confidence_level"] == 4
@@ -236,14 +231,13 @@ class TestResolveReceipt:
             f"/api/receipts/{rid}/resolve",
             json={"category_id": 1, "tag_ids": [1], "event_id": 1, "comment": "manual"},
         )
-        assert resp.status_code == 200, resp.text
-        expense_id = resp.json()["expense_id"]
+        assert resp.status_code == 204, resp.text
 
         con = storage.get_connection()
         try:
             exp = con.execute(
-                "SELECT event_id, comment FROM expenses WHERE id = ?",
-                [expense_id],
+                "SELECT id, event_id, comment FROM expenses WHERE receipt_id = ?",
+                [rid],
             ).fetchone()
             assert exp["event_id"] == 1
             assert exp["comment"] == "manual"
@@ -252,7 +246,7 @@ class TestResolveReceipt:
                 row[0]
                 for row in con.execute(
                     "SELECT tag_id FROM expense_tags WHERE expense_id = ?",
-                    [expense_id],
+                    [exp["id"]],
                 ).fetchall()
             }
             assert tag_ids == {1, 2}

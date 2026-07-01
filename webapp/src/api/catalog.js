@@ -163,7 +163,3 @@ export async function adminDeleteEvent(event_id) {
 export async function adminDeleteTag(tag_id) {
   return apiRequest(`/api/catalog/tags/${tag_id}`, { method: "DELETE" });
 }
-
-export async function adminReloadMap() {
-  return apiRequest("/api/catalog/reload-map", { method: "POST" });
-}

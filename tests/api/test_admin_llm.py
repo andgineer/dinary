@@ -27,18 +27,19 @@ def _add_provider(
 @allure.feature("Admin")
 class TestLLMProvidersCRUD:
     def test_list_empty(self, client, db):  # noqa: ARG002
-        resp = client.get("/api/llm/providers")
+        resp = client.get("/api/llm/status")
         assert resp.status_code == 200
-        assert resp.json() == []
+        assert resp.json()["providers"] == []
 
     def test_add_provider(self, client, db):  # noqa: ARG002
         resp = _add_provider(client)
-        assert resp.status_code == 201
-        assert resp.json()["name"] == "groq-llama"
+        assert resp.status_code == 204
+        providers = client.get("/api/llm/status").json()["providers"]
+        assert providers[0]["name"] == "groq-llama"
 
     def test_list_shows_added(self, client, db):  # noqa: ARG002
         _add_provider(client, name="groq-llama")
-        providers = client.get("/api/llm/providers").json()
+        providers = client.get("/api/llm/status").json()["providers"]
         assert len(providers) == 1
         assert providers[0]["name"] == "groq-llama"
 
@@ -46,21 +47,21 @@ class TestLLMProvidersCRUD:
         _add_provider(client, name="groq-llama")
         resp = client.patch("/api/llm/providers/groq-llama", json={"model": "new-model"})
         assert resp.status_code == 200
-        updated = client.get("/api/llm/providers").json()[0]
+        updated = client.get("/api/llm/status").json()["providers"][0]
         assert updated["model"] == "new-model"
 
     def test_patch_base_url(self, client, db):  # noqa: ARG002
         _add_provider(client, name="groq-llama")
         client.patch("/api/llm/providers/groq-llama", json={"base_url": "https://x/v1"})
-        updated = client.get("/api/llm/providers").json()[0]
+        updated = client.get("/api/llm/status").json()["providers"][0]
         assert updated["base_url"] == "https://x/v1"
 
     def test_delete_provider(self, client, db):  # noqa: ARG002
         _add_provider(client, name="p1")
         _add_provider(client, name="p2")
         resp = client.delete("/api/llm/providers/p1")
-        assert resp.status_code == 200
-        remaining = client.get("/api/llm/providers").json()
+        assert resp.status_code == 204
+        remaining = client.get("/api/llm/status").json()["providers"]
         assert len(remaining) == 1
 
     def test_delete_only_provider_refused(self, client, db):  # noqa: ARG002
@@ -69,7 +70,7 @@ class TestLLMProvidersCRUD:
         assert resp.status_code == 409
 
     def test_add_duplicate_rejected(self, client, db):  # noqa: ARG002
-        assert _add_provider(client, name="groq-llama").status_code == 201
+        assert _add_provider(client, name="groq-llama").status_code == 204
         resp = _add_provider(client, name="groq-llama")
         assert resp.status_code == 409
 

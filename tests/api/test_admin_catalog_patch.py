@@ -7,8 +7,8 @@ and the reactivation affordance that flips ``is_active`` back to
 ``TRUE``.
 
 Sibling files cover add (:file:`test_admin_catalog_add.py`),
-delete (:file:`test_admin_catalog_delete.py`), and version /
-reload-map plumbing (:file:`test_admin_catalog_meta.py`).
+delete (:file:`test_admin_catalog_delete.py`), and version
+plumbing (:file:`test_admin_catalog_meta.py`).
 """
 
 import allure

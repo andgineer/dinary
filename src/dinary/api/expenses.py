@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, Query, Response
 
 from dinary.api.controllers.expenses import (
     ExpenseEditRequest,
-    ExpenseEditResponse,
     ExpenseRequest,
     ExpenseResponse,
     create_expense_sync,
@@ -42,13 +41,14 @@ def get_expenses(
     return list_expenses_sync(con, page, page_size)
 
 
-@router.patch("/api/expenses/{expense_id}", response_model=ExpenseEditResponse)
+@router.patch("/api/expenses/{expense_id}", status_code=204)
 def patch_expense(
     expense_id: int,
     req: ExpenseEditRequest,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> ExpenseEditResponse:
-    return edit_expense_sync(expense_id, req, con)
+) -> Response:
+    edit_expense_sync(expense_id, req, con)
+    return Response(status_code=204)
 
 
 @router.delete("/api/expenses/{expense_id}", status_code=204)
