@@ -136,6 +136,7 @@ function onScanError(err) {
 }
 
 .action-qr:hover {
+  background: var(--expense);
   filter: brightness(1.1);
 }
 
@@ -158,5 +159,10 @@ function onScanError(err) {
   font-weight: 600;
   cursor: pointer;
   padding: 0 1rem;
+}
+
+.action-save:hover {
+  background: var(--expense);
+  filter: brightness(1.1);
 }
 </style>
