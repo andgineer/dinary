@@ -5,20 +5,20 @@
 | Name                                                           |    Stmts |     Miss |   Cover |   Missing |
 |--------------------------------------------------------------- | -------: | -------: | ------: | --------: |
 | src/dinary/\_\_about\_\_.py                                    |        1 |        0 |    100% |           |
-| src/dinary/adapters/exchange\_rates.py                         |       43 |        1 |     98% |        41 |
+| src/dinary/adapters/exchange\_rates.py                         |       43 |        1 |     98% |        32 |
 | src/dinary/adapters/nbp.py                                     |       37 |        0 |    100% |           |
 | src/dinary/adapters/nbs.py                                     |       47 |        0 |    100% |           |
 | src/dinary/adapters/rate\_helpers.py                           |       27 |        0 |    100% |           |
 | src/dinary/adapters/serbian\_receipt\_parser.py                |      127 |       18 |     86% |110, 116, 125-131, 145, 152, 186-187, 191-192, 195, 220-222, 249-255 |
-| src/dinary/adapters/sheets\_client.py                          |       44 |       28 |     36% |26-35, 39, 54-63, 72-84 |
-| src/dinary/api/analytics.py                                    |       52 |        1 |     98% |        36 |
+| src/dinary/adapters/sheets\_client.py                          |       44 |       28 |     36% |26-35, 39, 51-60, 69-81 |
+| src/dinary/api/analytics.py                                    |       52 |        2 |     96% |    33, 36 |
 | src/dinary/api/catalog.py                                      |       81 |        9 |     89% |68-70, 105-113, 158-169 |
 | src/dinary/api/category\_templates.py                          |       33 |        0 |    100% |           |
 | src/dinary/api/controllers/catalog.py                          |      136 |        0 |    100% |           |
 | src/dinary/api/controllers/catalog\_writer.py                  |       33 |        1 |     97% |        17 |
-| src/dinary/api/controllers/catalog\_writer\_errors.py          |       31 |        2 |     94% |     83-84 |
-| src/dinary/api/controllers/catalog\_writer\_events.py          |      187 |       33 |     82% |37, 199-201, 216, 226-231, 265, 267, 269, 271, 281, 297, 333-335, 359, 366, 376-378, 405, 409-411, 418-420, 442, 455-457 |
-| src/dinary/api/controllers/catalog\_writer\_groups.py          |       76 |       31 |     59% |37-41, 108-110, 130-170, 179, 203 |
+| src/dinary/api/controllers/catalog\_writer\_errors.py          |       31 |        2 |     94% |     55-56 |
+| src/dinary/api/controllers/catalog\_writer\_events.py          |      187 |       33 |     82% |35, 184-186, 201, 211-216, 243, 245, 247, 249, 259, 275, 311-313, 332, 339, 349-351, 378, 382-384, 391-393, 410, 423-425 |
+| src/dinary/api/controllers/catalog\_writer\_groups.py          |       76 |       31 |     59% |25-29, 90-92, 105-145, 154, 171 |
 | src/dinary/api/controllers/category\_templates.py              |       80 |        1 |     99% |       118 |
 | src/dinary/api/controllers/expense\_corrections.py             |       70 |        1 |     99% |        94 |
 | src/dinary/api/controllers/expenses.py                         |      172 |       17 |     90% |225-226, 262-272, 319, 390-392, 405-407 |
@@ -39,39 +39,39 @@
 | src/dinary/background/classification/receipt\_classifier.py    |       57 |        0 |    100% |           |
 | src/dinary/background/classification/store\_resolver.py        |       31 |        1 |     97% |        69 |
 | src/dinary/background/classification/task.py                   |      259 |       19 |     93% |80, 133-134, 140-147, 215-229, 332, 381, 530 |
-| src/dinary/background/rate\_prefetch/task.py                   |       51 |        2 |     96% |   81, 109 |
+| src/dinary/background/rate\_prefetch/task.py                   |       51 |        2 |     96% |    59, 87 |
 | src/dinary/background/sheet\_logging/income\_sheet\_logging.py |      176 |       44 |     75% |58-63, 89-90, 97-98, 106-108, 119, 152, 165-168, 176-179, 204-205, 217, 234, 240-242, 270-277, 289, 293, 317-325 |
-| src/dinary/background/sheet\_logging/logging\_jobs.py          |       63 |        9 |     86% |88-89, 105-111 |
-| src/dinary/background/sheet\_logging/sheet\_logging.py         |      221 |       39 |     82% |101-105, 119-126, 134, 200-201, 211, 216-218, 261-263, 286-287, 291-301, 376, 415-416, 427, 431, 458-459, 479-489 |
-| src/dinary/background/sheet\_logging/sheets\_write.py          |       65 |       35 |     46% |114-119, 124-127, 131-136, 158-192 |
-| src/dinary/background/sheet\_logging/task.py                   |       59 |        8 |     86% | 46-59, 98 |
+| src/dinary/background/sheet\_logging/logging\_jobs.py          |       63 |        9 |     86% |78-79, 95-101 |
+| src/dinary/background/sheet\_logging/sheet\_logging.py         |      221 |       39 |     82% |91-95, 109-116, 124, 181-182, 192, 197-199, 242-244, 267-268, 272-282, 352, 391-392, 403, 407, 434-435, 455-465 |
+| src/dinary/background/sheet\_logging/sheets\_write.py          |       65 |       35 |     46% |106-111, 116-119, 123-128, 143-177 |
+| src/dinary/background/sheet\_logging/task.py                   |       59 |        8 |     86% | 29-42, 79 |
 | src/dinary/category\_templates/loader.py                       |       65 |        0 |    100% |           |
-| src/dinary/config.py                                           |       68 |        6 |     91% |34, 44, 89, 107-109 |
-| src/dinary/db/catalog.py                                       |      119 |        1 |     99% |        97 |
+| src/dinary/config.py                                           |       68 |        6 |     91% |30, 40, 79, 91-93 |
+| src/dinary/db/catalog.py                                       |      119 |        1 |     99% |        86 |
 | src/dinary/db/category\_apply.py                               |       40 |        0 |    100% |           |
-| src/dinary/db/category\_seed.py                                |       59 |        6 |     90% |150-157, 162 |
+| src/dinary/db/category\_seed.py                                |       59 |        6 |     90% |141-148, 153 |
 | src/dinary/db/classification\_rules.py                         |       37 |        2 |     95% |     66-67 |
-| src/dinary/db/currencies.py                                    |       34 |        5 |     85% |21-22, 59-64 |
-| src/dinary/db/db\_migrations.py                                |       56 |        2 |     96% |    86, 89 |
+| src/dinary/db/currencies.py                                    |       34 |        5 |     85% |15-16, 53-58 |
+| src/dinary/db/db\_migrations.py                                |       56 |        2 |     96% |    53, 56 |
 | src/dinary/db/expenses.py                                      |      130 |       12 |     91% |126, 168, 201-208, 227-233, 316, 420, 462 |
 | src/dinary/db/income.py                                        |       55 |        5 |     91% |103, 117-124 |
 | src/dinary/db/receipts.py                                      |       92 |        3 |     97% |   119-121 |
 | src/dinary/db/sql\_loader.py                                   |       31 |        0 |    100% |           |
-| src/dinary/db/storage.py                                       |      129 |        7 |     95% |72, 266-269, 277-283 |
+| src/dinary/db/storage.py                                       |      129 |        7 |     95% |63, 234-237, 245-251 |
 | src/dinary/main.py                                             |       95 |        8 |     92% |45-47, 134, 140, 146, 156, 166 |
-| src/dinary/sheets/sheet\_mapping.py                            |      224 |       47 |     79% |239, 314-316, 343-344, 351-357, 404, 407-419, 433-434, 444-462, 480-514, 538, 549-554, 559-560 |
-| src/dinary/sheets/sheets.py                                    |      104 |        6 |     94% |59-60, 83, 119, 137, 220 |
-| src/dinary\_analytics/ai\_service.py                           |       77 |       10 |     87% |60, 66, 139-145, 149 |
-| src/dinary\_analytics/backup.py                                |       66 |       21 |     68% |24-25, 43-44, 62-63, 77-95, 99 |
+| src/dinary/sheets/sheet\_mapping.py                            |      224 |       47 |     79% |224, 289-291, 308-309, 316-322, 369, 372-377, 391-392, 402-420, 434-462, 478, 489-494, 499-500 |
+| src/dinary/sheets/sheets.py                                    |      104 |        6 |     94% |51-52, 71, 100, 118, 201 |
+| src/dinary\_analytics/ai\_service.py                           |       77 |       10 |     87% |53, 59, 132-138, 142 |
+| src/dinary\_analytics/backup.py                                |       66 |       21 |     68% |18-19, 36-37, 54-55, 69-87, 91 |
 | src/dinary\_analytics/charts.py                                |       57 |        0 |    100% |           |
 | src/dinary\_analytics/connection.py                            |       11 |        0 |    100% |           |
 | src/dinary\_analytics/llm.py                                   |       61 |       10 |     84% |39-44, 66, 69, 130-131 |
 | src/dinary\_analytics/notebooks/dashboard.py                   |      425 |      166 |     61% |32, 76, 85, 98, 115, 131-134, 148-190, 212-214, 216, 220-221, 270-340, 352, 443, 455-525, 538-549, 554-584, 589-619, 631-644, 649-651, 683-691, 702, 707-711, 716-720, 746, 762, 895, 911-913, 980-1016, 1021-1044, 1065-1068, 1072-1076, 1080-1084, 1088-1090, 1104-1105, 1110, 1149 |
 | src/dinary\_analytics/paths.py                                 |       17 |        0 |    100% |           |
-| src/dinary\_analytics/refresh.py                               |      100 |        2 |     98% |   50, 161 |
+| src/dinary\_analytics/refresh.py                               |      100 |        2 |     98% |   50, 157 |
 | src/dinary\_analytics/settings.py                              |       49 |        1 |     98% |        56 |
-| src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        65 |
-| **TOTAL**                                                      | **4991** |  **636** | **87%** |           |
+| src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        62 |
+| **TOTAL**                                                      | **4991** |  **637** | **87%** |           |
 
 
 ## Setup coverage badge
