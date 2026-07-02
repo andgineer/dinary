@@ -94,6 +94,7 @@ function handleCancel() {
         v-model="tagIds"
         :tags="allActiveTags"
         empty-hint="No tags yet — create one above first."
+        accent-color="var(--expense)"
       />
     </div>
 

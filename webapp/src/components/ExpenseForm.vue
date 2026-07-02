@@ -426,6 +426,7 @@ defineExpose({ save, reset });
         v-model="tagIds"
         :tags="allActiveTags"
         empty-hint="No tags yet"
+        accent-color="var(--expense)"
       />
       <ManageList
         v-if="manageMode.tag"

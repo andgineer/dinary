@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, watch } from "vue";
-import { Check, Receipt, Trash2 } from "lucide-vue-next";
+import { Receipt, Trash2 } from "lucide-vue-next";
 import { useCatalogStore } from "../stores/catalog.js";
 import { useReviewStore } from "../stores/review.js";
 import { useToastStore } from "../stores/toast.js";
@@ -259,12 +259,6 @@ function onReceiptResolved() {
           :data-testid="`tag-toggle-${tag.id}`"
           @click="toggleTag(tag.id)"
         >
-          <Check
-            v-if="selectedTagIds.has(Number(tag.id))"
-            :size="11"
-            class="tag-check"
-            aria-hidden="true"
-          />
           {{ tag.name }}
         </button>
       </div>
@@ -476,18 +470,14 @@ function onReceiptResolved() {
 }
 
 .tag-toggle.is-on {
-  border-color: var(--accent);
-  color: var(--text);
+  background: var(--review);
+  border-color: var(--review);
+  color: #fff;
 }
 
 .tag-toggle.is-inactive {
   opacity: 0.6;
   border-style: dashed;
-}
-
-.tag-check {
-  color: var(--accent);
-  flex-shrink: 0;
 }
 
 .event-select {

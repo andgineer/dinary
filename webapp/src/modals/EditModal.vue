@@ -187,6 +187,7 @@ async function submit() {
         v-model="tagIds"
         :tags="allActiveTags"
         empty-hint="No tags exist yet."
+        accent-color="var(--expense)"
       />
     </template>
   </BaseModal>

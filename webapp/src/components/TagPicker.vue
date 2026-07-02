@@ -14,6 +14,10 @@ const props = defineProps({
     type: String,
     default: "",
   },
+  accentColor: {
+    type: String,
+    default: "var(--accent)",
+  },
 });
 
 const emit = defineEmits(["update:modelValue"]);
@@ -39,7 +43,7 @@ const isEmpty = computed(() => props.tags.length === 0);
 </script>
 
 <template>
-  <div>
+  <div :style="{ '--tag-accent': accentColor }">
     <div v-if="!isEmpty" class="tags-list" data-testid="tag-picker">
       <label v-for="tag in tags" :key="tag.id" class="tag-chip">
         <input
@@ -97,7 +101,7 @@ const isEmpty = computed(() => props.tags.length === 0);
 }
 
 .tag-chip:has(input:checked) {
-  background: var(--accent);
+  background: var(--tag-accent, var(--accent));
   color: #fff;
 }
 
