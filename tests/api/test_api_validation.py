@@ -115,20 +115,9 @@ class TestPostExpenseInactiveCarveout:
         _mock_convert_fn,
         client,
     ):
-        """End-to-end of the FK-safe-sync → runtime flow:
-        1. Post an expense against an active category so an FK from
-           ``expenses`` to ``categories`` is established.
-        2. Simulate the reseed dropping that category from the
-           vocabulary entirely (``is_retired=TRUE``) — the row can't be
-           deleted because the FK still pins it, which is the whole
-           point of the FK-safe algorithm in ``seed_config``.
-        3. A truly-new POST (different ``client_expense_id``) against
-           the retired category must return 422.
-        4. An idempotent replay (same ``client_expense_id`` + same
-           body) must still return 200 duplicate — an offline PWA
-           retry must not be silently lost to an operator's reseed
-           that happened after the original POST went over the wire.
-        """
+        """See ``specs/reference/catalog-api.md`` for the retirement/replay carve-out
+        this pins: new POST against a retired category -> 422, idempotent replay
+        -> 200 duplicate, mismatched-body replay -> 409."""
         post_body = {
             "client_expense_id": "e_pin_1",
             "amount": 10.0,
@@ -142,9 +131,7 @@ class TestPostExpenseInactiveCarveout:
 
         con = storage.get_connection()
         try:
-            # Simulate the FK-safe reseed path: mark the category retired
-            # rather than deleting (which would violate the FK held by
-            # the expense we just inserted).
+            # FK-safe reseed: retire, don't delete (an expense still references it).
             con.execute(
                 "UPDATE categories SET is_active = FALSE, is_retired = TRUE WHERE name = 'food'",
             )
@@ -155,26 +142,16 @@ class TestPostExpenseInactiveCarveout:
         finally:
             con.close()
 
-        # Truly-new POST with the retired category → 422 (unchanged
-        # contract).
         resp = client.post(
             "/api/expenses",
             json={**post_body, "client_expense_id": "e_pin_2"},
         )
         assert resp.status_code == 422
 
-        # Idempotent replay with the same UUID + same body → 200
-        # duplicate. This is the PWA offline-retry guarantee: the
-        # original POST established the FK pinning the category on
-        # disk, so the server can prove this isn't a fresh use of a
-        # retired label.
         replay = client.post("/api/expenses", json=post_body)
         assert replay.status_code == 200, replay.text
         assert replay.json()["status"] == "duplicate"
 
-        # Replay with the same UUID but a *different* payload → 409,
-        # as for any other client_expense_id mismatch. The inactive
-        # category does not relax the conflict check.
         mismatch = client.post(
             "/api/expenses",
             json={**post_body, "amount": 999.0},
@@ -187,15 +164,8 @@ class TestPostExpenseInactiveCarveout:
         _mock_convert_fn,
         client,
     ):
-        """The tag validator's replay carve-out mirrors the category one:
-
-        1. Post an expense pinned to an active tag.
-        2. Retire the tag (admin PATCH or reseed).
-        3. Replaying the same POST must still succeed because the
-           stored ``expense_tags`` row proves the tag was live when
-           the original request hit the wire.
-        4. A truly-new POST using the retired tag must 422.
-        """
+        """The tag validator's replay carve-out mirrors the category one, see
+        ``specs/reference/catalog-api.md``."""
         post_body = {
             "client_expense_id": "e_tag_pin",
             "amount": 5.0,
@@ -214,7 +184,6 @@ class TestPostExpenseInactiveCarveout:
         finally:
             con.close()
 
-        # Truly-new POST against the retired tag -> 422.
         new = client.post(
             "/api/expenses",
             json={**post_body, "client_expense_id": "e_tag_new"},
@@ -222,7 +191,6 @@ class TestPostExpenseInactiveCarveout:
         assert new.status_code == 422
         assert "Inactive tag_ids" in new.json()["detail"]
 
-        # Replay of the original -> 200 duplicate.
         replay = client.post("/api/expenses", json=post_body)
         assert replay.status_code == 200, replay.text
         assert replay.json()["status"] == "duplicate"
@@ -233,18 +201,9 @@ class TestPostExpenseInactiveCarveout:
         _mock_convert_fn,
         client,
     ):
-        """Replay path using an inactive tag but a *different* body
-        must return 409, not 422.
-
-        Before the M5 refactor, the tag validator raised a blanket
-        422 as soon as any tag in the payload was inactive — even
-        for a replay whose stored row was a real conflict (amount /
-        date / tag-set differs). That masked the true
-        duplicate-vs-conflict decision, which belongs to
-        ``insert_expense``'s ON CONFLICT compare path. With the
-        validator deferring on replay, the compare runs and surfaces
-        the real 409.
-        """
+        """Replay with an inactive tag but a different body must return 409, not
+        422 — the tag validator defers to ``insert_expense``'s ON CONFLICT compare
+        path rather than blanket-rejecting on inactive tags."""
         post_body = {
             "client_expense_id": "e_tag_mismatch",
             "amount": 5.0,
@@ -263,9 +222,6 @@ class TestPostExpenseInactiveCarveout:
         finally:
             con.close()
 
-        # Same client_expense_id, inactive tag, but *different amount*:
-        # this is a genuine conflict, so the compare path should surface
-        # 409 — the inactive-tag validator must not hide it behind 422.
         resp = client.post(
             "/api/expenses",
             json={**post_body, "amount": 99.0},

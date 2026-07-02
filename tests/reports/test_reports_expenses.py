@@ -20,12 +20,8 @@ def data_dir(tmp_path, monkeypatch):
 
 
 def _seed_catalog(con) -> None:
-    """Seed the minimum catalog + three expenses across two months.
-
-    Two of the expenses share the same 3D coord (``food``, no event,
-    tags ``dog``) so the aggregation test can verify both the
-    grouping and the total sum.
-    """
+    """Two expenses share the same 3D coord (food, no event, tag dog) so the
+    aggregation test can verify both grouping and total sum."""
     con.execute(
         "INSERT INTO category_groups (id, name, sort_order, is_active)"
         " VALUES (1, 'group', 1, TRUE)",
@@ -90,12 +86,8 @@ class TestParseMonth:
 @allure.epic("Reports")
 @allure.feature("Expenses")
 class TestBuildFilter:
-    """Pin the SQL + params produced by each flag combination.
-
-    The CLI guarantees mutex via ``argparse``'s mutually-exclusive
-    group, so this helper never sees both year and month set at
-    once. Here we exercise the three permitted states only.
-    """
+    """Exercises the three states argparse's mutex group permits (never both
+    year and month set)."""
 
     def test_no_filter(self):
         where, params = expenses_report._build_filter(year=None, month=None)
@@ -176,16 +168,8 @@ class TestRenderCsv:
 @allure.epic("Reports")
 @allure.feature("Expenses")
 class TestRenderRich:
-    """Smoke tests for the rich renderer.
-
-    We don't parse the ANSI box-drawing output — rich's exact
-    layout is considered a black-box contract — but we do pin that
-    the renderer completes, prints the currency + every category
-    name, and reaches the ``TOTAL`` footer when rows are present.
-    ``Console(file=...)`` goes through rich's own width detection;
-    here we pass a ``StringIO`` which rich treats as a non-terminal
-    and falls back to monochrome ASCII.
-    """
+    """Rich's exact ANSI layout is a black-box; pins only that it completes and
+    prints the currency, category names, and TOTAL footer."""
 
     def test_renders_rows_and_total(self, _seeded_con):
         rows = expenses_report.aggregate_expenses(_seeded_con)
@@ -217,9 +201,6 @@ class TestRenderRich:
 @allure.feature("Expenses")
 class TestRun:
     def test_missing_db_returns_nonzero(self, tmp_path, monkeypatch, capsys):
-        # Point DB_PATH at a path that does NOT exist. run() must
-        # refuse to silently init an empty DB — the CLI already
-        # offers --remote for the "no local snapshot" case.
         monkeypatch.setattr(storage, "DB_PATH", tmp_path / "absent.db")
         buf = io.StringIO()
         rc = expenses_report.run(year=None, month=None, as_csv=False, stream=buf)
@@ -247,13 +228,8 @@ class TestMainCli:
 @allure.epic("Reports")
 @allure.feature("Expenses")
 class TestRenderJson:
-    """Wire-format tests for the ``--json`` mode used by ``inv
-    report-expenses --remote``: the remote process runs the query and
-    emits JSON over stdout, the local process parses and renders —
-    instead of shipping a rendered rich table whose UTF-8 bytes
-    :func:`invoke.runners.Runner.decode` chops across read-buffer
-    boundaries into U+FFFD replacement characters.
-    """
+    """Wire-format tests for ``--json``: avoids shipping a rendered rich table
+    whose UTF-8 bytes ``invoke.runners.Runner.decode`` could chop into U+FFFD."""
 
     def test_emits_valid_json_array(self, _seeded_con):
         rows = expenses_report.aggregate_expenses(_seeded_con)
@@ -272,12 +248,8 @@ class TestRenderJson:
             Decimal(entry["total"])
 
     def test_preserves_non_ascii_in_fields(self, _seeded_con):
-        """``category`` / ``event`` / ``tags`` may contain non-ASCII text.
-        The JSON transport must preserve them byte-for-byte on the wire —
-        ``ensure_ascii=False`` is how we keep the payload shorter
-        than an ASCII-escaped version and side-step any LC_ALL
-        surprises on the remote shell.
-        """
+        """``ensure_ascii=False`` keeps the payload shorter than escaped and
+        avoids LC_ALL surprises on the remote shell."""
         rows = expenses_report.aggregate_expenses(_seeded_con)
         buf = io.StringIO()
         expenses_report.render_json(rows, stream=buf)

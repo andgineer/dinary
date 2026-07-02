@@ -58,18 +58,9 @@ class TestSystemdQuote:
 @allure.feature("Deploy")
 @allure.story("SSH utils")
 class TestRemoteSnapshotCmd:
-    """``inv report-income --remote`` / ``inv report-expenses --remote``
-    / ``inv import-report-2d-3d --remote`` cannot safely open the
-    primary prod SQLite file directly — WAL would let the reader in,
-    but the reader would race with in-flight checkpoints and
-    Litestream replication and could surface an ephemeral
-    inconsistency. ``remote_snapshot_cmd`` wraps the report
-    invocation in a ``sqlite3 .backup`` prologue so the read-only
-    module runs against a transactionally consistent ``/tmp``
-    snapshot instead. These tests pin the exact shape of the emitted
-    command so a future refactor cannot silently drop the snapshot
-    step.
-    """
+    """Reading the primary prod SQLite file directly could race with in-flight
+    checkpoints/Litestream replication; ``remote_snapshot_cmd`` wraps the report
+    in a ``sqlite3 .backup`` prologue so it runs against a consistent snapshot."""
 
     def test_takes_sqlite_backup_of_primary_db(self):
         cmd = remote_snapshot_cmd("dinary.reports.income", [])
@@ -105,16 +96,8 @@ class TestRemoteSnapshotCmd:
         ),
     )
     def test_remote_sql_flags_survive_real_bash_tokenization(self):
-        """Regression for 527623d62: ``remote_snapshot_cmd`` used to splice
-        ``flags`` with ``' '.join``, so a flag value containing spaces or
-        single-quotes (typical SQL) was re-tokenized by the remote bash
-        into several argv entries and ``dinary.tools.sql`` received a
-        truncated ``--query``.
-
-        Verify the fix end-to-end: feed the generated suffix to an actual
-        ``bash`` (the same shell the prod transport uses) and observe the
-        argv it would hand to ``python -m dinary.tools.sql``.
-        """
+        """A flag value with spaces/quotes (typical SQL) must survive real bash
+        word-splitting on the remote, not just Python string joining."""
         module = "dinary.tools.sql"
         flags = ["--query", "SELECT 1 WHERE x = 'y'", "--json"]
         cmd = remote_snapshot_cmd(module, flags)
@@ -122,10 +105,8 @@ class TestRemoteSnapshotCmd:
         needle = f"python -m {module}"
         suffix = cmd[cmd.index(needle) + len(needle) :]
 
-        # ``set --`` makes bash apply its real word-splitting + quote-removal
-        # rules to the suffix, exactly as it does for the post-``python -m``
-        # tail on the remote host. ``printf '%s\n' "$@"`` then writes one
-        # line per resulting argv token.
+        # `set --` applies bash's real word-splitting to the suffix, same as
+        # the remote host would for the post-`python -m` tail.
         script = f'set -- {suffix}\nprintf "%s\\n" "$@"'
         result = subprocess.run(
             ["bash", "-c", script],
@@ -143,11 +124,8 @@ class TestRemoteSnapshotCmd:
         assert "dinary.reports.income " not in cmd or "dinary.reports.income --" in cmd
 
     def test_accepts_non_reports_module_paths(self):
-        """The same wrapper serves ``inv import-report-2d-3d --remote``
-        (which lives under ``dinary.imports.*``, not ``dinary.reports.*``).
-        Regression pin: the earlier ``_remote_report_cmd`` hardcoded
-        the ``dinary.reports.`` prefix and could not be reused for the
-        2D→3D diagnostic."""
+        """The same wrapper must serve modules outside ``dinary.reports.*`` too
+        (e.g. ``dinary.imports.*``) — no hardcoded prefix."""
         cmd = remote_snapshot_cmd(
             "dinary.imports.report_2d_3d",
             ["--json"],
@@ -155,25 +133,15 @@ class TestRemoteSnapshotCmd:
         assert "uv run python -m dinary.imports.report_2d_3d --json" in cmd
 
     def test_snapshot_is_pid_scoped_for_parallel_runs(self):
-        """Two operators running ``inv report-income --remote`` at the
-        same time must not clobber each other's ``/tmp`` file. ``$$``
-        expands to the remote shell PID and is how we keep them
-        isolated without coordinating via a lock file.
-        """
+        """``$$`` (remote shell PID) keeps two concurrent operators' snapshots
+        from clobbering each other without needing a lock file."""
         cmd = remote_snapshot_cmd("dinary.reports.income", [])
         assert "$$" in cmd
         assert "/tmp/dinary-report-snapshot-$$" in cmd
 
     def test_trap_cleans_up_snapshot_on_exit(self):
-        """A failing report (or ``Ctrl-C``) must not leak a
-        multi-hundred-MB ``.db`` snapshot in ``/tmp``. The trap is
-        registered before the ``.backup`` so even an interrupt
-        between registration and completion cannot orphan the file.
-
-        ``sqlite3 .backup`` writes a single self-contained DB file —
-        there are no ``-wal`` / ``-shm`` sidecars attached to the
-        snapshot output, so the trap does not need to mention them.
-        """
+        """The trap is registered before ``.backup`` so an interrupt between
+        registration and completion can't orphan a multi-hundred-MB /tmp file."""
         cmd = remote_snapshot_cmd("dinary.reports.income", [])
         assert 'trap "rm -f \\"$SNAP\\"" EXIT' in cmd
         # trap must come BEFORE the sqlite3 .backup so an interrupt
@@ -183,12 +151,8 @@ class TestRemoteSnapshotCmd:
         assert trap_pos < backup_pos
 
     def test_uses_set_e_so_backup_failure_is_visible(self):
-        """If the ``sqlite3 .backup`` of the primary DB fails, the
-        operator must see the error immediately — otherwise the
-        subsequent ``DINARY_DATA_PATH="$SNAP"`` would run against a
-        missing / empty file and emit a confusing "DB not found"
-        downstream.
-        """
+        """Without ``set -e``, a failed backup would let the report run against
+        a missing/empty file and emit a confusing "DB not found" downstream."""
         cmd = remote_snapshot_cmd("dinary.reports.income", [])
         assert cmd.startswith("set -e; ")
 
@@ -197,30 +161,14 @@ class TestRemoteSnapshotCmd:
 @allure.feature("Deploy")
 @allure.story("SSH utils")
 class TestSshCaptureBytes:
-    """Remote ``inv report-*`` runs must preserve UTF-8 across SSH
-    chunk boundaries. Decoding each read_proc_stdout chunk
-    independently with ``errors='replace'`` (what ``invoke.c.run``
-    does) corrupts multi-byte characters like ``─`` (``E2 94 80``)
-    and Cyrillic letters into U+FFFD when the split lands mid-code
-    point. The remote-capture helper therefore collects bytes via
-    raw subprocess and decodes once at the end. These tests pin that
-    contract: the helper uses ``subprocess.run`` (not invoke),
-    returns bytes, and round-trips a realistic UTF-8 payload without
-    any replacement characters.
-    """
+    """``invoke.c.run`` decodes each chunk independently with ``errors='replace'``,
+    corrupting multi-byte UTF-8 (Cyrillic, box-drawing) when a split lands
+    mid-codepoint — so this helper collects raw bytes via subprocess instead."""
 
     @pytest.fixture(autouse=True)
     def _stub_host(self, monkeypatch):
-        """Every ``_ssh_capture_bytes`` call resolves the SSH target via
-        ``_host()`` → ``_env()`` → ``.deploy/.env``. That file is a
-        developer-workstation artifact and is (correctly) absent on
-        CI runners, so without this stub every test in this class
-        would ``SystemExit(1)`` before reaching the mocked
-        ``subprocess.run``. We scope the stub to the class because
-        the real ``_host`` / ``_env`` path is covered elsewhere
-        (``TestDeploy`` / manual smoke) and isn't what this class
-        is exercising.
-        """
+        """Without this, every test would SystemExit(1) resolving ``.deploy/.env``,
+        which is correctly absent on CI runners."""
         monkeypatch.setattr(tasks.ssh_utils, "host", lambda: "ubuntu@test.invalid")
 
     def test_returns_raw_bytes_not_decoded_str(self, monkeypatch):
@@ -236,12 +184,8 @@ class TestSshCaptureBytes:
         assert out == b'{"k": "v"}\n'
 
     def test_invokes_ssh_with_host_and_base64_wrapped_cmd(self, monkeypatch):
-        """The transport is ssh + a base64 envelope around the real
-        command (same shape as ``_ssh`` / ``_ssh_capture``) so a
-        command carrying single quotes doesn't need manual escaping.
-        Pin that shape so a future refactor cannot silently break
-        quoting for every remote report / verify call at once.
-        """
+        """Same base64-envelope shape as ``ssh_run``/``ssh_capture`` so a command
+        with single quotes needs no manual escaping."""
         seen = {}
 
         def fake_run(args, **kwargs):
@@ -266,12 +210,8 @@ class TestSshCaptureBytes:
         assert "base64 -d | bash" in args[2]
 
     def test_roundtrips_cyrillic_and_box_drawing_bytes_intact(self, monkeypatch):
-        """Realistic payload carrying Cyrillic (``путешествия``) and
-        box-drawing (``─ ┼``). Through the new bytes-first path we
-        must see them come back *byte-identical* — any ``\\ufffd``
-        would signal a regression to the chunk-boundary-corruption
-        codepath.
-        """
+        """Must come back byte-identical — any ``\\ufffd`` signals a regression
+        to the chunk-boundary-corruption codepath."""
         payload = "путешествия — ├─┼ ┃ 2026".encode()
         captured = subprocess.CompletedProcess(
             args=[],

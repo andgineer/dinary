@@ -31,13 +31,8 @@ from .restore_utils import litestream_active, local_replica_resync
 
 
 def yadisk_list_snapshots():
-    """Return ``[(filename, size_bytes), ...]`` of backups on Yandex.Disk.
-
-    Uses ``rclone lsjson`` against the operator-local ``yandex:``
-    remote (the one configured on the machine running
-    :func:`restore_from_yadisk`). Shape/sort contract is inherited
-    from :func:`dinary.tools.backup_snapshots.parse_snapshot_lsjson`.
-    """
+    """Shape/sort contract inherited from
+    :func:`dinary.tools.backup_snapshots.parse_snapshot_lsjson`."""
     raw = subprocess.check_output(
         ["rclone", "lsjson", f"{BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}/", "--files-only"],
         text=True,
@@ -46,17 +41,8 @@ def yadisk_list_snapshots():
 
 
 def _prompt_restore_confirmation(target_db, picked):
-    """Interactive "type yes" gate before overwriting a non-empty DB.
-
-    Shows row count + size + mtime of the file that will be replaced
-    and the size of the incoming snapshot so the operator can sanity-
-    check they are about to lose ~nothing (debug DB case) or a lot
-    (prod case). Any input other than the literal ``yes`` aborts.
-
-    Why not a simple y/n: ``y`` is a one-keypress accept and every
-    heavy-destructive CLI tool I want to keep safe asks for a full
-    word precisely so ``Enter`` cannot accidentally commit.
-    """
+    """Requires the literal word "yes", not y/n, so ``Enter`` can't accidentally
+    commit a destructive overwrite."""
     row_count = sqlite_row_count(target_db)
     size_kb = target_db.stat().st_size / 1024
     mtime = datetime.fromtimestamp(target_db.stat().st_mtime, tz=UTC).strftime(

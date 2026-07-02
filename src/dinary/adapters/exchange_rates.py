@@ -1,9 +1,6 @@
 """Exchange rate service: NBS primary, NBP fallback, SQLite cache.
-
-Resolution: RSD pair → NBS direct → NBP via PLN.
-           Non-RSD pair → NBS via RSD → NBP via PLN.
 Stored as ``1 source * rate = N target``; inverse written alongside.
-See ``specs/reference/exchange-rates.md``.
+See ``specs/reference/currencies.md``.
 """
 
 import logging
@@ -25,14 +22,8 @@ def _bridge_through_rsd_via_nbs(
     source: str,
     target: str,
 ) -> Decimal | None:
-    """Resolve a non-RSD pair as ``source/RSD * RSD/target`` via NBS.
-
-    NBS quotes everything as ``1 X = N RSD``, so any pair becomes a
-    two-leg bridge through RSD. Returns ``None`` when either leg has
-    no NBS rate. The bridged value (and its inverse) is written into
-    the rates DB so subsequent lookups short-circuit the two NBS
-    calls.
-    """
+    """NBS quotes everything as ``1 X = N RSD``, so any pair bridges through RSD.
+    The bridged value is cached so subsequent lookups skip the two NBS calls."""
     rate_src_rsd = resolve_from_nbs(con, rate_date, source, "RSD")
     if rate_src_rsd is None:
         return None
@@ -52,19 +43,9 @@ def get_rate(
     *,
     offline: bool = False,
 ) -> Decimal:
-    """Get exchange rate: ``amount_source * rate = amount_target``.
-
-    When *offline* is True the DB is checked first; if a rate is
-    already stored the function returns immediately without any HTTP
-    calls. This keeps API request latency low — the background
-    prefetch task populates the DB ahead of time. If the DB has no
-    rate, the normal online resolution path runs as a fallback.
-
-    See the module docstring for the full multi-source resolution
-    policy. Briefly: NBS first (direct for RSD pairs, RSD-bridge for
-    the rest), NBP second (PLN-bridge) when NBS is unavailable or
-    doesn't list one of the sides.
-    """
+    """``amount_source * rate = amount_target``. When ``offline``, checks the DB
+    first and returns without HTTP calls if already cached (the background
+    prefetch task populates it ahead of time), falling back to online resolution."""
     if source.upper() == target.upper():
         return Decimal(1)
 

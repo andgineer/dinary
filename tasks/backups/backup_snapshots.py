@@ -1,10 +1,3 @@
-"""Pure helpers for backup snapshot inventory and freshness checks.
-
-No SSH, no invoke Context, no .deploy/.env dependency.
-I/O callers (_yadisk_list_snapshots, _replica_list_snapshots) live in
-tasks/_backup.py and use these helpers after fetching raw rclone output.
-"""
-
 import json
 import re
 import shutil
@@ -22,19 +15,12 @@ BACKUP_FILENAME_PREFIX = "dinary-"
 BACKUP_FILENAME_SUFFIX = ".db.zst"
 
 BACKUP_RCLONE_REMOTE = "yandex"
-# Nested under ``Backup/`` because the operator's Yandex.Disk already
-# has a ``Backup`` folder used by other tools — keeping dinary under a
-# leaf ``dinary/`` avoids colliding with ad-hoc human uploads in the
-# same namespace and matches the existing filesystem convention.
-# ``rclone mkdir`` is idempotent and will create the ``dinary`` leaf
-# inside the existing ``Backup`` parent on first run.
+# Nested under an existing "Backup/" folder to avoid colliding with the
+# operator's other ad-hoc uploads there.
 BACKUP_RCLONE_PATH = "Backup/dinary"
 
-# Freshness threshold for `inv backup-cloud-status`. The daily systemd timer
-# fires at 03:17 UTC with 30 min jitter, so a healthy snapshot is
-# always <= 24h30m old. 26h gives a ~1h30m buffer for a single missed
-# jitter window without false-alerting. A stale snapshot for >26h
-# means the pipeline silently stopped producing.
+# The daily timer fires at 03:17 UTC with 30min jitter, so a healthy snapshot
+# is always <=24h30m old; 26h leaves a buffer for one missed jitter window.
 BACKUP_STALE_HOURS = 26
 
 # ---------------------------------------------------------------------------
@@ -43,20 +29,8 @@ BACKUP_STALE_HOURS = 26
 
 
 def parse_snapshot_lsjson(raw):
-    """Turn ``rclone lsjson`` output into ``[(name, size_bytes), ...]``.
-
-    Pure parser, no I/O. Both the local-rclone reader
-    (:func:`_yadisk_list_snapshots`) and the over-SSH reader
-    (:func:`_replica_list_snapshots`) go through this helper so a
-    change to the filename regex or to the "ignore noise" rule
-    cannot drift between restore (local) and freshness monitoring
-    (replica). Always sorted oldest-first so callers can reach for
-    ``result[-1]`` to get the newest deterministically.
-
-    Anything whose filename does not match the backup pattern is
-    silently dropped so human-uploaded noise in the same Yandex
-    folder cannot break the inventory.
-    """
+    """Sorted oldest-first; entries not matching the backup filename pattern are
+    silently dropped."""
     entries = json.loads(raw)
     pattern = _make_pattern(BACKUP_FILENAME_PREFIX, BACKUP_FILENAME_SUFFIX)
     result = []
@@ -69,15 +43,8 @@ def parse_snapshot_lsjson(raw):
 
 
 def parse_snapshot_timestamp(name):
-    """Extract the UTC datetime encoded in a backup filename.
-
-    Filenames are ``dinary-YYYY-MM-DDTHHMMZ.db.zst`` — the timestamp
-    lives in the name itself and is the single source of truth for
-    "when was this backup produced". Using filename timestamps rather
-    than ``rclone``'s ``ModTime`` means freshness checks are
-    independent of Yandex-side clock skew and of any metadata
-    rewrites a future rclone version might do.
-    """
+    """Uses the filename timestamp rather than rclone's ModTime, to stay
+    independent of Yandex-side clock skew."""
     pattern = re.compile(
         re.escape(BACKUP_FILENAME_PREFIX)
         + r"(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})Z"
@@ -92,20 +59,6 @@ def parse_snapshot_timestamp(name):
 
 
 def check_backup_freshness(snapshots, now, max_age_hours):
-    """Compute the freshness verdict for ``inv backup-cloud-status``.
-
-    Pure helper so tests can pin the ok/stale/empty branches without
-    any SSH/rclone plumbing. Returns a dict ready for both human-
-    and JSON output paths.
-
-    Keys:
-        ``status``           ``ok`` | ``stale`` | ``empty``
-        ``newest``           filename of the latest snapshot (or None)
-        ``age_hours``        float, hours between now and the filename
-                             timestamp (or None)
-        ``size_bytes``       int (or None)
-        ``threshold_hours``  float, the ``max_age_hours`` input
-    """
     if not snapshots:
         return {
             "status": "empty",
@@ -136,12 +89,7 @@ def check_backup_freshness(snapshots, now, max_age_hours):
 
 
 def format_backup_status_line(verdict):
-    """Render one human-readable summary line for ``inv backup-cloud-status``.
-
-    Kept separate from the task so the laptop cron wrapper can log
-    the exact same line the operator would see, and so tests can pin
-    the wording without importing invoke's ``Context``.
-    """
+    """Kept separate from the task so the cron wrapper and tests can reuse the exact wording."""
     threshold = verdict["threshold_hours"]
     if verdict["status"] == "empty":
         return (
@@ -165,17 +113,10 @@ def format_backup_status_line(verdict):
 
 
 def check_identical_backup_sizes(snapshots):
-    """Detect a frozen Litestream replica from backup size patterns.
+    """Exchange rates are written daily, so two backups of identical size mean a frozen replica.
 
-    Exchange rates are written daily, so the DB always changes. Two consecutive
-    backups with the same compressed size mean the replica is frozen.
-    Fewer than two backups means comparison is impossible — treated as a failure
-    so a silently broken pipeline is never reported as healthy.
-
-    Status values: ``"ok"``, ``"frozen"`` (newest two match), ``"single"``
-    (fewer than two backups).  ``"frozen"`` carries ``newest``, ``prev``,
-    ``size_bytes``; ``"single"`` carries ``newest`` and ``size_bytes``
-    (or both ``None`` when the list is empty).
+    Fewer than two backups is treated as failure, not skipped, so a silently
+    broken pipeline is never reported as healthy.
     """
     if len(snapshots) < 2:
         name, size = snapshots[0] if snapshots else (None, None)
@@ -193,7 +134,6 @@ def check_identical_backup_sizes(snapshots):
 
 
 def format_frozen_replica_line(result):
-    """Render the FAIL line for a frozen-replica verdict."""
     size_kb = result["size_bytes"] / 1024
     return (
         f"FAIL: {result['newest']} and {result['prev']} are both {size_kb:.1f} KB"
@@ -203,7 +143,6 @@ def format_frozen_replica_line(result):
 
 
 def format_single_backup_line(result):
-    """Render the FAIL line when fewer than two backups exist."""
     if result["newest"] is None:
         return "FAIL: no backups found — cannot verify replica is not frozen."
     size_kb = result["size_bytes"] / 1024
@@ -214,18 +153,8 @@ def format_single_backup_line(result):
 
 
 def pick_snapshot(snapshots, key):
-    """Resolve the ``--snapshot`` CLI arg to one inventory entry.
-
-    ``key='latest'`` returns the newest snapshot (sorts are
-    chronological by filename).
-
-    Any other value is treated as a date-prefix match against the
-    ``YYYY-MM-DD`` portion of the filename so the operator can type
-    ``--snapshot 2026-03-15`` and get the run stored as
-    ``dinary-2026-03-15T0317Z.db.zst`` without memorizing the time
-    suffix. Returns ``None`` when nothing matches so callers can
-    print a useful error with the full inventory.
-    """
+    """A non-``latest`` key is matched as a date prefix, so ``--snapshot 2026-03-15``
+    matches without the time suffix."""
     if not snapshots:
         return None
     if key == "latest":
@@ -238,12 +167,6 @@ def pick_snapshot(snapshots, key):
 
 
 def print_snapshot_list(snapshots, stream=None):
-    """Chronological dump, newest first, with human-readable sizes.
-
-    Used by both ``--list`` (operator discovery) and the "no match"
-    error path (so a typo in ``--snapshot`` surfaces the actual
-    available keys next to the error message).
-    """
     stream = stream if stream is not None else sys.stdout
     for name, size in reversed(snapshots):
         kb = size / 1024
@@ -251,14 +174,8 @@ def print_snapshot_list(snapshots, stream=None):
 
 
 def sqlite_row_count(db_path):
-    """Cheap "how many expenses are about to vanish" sanity number.
-
-    Returns zero on any SQLite error (schema mismatch, file locked,
-    table absent in a very-fresh-bootstrap DB). The number is cosmetic
-    — it feeds the confirmation prompt — so failing soft is better
-    than aborting the restore because the count query tripped on an
-    edge-case file.
-    """
+    """Returns 0 on any SQLite error rather than raising — the count only feeds a
+    confirmation prompt."""
     try:
         with sqlite3.connect(db_path) as conn:
             cur = conn.execute("SELECT COUNT(*) FROM expenses")
@@ -268,13 +185,6 @@ def sqlite_row_count(db_path):
 
 
 def assert_local_binaries(names):
-    """Bail out with an actionable message if any required CLI is missing.
-
-    Checked up-front in :func:`restore_from_yadisk` so the operator
-    sees one consolidated "install X" error rather than discovering
-    a missing tool mid-pipeline after the snapshot has already been
-    downloaded.
-    """
     missing = [name for name in names if shutil.which(name) is None]
     if not missing:
         return

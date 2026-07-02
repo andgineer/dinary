@@ -1,15 +1,5 @@
-"""Tests for the currency picker HTTP surface.
-
-Covers:
-
-* ``GET    /api/currencies``         — saved-list shape
-* ``POST   /api/currencies``         — add (idempotent, validation)
-* ``DELETE /api/currencies/{code}``  — remove (default protected)
-
-The PWA does not need server-side exchange rates: rate conversion
-runs inside ``POST /api/expenses`` at write time. There is therefore
-no rate endpoint to test here.
-"""
+"""Tests for the currency picker HTTP surface (GET/POST/DELETE /api/currencies).
+No rate endpoint to test — conversion runs inside POST /api/expenses at write time."""
 
 import shutil
 

@@ -1,14 +1,6 @@
-"""Apply a category template onto the live catalog rows.
-
-Template definitions (Phase 1 seed) are read-only; applying one rewrites,
-for every category code the template places, ``categories.group_id`` /
-``is_active`` / ``name`` and the corresponding ``category_groups.name`` /
-``sort_order``, bumps ``app_metadata.catalog_version``, and records
-``app_metadata.active_template``. ``is_hidden`` and ``is_retired`` are never
-touched. Categories whose code is absent from the template's
-``visible``/``hidden`` (i.e. user-created ``u_``-prefixed categories) are
-left untouched.
-"""
+"""Apply a category template onto the live catalog rows. See
+``specs/reference/category-templates.md`` "Applying a template". Never touches
+``is_hidden``/``is_retired``."""
 
 import json
 import sqlite3

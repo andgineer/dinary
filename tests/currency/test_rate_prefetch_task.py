@@ -1,5 +1,3 @@
-"""Tests for dinary.background.rate_prefetch.task."""
-
 import asyncio
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -20,10 +18,6 @@ _RATE = Decimal("117.32")
 
 
 def _belgrade_dt(hour: int, *, weekday: int = 0) -> datetime:
-    """Build a Belgrade datetime for a given hour on a specific weekday.
-
-    weekday: 0=Mon .. 6=Sun. Anchored to 2025-02-24 (Monday).
-    """
     base = date(2025, 2, 24)  # Monday
     d = base + timedelta(days=weekday)
     return datetime(d.year, d.month, d.day, hour, 0, tzinfo=_BELGRADE)
@@ -33,8 +27,6 @@ def _belgrade_dt(hour: int, *, weekday: int = 0) -> datetime:
 @allure.feature("Background tasks")
 @allure.story("_seconds_until_prefetch_hour")
 class TestSecondsUntilPrefetchHour:
-    """Calculates sleep duration until next prefetch window."""
-
     def test_before_prefetch_hour_returns_hours_until(self):
         with patch("dinary.background.rate_prefetch.task.datetime") as mock_dt:
             mock_dt.now.return_value = _belgrade_dt(6)
@@ -60,8 +52,6 @@ class TestSecondsUntilPrefetchHour:
 @allure.feature("Background tasks")
 @allure.story("Before publication hour")
 class TestBeforePublicationHour:
-    """Before 08:00 Belgrade time — should sleep until prefetch hour, not fetch."""
-
     def test_no_fetch_before_8am(self):
         early_morning = _belgrade_dt(6)
 
@@ -100,8 +90,6 @@ class TestBeforePublicationHour:
 @allure.feature("Background tasks")
 @allure.story("Working day — fetches rate")
 class TestWorkingDayFetch:
-    """Working day after 08:00, rate not cached — should call get_rate."""
-
     def test_fetches_rate(self):
         monday_9am = _belgrade_dt(9)
         con = MagicMock()
@@ -151,8 +139,6 @@ class TestWorkingDayFetch:
 @allure.feature("Background tasks")
 @allure.story("Weekend — fetches rate (walkback)")
 class TestWeekendFetch:
-    """Weekend after 08:00, rate not cached — should call get_rate."""
-
     def test_fetches_on_saturday(self):
         saturday_10am = _belgrade_dt(10, weekday=5)
         con = MagicMock()
@@ -201,8 +187,6 @@ class TestWeekendFetch:
 @allure.feature("Background tasks")
 @allure.story("Already cached — sleeps until tomorrow")
 class TestAlreadyCached:
-    """Rate already in cache — should sleep until tomorrow prefetch hour."""
-
     def test_sleeps_until_tomorrow(self):
         monday_9am = _belgrade_dt(9)
         con = MagicMock()
@@ -246,8 +230,6 @@ class TestAlreadyCached:
 @allure.feature("Background tasks")
 @allure.story("Fetch error — retries")
 class TestFetchError:
-    """get_rate raises — should log and retry after interval."""
-
     def test_retries_after_error(self):
         monday_9am = _belgrade_dt(9)
         con = MagicMock()
@@ -287,12 +269,8 @@ class TestFetchError:
 @allure.feature("Background tasks")
 @allure.story("Stale fallback — retries instead of sleeping until tomorrow")
 class TestStaleFallback:
-    """get_rate returns a rate but does not write it to DB for today (e.g.
-    NBS walked back to a previous-working-day rate without aliasing it
-    under today, or NBP returned its weekly table-B publication that
-    pre-dates today). The task must retry rather than sleep until
-    tomorrow so the daily write still happens once a fresh rate
-    appears upstream."""
+    """get_rate can return a rate without writing it to DB for today; the
+    task must retry rather than sleep until tomorrow."""
 
     def test_retries_when_rate_not_written_to_db(self):
         monday_9am = _belgrade_dt(9)

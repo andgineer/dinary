@@ -1,12 +1,4 @@
-"""Shared autouse fixture, ``nbs_mocks`` patch bundle, and date /
-rate constants for the split ``test_currency_rates_*.py`` files.
-
-Underscore prefix keeps pytest from collecting this as a test
-module. The autouse cache-clear fixture stays scoped to the
-currency-rates suite (re-imported per split file) rather than
-promoted to ``conftest.py`` so the per-test TTL-cache wipe doesn't
-fire for unrelated suites.
-"""
+"""Underscore prefix keeps pytest from collecting this as a test module."""
 
 from datetime import date
 from decimal import Decimal
@@ -35,7 +27,6 @@ _CON = MagicMock(name="con")
 
 @pytest.fixture(autouse=True)
 def _clear_ttl_caches():
-    """Clear in-memory TTL caches between tests to avoid cross-test pollution."""
     _fetch_nbs_rate.cache.clear()
     _fetch_nbp_pln_leg.cache.clear()
     yield

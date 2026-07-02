@@ -70,14 +70,7 @@ class TestFindMonthRange:
 @allure.epic("Sheets Sync")
 @allure.feature("Google Sheets API")
 class TestYearAwareMatching:
-    """The optional logging spreadsheet keeps every year in one tab.
-
-    Column G stores month 1..12 only; the year lives in column A as a
-    Google Sheets date serial that displays as e.g. ``"Apr-1"``. A
-    separate unformatted read decodes the year per row, and the helpers
-    must use it so that logging an expense for a different year doesn't
-    smear onto an existing year's rows.
-    """
+    """See ``specs/reference/sheets.md`` "Year-aware row matching"."""
 
     HEADER = HEADER
 

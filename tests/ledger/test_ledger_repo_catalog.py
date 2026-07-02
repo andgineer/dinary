@@ -54,13 +54,8 @@ class TestConnectionLifecycle:
         assert row[0] == 1
 
     def test_multiple_connections_see_each_others_commits(self, fresh_db):
-        """Two independent connections observe each other's commits.
-
-        After the SQLite port ``get_connection`` hands out one fresh
-        connection per call (no shared engine). WAL mode plus an
-        explicit commit on the writer lets the second connection
-        observe the new row.
-        """
+        """``get_connection`` hands out one fresh connection per call (no shared
+        engine); WAL mode plus a commit lets a second connection see the new row."""
         c1 = storage.get_connection()
         c2 = storage.get_connection()
         try:

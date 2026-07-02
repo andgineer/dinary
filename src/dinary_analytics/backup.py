@@ -1,9 +1,3 @@
-"""CLI for analytics.db (LMDB) backup and restore.
-
-Invoked by ``inv backup-analytics`` and ``inv restore-analytics`` via
-``uv run python -m dinary_analytics.backup <command>``.
-"""
-
 import argparse
 import shutil
 import subprocess
@@ -26,7 +20,6 @@ def _default_filename() -> str:
 
 
 def backup_to_file(output: Path) -> None:
-    """Write a zstd-compressed consistent snapshot of analytics.db to output."""
     if not ANALYTICS_DB_PATH.exists():
         sys.stderr.write(f"analytics.db not found at {ANALYTICS_DB_PATH} — nothing to backup.\n")
         sys.exit(1)
@@ -48,7 +41,6 @@ def backup_to_file(output: Path) -> None:
 
 
 def restore_from_file(src: Path) -> None:
-    """Restore analytics.db from a zstd-compressed backup file."""
     if not src.exists():
         sys.stderr.write(f"Backup file not found: {src}\n")
         sys.exit(1)

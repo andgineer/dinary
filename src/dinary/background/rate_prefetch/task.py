@@ -1,20 +1,7 @@
-"""Background task that prefetches today's exchange rate.
-
-Waits until 08:00 Belgrade time (when kurs.resenje.org publishes
-NBS rates), then calls ``get_rate`` for today's date.  On working
-days this fetches a fresh rate from the API; on weekends and
-holidays ``resolve_from_nbs`` walks back and stores the previous
-working day's rate under today's date.
-
-Once the rate for today is in the DB the task sleeps until
-tomorrow 08:00 — no further work needed.  If the fetch fails the
-task retries every 30 minutes.
-
-This guarantees at least one write to the ``exchange_rates`` table
-every calendar day, which produces a Litestream LTX segment that
-the off-site backup script on VM2 can use as a replication health
-indicator.
-"""
+"""Background task that prefetches today's exchange rate at 08:00 Belgrade time
+(when kurs.resenje.org publishes NBS rates); retries every 30 minutes on failure.
+See ``specs/reference/architecture.md`` for why this write is load-bearing beyond
+the rate itself."""
 
 import asyncio
 import logging
@@ -35,12 +22,7 @@ _RETRY_INTERVAL_SEC = 1800  # 30 minutes
 
 
 def _seconds_until_prefetch_hour() -> float:
-    """Seconds until the next occurrence of _PREFETCH_HOUR Belgrade time.
-
-    If the hour has already passed today, returns seconds until
-    tomorrow.  DST transitions are handled correctly by ZoneInfo
-    arithmetic (spring-forward = 23h day, fall-back = 25h day).
-    """
+    """Seconds until the next _PREFETCH_HOUR Belgrade time; DST-correct via ZoneInfo."""
     now = datetime.now(tz=_BELGRADE)
     target = now.replace(hour=_PREFETCH_HOUR, minute=0, second=0, microsecond=0)
     if target <= now:
@@ -49,12 +31,8 @@ def _seconds_until_prefetch_hour() -> float:
 
 
 def _get_rate_blocking(rate_date: date, source: str, target: str) -> Decimal:
-    """Fetch and persist a rate; runs in a ThreadPoolExecutor worker thread.
-
-    Opens its own connection so the SQLite handle is never shared
-    across thread boundaries (avoids CPython 3.14 access violations
-    caused by passing a connection object between threads).
-    """
+    """Runs in a worker thread; opens its own connection since sharing a SQLite
+    handle across threads causes CPython 3.14 access violations."""
     with storage.connection() as con:
         return get_rate(con, rate_date, source, target)
 

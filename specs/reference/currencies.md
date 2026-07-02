@@ -41,6 +41,15 @@ the most recently published rate. Up to six days of staleness is accepted for
 these currencies — they are rare enough that the approximation is not
 operationally significant.
 
+## Accounting currency source of truth
+
+`app_metadata.accounting_currency` is the runtime source of truth; the
+`DINARY_ACCOUNTING_CURRENCY` env var only seeds it on first deploy against a
+fresh database. Once seeded, changing the env var without updating the stored
+value raises rather than silently switching currencies (typo-guard) — the
+operator must go through an explicit migration to change the accounting
+currency later.
+
 ## Authentication
 
 Currently deferred along with the rest of the admin surface. Deployments are

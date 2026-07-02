@@ -1,5 +1,3 @@
-"""Income sheet drain: append, update, idempotency, worksheet creation."""
-
 import shutil
 from unittest.mock import MagicMock, patch
 

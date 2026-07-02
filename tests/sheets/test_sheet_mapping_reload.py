@@ -1,15 +1,7 @@
-"""Reload pipeline tests for ``sheet_mapping``.
-
-Covers ``reload_now`` modifiedTime ordering — cache only advances
-when the Drive ``modifiedTime`` brackets the read with a stable value
-— and ``ensure_fresh`` short-circuiting when the cached
-``modifiedTime`` matches Drive (so a cold tab does not pay for a
-worksheet read on every drain tick).
-
-Parsing lives in :file:`test_sheet_mapping_parse.py`; resolution and
-DB projection helpers live in
-:file:`test_sheet_mapping_resolve.py`.
-"""
+"""Reload pipeline tests for ``sheet_mapping``: ``reload_now``'s modifiedTime
+ordering and ``ensure_fresh``'s short-circuit when the cache is already current.
+Parsing lives in ``test_sheet_mapping_parse.py``; resolution in
+``test_sheet_mapping_resolve.py``."""
 
 from unittest.mock import MagicMock, patch
 

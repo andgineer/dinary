@@ -1,8 +1,3 @@
-"""Tests for the visibility predicate: db.catalog.list_visible_categories.
-
-Truth table for ``is_active AND NOT is_hidden AND NOT is_retired``.
-"""
-
 import sqlite3
 
 import allure
@@ -38,8 +33,6 @@ def _visible_codes(con: sqlite3.Connection) -> set[str]:
 @allure.feature("Visibility")
 class TestListVisibleCategories:
     def test_fresh_seed_has_no_visible_categories(self, fresh_con):
-        """Before any ``apply_template``, every factory category is
-        ``is_active=0``, ``group_id=NULL`` and unused — none are visible."""
         assert list_visible_categories(fresh_con) == []
 
     def test_active_not_hidden_not_retired_is_visible(self, con):

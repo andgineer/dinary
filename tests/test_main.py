@@ -15,20 +15,9 @@ from dinary import __version__
 
 @pytest.fixture(autouse=True)
 def _lifespan_stubs(db, monkeypatch):
-    """Stub out lifespan side-effects irrelevant to drain-loop tests.
-
-    The ``db`` fixture redirects ``storage.DB_PATH`` to an isolated,
-    fully-migrated temp database, so ``_lifespan`` never touches the
-    real ``data/dinary.db``.
-
-    ``init_db`` re-runs yoyo migrations on each test — ~300 ms of SQLite
-    overhead that has nothing to do with the drain-loop contract.
-    The autouse ``_disable_llm_broker_sync`` fixture no-ops broker seeding.
-    ``bootstrap_categories`` reconciles the category catalog from the
-    packaged templates — also irrelevant here.
-    ``rate_prefetch_task`` opens a DB connection and may make network
-    calls; it runs concurrently and adds noise to timing assertions.
-    """
+    """Stubs lifespan side-effects irrelevant to the drain-loop contract:
+    ``init_db`` (~300ms of migration overhead), ``bootstrap_categories``, and
+    ``rate_prefetch_task`` (network calls that add noise to timing assertions)."""
     monkeypatch.setattr(storage, "init_db", lambda: None)
     monkeypatch.setattr(category_seed, "bootstrap_categories", lambda con: None)
 
@@ -203,12 +192,8 @@ def test_cancel_on_shutdown_is_clean(monkeypatch):
 @allure.feature("Sheet logging")
 @allure.story("notify_new_work wakes the loop immediately")
 def test_notify_new_work_wakes_drain_immediately(monkeypatch):
-    """`notify_new_work` kicks the drain loop without waiting for the timer.
-
-    Uses a long interval (1s) so the timer cannot mask the wake-up: if
-    the event channel is wired correctly, `drain_pending` is called
-    immediately when notified, not after the timer fires.
-    """
+    """Uses a long interval (1s) so the timer can't mask the wake-up if the
+    event channel is wired correctly."""
     monkeypatch.setattr(settings, "sheet_logging_drain_interval_sec", 1.0)
     monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "fake-spreadsheet-id")
     app = create_app()

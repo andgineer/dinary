@@ -1,11 +1,4 @@
-"""Shared fixtures + helpers for the split ``test_sheet_mapping_*.py``
-files.
-
-Underscore prefix keeps pytest from collecting this as a test module.
-The autouse fixture stays scoped to the sheet-mapping suite (imported
-into each split file rather than promoted to ``conftest.py``) so the
-per-test DB-path override does not leak into sibling tests.
-"""
+"""Underscore prefix keeps pytest from collecting this as a test module."""
 
 import shutil
 from unittest.mock import MagicMock

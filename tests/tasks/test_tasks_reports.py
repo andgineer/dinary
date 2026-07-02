@@ -1,10 +1,6 @@
 """Tests for the ``inv report-* --remote`` orchestration in :mod:`tasks.reports`.
-
-The local-only path is a thin ``c.run`` wrapper covered by manual
-smoke; what matters here is the JSON-on-the-wire contract for
-``--remote`` so Cyrillic / box-drawing glyphs survive the SSH pipe
-intact.
-"""
+Focuses on the JSON-on-the-wire contract so Cyrillic/box-drawing glyphs survive
+the SSH pipe intact; the local-only path is covered by manual smoke."""
 
 import json
 from unittest.mock import MagicMock
@@ -18,18 +14,8 @@ import tasks.reports.report_tasks
 @allure.epic("Infrastructure")
 @allure.feature("Deploy")
 class TestRunReportModuleRemote:
-    """End-to-end architectural contract for ``inv report-<mod> --remote``:
-
-    1. Remote side executes the report in ``--json`` mode and only
-       ships raw row data over SSH (no rich text).
-    2. Transport captures bytes, decodes UTF-8 *once*, parses JSON.
-    3. Local process calls the module's ``render`` on the resulting
-       rows, so the final rendered output matches what the operator
-       would see from a local run against the same data.
-
-    These tests assert that contract with a mocked
-    ``_ssh_capture_bytes`` so we never touch the network.
-    """
+    """Remote side ships raw JSON row data (no rich text); local process decodes
+    once and calls the module's own ``render``. Mocks ``ssh_capture_bytes``."""
 
     @pytest.fixture
     def _fake_ssh_bytes(self, monkeypatch):
@@ -86,11 +72,8 @@ class TestRunReportModuleRemote:
         _fake_ssh_bytes,
         capsysbinary,
     ):
-        """``--json --remote`` is the piping-into-jq case. We should
-        pass the server's bytes straight through — no ``rows_from_json``
-        + ``render_json`` round-trip (which would re-format and
-        re-shape whitespace / key order).
-        """
+        """The piping-into-jq case: pass server bytes straight through, no
+        rows_from_json/render_json round-trip that would re-shape whitespace."""
         payload = b'[{"year": 2025, "tags": "\xd0\xbf\xd1\x83"}]\n'
         _fake_ssh_bytes.payload = payload
         c = MagicMock()
@@ -103,11 +86,8 @@ class TestRunReportModuleRemote:
         _fake_ssh_bytes,
         capsys,
     ):
-        """The original bug: Cyrillic text corrupted into ``�`` on the
-        way back. With JSON transport + single-shot decode + local
-        rich render, the tag / event names must appear intact in the
-        operator's terminal.
-        """
+        """Regression: Cyrillic text must not corrupt into ``�`` in the
+        operator's terminal."""
         _fake_ssh_bytes.payload = json.dumps(
             [
                 {

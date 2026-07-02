@@ -21,13 +21,8 @@ ALLOWED_DOC_LANGUAGES = get_allowed_doc_languages()
 
 @contextmanager
 def docs_rendered(language: str):
-    """Render docs sources for language specified.
-
-    Copy language agnostic assets from en to non-en folders.
-    Substitute language and site dir in config copy.
-
-    Returns config copy path.
-    """
+    """Copies language-agnostic assets from ``en`` into non-en folders and
+    returns a rendered mkdocs config copy path."""
     config_template_path = DOCS_PATH / "mkdocs.yml"
     common_path = DOCS_PATH / "common"
     src_path = DOCS_SRC_PATH / language

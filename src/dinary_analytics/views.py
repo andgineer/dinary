@@ -1,9 +1,6 @@
 """Loading of analytics view ("basket") data frames from the ledger replica.
-
-Composes the LMDB-backed view configs (settings) with DuckDB queries (connection)
-so the dashboard cells stay thin: they call one helper instead of wiring six IO
-dependencies each.
-"""
+Composes LMDB-backed view configs with DuckDB queries so dashboard cells stay
+thin — one helper call instead of wiring IO dependencies each."""
 
 import json
 from pathlib import Path

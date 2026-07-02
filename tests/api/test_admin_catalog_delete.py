@@ -1,22 +1,6 @@
-"""DELETE /api/catalog/<kind>/<id> tests.
-
-Pin the soft-vs-hard delete decision and the ``delete_status``
-field that surfaces it for tags and events. Soft-delete is triggered
-by *any* referencing row, including:
-
-* ``expense_*`` ledger references (``usage_count >= 1``);
-* ``sheet_mapping`` / ``sheet_mapping_tags`` projection rules;
-* ``events.auto_tags`` JSON name pointers (a tag-only,
-  ``usage_count == 0`` reference that would silently rot if the row
-  were hard-deleted).
-
-A group with surviving categories cannot be deleted at all (409) —
-the operator must drain the group first.
-
-Sibling files cover add (:file:`test_admin_catalog_add.py`),
-patch (:file:`test_admin_catalog_patch.py`), and version
-plumbing (:file:`test_admin_catalog_meta.py`).
-"""
+"""DELETE /api/catalog/<kind>/<id> tests — soft-vs-hard delete decision, see
+``specs/reference/catalog-api.md``. Sibling files cover add, patch, and version
+plumbing."""
 
 from datetime import datetime
 

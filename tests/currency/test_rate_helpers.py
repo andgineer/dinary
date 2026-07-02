@@ -1,10 +1,3 @@
-"""Unit tests for ``dinary.services.rate_helpers`` HTTP helpers.
-
-Covers ``_get_json_with_retry`` (200, 404, error, retry count) and
-``_get_json_or_none`` (success passthrough, HTTPError swallowed,
-ValueError swallowed).
-"""
-
 from unittest.mock import MagicMock, patch
 
 import allure

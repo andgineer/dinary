@@ -1,10 +1,6 @@
 """NBP (Polish National Bank) exchange rate client — fallback for NBS.
-
 Bridges any pair through PLN: ``X/Y = (X/PLN) / (Y/PLN)``.
-Table A (32 majors): daily on Polish working days.
-Table B (116 less-common, incl. RSD/RUB): weekly on Wednesdays only.
-Date 404 → falls back to dateless endpoint (most recently published rate).
-See ``specs/reference/exchange-rates.md``.
+See ``specs/reference/currencies.md``.
 """
 
 import logging
@@ -27,18 +23,10 @@ _TABLES = ("A", "B")
 
 @cached(cache=TTLCache(maxsize=10000, ttl=_FETCH_RATE_CACHE_TIME))
 def _fetch_nbp_pln_leg(rate_date: date | None, currency: str) -> Decimal | None:
-    """Fetch ``1 currency = N PLN`` from NBP for *rate_date*.
-
-    Tries table A first (cheaper, daily majors), then table B
-    (weekly less-common). ``rate_date=None`` requests the most
-    recently published rate; callers use this as a fallback when the
-    date-specific lookup returns 404 (table B publishes weekly so
-    most weekdays 404).
-
-    HTTP failures and 404s are intentionally cached as ``None`` for
-    the full TTL — the same DOS guard rationale as NBS. Do NOT
-    "fix" this by skipping ``None`` caching.
-    """
+    """Tries table A (daily majors) then B (weekly). ``rate_date=None`` requests
+    the most recent rate, used as fallback when a date-specific lookup 404s.
+    Failures are intentionally cached as ``None`` for the full TTL — do NOT
+    "fix" this by skipping it (same DOS-guard rationale as NBS)."""
     for table in _TABLES:
         path = f"rates/{table}/{currency.lower()}"
         url = (
@@ -54,14 +42,8 @@ def _fetch_nbp_pln_leg(rate_date: date | None, currency: str) -> Decimal | None:
 
 
 def _pln_leg(rate_date: date, currency: str) -> Decimal | None:
-    """Resolve ``1 currency = N PLN`` for *rate_date*, with fallbacks.
-
-    Order of attempts:
-        1. Identity short-circuit if *currency* is PLN.
-        2. NBP for *rate_date* directly (table A, then table B).
-        3. NBP "latest published" no-date form. This is the path that
-           covers table-B currencies on a non-Wednesday request.
-    """
+    """Falls back to NBP's "latest published" no-date form, which covers
+    table-B currencies on a non-Wednesday request."""
     if currency.upper() == "PLN":
         return Decimal(1)
     rate = _fetch_nbp_pln_leg(rate_date, currency)
@@ -71,13 +53,8 @@ def _pln_leg(rate_date: date, currency: str) -> Decimal | None:
 
 
 def resolve_from_nbp(con, rate_date: date, source: str, target: str) -> Decimal | None:
-    """Resolve ``source/target`` via NBP, bridging through PLN.
-
-    Returns ``None`` when NBP has no rate for either side. The
-    bridged value is written to ``exchange_rates`` so subsequent
-    lookups (including the rate-prefetch task and ``offline=True``
-    requests) short-circuit the two HTTP calls.
-    """
+    """Bridges through PLN; the result is cached so subsequent lookups (including
+    the rate-prefetch task and ``offline=True`` requests) skip the two HTTP calls."""
     # Identity short-circuit: ``get_rate`` already does this, but
     # guarding here too keeps direct callers (and the unit tests) from
     # writing a useless ``(X, X, 1)`` row into ``exchange_rates``.

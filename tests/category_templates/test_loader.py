@@ -1,5 +1,3 @@
-"""Tests for dinary.category_templates.loader: parsing and validation."""
-
 import allure
 import pytest
 

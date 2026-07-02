@@ -210,6 +210,16 @@ For implementation detail on each subsystem see `specs/reference/`:
 SFTP. Accessible via Cloudflare Tunnel or Tailscale. No Docker in production —
 saves RAM. See `docs/src/en/operations.md` for the ops runbook.
 
+**Offsite backups:** `dinary.db` and `analytics.db` snapshots are pushed to
+Yandex.Disk via rclone over WebDAV with an app-password, not rclone's OAuth
+wizard — the replica VM is headless, and OAuth's laptop-authorize/copy-token
+handoff is an error magnet during disaster recovery.
+
+**Replication health signal:** a background task prefetches the daily exchange
+rate every morning, guaranteeing at least one write to `exchange_rates` per
+calendar day — the resulting Litestream segment lets the offsite backup script
+detect a stalled replica even on days with no expense activity.
+
 **Dependency isolation:** The server is deployed with `uv sync --no-dev --no-group analytics`,
 keeping heavy analytics dependencies (DuckDB, Polars, LMDB, Marimo, LLM SDKs) off the VM.
 On a 1 GB RAM host these packages would materially increase resident memory and import time.

@@ -1,22 +1,3 @@
-"""Cross-cutting ``exchange_rates`` plumbing tests.
-
-Pin three contracts that don't fit the per-resolver split:
-
-* ``get_rate`` end-to-end — fetches a real rate, persists it, and
-  short-circuits the same-currency identity case without DB
-  access.
-* Failure caching (DOS guard) — HTTP failures from each upstream
-  are cached for the full TTL so a down upstream is not hammered
-  with retries on every incoming request. Do NOT change caching
-  to skip ``None`` results.
-* The full NBS → NBP fallback chain — pair shapes, bridge
-  invocations, and the ``offline=True`` short-circuit.
-
-Per-resolver pipeline tests live in
-:file:`test_currency_rates_resolve.py` (NBS) and
-:file:`test_currency_rates_nbp.py` (NBP).
-"""
-
 from datetime import date
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
@@ -69,7 +50,6 @@ class TestExchangeRate:
             con.close()
 
     def test_get_rate_identity_for_same_currency(self):
-        """EUR to EUR should return rate 1 without any DB access."""
         assert get_rate(None, date(2026, 4, 1), "EUR", "EUR") == Decimal(1)
 
     @patch("dinary.adapters.rate_helpers.httpx.get")
@@ -125,12 +105,8 @@ class TestConvertToAccountingAmount:
 @allure.feature("Rate resolution")
 @allure.story("Failure caching — DOS protection")
 class TestFailureCaching:
-    """HTTP failures MUST be cached for the full TTL so a down upstream is not
-    hammered with retries on every incoming request.
-
-    This is intentional — do NOT change caching to skip ``None`` results.
-    These tests exist to catch that mistake.
-    """
+    """HTTP failures are cached for the full TTL (DOS guard) — do not
+    change caching to skip ``None`` results."""
 
     @patch("dinary.adapters.nbs._get_json_or_none")
     def test_nbs_failure_is_cached(self, mock_json):
@@ -155,11 +131,6 @@ class TestFailureCaching:
 @allure.feature("Rate resolution")
 @allure.story("get_rate — NBS → NBP fallback chain")
 class TestGetRateFallbackChain:
-    """The full multi-source resolution policy: NBS first (direct
-    for RSD-pairs, RSD-bridge for the rest), then NBP (PLN-bridge)
-    when NBS doesn't serve the pair.
-    """
-
     @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
     @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
     def test_rsd_pair_uses_nbs_direct(self, mock_nbs, mock_nbp):
@@ -256,9 +227,6 @@ class TestGetRateFallbackChain:
 @allure.feature("Rate resolution")
 @allure.story("get_rate — offline mode")
 class TestGetRateOffline:
-    """offline=True returns DB rate without HTTP calls; falls back to
-    online resolution only when DB has no rate."""
-
     @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
     @patch("dinary.adapters.exchange_rates.get_db_rate")
     def test_offline_returns_db_rate_without_fetch(self, mock_db, mock_nbs):

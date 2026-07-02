@@ -1,14 +1,4 @@
-"""Shared fixtures and helpers for the split ``test_api_*.py`` files.
-
-Underscore prefix keeps pytest from collecting this as a test module.
-Each ``test_api_*.py`` file imports the names it uses; pytest treats
-them as fixtures because they're in the test module's namespace.
-
-The autouse ``_tmp_db`` is module-local rather than promoted to
-``conftest.py`` so the per-test DB-path override stays scoped to the
-API suite (sibling tests must not have their ``storage.DATA_DIR``
-silently rewritten).
-"""
+"""Not promoted to conftest.py: keeps the per-test DB-path override scoped to this suite."""
 
 import contextlib
 import shutil
@@ -23,25 +13,7 @@ from dinary.db import expenses, storage
 
 @contextlib.contextmanager
 def _count_race_recoveries():
-    """Count ``insert_expense`` race-recovery ROLLBACKs during a test run.
-
-    Yields a ``{"count": int}`` dict that callers read *after* the
-    ``with`` block exits. Works by wrapping
-    ``storage.best_effort_rollback`` with a counter that
-    increments on contexts containing ``"race-recovery"`` — the
-    substring both INSERT-time and COMMIT-time ``_RACE_EXCS``
-    branches embed in their context string. The outer
-    ``except Exception: best_effort_rollback(...)`` in
-    ``insert_expense`` uses a different context string and is not
-    counted, so the counter is specific to the race-recovery path.
-
-    A ``threading.Lock`` protects the increment because concurrent
-    tests (``asyncio.to_thread`` + ``asyncio.gather``) dispatch each
-    request to a ThreadPool worker; the GIL makes ``+= 1`` usually
-    atomic, but this is the sort of instrumentation where a spurious
-    off-by-one under future CPython changes would obscure exactly
-    the scheduling-regression class we're trying to detect.
-    """
+    """Matches on the "race-recovery" substring in the rollback context to isolate that path from other rollback causes."""
     counter = {"count": 0}
     lock = threading.Lock()
     original = storage.best_effort_rollback
@@ -63,7 +35,6 @@ def _mock_get_rate(con, rate_date, source, target, *, offline=False):
 
 @pytest.fixture(autouse=True)
 def db(tmp_path, monkeypatch, blank_db):
-    """Point the repo at a fresh per-test DB and seed a minimal catalog."""
     dst = tmp_path / "dinary.db"
     shutil.copy(blank_db, dst)
     monkeypatch.setattr(storage, "DATA_DIR", tmp_path)

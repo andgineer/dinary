@@ -1,13 +1,5 @@
-"""POST ``/api/expenses`` under real concurrency:
-
-- Atomic ON CONFLICT compare in ``insert_expense`` keeps duplicate vs
-  conflict decisions correct under same-UUID racers.
-- ``asyncio.to_thread`` + ``asyncio.gather`` exercise the per-request
-  SQLite-connection model and SQLite's serialized-writer guarantees.
-- Failure-propagation paths around ``insert_expense`` (unexpected
-  ``RuntimeError`` and unexpected ``IntegrityError`` carry-over) must
-  surface as 500, not silently 200/duplicate.
-"""
+"""POST ``/api/expenses`` under real concurrency: ON CONFLICT duplicate/conflict
+handling, SQLite's serialized-writer guarantees, and failure-propagation paths."""
 
 import asyncio
 import sqlite3
@@ -37,11 +29,8 @@ class TestPostExpenseConcurrency:
         _mock_convert_fn,
         client,
     ):
-        """The ON CONFLICT path inside ``insert_expense`` decides
-        duplicate-vs-conflict atomically, so the API doesn't need a
-        pre-lookup. The same UUID + same payload returns 200 duplicate;
-        the same UUID + different payload returns 409.
-        """
+        """The ON CONFLICT compare in ``insert_expense`` decides duplicate-vs-conflict
+        atomically, so the API doesn't need a pre-lookup."""
         body = {
             "client_expense_id": "e_race",
             "amount": 50.0,
@@ -64,33 +53,9 @@ class TestPostExpenseConcurrency:
     def test_concurrent_replays_are_serialized_without_transaction_errors(
         self,
     ):
-        """Smoke test for the ``asyncio.to_thread`` + per-request
-        SQLite-connection interaction: fire N concurrent POSTs with
-        the same ``client_expense_id`` and same body, and verify that:
-
-        - no request returns 5xx (the per-request-connection model
-          survives real cross-thread concurrency — no leaked
-          ``sqlite3.OperationalError`` from ``BEGIN IMMEDIATE`` write
-          contention between two worker threads);
-        - exactly one request returns ``{status: "ok"}`` (the creator);
-        - every other request returns ``{status: "duplicate"}`` (the
-          ON CONFLICT compare path);
-        - disk state has exactly one row for the UUID.
-
-        This is the closest we can get to production-like concurrency
-        inside a test: ``httpx.AsyncClient`` + ``ASGITransport`` lets
-        ``asyncio.gather`` actually interleave the handlers, and
-        ``asyncio.to_thread`` dispatches each one to a worker thread
-        on the default pool. The ``client`` fixture is bypassed here
-        because ``fastapi.testclient.TestClient`` serializes requests
-        by construction (portal-backed sync wrapper) and can't
-        demonstrate the property under test.
-
-        No per-test ``DATA_DIR`` / ``DB_PATH`` override is needed:
-        the autouse ``_tmp_db`` fixture already points the repo
-        at a fresh per-test DB and seeded the catalog, and the
-        ``create_app`` lifespan reuses that same path.
-        """
+        """Uses ``httpx.AsyncClient`` + ``ASGITransport`` (not the ``client`` fixture)
+        because ``fastapi.testclient.TestClient`` serializes requests by construction
+        and can't demonstrate real cross-thread concurrency."""
         body = {
             "client_expense_id": "e_concurrent",
             "amount": 42.0,
@@ -141,20 +106,9 @@ class TestPostExpenseConcurrency:
             con.close()
         assert count == 1
 
-        # Observability: under SQLite's single-writer model
-        # (``BEGIN IMMEDIATE`` + ``busy_timeout``), concurrent writers
-        # serialize on the database-level write lock and the winner
-        # commits before any loser's INSERT runs. Losers therefore
-        # hit ``ON CONFLICT (client_expense_id) DO NOTHING`` on an
-        # already-committed row and absorb the conflict without ever
-        # raising ``IntegrityError`` — so ``_RACE_EXCS`` recovery is
-        # structurally unreachable from this coroutine-gather. The
-        # recovery branches in ``insert_expense`` remain as defensive
-        # code for any future writer that bypasses ``ON CONFLICT``;
-        # they have dedicated unit coverage elsewhere. Assert the
-        # counter stays at 0 so a regression that *does* start
-        # surfacing ``IntegrityError`` here (e.g. a busy_timeout drop
-        # or an ON CONFLICT removal) trips this test loudly.
+        # SQLite's single-writer model absorbs losers via ON CONFLICT before they
+        # ever raise IntegrityError, so this should stay 0; a nonzero count means
+        # something (e.g. a dropped ON CONFLICT) broke that guarantee.
         assert race_counter["count"] == 0, (
             f"Unexpectedly saw {race_counter['count']} race-recovery "
             f"rollbacks under SQLite's serialized-writer model — "
@@ -165,25 +119,10 @@ class TestPostExpenseConcurrency:
     def test_concurrent_mixed_bodies_are_serialized_with_conflict(
         self,
     ):
-        """Concurrent variant of the conflict path: N racers share a
-        ``client_expense_id`` but differ on ``amount``.
-
-        The atomic ON CONFLICT compare inside ``insert_expense`` must
-        still pick exactly one winner (the first writer to commit),
-        and every other racer must land in the compare branch and
-        surface a **409 Conflict** — not a 500 ``OperationalError``
-        leak, and not a silent 200 duplicate that would hide an actual
-        payload disagreement from the PWA.
-
-        This complements
-        ``test_concurrent_replays_are_serialized_without_transaction_errors``:
-        that one covers the idempotent-replay branch (identical
-        bodies -> 200 duplicate for the losers), this one covers the
-        conflicting-body branch (different bodies -> 409 for the
-        losers). Together they exercise both recovery exits from the
-        ``sqlite3.IntegrityError`` / ``sqlite3.OperationalError``
-        compare path.
-        """
+        """Conflict-path counterpart to
+        ``test_concurrent_replays_are_serialized_without_transaction_errors``: racers
+        share a ``client_expense_id`` but differ on ``amount``, so every loser must
+        land in the compare branch as 409, not a silent 200 duplicate."""
         base_body = {
             "client_expense_id": "e_concurrent_mixed",
             "currency": "RSD",
@@ -237,14 +176,7 @@ class TestPostExpenseConcurrency:
         finally:
             con.close()
         count, min_amount, max_amount = row
-        # Exactly one committed row — the conflicting losers must
-        # not have left partial state on disk.
         assert count == 1
-        # And its amount must be *one of* the submitted amounts.
-        # A regression where race recovery mutates the stored row
-        # (partial UPDATE from a loser, merge of two racers' fields,
-        # etc.) would land us here with an amount that no racer
-        # actually submitted.
         submitted_amounts = {round(10.0 + i, 2) for i in range(n_requests)}
         assert float(min_amount) == float(max_amount), (
             f"single-row assertion disagrees with COUNT: min={min_amount} max={max_amount}"
@@ -255,15 +187,6 @@ class TestPostExpenseConcurrency:
             f"the committed row?"
         )
 
-        # Observability: see the companion sibling
-        # ``test_concurrent_replays_are_serialized_without_transaction_errors``
-        # for the rationale. Under SQLite's serialized-writer model
-        # every loser absorbs the conflict through ON CONFLICT DO NOTHING
-        # and then falls into the compare path without raising. A
-        # non-zero counter would mean a regression started surfacing
-        # ``IntegrityError`` / ``OperationalError`` at this layer,
-        # which is exactly what ``BEGIN IMMEDIATE`` + ``busy_timeout``
-        # is meant to prevent.
         assert race_counter["count"] == 0, (
             f"Unexpectedly saw {race_counter['count']} race-recovery "
             f"rollbacks under SQLite's serialized-writer model — "

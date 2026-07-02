@@ -1,25 +1,8 @@
-"""Tests for ``db.logging_projection``.
-
-The drain worker calls this helper to decide where each expense
-lands on the logging sheet. The contract pins:
-
-* "First non-``*`` wins per column" applied independently across
-  ``sheet_category`` and ``sheet_group``.
-* Tag matching requires the row's tag set to be a *subset* of the
-  expense tags.
-* Partial matches keep the resolved column instead of being
-  discarded — dropping a column we already populated would be
-  strictly worse than the empty-string fallback.
-* Unknown ``category_id`` returns ``None`` so the drain worker
-  poisons the queued row instead of logging to a bogus target.
-* When no rule fires at all, both columns fall back to
-  ``(categories.name, "")`` — the in-helper default that replaced
-  the old "return None and let the caller fall back" contract.
-
-Sibling :file:`test_ledger_repo_catalog.py` covers connection
-lifecycle, ``catalog_version``, ``list_categories``, sheet-mapping
-3D resolution, and ``get_category_name``.
-"""
+"""Tests for ``db.logging_projection``. Pins: first non-``*`` wins per column; tag
+matching requires the row's tag set to be a subset of the expense's; partial matches
+keep the resolved column rather than being discarded; unknown ``category_id`` returns
+None so the drain worker poisons the row; no rule firing falls back to
+``(categories.name, "")``."""
 
 import allure
 import pytest
@@ -38,16 +21,8 @@ from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
 class TestLoggingProjection:
     @pytest.fixture
     def logging_setup(self, fresh_db):
-        """Seed one category with three ``sheet_mapping`` rows exercising
-        the "first non-``*`` wins per column" resolver:
-
-        row_order=1: category=food, tag ``tag1`` required, sheet_category=``*``,
-                     sheet_group=``WithTag``
-        row_order=2: category=food, event=``evt``, sheet_category=``*``,
-                     sheet_group=``WithEvt``
-        row_order=3: category=food (catch-all), sheet_category=``CatA``,
-                     sheet_group=``*``
-        """
+        """Three ``sheet_mapping`` rows: (1) tag1-gated envelope, (2) event-gated
+        envelope, (3) catch-all category — exercises "first non-``*`` wins"."""
         con = storage.get_connection()
         try:
             con.execute(
@@ -112,12 +87,8 @@ class TestLoggingProjection:
     def test_partial_resolution_keeps_resolved_column(self, logging_setup):
         con = storage.get_connection()
         try:
-            # tag 'tag2' is not required by any row, no event: rows 1 and 2
-            # are skipped, row 3 fills sheet_category=CatA but leaves sheet_group as
-            # ``*``. The resolver keeps the partial match and fills the
-            # missing ``sheet_group`` with the empty-string fallback —
-            # dropping CatA would be strictly worse since we already
-            # picked a better-than-default value for that column.
+            # Only row 3 matches; the resolved sheet_category=CatA is kept and
+            # sheet_group falls back to empty string rather than dropping CatA too.
             result = logging_projection(
                 con,
                 category_id=1,
@@ -131,9 +102,6 @@ class TestLoggingProjection:
     def test_unknown_category_returns_none(self, logging_setup):
         con = storage.get_connection()
         try:
-            # category_id=999 has no rows at all and no canonical name —
-            # the projection returns None so the drain worker can poison
-            # the queued row rather than logging to a bogus target.
             result = logging_projection(
                 con,
                 category_id=999,
@@ -147,11 +115,6 @@ class TestLoggingProjection:
     def test_no_event_no_tags_fills_envelope_with_empty_string(self, logging_setup):
         con = storage.get_connection()
         try:
-            # Same shape as ``test_partial_resolution_keeps_resolved_column``
-            # but with no tags at all; rows 1 and 2 require tag/event and
-            # are skipped, row 3 assigns sheet_category and leaves sheet_group as
-            # ``*``. The resolver fills sheet_group with the empty-string
-            # fallback while keeping the explicit ``CatA`` mapping.
             result = logging_projection(
                 con,
                 category_id=1,
@@ -163,12 +126,7 @@ class TestLoggingProjection:
             con.close()
 
     def test_no_mapping_rule_falls_back_to_category_name(self, fresh_db):
-        """When no sheet_mapping rule fires at all, both columns fall
-        back: ``sheet_category`` = categories.name, ``sheet_group`` = ''.
-        This replaces the old "return None and let the caller fall
-        back" contract with an in-helper default so partial matches
-        never get discarded.
-        """
+        """No sheet_mapping rule fires: falls back to (categories.name, '')."""
         con = storage.get_connection()
         try:
             con.execute(
@@ -232,10 +190,7 @@ class TestLoggingProjection:
                 " auto_attach_enabled) VALUES (1, 'vacation-2026',"
                 " '2026-01-01', '2026-04-20', 1)",
             )
-            # Row 1 (specific event) must win over the wildcard row for
-            # event_id=1; row 2 must still fire for event_id=None.
-            # ``sheet_group`` is left wildcard and therefore falls back
-            # to the empty-string sentinel in both cases.
+            # Row 1 (specific event) must win for event_id=1; row 2 for event_id=None.
             con.execute(
                 "INSERT INTO sheet_mapping (row_order, category_id, event_id,"
                 " sheet_category, sheet_group)"

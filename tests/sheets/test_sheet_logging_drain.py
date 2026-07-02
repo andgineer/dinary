@@ -1,15 +1,7 @@
-"""Tests for ``drain_pending``: happy path, poisoning, fallback,
-counters.
-
-Sibling files:
-
-* :file:`test_sheet_logging_derive.py` —
-  ``_derive_app_currency_amount_for_sheet``.
-* :file:`test_sheet_logging_drain_one.py` — ``_drain_one_job``
-  return-contract + post-append claim-stolen recovery.
-* :file:`test_sheet_logging.py` — idempotency / circuit breaker /
-  disabled / lock conflict / rate limit.
-"""
+"""Tests for ``drain_pending``: happy path, poisoning, fallback, counters.
+Sibling files cover derive (``test_sheet_logging_derive.py``), single-job drain
+(``test_sheet_logging_drain_one.py``), and idempotency/circuit-breaker
+(``test_sheet_logging.py``)."""
 
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -63,11 +55,7 @@ class TestDrainPending:
         assert result["noop_orphan"] == 0
         assert result["poisoned"] == 0
 
-        # J-marker contract: the key passed into ``append_expense_atomic``
-        # is the expense's ``client_expense_id`` UUID (not the integer
-        # PK). Regression test for the pre-fix bug where ``ExpenseRow``
-        # did not expose ``client_expense_id`` at all and the marker
-        # fell back to ``str(expense_pk)``.
+        # marker_key must be the client_expense_id UUID, not the integer PK.
         call_kwargs = mock_append.call_args.kwargs
         assert call_kwargs.get("marker_key") == "exp1-client-key"
 
@@ -82,15 +70,8 @@ class TestDrainPending:
 @allure.feature("Sheet logging")
 @allure.story("Drain pending")
 class TestDrainPendingPoisonsUnresolvedCategory:
-    """If an expense's ``category_id`` does not resolve to any
-    ``categories`` row (neither by mapping nor by fallback name), the
-    worker must poison the queue row: delete it and log the reason,
-    so a single corrupted row never blocks the rest of the queue.
-
-    In practice FK-safe catalog sync prevents this state from existing
-    on disk, but the poison branch is the safety net and must be
-    covered.
-    """
+    """An unresolvable ``category_id`` must poison the queue row so it never
+    blocks the rest — a safety net FK-safe sync should normally prevent."""
 
     @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
     @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
@@ -123,11 +104,7 @@ class TestDrainPendingPoisonsUnresolvedCategory:
         con = storage.get_connection()
         try:
             assert list_logging_jobs(con) == []
-            # The queue row is still on disk but in status='poisoned',
-            # which is why ``list_logging_jobs`` (pending + stale
-            # in_progress) doesn't surface it. The expense ledger row
-            # itself is untouched — poison only marks the queue row,
-            # never the underlying expense.
+            # Poison marks the queue row only; the expense ledger row is untouched.
             poisoned = con.execute(
                 "SELECT COUNT(*) FROM sheet_logging_jobs"
                 " WHERE expense_id = ? AND status = 'poisoned'",
@@ -147,15 +124,8 @@ class TestDrainPendingPoisonsUnresolvedCategory:
 @allure.feature("Sheet logging")
 @allure.story("Drain pending")
 class TestDrainPendingPoisonsNullClientExpenseId:
-    """A queue row whose underlying expense has
-    ``client_expense_id = NULL`` must be poisoned rather than
-    append-with-fallback-marker. Bootstrap-imported rows carry a NULL
-    UUID but are explicitly never enqueued (``enqueue_logging=False``),
-    so this branch catches a misbehaving runtime producer — silently
-    writing a non-UUID marker (e.g. the server PK) into column J would
-    corrupt the idempotency contract for every later append to the
-    same row.
-    """
+    """A NULL ``client_expense_id`` is always a producer bug, see
+    ``specs/reference/sheets.md``."""
 
     @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
     @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
@@ -171,12 +141,8 @@ class TestDrainPendingPoisonsNullClientExpenseId:
     ):
         shutil.copy(blank_db, storage.DB_PATH)
 
-        # Seed minimal catalog + a single expense with
-        # client_expense_id = NULL, then force a queue row for it so we
-        # simulate the "malformed runtime producer" condition. We bypass
-        # ``insert_expense(enqueue_logging=True)`` for this leg because
-        # the public path refuses to let NULL + enqueue coexist on a
-        # runtime call — which is exactly the invariant we're testing.
+        # Bypasses insert_expense(enqueue_logging=True) since the public path
+        # refuses to let NULL + enqueue coexist — the invariant under test.
         con = storage.get_connection()
         try:
             con.execute(

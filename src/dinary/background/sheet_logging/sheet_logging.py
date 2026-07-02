@@ -64,13 +64,8 @@ def register_wake_channel(
     event: asyncio.Event,
     loop: asyncio.AbstractEventLoop,
 ) -> None:
-    """Register the drain loop's wake-up event and its owning event loop.
-
-    Called exactly once per process by the lifespan drain loop. The
-    reference stays alive for the lifetime of the loop; on shutdown
-    the drain loop calls `clear_wake_channel` so stale `notify_new_work`
-    calls from a parallel test cannot touch a closed loop.
-    """
+    """On shutdown the drain loop calls `clear_wake_channel` so stale
+    `notify_new_work` calls from a parallel test can't touch a closed loop."""
     global _wake_event, _wake_loop  # noqa: PLW0603
     _wake_event = event
     _wake_loop = loop
@@ -84,14 +79,9 @@ def clear_wake_channel() -> None:
 
 
 def notify_new_work() -> None:
-    """Signal the drain loop to start its next sweep immediately.
-
-    Thread-safe: safe to call from the event loop thread, from an
-    `asyncio.to_thread` worker, or from a regular sync context. If no
-    drain loop has registered (logging disabled, tests, shutdown),
-    this is a silent no-op — the periodic timer remains the canonical
-    wakeup source, so a missed notify never silently loses work.
-    """
+    """Thread-safe: callable from the event loop, a `to_thread` worker, or sync
+    context. Silent no-op if no drain loop registered — the periodic timer remains
+    the canonical wakeup source, so a missed notify never loses work."""
     ev = _wake_event
     loop = _wake_loop
     if ev is None or loop is None or loop.is_closed():
@@ -153,19 +143,10 @@ def _derive_app_currency_amount_for_sheet(
     app_currency_rate: Decimal | None,
     expense_date: date,
 ) -> float | None:
-    """Return the app-currency amount to write into sheet column B.
-
-    Strategy:
-
-    * If the expense was typed in app_currency, use ``amount_original``
-      verbatim — bit-identical to what the user saw.
-    * If accounting_currency == app_currency, use ``expense.amount``.
-    * Otherwise, convert ``expense.amount`` (accounting_currency) to
-      app_currency using the pre-fetched rate or an on-demand lookup.
-
-    Returns ``None`` iff a needed rate is unavailable; the caller
-    then requeues the job for the next sweep.
-    """
+    """Uses ``amount_original`` verbatim when typed in app_currency (bit-identical
+    to what the user saw), otherwise converts via the pre-fetched rate or an
+    on-demand lookup. Returns None if a needed rate is unavailable, so the caller
+    requeues for the next sweep."""
     app_currency = settings.app_currency.upper()
     currency_original = (expense.currency_original or "").upper()
     if currency_original == app_currency:
@@ -348,13 +329,8 @@ def _append_row_to_sheet(
     spreadsheet_id: str,
     expense_row: "_ExpenseSheetRow",
 ) -> bool:
-    """Project one expense onto Google Sheets.
-
-    ``marker_key`` is written verbatim into column J (last-key-only
-    idempotency). Callers pass the expense's ``client_expense_id`` so
-    the sheet J cell matches the PWA-generated UUID on every runtime
-    row.
-    """
+    """``marker_key`` is written verbatim into column J (last-key-only
+    idempotency, see ``specs/reference/sheets.md``)."""
     ss = get_sheet(spreadsheet_id)
     ws = ss.sheet1
     all_values = ws.get_all_values()

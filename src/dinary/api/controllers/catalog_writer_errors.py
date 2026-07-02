@@ -7,23 +7,13 @@ CatalogKind = Literal["category_group", "category", "event", "tag"]
 
 AddStatus = Literal["created", "reactivated", "noop"]
 
-#: ``hard`` = row physically removed; ``soft`` = row flipped to
-#: ``is_active=FALSE`` because it's still referenced by the ledger and
-#: removing it would orphan historical rows. The admin API surfaces
-#: the distinction so the PWA can tell the operator "still available
-#: under Show inactive" vs "gone for good".
+#: See specs/reference/catalog-api.md "Soft vs hard delete".
 DeleteStatus = Literal["hard", "soft"]
 
 
 @dataclass(frozen=True, slots=True)
 class DeleteResult:
-    """Return value of ``delete_*`` helpers.
-
-    ``status`` reports whether the row was physically removed or
-    soft-retired (``is_active=FALSE``). ``usage_count`` is the number
-    of referencing ledger rows observed at decision time — zero for
-    the hard-delete branch, >0 for the soft-delete branch.
-    """
+    """``usage_count`` is zero for the hard-delete branch, >0 for soft-delete."""
 
     status: DeleteStatus
     usage_count: int
@@ -31,14 +21,8 @@ class DeleteResult:
 
 @dataclass(frozen=True, slots=True)
 class AddResult:
-    """Return value of ``add_group`` / ``add_event`` / ``add_tag``.
-
-    ``id`` is the row id (existing or new). ``status`` distinguishes
-    between a brand-new INSERT, a reactivate-in-place, and a fully
-    silent no-op (active row with matching fields). Admin-API callers
-    propagate ``status`` to the PWA response so the UI can tell the
-    user "reactivated existing" vs "created new".
-    """
+    """``status`` distinguishes a new INSERT, a reactivate-in-place, and a silent
+    no-op (active row with matching fields)."""
 
     id: int
     status: AddStatus
@@ -56,22 +40,10 @@ class CatalogWriteError(Exception):
 
 
 class CatalogInUseError(CatalogWriteError):
-    """Delete or deactivate blocked because the row is still referenced.
-
-    Only raised for ``category_group``: ``usage_count`` counts child
-    categories (active or inactive). A group with any children cannot
-    be deleted or deactivated until the categories are relocated or
-    removed.
-
-    Categories / events / tags do *not* raise this — ``delete_*`` on a
-    referenced row auto-degrades to soft-delete (see
-    ``DeleteResult.status``) and ``edit_*`` on a referenced row
-    accepts any column mix including ``is_active=FALSE`` combined with
-    rename / ``group_id`` move. The former is a policy choice ("retire
-    but keep pointable"); the latter is safe because SQLite enforces
-    FK constraints on ``DELETE`` (and on ``UPDATE`` of referenced key
-    columns) only, not on ``UPDATE`` of non-key columns.
-    """
+    """Only raised for ``category_group`` (children must be relocated/removed
+    first). Categories/events/tags instead auto-degrade to soft-delete, since
+    SQLite only enforces FK constraints on DELETE and key-column UPDATE, not on
+    other column updates."""
 
     http_status = 409
 

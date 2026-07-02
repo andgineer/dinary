@@ -1,5 +1,3 @@
-"""inv analytics — ensure dinary-ai is running, start Marimo dashboard."""
-
 import asyncio
 import time
 import urllib.error

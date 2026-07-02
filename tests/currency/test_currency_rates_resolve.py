@@ -1,17 +1,3 @@
-"""Resolution-pipeline tests for the NBS resolver.
-
-Pin ``resolve_from_nbs`` across the full date-shape matrix —
-working-day hit / DB-cache hit / pre-publication walkback,
-weekend → Friday alias, holiday → previous-working-day alias,
-stale-walkback that must NOT alias under the requested date, and
-the no-rate-within-10-days terminal case.
-
-Sibling :file:`test_currency_rates_misc.py` covers the
-end-to-end ``get_rate`` plumbing (NBS primary → NBP fallback
-chain, ``offline=True`` short-circuits, failure-caching DOS guard).
-NBP-resolver internals live in :file:`test_currency_rates_nbp.py`.
-"""
-
 from datetime import date
 from unittest.mock import call
 
@@ -40,8 +26,6 @@ from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
 @allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — working day, direct hit")
 class TestResolveWorkingDayHit:
-    """rate_date is a working day, API returns a rate for it."""
-
     def test_returns_rate(self, nbs_mocks):
         _, _, fetch_nbs = nbs_mocks
         fetch_nbs.return_value = _RATE
@@ -64,8 +48,6 @@ class TestResolveWorkingDayHit:
 @allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — working day, DB hit")
 class TestResolveWorkingDayCacheHit:
-    """rate_date is a working day, rate already in DB."""
-
     def test_returns_cached(self, nbs_mocks):
         get_db, _, _ = nbs_mocks
         get_db.return_value = _RATE
@@ -88,11 +70,6 @@ class TestResolveWorkingDayCacheHit:
 @allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — working day, pre-publication (before 08:00)")
 class TestResolveWorkingDayPrePublication:
-    """rate_date is a working day but API has no rate yet (before 08:00).
-
-    Should return previous day's rate but NOT store under rate_date.
-    """
-
     def test_returns_previous_day_rate(self, nbs_mocks):
         _, _, fetch_nbs = nbs_mocks
         fetch_nbs.side_effect = lambda d, c: _RATE if d == _MON else None
@@ -115,8 +92,6 @@ class TestResolveWorkingDayPrePublication:
 @allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — weekend")
 class TestResolveWeekend:
-    """rate_date is Saturday or Sunday — walks back to Friday."""
-
     def test_saturday_returns_friday_rate(self, nbs_mocks):
         _, _, fetch_nbs = nbs_mocks
         fetch_nbs.side_effect = lambda d, c: _RATE if d == _FRI else None
@@ -162,12 +137,6 @@ class TestResolveWeekend:
 @allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — weekend, stale walkback")
 class TestResolveWeekendStaleWalkback:
-    """Weekend, Friday has no rate — walks back to Thursday.
-
-    Rate is older than the immediately previous working day,
-    so it must NOT be aliased under rate_date.
-    """
-
     _THU = date(2025, 2, 27)
 
     def test_returns_thursday_rate(self, nbs_mocks):
@@ -182,7 +151,6 @@ class TestResolveWeekendStaleWalkback:
         save_db.assert_called_once_with(_CON, self._THU, _SOURCE, _TARGET, _RATE)
 
     def test_db_thursday_no_alias(self, nbs_mocks):
-        """Thursday rate in DB, Friday had no rate — no alias under Saturday."""
         get_db, save_db, fetch_nbs = nbs_mocks
         get_db.side_effect = lambda con, d, s, t: _RATE if d == self._THU else None
         fetch_nbs.return_value = None
@@ -194,8 +162,6 @@ class TestResolveWeekendStaleWalkback:
 @allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — weekend, Saturday already in DB")
 class TestResolveWeekendSaturdayCached:
-    """Saturday itself has a DB rate — return it, no alias save needed."""
-
     def test_returns_db_saturday(self, nbs_mocks):
         get_db, save_db, _ = nbs_mocks
         get_db.side_effect = lambda con, d, s, t: _RATE if d == _SAT else None
@@ -207,8 +173,6 @@ class TestResolveWeekendSaturdayCached:
 @allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — holiday")
 class TestResolveHoliday:
-    """rate_date is a weekday holiday — walks back to previous working day."""
-
     def test_returns_previous_working_day_rate(self, nbs_mocks):
         _, _, fetch_nbs = nbs_mocks
         fetch_nbs.side_effect = lambda d, c: _RATE if d == _DAY_BEFORE_HOLIDAY else None
@@ -228,8 +192,6 @@ class TestResolveHoliday:
 @allure.feature("NBS rates")
 @allure.story("resolve_from_nbs — no rate found")
 class TestResolveNoRateFound:
-    """No rate found within 10 days."""
-
     def test_returns_none(self, nbs_mocks):
         assert resolve_from_nbs(_CON, _MON, _SOURCE, _TARGET) is None
 

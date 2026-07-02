@@ -25,10 +25,8 @@ from dinary.sheets.sheet_mapping import decode_auto_tags_value
 # Tag-name validation
 # ---------------------------------------------------------------------------
 
-#: Characters rejected inside tag names. Tag names flow through the
-#: ``map`` tab's comma/whitespace-separated tags cell, so whitespace
-#: and commas look like honest typos but silently route expenses
-#: into the wrong envelope. Reject them at write time.
+#: Rejected because the ``map`` tab's tags cell is comma/whitespace-separated —
+#: a tag containing either would silently route expenses into the wrong envelope.
 _DISALLOWED_TAG_NAME_RE = re.compile(r"[,\s]")
 
 
@@ -137,23 +135,10 @@ def add_event(
     auto_attach_enabled: bool = False,
     auto_tags: list[int] | None = None,
 ) -> AddResult:
-    """Create a new event, or reactivate-in-place if the name exists.
-
-    Reactivate behaviour: ``date_from`` / ``date_to`` /
-    ``auto_attach_enabled`` / ``auto_tags`` on the existing row are
-    left untouched. To change those, use ``edit_event``.
-
-    Input validation (``date_from <= date_to``, ``auto_tags`` ids
-    resolve to an existing ``tags`` row — active or inactive) runs
-    regardless of whether we insert or reactivate. The reactivate
-    path discards the caller's values, but the API contract is
-    "supply a valid body" on every call — an invalid body surfaces
-    here as 422 instead of being silently ignored. This keeps
-    ``add_event`` symmetric with ``edit_event`` (which rejects the
-    same inputs) and prevents the operator from mistaking "the
-    caller sent garbage which got dropped" for "reactivated with
-    the new values".
-    """
+    """Create a new event, or reactivate-in-place if the name exists (existing
+    dates/auto_tags are left untouched on reactivate — use ``edit_event`` to change
+    them). Validates the input regardless, even though the reactivate path discards
+    it, so a garbage body always surfaces as 422 rather than being silently dropped."""
     if date_from > date_to:
         raise CatalogWriteError(
             f"event date_from ({date_from}) must be <= date_to ({date_to})",
@@ -246,17 +231,10 @@ def edit_event(
     auto_tags: list[int] | None = None,
     is_active: bool | None = None,
 ) -> None:
-    """Atomic PATCH for ``events``.
-
-    All parameters optional. ``auto_tags=None`` means "leave column
-    alone"; an empty list explicitly clears it. Validations
-    (not-found, conflict, post-patch date range, in-use, unknown
-    auto_tag names) run *before* any UPDATE so a failed validation
-    never leaves the row half-edited. The date range check is
-    evaluated against the composite "current row merged with patch
-    values" so patching only one of ``date_from`` / ``date_to`` is
-    still validated correctly.
-    """
+    """Atomic PATCH: ``auto_tags=None`` leaves the column alone, an empty list
+    clears it. All validations run before any UPDATE so a failure never leaves
+    the row half-edited; the date-range check merges patch values onto the
+    current row so patching only one of ``date_from``/``date_to`` still validates."""
     con.execute("BEGIN IMMEDIATE")
     try:
         before = hash_state(con)
@@ -342,13 +320,8 @@ def edit_tag(
     name: str | None = None,
     is_active: bool | None = None,
 ) -> None:
-    """Atomic PATCH for ``tags``.
-
-    All parameters optional. Validations (not-found, conflict) run
-    *before* any UPDATE so a failed validation never leaves the row
-    half-edited. ``is_active=False`` always succeeds on a known row
-    (soft-retire).
-    """
+    """Atomic PATCH: validations run before any UPDATE so a failure never leaves
+    the row half-edited."""
     if name is not None:
         _validate_tag_name(name)
     con.execute("BEGIN IMMEDIATE")
@@ -424,13 +397,8 @@ def delete_tag(
     con: sqlite3.Connection,
     tag_id: int,
 ) -> DeleteResult:
-    """Hard-delete iff nothing references this tag; otherwise flip
-    ``is_active=FALSE``.
-
-    "Nothing references" covers ``expense_tags``, ``sheet_mapping_tags``
-    and ``import_mapping_tags`` — any surviving row would trip the FK
-    constraint at COMMIT.
-    """
+    """Hard-delete iff nothing references this tag (``expense_tags``,
+    ``sheet_mapping_tags``, ``import_mapping_tags``); otherwise flip ``is_active=FALSE``."""
     con.execute("BEGIN IMMEDIATE")
     try:
         before = hash_state(con)

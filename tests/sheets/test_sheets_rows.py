@@ -1,18 +1,6 @@
-"""New-row insertion tests for ``dinary.services.sheets``.
-
-Pin the ``ensure_category_row`` contract on top of three layouts:
-
-* the canonical flat-table grid (``SAMPLE_SHEET``);
-* legacy copy-paste month blocks where a single month carries a
-  full snapshot of the active categories (covered by
-  ``TestEnsureCategoryRowLegacySheet``);
-* the multi-year layout where row ordering is driven by an aligned
-  ``years_by_row`` from a separate unformatted column-A read.
-
-Read-side helpers live in :file:`test_sheets_read.py`; in-place
-column writes (formula + comment append) live in
-:file:`test_sheets_append.py`.
-"""
+"""``ensure_category_row`` contract across three layouts: the canonical flat-table
+grid, legacy copy-paste month blocks, and the multi-year layout. Read-side helpers
+live in ``test_sheets_read.py``; in-place column writes in ``test_sheets_append.py``."""
 
 from datetime import date
 
@@ -256,14 +244,9 @@ class TestEnsureCategoryRowMultiYear:
         assert row == 2
 
     def test_inserts_between_year_blocks(self):
-        """The most common production case: a brand-new (year, month)
-        block must land between two existing year blocks, not at the
-        top or bottom. Walking newest→oldest, we stop at the first
-        strictly-older row.
-
-        Layout: Apr 2027 (2..3), Mar 2027 (4), Apr 2026 (5..6).
-        Logging Feb 2027 → must land at row 5 (after Mar 2027,
-        before Apr 2026)."""
+        """A new (year, month) block must land between two existing blocks, not at
+        the top or bottom: logging Feb 2027 must land at row 5, after Mar 2027 and
+        before Apr 2026."""
 
         sheet = [row[:] for row in self.MULTIYEAR_SHEET]
         ws = _make_worksheet(sheet)

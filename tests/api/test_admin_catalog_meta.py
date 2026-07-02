@@ -1,15 +1,6 @@
-"""Cross-cutting admin-catalog plumbing tests.
-
-Pins the ``catalog_version`` end-to-end surface that doesn't fit the
-per-verb (add/patch/delete) files: every mutation must bump the
-counter and the value must surface both in ``GET /api/catalog`` JSON
-and in its weak ``ETag`` header so the PWA can ``If-None-Match`` the
-snapshot.
-
-Sibling files cover add (:file:`test_admin_catalog_add.py`),
-patch (:file:`test_admin_catalog_patch.py`), and delete
-(:file:`test_admin_catalog_delete.py`).
-"""
+"""Cross-cutting admin-catalog plumbing: every mutation must bump
+``catalog_version`` and surface it in both the JSON body and the weak ETag.
+Sibling files cover add, patch, and delete."""
 
 import allure
 

@@ -1,14 +1,6 @@
-"""Tests for the ``_drain_one_job`` per-row contract.
-
-Sibling files:
-
-* :file:`test_sheet_logging_derive.py` —
-  ``_derive_app_currency_amount_for_sheet``.
-* :file:`test_sheet_logging_drain.py` — drain_pending happy path,
-  poisoning, fallback, counters.
-* :file:`test_sheet_logging.py` — idempotency / circuit breaker /
-  disabled / lock conflict / rate limit.
-"""
+"""Tests for the ``_drain_one_job`` per-row contract. Sibling files cover derive
+(``test_sheet_logging_derive.py``), drain happy-path (``test_sheet_logging_drain.py``),
+and idempotency/circuit-breaker (``test_sheet_logging.py``)."""
 
 from unittest.mock import MagicMock, patch
 
@@ -75,15 +67,9 @@ class TestDrainOneJobReturnContract:
 @allure.feature("Sheet logging")
 @allure.story("Drain one job")
 class TestDrainOneJobClaimStolen:
-    """When ``clear_logging_job`` returns False after we already appended
-    to Sheets, ``_drain_one_job`` must:
-
-    1. Force-delete the queue row (so the next sweep can't trigger a
-       third append).
-    2. Surface the outcome as ``RECOVERED_WITH_DUPLICATE`` — distinct
-       from ``FAILED`` so the sweep summary tells "audit the sheet"
-       from "retry pending" apart.
-    """
+    """After an already-appended row's claim is stolen, must force-delete the
+    queue row and surface ``RECOVERED_WITH_DUPLICATE`` (distinct from ``FAILED``,
+    so the sweep summary distinguishes "audit the sheet" from "retry pending")."""
 
     @patch("dinary.background.sheet_logging.sheet_logging.get_sheet")
     @patch("dinary.background.sheet_logging.sheet_logging.get_rate", return_value="117.0")
@@ -132,11 +118,8 @@ class TestDrainOneJobClaimStolen:
         mock_sheet,
         setup,
     ):
-        """Operator-wipe sub-case: the queue row was deleted out from
-        under us mid-append. Both ``clear_logging_job`` and
-        ``force_clear_logging_job`` find nothing, but we still surface
-        ``RECOVERED_WITH_DUPLICATE`` — we cannot distinguish this case
-        from a stolen claim and over-warning is safer than silently
+        """Even if the row was operator-wiped (not stolen), still surfaces
+        ``RECOVERED_WITH_DUPLICATE`` — over-warning is safer than silently
         leaking a duplicate."""
         ws = MagicMock()
         values = [["header"], ["row1"], ["row2"], ["row3"]]

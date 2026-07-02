@@ -20,12 +20,8 @@ class CurrencyAddBody(BaseModel):
 
 
 class CurrencyListResponse(BaseModel):
-    """Saved-currency list returned by GET/POST/DELETE /api/currencies.
-
-    ``default_code`` is the env-seeded ``settings.app_currency`` and
-    is reported separately so the PWA can pin it in the picker and
-    refuse to delete it client-side. Server still enforces the rule.
-    """
+    """``default_code`` is reported separately so the PWA can pin it and refuse
+    client-side deletion; the server still enforces the rule."""
 
     codes: list[str]
     default_code: str

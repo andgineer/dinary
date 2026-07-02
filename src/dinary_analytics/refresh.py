@@ -59,12 +59,8 @@ def save_server_address(
     set_address_configured: Callable[[bool], None],
     set_refresh_requested: Callable[[bool], None],
 ) -> None:
-    """Persist the server address and request a refresh, or warn if it's blank.
-
-    ``set_refresh_requested`` lets the caller wake the refresh daemon across
-    process boundaries (the daemon's wake event is per-process, so it can't be
-    triggered directly from the notebook process).
-    """
+    """``set_refresh_requested`` lets the caller wake the refresh daemon across
+    process boundaries (its wake event is per-process)."""
     _url = url.strip()
     if not _url:
         set_address_warning(True)

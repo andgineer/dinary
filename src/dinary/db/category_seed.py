@@ -1,15 +1,6 @@
 """Seed and reconcile the category catalog from packaged template files.
-
-``src/dinary/category_templates/`` ships the category vocabulary
-(``categories.yml``) and one factory template per onboarding choice
-(``*.yaml``). ``seed_category_templates`` loads them into ``categories`` /
-``category_groups`` / ``category_translations`` / ``category_templates`` by
-``code``: insert new factory codes, update existing rows in place, and retire
-factory codes that dropped out of the vocabulary. ``u_``-prefixed
-(user-created) codes are never touched.
-
-``bootstrap_categories`` is the single entry point, called on every app
-boot, to seed / reconcile the factory vocabulary and templates.
+``bootstrap_categories`` is the single entry point, called on every app boot.
+See ``specs/reference/category-templates.md``.
 """
 
 import json

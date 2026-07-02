@@ -20,13 +20,8 @@ def data_dir(tmp_path, monkeypatch):
 
 
 def _seed_income(con) -> None:
-    """Seed two years: 2024 has 12 full months, 2025 has only 3.
-
-    2025's partial-year layout exercises the ``avg_month = total /
-    months-with-data`` contract — with a 12-month divisor the
-    average would halve, and the fixture would no longer catch
-    future drift.
-    """
+    """2025's partial-year layout exercises ``avg_month = total /
+    months-with-data`` — a 12-month divisor would halve it and hide drift."""
     for month in range(1, 13):
         con.execute(
             "INSERT INTO income (year, month, income_date, amount, amount_original, currency_original)"
@@ -144,12 +139,8 @@ class TestRun:
 @allure.epic("Reports")
 @allure.feature("Income")
 class TestRenderJson:
-    """The remote-execution path ships raw rows as JSON (``inv report-income
-    --remote`` runs the query on the server, the client renders locally).
-    These tests pin the wire format so a future refactor of the CLI
-    renderers cannot silently drift the serialization used by the
-    ``tasks.py`` transport layer.
-    """
+    """Pins the JSON wire format ``inv report-income --remote`` relies on so a
+    renderer refactor can't silently drift the transport layer's serialization."""
 
     def test_emits_valid_json_array(self, _seeded_con):
         rows = income_report.aggregate_income(_seeded_con)

@@ -1,15 +1,6 @@
-"""POST /api/catalog/<kind> tests.
-
-Pin the add-side surface: snapshot return shape (so the PWA can swap
-its cache without a second round-trip), the ``ETag`` header for the
-new ``catalog_version``, the ``status`` field that distinguishes
-``created`` / ``noop`` / ``reactivated``, and the date-range
-validation on event creation.
-
-Sibling files cover patch (:file:`test_admin_catalog_patch.py`),
-delete (:file:`test_admin_catalog_delete.py`), and version
-plumbing (:file:`test_admin_catalog_meta.py`).
-"""
+"""POST /api/catalog/<kind> tests: snapshot shape, ETag, status field
+(created/noop/reactivated), event date-range validation. Sibling files cover
+patch, delete, and version plumbing."""
 
 import allure
 

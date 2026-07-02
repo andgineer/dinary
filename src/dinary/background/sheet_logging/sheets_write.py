@@ -15,10 +15,7 @@ from dinary.sheets.sheets import (
 
 logger = logging.getLogger(__name__)
 
-# Logging-sheet column numbers (1-indexed):
-#   A=Date  B=AppCurrency(formula)  C=EUR(formula)  D=Category  E=Group
-#   F=Comment  G=Month  H=Rate  J=LastClientExpenseId
-# Column I is intentionally skipped to leave the human-visible A..H block intact.
+# 1-indexed columns, see specs/reference/sheets.md "Logging column layout".
 COL_DATE = 1
 COL_AMOUNT_APP = 2
 COL_COMMENT = 6
@@ -36,13 +33,8 @@ def insert_logging_row(
     *,
     rate: str | None = None,
 ) -> None:
-    """Insert a blank row at *insert_at* and populate its cells.
-
-    H is written as an explicit empty string when *rate* is None so that
-    ``append_expense_atomic``'s set-if-missing guard can distinguish "H was
-    never touched" from "H was touched and left blank" — both come back as
-    ``""`` from batch_get, but the placeholder enables the backfill path.
-    """
+    """H is written as an explicit empty string when *rate* is None, enabling
+    ``append_expense_atomic``'s set-if-missing backfill path."""
     ws.insert_rows([[]], row=insert_at)
     r = insert_at
     date_str = expense_date.replace(day=1).strftime("%Y-%m-%d")
@@ -146,15 +138,8 @@ def append_expense_atomic(
     rate: str | None = None,
 ) -> bool:
     """Idempotently append one expense to *row*. Returns False if already recorded.
-
-    Reads B/F/J/H in one batch_get, then writes new B + J (+ F if comment,
-    + H if rate and H is empty) in one batch_update. The atomic read-then-write
-    closes the timeout-after-success duplicate hole: the marker lands together
-    with the formula it accounts for.
-
-    J stores only the most recent ``client_expense_id`` (last-key-only).
-    H is only backfilled when empty (set-if-missing).
-    """
+    One atomic batch_get + batch_update closes the timeout-after-success duplicate
+    hole — see ``specs/reference/sheets.md`` for the column-J idempotency contract."""
     formula_addr = gspread.utils.rowcol_to_a1(row, COL_AMOUNT_APP)
     comment_addr = gspread.utils.rowcol_to_a1(row, COL_COMMENT)
     marker_addr = gspread.utils.rowcol_to_a1(row, COL_EXPENSE_IDS)

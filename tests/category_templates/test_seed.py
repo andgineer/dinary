@@ -1,5 +1,3 @@
-"""Tests for dinary.db.category_seed: idempotent fresh-seed and reconcile."""
-
 import allure
 import pytest
 
@@ -114,9 +112,8 @@ class TestReconcile:
         assert fk_problems == []
 
     def test_retired_rows_always_have_is_active_zero(self, con, monkeypatch):
-        """Invariant guard: ``VISIBLE_CATEGORY_PREDICATE`` and the frontend
-        ``visibleCategories`` computed both rely on ``_retire_vanished`` always
-        pairing ``is_retired=1`` with ``is_active=0``."""
+        """``VISIBLE_CATEGORY_PREDICATE`` and the frontend ``visibleCategories``
+        both rely on ``is_retired=1`` always pairing with ``is_active=0``."""
         vocab1, templates1 = _fixture(["alpha", "beta", "gamma"])
         monkeypatch.setattr(loader, "load_vocabulary", lambda: vocab1)
         monkeypatch.setattr(loader, "load_templates", lambda: templates1)

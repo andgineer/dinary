@@ -1,12 +1,4 @@
-"""Shared fixtures + helpers for the split ``test_sheet_logging_*.py``
-files.
-
-Underscore prefix keeps pytest from collecting this as a test module.
-The autouse fixtures stay scoped to the sheet-logging suite (imported
-into each split file rather than promoted to ``conftest.py``) so the
-per-test DB-path override and the circuit-breaker reset do not leak
-into sibling tests.
-"""
+"""Underscore prefix keeps pytest from collecting this as a test module."""
 
 import shutil
 from datetime import datetime
@@ -39,12 +31,6 @@ def _reset_backoff():
 
 @pytest.fixture
 def setup(tmp_path, blank_db) -> int:
-    """Seed the unified DB with one expense and its queue row.
-
-    Returns the integer PK of that expense — the sheet-logging layer
-    now keys queue rows on ``expenses.id`` rather than on a legacy
-    string id.
-    """
     shutil.copy(blank_db, tmp_path / "dinary.db")
     con = storage.get_connection()
     try:
@@ -96,12 +82,6 @@ def _expense_row(
     amount_original: Decimal,
     currency_original: str,
 ) -> ExpenseRow:
-    """Minimal ``ExpenseRow`` factory for pure-helper tests.
-
-    ``_derive_app_currency_amount_for_sheet`` only reads ``amount``, ``amount_original``
-    and ``currency_original``; the rest exists solely to satisfy the
-    dataclass slots.
-    """
     return ExpenseRow(
         id=1,
         client_expense_id="x",

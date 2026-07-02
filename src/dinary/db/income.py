@@ -129,11 +129,8 @@ def update_income(
 
 
 def delete_income(con: sqlite3.Connection, income_id: int) -> None:
-    """Delete an income row by id. Raises ValueError if not found.
-
-    Also deletes the corresponding logging job when the last income for that
-    month is removed (no FK cascade since year/month is no longer a unique key).
-    """
+    """Also deletes the month's logging job when its last income row is removed
+    (no FK cascade — year/month is no longer a unique key)."""
     result = con.execute(
         "DELETE FROM income WHERE id = ? RETURNING year, month",
         [income_id],

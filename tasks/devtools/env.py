@@ -13,23 +13,10 @@ from .constants import (
 
 
 def _env():
-    """Read runtime env vars from ``.deploy/.env`` (the post-refactor canonical path).
-
-    The legacy top-level ``.env`` is deliberately no longer consulted:
-    it was removed in the same change that introduced
-    ``.deploy/.env``, and keeping a silent fallback would make
-    mis-scoped env vars hard to spot. ``.env.example`` has also been
-    deleted in favour of ``.deploy.example/.env``.
-
-    Sanity checks beyond "file exists" — the file must also be
-    non-empty and not byte-equal to ``.deploy.example/.env``. Both
-    failure modes are operator mistakes that would otherwise propagate
-    silently: an empty ``.deploy/.env`` produces "No DINARY_* settings
-    found" deep inside ``_sync_remote_env``, and an unedited copy of
-    the template ships placeholder values (``ubuntu@<PUBLIC_IP>``) to
-    prod, which then fail at SSH time with an opaque DNS error. Fail
-    fast here with an actionable message instead.
-    """
+    """Reads ``.deploy/.env``. Fails fast (with an actionable message) if the file
+    is missing, empty, or byte-equal to the template — an unedited template ships
+    placeholder values (``ubuntu@<PUBLIC_IP>``) to prod and fails at SSH time with
+    an opaque DNS error otherwise."""
     local_path = Path(LOCAL_ENV_PATH)
     if not local_path.exists():
         print(
@@ -59,18 +46,10 @@ def _env():
 
 
 def bind_host(tunnel: str) -> str:
-    """Return the ``--host`` value ``uvicorn`` should bind to.
-
-    Tunnel ``none`` exposes the service directly on the public
-    interface; ``tailscale`` / ``cloudflare`` front it so we stay on
-    loopback. Shared by ``setup`` and ``deploy`` so both paths render
-    the same ``DINARY_SERVICE`` unit file.
-
-    For ``tailscale``, uvicorn binds to ``127.0.0.1`` so that
-    ``tailscale serve`` (which proxies ``https://hostname.ts.net`` →
-    ``http://127.0.0.1:8000``) can reach it. Binding to the Tailscale
-    IP instead breaks the HTTPS proxy and forces clients onto plain HTTP.
-    """
+    """``tailscale``/``cloudflare`` bind to loopback so the proxy can reach them
+    (``tailscale serve`` proxies to ``127.0.0.1`` specifically — binding the
+    Tailscale IP instead breaks HTTPS and forces clients onto plain HTTP).
+    ``none`` binds the public interface directly."""
     if tunnel == "none":
         return "0.0.0.0"  # noqa: S104
     return "127.0.0.1"
@@ -85,14 +64,8 @@ def host():
 
 
 def replica_host():
-    """Read the Litestream replica host (VM2) from ``.deploy/.env``.
-
-    Separate from :func:`_host` because the replica is a distinct VM
-    with its own MagicDNS/Tailscale identity, owns no Python app, and
-    must never receive ``inv deploy``. Keeping the two hosts in
-    independent env vars makes it impossible for a typo in one to
-    accidentally target the other.
-    """
+    """Separate from :func:`_host`: the replica is a distinct VM that must never
+    receive ``inv deploy``, so a typo can't accidentally target the wrong one."""
     h = _env().get("DINARY_REPLICA_HOST")
     if not h:
         print(
@@ -103,13 +76,7 @@ def replica_host():
 
 
 def litestream_retention() -> str:
-    """Read the Litestream WAL retention window from ``.deploy/.env``.
-
-    Defaults to ``168h`` (7 days) when the key is absent so existing
-    deployments are unaffected. Change ``DINARY_LITESTREAM_RETENTION``
-    in ``.deploy/.env`` to tune per-deployment (e.g. ``336h`` for two
-    weeks on a production box with more disk space).
-    """
+    """Defaults to ``168h`` (7 days) when unset, so existing deployments are unaffected."""
     return _env().get("DINARY_LITESTREAM_RETENTION") or "168h"
 
 

@@ -1,14 +1,4 @@
-"""Shared autouse fixture for the split ``test_admin_catalog_*.py``
-files.
-
-Each test gets a per-call temporary SQLite DB pre-seeded with a
-single category group (id=1) so the split files can ``POST`` new
-categories under it without first issuing a setup request. Pytest
-auto-discovers this module via the per-test ``noqa: F401`` import
-in each split file (we deliberately avoid promoting it to
-``conftest.py`` so the override does not bleed into sibling
-non-admin suites).
-"""
+"""Not promoted to conftest.py: doing so would leak this per-test DB override into sibling non-admin suites."""
 
 import shutil
 

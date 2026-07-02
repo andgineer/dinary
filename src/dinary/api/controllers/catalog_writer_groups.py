@@ -19,21 +19,9 @@ from dinary.db import storage
 
 
 def _group_usage_count(con: sqlite3.Connection, group_id: int) -> int:
-    """Active child count for observability in ``edit_group``.
-
-    Distinct from ``_group_child_category_count`` (used by
-    ``delete_group``) which counts *all* children, active or not. The
-    distinction is intentional:
-
-    * ``edit_group(is_active=False)`` asks "is this group still
-      relevant to the operator?" — an inactive category is already
-      hidden from new expenses, so it should not block flipping the
-      parent inactive.
-    * ``delete_group`` asks "is it safe to physically remove this row?"
-      — FK from ``categories.group_id`` does not care about
-      ``is_active`` so any surviving category row, active or not, will
-      cause a constraint violation.
-    """
+    """Active-only count for ``edit_group``, unlike :func:`_group_child_category_count`
+    (used by ``delete_group``) which counts all children — the FK doesn't care about
+    ``is_active``, but deactivating a group shouldn't be blocked by already-hidden ones."""
     row = con.execute(
         "SELECT COUNT(*) FROM categories WHERE group_id = ? AND is_active",
         [group_id],
@@ -45,13 +33,7 @@ def _group_child_category_count(
     con: sqlite3.Connection,
     group_id: int,
 ) -> int:
-    """Total categories (active or inactive) pointing at this group.
-
-    Used by ``delete_group`` to gate physical removal: a non-zero
-    count means the ``categories.group_id`` FK would reject the
-    ``DELETE``, so the operator has to relocate or delete the
-    children first.
-    """
+    """Gates ``delete_group``: a non-zero count means the FK would reject the DELETE."""
     row = con.execute(
         "SELECT COUNT(*) FROM categories WHERE group_id = ?",
         [group_id],
@@ -118,15 +100,8 @@ def edit_group(
     sort_order: int | None = None,
     is_active: bool | None = None,
 ) -> None:
-    """Atomic PATCH for ``category_groups``.
-
-    All parameters optional; absent parameters are left unchanged.
-    ``is_active=False`` enforces the same in-use guard as the legacy
-    ``set_group_active``. Validations (not-found, conflict, in-use)
-    run *before* any UPDATE so a failed validation never leaves the
-    row half-edited even if the caller PATCHes multiple columns at
-    once.
-    """
+    """Atomic PATCH: validations (not-found, conflict, in-use) run before any
+    UPDATE so a failure never leaves the row half-edited."""
     con.execute("BEGIN IMMEDIATE")
     try:
         before = hash_state(con)
@@ -183,15 +158,8 @@ def delete_group(
     con: sqlite3.Connection,
     group_id: int,
 ) -> DeleteResult:
-    """Hard-delete a category group iff it has no (active or inactive)
-    categories referencing it; raise 409 otherwise.
-
-    Unlike the other catalog kinds, soft-deleting a group while
-    categories still point at it leaves orphaned ``is_active=TRUE``
-    categories attached to an inactive group — the API refuses that
-    combination outright and forces the operator to relocate (or
-    delete) the categories first.
-    """
+    """Hard-delete iff no categories reference this group; raise 409 otherwise
+    (stricter than other catalog kinds, see ``specs/reference/catalog-api.md``)."""
     con.execute("BEGIN IMMEDIATE")
     try:
         before = hash_state(con)

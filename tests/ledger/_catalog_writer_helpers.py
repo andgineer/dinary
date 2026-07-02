@@ -1,11 +1,4 @@
-"""Shared fixtures + seed helpers for the split
-``test_catalog_writer_*.py`` files.
-
-Underscore prefix keeps pytest from collecting this as a test
-module. Per-suite scope (rather than ``conftest.py`` promotion) so
-the per-call SQLite path override does not bleed into sibling
-non-catalog suites that have their own DB autouse machinery.
-"""
+"""Underscore prefix keeps pytest from collecting this as a test module."""
 
 import shutil
 from datetime import datetime

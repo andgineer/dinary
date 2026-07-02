@@ -27,16 +27,8 @@ from tasks.ssh_utils import ssh_replica_capture_bytes
 
 
 def replica_list_snapshots():
-    """List Yadisk snapshots by asking VM2 over SSH.
-
-    Used by :func:`backup_status` so the monitoring path reuses the
-    already-configured ``yandex:`` remote on VM2. The laptop can
-    then run freshness checks from cron without keeping its own
-    Yandex WebDAV credentials.
-
-    Shape/sort contract is inherited from
-    :func:`dinary.tools.backup_snapshots.parse_snapshot_lsjson`.
-    """
+    """Reuses VM2's already-configured ``yandex:`` remote, so the laptop can run
+    freshness checks from cron without its own Yandex credentials."""
     raw = ssh_replica_capture_bytes(
         f"rclone lsjson {BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}/ --files-only",
     ).decode("utf-8")

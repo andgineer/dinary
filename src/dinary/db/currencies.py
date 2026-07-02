@@ -1,11 +1,5 @@
-"""Repository helpers for the saved-currencies table.
-
-The PWA picker shows whatever codes the operator has saved here,
-plus a world-currency search and a manage-mode that ``add`` /
-``remove``s rows. The default ``app_currency`` is always present
-(seeded on first boot, deletion guarded by the API layer) so the
-picker is never empty.
-"""
+"""Repository helpers for the saved-currencies table. The default
+``app_currency`` is always present (seeded on boot, deletion API-guarded)."""
 
 import logging
 import sqlite3
@@ -65,13 +59,8 @@ def has_currency(con: sqlite3.Connection, code: str) -> bool:
 
 
 def seed_default_if_empty(con: sqlite3.Connection, default_code: str) -> None:
-    """Insert ``default_code`` if the table is empty.
-
-    Called from ``db.init_db`` so a fresh DB starts with the
-    operator's chosen ``app_currency`` already in the picker. No-op
-    once any row exists, so operators are free to add/remove
-    currencies later without the seed re-asserting itself on reboot.
-    """
+    """No-op once any row exists, so operators can add/remove currencies later
+    without the seed re-asserting itself on reboot."""
     canonical = _normalise_code(default_code)
     row = con.execute("SELECT 1 FROM app_currencies LIMIT 1").fetchone()
     if row is not None:

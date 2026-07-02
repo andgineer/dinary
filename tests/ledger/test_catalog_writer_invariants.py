@@ -1,20 +1,3 @@
-"""Invariant tests for ``catalog_writer``.
-
-Pin two groups of cross-cutting rules every mutation must obey:
-
-* ``catalog_version`` bookkeeping — observable changes (add /
-  reactivate) bump the counter exactly once; idempotent no-op
-  rewrites do not.
-* Reactivate preserves "optional" columns that the caller didn't
-  explicitly touch (``date_from``/``date_to``, ``auto_attach_enabled``)
-  so a reactivate request body can stay minimal.
-* Integrity rules — event ranges must satisfy ``date_from <= date_to``,
-  including on the reactivate path.
-
-PATCH-side fine-grain rollback / partial-update semantics live in
-:file:`test_catalog_writer_patch.py`.
-"""
-
 from datetime import date
 
 import allure
@@ -133,19 +116,7 @@ class TestIntegrityRules:
             con.close()
 
     def test_add_event_reactivate_still_validates_inverted_incoming_dates(self, fresh_db):
-        """Reactivating an existing-but-inactive event must 422 on an
-        inverted ``date_from``/``date_to`` body, even though the
-        reactivate branch never actually applies those values to the
-        stored row.
-
-        Rationale: ``add_event`` treats the request body as an assertion
-        of intent ("I want an event with these fields"), and honouring a
-        body we know is invalid would let an operator ship garbage under
-        a valid-looking 200 response. Keeping validation symmetric with
-        ``edit_event`` also means the PWA sees the same 422 whether it
-        hits the add-or-reactivate path or the dedicated edit endpoint.
-        Stored fields stay frozen on reactivate (see docstring) — the
-        caller must use ``edit_event`` to actually change them."""
+        """Validates the incoming body even though reactivate never applies it to the stored row."""
         con = storage.get_connection()
         try:
             con.execute(

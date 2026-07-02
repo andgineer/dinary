@@ -1,23 +1,8 @@
-"""Resolution + DB-projection tests for ``sheet_mapping``.
-
-Covers:
-
-* ``resolve_projection`` — pure "first non-``*`` wins per column"
-  algorithm, applied independently across sheet_category and
-  sheet_group.
-* ``_atomic_swap`` — DB transaction: wipes the previous map and
-  inserts the new one inside a single connection so a mid-way crash
-  cannot leave a half-applied mapping.
-* ``_load_catalog`` — must ignore ``is_active = FALSE`` so that
-  hiding a single tag from the PWA picker does not wedge map-tab
-  reload.
-* event ``auto_tags`` JSON helpers — id resolution, malformed JSON
-  tolerance, inactive-tag survival.
-
-Parsing lives in :file:`test_sheet_mapping_parse.py`; the reload /
-``ensure_fresh`` pipeline lives in
-:file:`test_sheet_mapping_reload.py`.
-"""
+"""Resolution + DB-projection tests for ``sheet_mapping``: ``resolve_projection``'s
+first-non-``*``-wins algorithm, ``_atomic_swap``'s crash-safety, ``_load_catalog``'s
+inactive-row tolerance, and event ``auto_tags`` JSON helpers. Parsing and the
+reload/``ensure_fresh`` pipeline live in the sibling ``test_sheet_mapping_parse.py``
+and ``test_sheet_mapping_reload.py``."""
 
 import allure
 
@@ -210,12 +195,8 @@ class TestAtomicSwap:
 @allure.epic("Sheets Sync")
 @allure.feature("Sheet mapping")
 class TestLoadCatalog:
-    """``_load_catalog`` must include inactive categories / events /
-    tags. ``is_active = FALSE`` is a "hide from the picker"
-    affordance and must not break map-tab reload — otherwise the
-    operator hiding a single auto-tag wedges the whole reload
-    pipeline with a ``MapTabError`` on every tick.
-    """
+    """``is_active = FALSE`` is a "hide from the picker" affordance and must not
+    break map-tab reload — otherwise hiding one tag wedges the whole pipeline."""
 
     def test_loads_inactive_tags(self):
         con = storage.get_connection()
@@ -245,12 +226,8 @@ class TestLoadCatalog:
         assert event_id_by_name.get("vacation-2026") == 1
 
     def test_parse_rows_accepts_inactive_tag_reference(self):
-        """End-to-end: when the catalog loader picks up an inactive tag,
-        ``parse_rows`` must accept a map-tab row that references it.
-        This pins the exact user-reported failure mode — a map-tab
-        row ``*,*,travel,*,travel`` surviving the operator
-        deactivating "travel" via the PWA catalog manager.
-        """
+        """End-to-end: ``parse_rows`` must accept a map-tab row referencing a tag
+        the catalog loader marked inactive."""
         con = storage.get_connection()
         try:
             con.execute("UPDATE tags SET is_active = FALSE WHERE id = 3")

@@ -1,15 +1,3 @@
-"""Tests for the ``_derive_app_currency_amount_for_sheet`` helper.
-
-Sibling files:
-
-* :file:`test_sheet_logging_drain.py` — drain_pending happy path,
-  poisoning, fallback, counters.
-* :file:`test_sheet_logging_drain_one.py` — _drain_one_job
-  return-contract + post-append claim-stolen recovery.
-* :file:`test_sheet_logging.py` — idempotency / circuit breaker /
-  disabled / lock conflict / rate limit.
-"""
-
 from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
@@ -29,18 +17,9 @@ from _sheet_logging_helpers import (  # noqa: F401  (autouse + helper)
 @allure.epic("Sheets Sync")
 @allure.feature("Sheet logging")
 class TestDeriveRsdForSheet:
-    """Column B on the Sheets mirror is RSD-denominated (the sheet's
-    native "original" currency post-Apr-2022). DB rows are stored in
-    ``settings.accounting_currency`` (EUR by default). The helper must
-    bridge that gap without ever writing a wrong-currency amount.
-    """
-
     _DATE = date(2026, 4, 14)
 
     def test_rsd_input_returns_amount_original_verbatim(self):
-        """PWA default path: operator typed in RSD, so ``amount_original``
-        is already the correct sheet value. No rate lookup, no rounding
-        drift — bit-identical to what the user saw in the app."""
         row = _expense_row(
             amount=Decimal("12.82"),
             amount_original=Decimal("1500.00"),
@@ -62,10 +41,6 @@ class TestDeriveRsdForSheet:
         self,
         monkeypatch,
     ):
-        """Default setup: ``accounting_currency=EUR``, expense stored
-        in EUR, operator typed in some non-RSD currency. Helper must
-        use the already-fetched EUR/RSD column-H rate — no second
-        ``get_rate`` call."""
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
         row = _expense_row(
             amount=Decimal("10.00"),
@@ -83,9 +58,6 @@ class TestDeriveRsdForSheet:
         mock_rate.assert_not_called()
 
     def test_eur_accounting_without_rate_returns_none(self, monkeypatch):
-        """``app_currency_rate=None`` means no rate available for the expense
-        date. Helper must signal failure (``None``) so the caller
-        requeues the job — never silently write 0 or a stale value."""
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
         row = _expense_row(
             amount=Decimal("10.00"),

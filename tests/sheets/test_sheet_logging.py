@@ -1,18 +1,7 @@
-"""Edge-case tests for the sheet-logging queue.
-
-Idempotency-marker, ``DINARY_SHEET_LOGGING_SPREADSHEET=""`` short-circuit,
-circuit-breaker module-level state, ``claim_logging_job`` lock conflict,
-and ``drain_pending``'s rate-limit / inter-row delay knobs.
-
-Sibling files cover the larger surfaces:
-
-* :file:`test_sheet_logging_derive.py` —
-  ``_derive_app_currency_amount_for_sheet``.
-* :file:`test_sheet_logging_drain.py` — drain_pending happy path,
-  poisoning, fallback, counters.
-* :file:`test_sheet_logging_drain_one.py` — ``_drain_one_job``
-  return-contract + post-append claim-stolen recovery.
-"""
+"""Edge-case tests for the sheet-logging queue: idempotency marker, spreadsheet-unset
+short-circuit, circuit-breaker state, job-lock conflict, rate-limit knobs. Sibling
+files cover derive (``test_sheet_logging_derive.py``), drain happy-path
+(``test_sheet_logging_drain.py``), and single-job drain (``test_sheet_logging_drain_one.py``)."""
 
 import sqlite3
 from datetime import datetime
@@ -110,13 +99,8 @@ class TestClaimLoggingJobLockConflict:
 
     def test_lock_conflict_on_begin_returns_none(self, setup):
         expense_pk = setup
-        # Provoke a real SQLite write-lock conflict, not a mock: one
-        # connection holds ``BEGIN IMMEDIATE`` (the write lock); a
-        # second connection opened with ``timeout=0`` cannot wait for
-        # it and ``BEGIN IMMEDIATE`` from ``claim_logging_job`` surfaces
-        # as ``OperationalError("database is locked")`` immediately.
-        # This is the exact runtime shape two drain workers hit when
-        # they race on the same queue row.
+        # A real write-lock conflict (timeout=0, not a mock): the exact shape
+        # two drain workers hit racing on the same queue row.
         holder = storage.get_connection()
         loser = sqlite3.connect(
             str(storage.DB_PATH),
@@ -138,10 +122,8 @@ class TestClaimLoggingJobLockConflict:
 @allure.epic("Sheets Sync")
 @allure.feature("Sheet logging")
 class TestDrainRateLimit:
-    """Rate-limiting and inter-row sleep on ``drain_pending``. The
-    single-DB refactor dropped the TTL + year-window code paths, so the
-    remaining surface is just ``max_attempts_per_iteration`` and
-    ``inter_row_delay_sec``."""
+    """Rate-limiting and inter-row sleep on ``drain_pending``:
+    ``max_attempts_per_iteration`` and ``inter_row_delay_sec``."""
 
     def _insert_additional_expenses(self, n: int) -> None:
         con = storage.get_connection()

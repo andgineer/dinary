@@ -1,18 +1,6 @@
-"""VM2 (Litestream replica) bootstrap and resync tasks.
-
-Three layers, all routed through this module:
-
-* Pure script builders (``_build_setup_replica_*``) — emit the bash
-  blobs that VM2 ultimately runs. Tests pin their observable contract.
-* :func:`setup_replica` — the orchestrator that wires the four
-  bootstrap steps (packages, dir, swap, ssh hardening) and configures
-  VM1's Litestream replicator to push to VM2.
-* :func:`replica_resync` — post-restore housekeeping that resets the
-  replica's WAL position by deleting its stale DB copy and restarting
-  litestream so it pulls a fresh restore.
-* :func:`replica_restore_db` — restore a snapshot from VM2's LTX
-  archive and download it to the laptop for inspection or recovery.
-"""
+"""VM2 (Litestream replica) bootstrap and resync tasks: pure script builders
+(``_build_setup_replica_*``), the :func:`setup_replica` orchestrator, and
+post-restore housekeeping (:func:`replica_resync`, :func:`replica_restore_db`)."""
 
 from pathlib import Path
 
@@ -63,25 +51,12 @@ from .restore_utils import apply_restore, confirm_overwrite, litestream_active, 
 
 
 def _replica_sftp_host() -> str:
-    """Return the bare hostname for ssh-keyscan, derived from ``DINARY_REPLICA_HOST``.
-
-    Strips the ``user@`` prefix so the result matches what Litestream
-    puts in known_hosts (host only, no user, no port).
-    """
+    """Strips the ``user@`` prefix to match what Litestream puts in known_hosts."""
     return replica_host().split("@", 1)[-1]
 
 
 def _build_litestream_config() -> str:
-    """Generate ``/etc/litestream.yml`` content from ``.deploy/.env`` + constants.
-
-    All values are derived automatically — no manual template to fill in:
-    - SFTP host + user: parsed from ``DINARY_REPLICA_HOST``
-    - key-path: ``VM1_LITESTREAM_KEY_PATH`` (constant, generated once by
-      ``inv setup-replica``)
-    - path: ``REPLICA_LITESTREAM_DIR/REPLICA_DB_NAME`` (constant)
-    - retention: ``DINARY_LITESTREAM_RETENTION`` from ``.deploy/.env``
-      (default ``168h``)
-    """
+    """All values derived from ``.deploy/.env`` + constants — no manual template."""
     rhost = replica_host()
     if "@" in rhost:
         user, host_part = rhost.split("@", 1)
@@ -107,17 +82,8 @@ def _build_litestream_config() -> str:
 
 
 def _build_setup_replica_packages_script() -> str:
-    """Emit the apt step of the replica bootstrap.
-
-    Kept as a pure helper so tests can pin the observable contract
-    (non-interactive apt, explicit ``unattended-upgrades`` install)
-    without mocking SSH.
-
-    ``DEBIAN_FRONTEND=noninteractive`` is required: without it
-    ``apt-get install`` on a fresh Ubuntu cloud image can block on a
-    postfix / grub debconf prompt that the replica never answers,
-    turning the bootstrap into a silent hang.
-    """
+    """``DEBIAN_FRONTEND=noninteractive`` is required — without it a fresh Ubuntu
+    image can block forever on a postfix/grub debconf prompt."""
     return (
         "sudo bash <<'DINARY_REPLICA_PKG_EOF'\n"
         "set -euo pipefail\n"
@@ -129,17 +95,8 @@ def _build_setup_replica_packages_script() -> str:
 
 
 def _build_setup_replica_litestream_dir_script() -> str:
-    """Emit the ``/var/lib/litestream`` provisioning step.
-
-    Pinned via :data:`REPLICA_LITESTREAM_DIR` so the ``inv
-    litestream-setup`` replica URL on VM1 and the directory created
-    here on VM2 cannot drift apart silently.
-
-    Mode ``0750`` with ``ubuntu:ubuntu`` ownership lets the SFTP
-    receiver (logged in as ``ubuntu``) write WAL segments without
-    granting world-read to the replica stream, which contains full
-    row data pre-compaction.
-    """
+    """Mode ``0750``/``ubuntu:ubuntu`` lets the SFTP receiver write WAL segments
+    without granting world-read to the replica stream (full row data pre-compaction)."""
     return (
         "sudo bash <<'DINARY_REPLICA_DIR_EOF'\n"
         "set -euo pipefail\n"
@@ -164,12 +121,9 @@ def _build_setup_replica_backup_packages_script() -> str:
 
 
 def _build_backup_script() -> str:
-    """Emit the ``/usr/local/bin/dinary-backup`` bash script for VM2.
-
-    Flow: litestream restore → integrity_check → zstd → rclone copyto yandex: → retention prune.
-    ``set -euo pipefail`` + trap ensures a failed restore never leaks temp files
-    or overwrites Yandex history with a corrupt snapshot.
-    """
+    """Flow: litestream restore -> integrity_check -> zstd -> rclone copyto -> retention
+    prune. ``set -euo pipefail`` + trap ensures a failed restore never leaks temp
+    files or overwrites Yandex history with a corrupt snapshot."""
     replica_path = f"{REPLICA_LITESTREAM_DIR}/{REPLICA_DB_NAME}"
     remote_prefix = f"{BACKUP_RCLONE_REMOTE}:{BACKUP_RCLONE_PATH}"
     return f"""#!/usr/bin/env bash
@@ -236,13 +190,8 @@ def _build_backup_service_unit() -> str:
 
 
 def _build_backup_timer_unit() -> str:
-    """Emit the ``dinary-backup.timer`` systemd unit for VM2.
-
-    03:17 UTC with 30m jitter: avoids top-of-hour Litestream snapshot
-    cadence on VM1, and ``Persistent=true`` catches missed runs after
-    a reboot-during-scheduled-slot so the 24h retention gap cannot
-    silently open.
-    """
+    """03:17 UTC with 30m jitter avoids top-of-hour Litestream cadence;
+    ``Persistent=true`` catches missed runs so the 24h retention gap can't open."""
     return (
         "# Managed by inv setup-replica. Overwritten on every re-apply.\n"
         "[Unit]\n"

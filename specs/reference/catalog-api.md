@@ -1,5 +1,12 @@
 # Catalog API — Architecture
 
+## Snapshot shape
+
+`GET /api/catalog` returns every row — active and inactive — for each entity
+type, each carrying an `is_active` flag. The PWA filters client-side and
+exposes a per-picker "show inactive" toggle rather than the server omitting
+retired rows.
+
 ## Version-gated writes
 
 Catalog mutations only bump `catalog_version` when the observable content
@@ -16,6 +23,15 @@ foreign keys into catalog rows, so deleting or renumbering a row would violate
 referential integrity. Instead, sync marks all rows inactive then upserts by
 name (natural key): matched rows are restored with their existing integer ID; new
 rows get the next ID; unmatched rows stay inactive but remain FK-valid.
+
+## Retirement and idempotent replay
+
+A category/tag retired after an expense was posted against it stays valid for
+that expense's idempotent replay (same `client_expense_id` and body) — the
+stored ledger row proves it was live when the original request was sent. A
+genuinely new POST against the retired value, or a replay with a different
+body, is rejected normally (422 new / 409 conflict): retirement never relaxes
+the conflict check itself.
 
 ## Soft vs hard delete
 
@@ -40,7 +56,8 @@ to show a delete button before the user attempts it — avoids a round-trip erro
 Event auto-tags are stored as tag IDs. At expense-insert time the stored IDs
 are resolved to live tag records. Tag deactivation (hiding from the picker)
 does not block auto-attach — retired tags still apply to events that reference
-them.
+them. A tag referenced only via `events.auto_tags` (zero ledger usage) still
+triggers soft-delete rather than a hard delete.
 
 ## Frequent categories
 

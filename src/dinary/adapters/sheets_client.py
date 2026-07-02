@@ -44,12 +44,9 @@ _drive_creds_lock = threading.Lock()
 
 
 def _drive_credentials() -> Credentials:
-    """Lazy-init Drive-only credentials; refresh() is not inside the lock.
-
-    Token refresh is safe to call concurrently (google-auth documents this).
-    Holding the lock across a network round-trip would serialise every drain
-    sweep behind every admin call.
-    """
+    """refresh() is deliberately outside the lock — google-auth documents it as
+    concurrency-safe, and holding the lock across a network round-trip would
+    serialise every drain sweep behind every admin call."""
     global _drive_creds  # noqa: PLW0603
     if _drive_creds is None:
         with _drive_creds_lock:

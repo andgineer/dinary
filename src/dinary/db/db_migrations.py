@@ -13,38 +13,10 @@ from yoyo.migrations import default_migration_table
 
 
 class SQLiteBackend(DatabaseBackend):
-    """Minimal yoyo backend for local SQLite files.
-
-    Keeps the dependency surface small: we only need ``apply_migrations`` +
-    ``to_apply`` with a single-file connection. The built-in yoyo SQLite
-    backend does more than we need (authentication helpers, alt drivers);
-    inlining the minimum keeps the build boring and makes the PRAGMA
-    configuration explicit.
-
-    ``PRAGMA foreign_keys=ON`` is applied on every connect so referential
-    integrity is enforced during migration DDL just like at runtime.
-    ``PRAGMA journal_mode=WAL`` is applied once on the DB file (it is
-    persisted across reopens by SQLite) so later runtime connections
-    also land in WAL mode; the Litestream sidecar requires that.
-
-    Note on connection paths: this backend deliberately does **not**
-    route through ``dinary.db.storage.connect`` because
-    yoyo manages the lifecycle (commit/rollback, savepoint dance)
-    and expects to own ``isolation_level`` and PRAGMA setup. Both
-    paths agree on the three invariants that matter for correctness
-    — ``isolation_level=None`` (autocommit + explicit BEGIN), FKs
-    on, WAL mode. The type-adapter registration in ``storage``
-    is a module-level side effect of importing it, so any
-    ``Decimal`` / ``date`` / ``datetime`` / ``BOOLEAN`` values that
-    happen to cross this backend's cursors still round-trip
-    correctly as long as ``storage`` has been imported at
-    least once in the process (which is true at runtime because
-    ``db`` imports it eagerly, and true in tests because
-    ``tests/conftest.py`` does the same). If a future migration
-    starts binding those Python types via ``?`` parameters, keep
-    this contract in mind or switch the backend over to
-    ``storage.connect``.
-    """
+    """Doesn't route through ``dinary.db.storage.connect`` because yoyo owns the
+    transaction/savepoint lifecycle; both paths agree on isolation_level=None, FKs on,
+    and WAL mode. ``Decimal``/``date``/``datetime`` values round-trip correctly only
+    because importing ``storage`` elsewhere registers the type adapters as a side effect."""
 
     driver_module = "sqlite3"
     list_tables_sql = "SELECT name FROM sqlite_master WHERE type = 'table'"
@@ -53,13 +25,8 @@ class SQLiteBackend(DatabaseBackend):
         con = self.driver.connect(dburi.database, isolation_level=None)
         con.execute("PRAGMA foreign_keys=ON")
         con.execute("PRAGMA journal_mode=WAL")
-        # Match the 5-second window every other connection carries
-        # (``storage.connect``'s default). Migrations normally
-        # run with the service stopped so contention is minimal, but
-        # if a stray operator tool still holds the write lock, the
-        # ``BEGIN IMMEDIATE`` below would otherwise raise
-        # ``SQLITE_BUSY`` immediately instead of waiting out the
-        # timeout.
+        # Matches storage.connect's default so a stray operator tool holding the
+        # write lock doesn't make BEGIN IMMEDIATE raise SQLITE_BUSY immediately.
         con.execute("PRAGMA busy_timeout=5000")
         return con
 

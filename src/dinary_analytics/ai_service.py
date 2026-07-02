@@ -1,5 +1,3 @@
-"""dinary-ai service: MCP ledger tools plus health and refresh-now HTTP routes."""
-
 import argparse
 import datetime
 import json
@@ -32,7 +30,6 @@ mcp = FastMCP("dinary-analytics")
 
 
 def _run_query(sql: str) -> str:
-    """Execute sql against the ledger replica and return JSON rows."""
     db_path = get_db_path()
     if db_path is None:
         raise ToolError(
@@ -52,11 +49,7 @@ def _run_query(sql: str) -> str:
 
 @mcp.tool()
 def query(sql: str) -> str:
-    """Execute a read-only SQL query against the dinary expense ledger.
-
-    Tables live in the 'ledger' schema — e.g. ledger.expenses, ledger.categories.
-    Only SELECT statements are accepted.
-    """
+    """Read-only SQL against the ledger schema (e.g. ledger.expenses). SELECT only."""
     return _run_query(sql)
 
 

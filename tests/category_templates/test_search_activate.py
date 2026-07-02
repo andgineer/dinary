@@ -1,5 +1,3 @@
-"""Tests for db.catalog.activate_category, hide_category, unhide_category."""
-
 import allure
 import pytest
 
@@ -60,9 +58,6 @@ class TestActivateCategory:
             activate_category(con, "does_not_exist")
 
     def test_places_in_active_template_group_when_unplaced(self, con):
-        """A category with no ``group_id`` (e.g. fresh from the vocabulary,
-        never placed by ``apply_template``) is placed using the active
-        template's definition on activation."""
         con.execute("UPDATE categories SET group_id = NULL WHERE code = 'fruit'")
 
         activate_category(con, "fruit")

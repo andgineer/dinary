@@ -19,24 +19,13 @@ from tasks import sql as sql_tool
 
 @pytest.fixture
 def seeded_db(tmp_path, monkeypatch):
-    """Point the runner at a tmp DB with a tiny expenses-like table.
-
-    Avoids bringing up the real schema: the SQL tool is schema-agnostic
-    (it just executes whatever SQL the operator types), so a 3-column
-    synthetic table is enough to exercise the column / row / value
-    coercion paths without coupling these tests to every migration.
-    Only ``settings.data_path`` needs monkeypatching because
-    ``sql._execute`` reads that directly rather than going through
-    ``db.DB_PATH`` (the stored-SQL runner is not relevant to
-    this ad-hoc tool).
-    """
+    """The SQL tool is schema-agnostic, so a synthetic 3-column table exercises
+    the coercion paths without coupling to every migration. Only
+    ``settings.data_path`` is patched — ``sql._execute`` reads that directly."""
     db_path = tmp_path / "dinary.db"
-    # Open read-write with foreign keys + WAL so the seed shape
-    # matches what the runtime repo produces; otherwise the subsequent
-    # read-only open might surface a "database is locked" on
-    # legacy rollback-journal mode.
     con = sqlite3.connect(str(db_path))
     try:
+        # WAL to match runtime shape; otherwise read-only open may see "database is locked".
         con.execute("PRAGMA journal_mode=WAL")
         con.execute("""
             CREATE TABLE sample (
@@ -111,11 +100,8 @@ class TestRenderCsv:
 @allure.feature("CLI tools")
 class TestRenderJson:
     def test_envelope_shape(self):
-        """The JSON envelope is the SSH wire format for ``inv sql
-        --remote`` — its shape (``columns`` / ``rows`` / ``row_count``)
-        is a contract, not an implementation detail. Verify ASCII
-        non-escape so Cyrillic survives ``jq`` without ``--raw-output``.
-        """
+        """The envelope shape is the SSH wire format contract; ASCII non-escape
+        so Cyrillic survives ``jq`` without ``--raw-output``."""
         buf = io.StringIO()
         sql_tool.render_json(
             ["id", "label"],
@@ -142,11 +128,8 @@ class TestRenderJson:
         assert _json.loads(buf.getvalue())["rows"] == [["12.34"]]
 
     def test_rows_from_json_roundtrip(self):
-        """``render_json`` -> ``rows_from_json`` must produce the same
-        columns and tuple-typed rows the caller fed in. This backs the
-        remote render path: the local rich/csv renderers take tuples
-        and must get equivalent input from the deserialised envelope.
-        """
+        """Backs the remote render path — local rich/csv renderers need tuples
+        from the deserialised envelope, same as the original input."""
         buf = io.StringIO()
         original_rows = [(1, "а"), (2, None)]
         sql_tool.render_json(["id", "label"], original_rows, stream=buf)
@@ -173,12 +156,8 @@ class TestReadOnlySafety:
         assert rows == [(1, "еда"), (2, None), (3, "транспорт")]
 
     def test_writes_are_blocked_by_default(self, seeded_db):
-        """The whole point of the tool's default mode: a typo'd
-        ``UPDATE`` can't clobber the ledger because the connection is
-        opened read-only (``file:...?mode=ro`` URI). SQLite surfaces
-        this as an ``OperationalError`` — the runner does not need
-        any extra guard.
-        """
+        """A typo'd UPDATE can't clobber the ledger — the read-only URI makes
+        SQLite itself raise, so the runner needs no extra guard."""
         with pytest.raises(sqlite3.OperationalError):
             sql_tool._execute("UPDATE sample SET label = 'x' WHERE id = 1")
 
@@ -187,11 +166,7 @@ class TestReadOnlySafety:
         assert rows == [("еда",)]
 
     def test_write_flag_permits_mutation(self, seeded_db):
-        """``--write`` is the explicit opt-in for mutations — an
-        ``UPDATE`` routed through ``_execute(..., write=True)`` must
-        succeed and the change must persist across a follow-up
-        read-only open.
-        """
+        """The mutation must persist across a follow-up read-only open."""
         sql_tool._execute("UPDATE sample SET label = 'X' WHERE id = 1", write=True)
         _, rows = sql_tool._execute("SELECT label FROM sample WHERE id = 1")
         assert rows == [("X",)]

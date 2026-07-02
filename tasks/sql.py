@@ -16,20 +16,9 @@ from dinary.db import storage as sqlite_types
 
 
 def _execute(sql: str, *, write: bool = False) -> tuple[list[str], list[tuple]]:
-    """Open ``settings.data_path`` and run ``sql``.
-
-    ``write=False`` (default) connects via the read-only URI mode so
-    the SQLite engine itself refuses any ``INSERT`` / ``UPDATE`` /
-    ``DELETE``; ``write=True`` opens read-write — used for explicit
-    operator-triggered fixups and only reachable through
-    ``inv sql --write`` locally (never over ``--remote``).
-
-    Returns ``(columns, rows)``. ``columns == []`` means the statement
-    had no result set (SQLite returns ``cursor.description is None`` for
-    DDL / pragma / no-op statements). The connection is closed on every
-    exit path so a repeated ``inv sql`` doesn't pile up file handles
-    against the DB.
-    """
+    """``write=False`` (default) opens read-only so SQLite itself refuses
+    mutations; ``write=True`` is only reachable via ``inv sql --write`` locally,
+    never over ``--remote``. ``columns == []`` means no result set (DDL/pragma)."""
     con = sqlite_types.connect(str(Path(settings.data_path)), read_only=not write)
     try:
         cursor = con.execute(sql)
@@ -41,16 +30,9 @@ def _execute(sql: str, *, write: bool = False) -> tuple[list[str], list[tuple]]:
 
 
 def _coerce_for_json(value: Any) -> Any:
-    """Coerce row values into JSON-serialisable primitives.
-
-    SQLite round-trips ``Decimal`` for ``DECIMAL`` columns via the
-    converters registered in ``dinary.db.storage``,
-    ``date`` / ``datetime`` for temporal columns, and ``bytes`` for
-    ``BLOB``. None of these survive ``json.dumps`` natively.
-    Primitive types (``int``, ``float``, ``str``, ``bool``, ``None``)
-    pass through verbatim so downstream ``jq`` filters see native
-    JSON numbers rather than strings.
-    """
+    """``Decimal``/``date``/``datetime``/``bytes`` (from storage's converters) don't
+    survive ``json.dumps`` natively; primitives pass through verbatim so ``jq``
+    filters see native JSON numbers rather than strings."""
     if value is None or isinstance(value, int | float | str | bool):
         return value
     if isinstance(value, Decimal):
@@ -59,14 +41,9 @@ def _coerce_for_json(value: Any) -> Any:
 
 
 def render_rich(columns: list[str], rows: list[tuple], *, stream: IO[str] | None = None) -> None:
-    """Write a rich ``Table`` with a subdued footer row-count.
-
-    ``stream`` defaults to ``sys.stdout`` *resolved at call time* — a
-    bare ``stream=sys.stdout`` default would bind the current stdout
-    at import time, which pytest's ``capsys`` cannot intercept because
-    it swaps ``sys.stdout`` after test collection. Same rationale in
-    ``render_csv`` / ``render_json``.
-    """
+    """``stream`` resolves to ``sys.stdout`` at call time, not as a default value —
+    a bare default would bind stdout at import time, before pytest's ``capsys``
+    swaps it (same rationale in ``render_csv``/``render_json``)."""
     out = stream if stream is not None else sys.stdout
     if not columns:
         out.write("OK (no result set)\n")
@@ -91,13 +68,8 @@ def render_csv(columns: list[str], rows: list[tuple], *, stream: IO[str] | None 
 
 
 def render_json(columns: list[str], rows: list[tuple], *, stream: IO[str] | None = None) -> None:
-    """Write a single JSON envelope used as the SSH wire format too.
-
-    The schema is intentionally stable: ``inv sql --remote`` forwards
-    these bytes verbatim when the operator passes ``--json``, so any
-    future callers that pipe through ``jq`` can treat local and remote
-    output interchangeably.
-    """
+    """Schema is intentionally stable: ``inv sql --remote --json`` forwards these
+    bytes verbatim, so local and remote output can be piped through ``jq`` alike."""
     out = stream if stream is not None else sys.stdout
     payload = {
         "columns": columns,
@@ -109,12 +81,7 @@ def render_json(columns: list[str], rows: list[tuple], *, stream: IO[str] | None
 
 
 def rows_from_json(payload: dict) -> tuple[list[str], list[tuple]]:
-    """Reverse of ``render_json`` for the local-render path on ``--remote``.
-
-    Rows round-trip as tuples of the same primitives — ``render_rich``
-    and ``render_csv`` don't care about types, they ``str(...)``
-    everything except ``None``.
-    """
+    """Reverse of ``render_json`` for the local-render path on ``--remote``."""
     return payload["columns"], [tuple(r) for r in payload["rows"]]
 
 

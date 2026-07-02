@@ -1,9 +1,4 @@
 """Google Sheets row utilities: cell parsing, year decoding, row finding.
-
-Year-aware matching: column A stores a date serial; ``get_all_values()``
-returns the formatted display string without the year, so ``fetch_row_years()``
-reads column A unformatted separately. Pass ``(target_year, years_by_row)``
-together or omit both (falls back to month-only matching for tests/single-year callers).
 See ``specs/reference/sheets.md``.
 """
 
@@ -15,10 +10,7 @@ from gspread.utils import ValueRenderOption
 
 logger = logging.getLogger(__name__)
 
-# 1-indexed column numbers matching the Google Sheet layout:
-#   A=Date  B=AppCurrency(formula)  C=EUR(formula)  D=Category  E=Group
-#   F=Comment  G=Month  H=Rate  J=LastClientExpenseId
-# Column I is intentionally skipped (keeps the human-visible A..H block intact).
+# 1-indexed columns, see specs/reference/sheets.md "Logging column layout".
 COL_CATEGORY = 4
 COL_GROUP = 5
 COL_MONTH = 7
@@ -68,12 +60,8 @@ def _year_from_iso_string(value: str) -> int | None:
 
 
 def _year_from_a_value(value: object) -> int | None:
-    """Extract the year from a column-A cell read with ``UNFORMATTED_VALUE``.
-
-    Date serial → decoded year. Plain ``YYYY-MM-DD`` text → parsed year.
-    Anything else (formatted display strings, empty cells) → ``None``
-    (treated as "year unknown" by matching helpers; wildcard-matches month).
-    """
+    """Handles a date serial or ``YYYY-MM-DD`` text; anything else (formatted
+    display strings, empty cells) returns None, wildcard-matching any year."""
     if value is None or value == "" or isinstance(value, bool):
         return None
     if isinstance(value, int | float):
@@ -84,12 +72,8 @@ def _year_from_a_value(value: object) -> int | None:
 
 
 def fetch_row_years(ws: gspread.Worksheet, n_rows: int) -> list[int | None]:
-    """Read column A unformatted; return a list aligned 1:1 with ``get_all_values()``.
-
-    Sheets API trims trailing empty rows from ``batch_get``, so the result is
-    padded with ``None`` to exactly ``n_rows`` entries. ``None`` = year unknown
-    → wildcard-matches any target year.
-    """
+    """Padded with None to exactly ``n_rows`` since the Sheets API trims trailing
+    empty rows from ``batch_get``."""
     if n_rows < 1:
         return []
     fetched = ws.batch_get(
@@ -110,11 +94,8 @@ def _check_year_args_paired(
     target_year: int | None,
     years_by_row: list[int | None] | None,
 ) -> None:
-    """Raise if exactly one of (target_year, years_by_row) is provided.
-
-    Partial year-aware mode silently wildcards — the failure mode behind a
-    previous rate-corruption bug. Failing loudly here surfaces the caller bug.
-    """
+    """Partial year-aware mode silently wildcards, so fail loudly instead of
+    letting a caller bug slip through."""
     if (target_year is None) != (years_by_row is None):
         raise ValueError(
             "target_year and years_by_row must be provided together "

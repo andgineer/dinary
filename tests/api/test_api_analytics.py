@@ -289,16 +289,10 @@ class TestDbSnapshot:
         assert not created[0].exists()
 
     def test_db_snapshot_cleans_up_temp_file_on_backup_failure(self, client, monkeypatch):
-        """A backup failure must unlink the orphaned temp file and surface an error response.
-
-        ``sqlite3.Connection`` is a C-level immutable type — its ``backup`` method
-        cannot be monkeypatched directly. Instead we make ``sqlite3.connect(tmp_path)``
-        (the call that creates the route's ``target`` connection — identifiable by its
-        single positional argument and no keyword arguments, unlike
-        ``storage.connect``'s call) return a stand-in that isn't a ``sqlite3.Connection``,
-        so ``source.backup(target)`` raises — exactly the failure path the route's
-        ``except Exception`` handler exists to clean up after.
-        """
+        """``sqlite3.Connection.backup`` can't be monkeypatched directly (C-level
+        immutable type), so ``sqlite3.connect`` is wrapped to return a non-Connection
+        stand-in for the route's single-positional-arg ``target`` call, forcing
+        ``source.backup(target)`` to raise."""
         created: list[Path] = []
         _spy_named_temporary_file(monkeypatch, created)
 
@@ -326,17 +320,10 @@ class TestDbSnapshot:
         assert not created[0].exists()
 
     def test_db_snapshot_consistent_under_concurrent_write(self, client, monkeypatch, tmp_path):
-        """A write that lands during ``source.backup(target)`` must not tear the snapshot.
-
-        ``sqlite3.Connection`` can't be monkeypatched directly (see the failure test
-        above), so the concurrent write is injected by wrapping ``get_connection`` —
-        the route's only handle on ``source`` — in a proxy whose ``backup`` commits an
-        extra expense via a second connection immediately before delegating to the real
-        Online Backup API call. Either outcome (the row is or isn't in the snapshot) is
-        acceptable; what matters is that the resulting file opens cleanly and the count
-        is one of exactly the two possible values, never something in between (a sign
-        of a torn read).
-        """
+        """Wraps ``get_connection`` in a proxy whose ``backup`` commits an extra
+        expense via a second connection right before delegating to the real Online
+        Backup API. Either outcome is fine; a torn read (count between the two
+        valid values) is not."""
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
         from datetime import date
 

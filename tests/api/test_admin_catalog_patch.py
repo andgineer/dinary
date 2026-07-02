@@ -1,15 +1,6 @@
-"""PATCH /api/catalog/<kind>/<id> tests.
-
-Pin the patch-side surface: the tag-rename cascade into
-``events.auto_tags`` (which stores names rather than ids and would
-otherwise silently break the auto-attach pipeline on every rename),
-and the reactivation affordance that flips ``is_active`` back to
-``TRUE``.
-
-Sibling files cover add (:file:`test_admin_catalog_add.py`),
-delete (:file:`test_admin_catalog_delete.py`), and version
-plumbing (:file:`test_admin_catalog_meta.py`).
-"""
+"""PATCH /api/catalog/<kind>/<id> tests: ``events.auto_tags`` stores IDs and
+stays unchanged by a tag rename, and the reactivation affordance flips
+``is_active`` back to TRUE. Sibling files cover add, delete, and version plumbing."""
 
 import allure
 

@@ -253,23 +253,15 @@ class TestInitDbIntegration:
 @allure.epic("Infrastructure")
 @allure.feature("Migrations")
 class TestAccountingCurrencyAnchor:
-    """``init_db`` pins ``settings.accounting_currency`` into
-    ``app_metadata`` on first run and refuses to start on later
-    mismatches. Covers the "accidental ``DINARY_ACCOUNTING_CURRENCY``
-    typo silently corrupts ledger" failure mode.
-    """
+    """See ``specs/reference/currencies.md`` "Accounting currency source of truth"."""
 
     def _point_repo_at_tmp(self, tmp_path, monkeypatch):
         monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
         monkeypatch.setattr(storage, "DB_PATH", tmp_path / "dinary.db")
 
     def test_fresh_db_persists_anchor_uppercased(self, tmp_path, monkeypatch):
-        """First ``init_db`` on an empty file must stamp the canonical
-        uppercased accounting currency into ``app_metadata``. Callers
-        relying on ``.upper()`` downstream can then trust the stored
-        value is already normalised. ``settings.accounting_currency``
-        is also snapped to the same canonical form.
-        """
+        """Both the stored value and ``settings.accounting_currency`` must be
+        uppercased so downstream callers can trust the normalised form."""
         self._point_repo_at_tmp(tmp_path, monkeypatch)
         monkeypatch.setattr(settings, "accounting_currency", "eur")
 
@@ -307,12 +299,8 @@ class TestAccountingCurrencyAnchor:
         assert rows == [("EUR",)]
 
     def test_mismatched_anchor_refuses_to_start(self, tmp_path, monkeypatch):
-        """The whole point of the anchor: flipping
-        ``settings.accounting_currency`` between runs must raise
-        instead of silently writing new rows in the wrong unit. The
-        message must name BOTH currencies so the operator can tell
-        which direction the drift went.
-        """
+        """Must raise instead of silently writing rows in the wrong unit; the
+        message must name both currencies so the operator can tell the drift direction."""
         self._point_repo_at_tmp(tmp_path, monkeypatch)
 
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
@@ -350,13 +338,8 @@ class TestAccountingCurrencyAnchor:
             storage.init_db()
 
     def test_populated_db_without_env_reads_anchor(self, tmp_path, monkeypatch):
-        """The steady-state path: DB is already anchored, operator
-        unset (or never set) ``DINARY_ACCOUNTING_CURRENCY``. Server
-        must NOT fail — it must read the anchored value out of the DB
-        and broadcast it via ``settings.accounting_currency`` so all
-        the downstream call sites transparently pick up the right
-        currency.
-        """
+        """Must read the anchored value from the DB and broadcast it via
+        ``settings.accounting_currency``, not fail."""
         self._point_repo_at_tmp(tmp_path, monkeypatch)
 
         monkeypatch.setattr(settings, "accounting_currency", "EUR")

@@ -127,12 +127,8 @@ def deploy(c, ref="", no_start=False):
 
     ssh_sudo(c, "systemctl restart dinary")
     print("=== Restarted. Waiting for /api/health (up to 30s) ... ===")
-    # Cold starts can exceed a fixed ``sleep 5`` whenever yoyo runs a
-    # migration on boot or ``sheet_mapping`` prefetch hits a slow
-    # Drive round-trip; the old ``sleep 5 && curl`` raced those costs
-    # and surfaced as a deploy failure (curl exit 7) even though the
-    # service was about to come up cleanly. Probe once per second
-    # for up to 30s and only fail when the service is genuinely down.
+    # A fixed sleep raced cold-start costs (migrations, Drive prefetch) and
+    # falsely failed deploys that were about to come up cleanly.
     health_check = (
         "for i in $(seq 1 30); do "
         "  if out=$(curl -fsS http://localhost:8000/api/health 2>&1); then "

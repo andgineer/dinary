@@ -32,12 +32,8 @@ from tasks.backups.backup_snapshots import (
 @allure.feature("Backup")
 @allure.story("Cloud restore")
 class TestRestoreFromYadiskHelpers:
-    """``restore-yadisk`` is split into three helpers so the
-    destructive file-replacement path can be read separately from the
-    discovery path. These tests cover the non-destructive helpers
-    (list parsing, snapshot picking) — the full task's file-writing
-    path is covered in ``TestRestoreFromYadiskTask`` below.
-    """
+    """Covers the non-destructive helpers (list parsing, snapshot picking); the
+    file-writing path is covered in ``TestRestoreFromYadiskTask`` below."""
 
     def test_regex_round_trips_between_retention_and_restore(self):
         """retention and restore use the same pattern via _make_pattern —
@@ -78,12 +74,8 @@ class TestRestoreFromYadiskHelpers:
         ]
 
     def test_pick_snapshot_latest_returns_newest(self):
-        """``--snapshot latest`` must return the tail of the sorted
-        list (sort is lexicographic on filenames, which is also
-        chronological by construction). A regression that picks
-        ``[0]`` instead would silently restore the oldest available
-        snapshot and lose weeks of data.
-        """
+        """A regression that picks ``[0]`` instead of the tail would silently
+        restore the oldest available snapshot and lose weeks of data."""
         snaps = [
             ("dinary-2026-04-20T0317Z.db.zst", 100),
             ("dinary-2026-04-21T0317Z.db.zst", 200),
@@ -159,13 +151,8 @@ class TestRestoreFromYadiskTask:
 
     @pytest.fixture
     def _mock_binaries_present(self, monkeypatch):
-        """rclone / sqlite3 / zstd pre-flight passes. Keep the spy
-        ordering deterministic by pretending every ``which`` hits.
-        Stubs ``litestream_active`` to False so existing tests behave
-        like a developer laptop and skip the post-restore resync.
-        Stubs ``ensure_local_yandex_rclone_configured`` so tests that
-        don't care about credential prompting stay isolated.
-        """
+        """Pre-flight passes; stubs ``litestream_active`` to False (developer
+        laptop, skip resync) and ``ensure_local_yandex_rclone_configured``."""
         monkeypatch.setattr(
             tasks.backups.backups_restore.shutil, "which", lambda name: f"/fake/{name}"
         )
@@ -239,11 +226,8 @@ class TestRestoreFromYadiskTask:
         _fake_snapshot,
         capsys,
     ):
-        """An existing ``data/dinary.db`` (non-empty) MUST end up at
-        ``data/dinary.db.before-restore-<ts>`` before the replacement
-        lands. With ``--yes``, no prompt, but the preservation still
-        applies.
-        """
+        """An existing DB must be preserved before the replacement lands, even
+        with ``--yes`` skipping the confirmation prompt."""
         target = _cwd / "data" / "dinary.db"
         self._make_sqlite(target)
         original_bytes = target.read_bytes()
@@ -265,11 +249,8 @@ class TestRestoreFromYadiskTask:
         _mock_binaries_present,
         capsys,
     ):
-        """A snapshot that fails ``PRAGMA integrity_check`` must
-        leave ``data/dinary.db`` untouched. The preserved-backup
-        dance only happens on the success branch; a corrupt
-        archive gets the operator a loud stderr, not a silent swap.
-        """
+        """A snapshot failing ``PRAGMA integrity_check`` must leave the existing
+        DB untouched — a loud stderr, not a silent swap."""
         snapshot_name = "dinary-2026-04-22T0317Z.db.zst"
         remote_root = tmp_path / "fake-yadisk"
         remote_root.mkdir()
@@ -317,11 +298,8 @@ class TestRestoreFromYadiskTask:
         _fake_snapshot,
         capsys,
     ):
-        """``--list-only`` must never touch the local filesystem —
-        no downloads, no preservation, no overwrite. The test sets a
-        non-empty ``data/dinary.db`` and asserts it is byte-unchanged
-        after the call.
-        """
+        """``--list-only`` must never touch the local filesystem — no downloads,
+        no preservation, no overwrite."""
         target = _cwd / "data" / "dinary.db"
         self._make_sqlite(target)
         before = target.read_bytes()

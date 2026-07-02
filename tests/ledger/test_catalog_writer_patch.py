@@ -91,13 +91,8 @@ class TestTagUsage:
             con.close()
 
     def test_soft_retire_tag_used_by_expense_is_allowed(self, fresh_db):
-        """Soft-retiring a tag still referenced by an expense is
-        allowed (matches PATCH/DELETE symmetry). The expense keeps
-        its tag_id row intact; the tag simply stops appearing in the
-        picker. Event-driven auto-attach keeps working against
-        inactive tags — that's the whole point of "hide from picker,
-        keep as an event auto_tags anchor".
-        """
+        """Soft-retiring a used tag is allowed (matches PATCH/DELETE symmetry);
+        auto-attach keeps working against inactive tags."""
         con = storage.get_connection()
         try:
             _seed_minimal(con)

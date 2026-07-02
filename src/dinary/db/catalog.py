@@ -17,11 +17,6 @@ from dinary.db.storage import (
 )
 
 #: The "pickable for new expenses" predicate (specs/reference/category-templates.md).
-#: ``is_active`` already reflects template membership and historical use:
-#: ``apply_template`` is the only writer that can deactivate a category during
-#: normal operation, and it never does so for one with expenses.
-#: (``category_seed``'s retirement step also clears ``is_active``, but always
-#: alongside ``is_retired``, which this predicate excludes unconditionally.)
 #: Assumes the categories table is aliased ``c`` in the enclosing query.
 VISIBLE_CATEGORY_PREDICATE = "NOT c.is_retired AND NOT c.is_hidden AND c.is_active"
 
@@ -54,14 +49,8 @@ def get_catalog_version(con: sqlite3.Connection) -> int:
 
 
 def set_catalog_version(con: sqlite3.Connection, value: int) -> None:
-    """Public write for ``app_metadata.catalog_version``.
-
-    Callers: ``catalog_writer._commit_with_bump`` (the admin-API path),
-    ``category_apply.apply_template``, and the category-ops writers below
-    (``activate_category``, ``hide_category``, ``unhide_category``,
-    ``move_category``, ``create_category``, ``rename_category``). Every other
-    module is expected to go through one of those.
-    """
+    """Every catalog-mutating path is expected to go through one of the writers
+    in this module or ``catalog_writer``/``category_apply``, not call this directly."""
     con.execute(
         "UPDATE app_metadata SET value = ? WHERE key = 'catalog_version'",
         [str(value)],
@@ -98,14 +87,8 @@ def _resolve_group_code_in_template(definition: dict, code: str) -> str | None:
 
 
 def activate_category(con: sqlite3.Connection, code: str) -> None:
-    """Make ``code`` pickable: ``is_active=1, is_hidden=0``.
-
-    If ``group_id`` is ``NULL``, resolve it from the active template's
-    definition. Raises ``ValueError`` if the code is unknown, or if
-    ``group_id`` is ``NULL`` and no group can be resolved (no active
-    template, or the template row is missing) — ``is_active=1`` with
-    ``group_id=NULL`` is never a valid catalog state.
-    """
+    """Resolves ``group_id`` from the active template if NULL — ``is_active=1``
+    with ``group_id=NULL`` is never a valid catalog state, so this raises instead."""
     with storage.transaction(con):
         row = con.execute(
             "SELECT group_id FROM categories WHERE code = ?",
@@ -275,33 +258,13 @@ def logging_projection(
     tag_ids: list[int] | set[int] | tuple[int, ...],
 ) -> tuple[str, str] | None:
     """Resolve ``(category_id, event_id, tag set)`` to ``(sheet_category, sheet_group)``.
+    Scans ``sheet_mapping`` rows in order, taking the first non-``'*'`` value per column
+    (NULL category_id/event_id is a wildcard); each column falls back independently
+    (category name / empty string) so a partial match survives. Returns None only if
+    category_id isn't in the catalog.
 
-    Sources from ``sheet_mapping`` (owned by the ``map`` worksheet tab
-    and ``sheet_mapping.py``). Semantics: scan rows in ``row_order``
-    ASC, keep only rows whose ``category_id`` / ``event_id`` / required
-    tag set is compatible with the expense, and per output column pick
-    the first non-``'*'`` value we see. ``NULL`` on ``category_id`` /
-    ``event_id`` is a wildcard (matches anything including no event);
-    ``'*'`` on ``sheet_category`` / ``sheet_group`` means "don't
-    decide here".
-
-    Fallbacks are applied per column independently: if the resolver
-    did not pick a ``sheet_category`` we fall back to the category's
-    canonical name; if it did not pick a ``sheet_group`` we fall back
-    to the empty string. This keeps any partial resolution ("tag
-    rewrote only the envelope column") instead of discarding both
-    columns when one side stays wildcard.
-
-    Returns ``None`` only when ``category_id`` itself is not in the
-    catalog — that is the one condition the caller cannot recover
-    from and must translate into a "poison this job" signal.
-
-    NOTE: ``sheet_mapping.resolve_projection`` implements the same
-    "first non-``*`` wins per column" rule over pure ``MapRow``
-    objects; the two helpers intentionally stay separate so this
-    function can run directly against the DB without materializing
-    every row. Any change to the matching rule must be mirrored in
-    both places.
+    Mirrors ``sheet_mapping.resolve_projection`` over ``MapRow`` objects (kept separate
+    so this can query the DB directly) — any change to the matching rule must go in both.
     """
     expense_tag_set = {int(t) for t in tag_ids}
     category_fallback = get_category_name(con, category_id)

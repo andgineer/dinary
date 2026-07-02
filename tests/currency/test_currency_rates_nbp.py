@@ -1,18 +1,4 @@
-"""Unit tests for the NBP fallback resolver (``dinary.services.nbp``).
-
-NBP quotes ``1 X = N PLN`` and we bridge any pair through PLN. This
-suite pins:
-
-* The two-table fetch order (table A then table B) inside
-  ``_fetch_nbp_pln_leg``.
-* The "specific date 404 → no-date latest" walk inside
-  ``_pln_leg``.
-* The PLN-bridge product, identity, and missing-leg cases inside
-  ``resolve_from_nbp``.
-
-Cross-resolver chain tests (NBS → NBP fallback) live in
-:file:`test_currency_rates_misc.py`.
-"""
+"""NBP quotes ``1 X = N PLN`` and we bridge any pair through PLN."""
 
 from decimal import Decimal
 from unittest.mock import MagicMock, call, patch
@@ -141,11 +127,8 @@ class TestResolveFromNbp:
     @patch("dinary.adapters.nbp.save_db_rate")
     @patch("dinary.adapters.nbp._pln_leg")
     def test_identity_pair_short_circuits_without_fetch_or_db_write(self, mock_leg, mock_save):
-        # Same source/target: return 1 without touching NBP HTTP and
-        # without writing a useless ``(X, X, 1)`` row to ``exchange_rates``.
-        # ``get_rate`` already short-circuits identity before reaching
-        # this resolver, but defending here too keeps direct callers
-        # (and any future ``get_rate`` rewiring) from polluting the DB.
+        # Defends identity here too (get_rate already short-circuits it) so direct
+        # callers can't pollute the DB with a useless (X, X, 1) row.
         con = MagicMock()
         rate = resolve_from_nbp(con, _MON, "EUR", "EUR")
         assert rate == Decimal(1)

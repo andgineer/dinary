@@ -1,5 +1,3 @@
-"""Tests for db.catalog.create_category, move_category, rename_category."""
-
 import allure
 import pytest
 
@@ -30,7 +28,6 @@ class TestCreateCategory:
         assert code == "u_my_category"
 
     def test_non_latin_name_falls_back_to_generic_code(self, con):
-        """A name with no ASCII alphanumerics slugifies to a generic placeholder."""
         code = create_category(con, "!!! ???", "food")
 
         assert code == "u_category"

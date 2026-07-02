@@ -1,12 +1,6 @@
-"""Race-recovery branch in ``insert_expense`` and the
-``_is_unique_violation_of_client_expense_id`` classifier that gates it.
-
-The production path uses ``ON CONFLICT (client_expense_id) DO NOTHING``
-so the recovery branch never fires under SQLite's serialized writer;
-these tests force it by swapping the loaded SQL for a bare INSERT, and
-freeze the engine's actual error wording so the classifier doesn't
-silently flip on a future SQLite release.
-"""
+"""Race-recovery branch in ``insert_expense``: production uses ON CONFLICT DO NOTHING
+so this branch never fires naturally, so these tests force it via a bare INSERT and
+pin the classifier against real (not fabricated) SQLite error wording."""
 
 import sqlite3
 from datetime import datetime
@@ -29,30 +23,8 @@ from _ledger_repo_helpers import (  # noqa: F401  (autouse + fixtures)
 @allure.feature("DB layer")
 @allure.story("Race recovery")
 class TestInsertExpenseRaceRecovery:
-    """Exercise the ``_RACE_EXCS`` branch inside ``insert_expense``.
-
-    The production SQL (``sql/insert_expense.sql``) uses
-    ``ON CONFLICT (client_expense_id) DO NOTHING`` so SQLite silently
-    absorbs conflicts with already-committed winners — the
-    ``except _RACE_EXCS`` branch never fires on the happy path, and
-    the end-to-end concurrency tests in ``tests/test_api.py`` now
-    assert that the ``race_counter`` stays at zero under SQLite's
-    serialized-writer model.
-
-    That leaves the recovery branch uncovered by regular tests even
-    though it stays in the source as a defensive net for any future
-    writer module that drops ``ON CONFLICT`` (or for a raw SQL path
-    that bubbles the IntegrityError up). This test forces the branch
-    by swapping ``load_sql("insert_expense.sql")`` for a bare INSERT
-    (no ``ON CONFLICT``) for the duration of the second call, so the
-    same code path gets to observe a real ``sqlite3.IntegrityError``
-    from a real duplicate key and must land in the compare-path.
-
-    Paired with ``TestIsUniqueViolationOfClientExpenseId`` (which
-    pins the message-matching classifier) and the ``sql/insert_expense``
-    file itself, this keeps every leg of the race path exercised
-    against a real SQLite engine.
-    """
+    """Forces the ``_RACE_EXCS`` branch by swapping ``insert_expense.sql`` for a bare
+    INSERT (no ON CONFLICT) so a real duplicate key raises ``IntegrityError``."""
 
     def _insert_winner(self, populated_catalog) -> None:
         """Commit the original ``client_expense_id='race-x'`` row."""
@@ -77,13 +49,9 @@ class TestInsertExpenseRaceRecovery:
             con.close()
 
     def _bare_insert_sql(self) -> str:
-        """Replacement SQL with no ``ON CONFLICT`` clause.
-
-        Mirrors ``sql/insert_expense.sql`` column shape so
-        ``insert_expense`` binds the same 10 parameters in the same
-        order; only the conflict-absorption clause is dropped so the
-        second call to ``con.execute`` actually raises ``IntegrityError``.
-        """
+        """Mirrors ``sql/insert_expense.sql``'s column order minus the ON CONFLICT
+        clause, so ``insert_expense`` binds the same parameters but a duplicate
+        key actually raises ``IntegrityError``."""
         return (
             "INSERT INTO expenses (client_expense_id, datetime, amount,"
             " amount_original, currency_original, category_id, event_id,"
@@ -171,36 +139,13 @@ class TestInsertExpenseRaceRecovery:
 @allure.feature("DB layer")
 @allure.story("Race recovery")
 class TestIsUniqueViolationOfClientExpenseId:
-    """Pin the classifier behind ``insert_expense``'s race recovery.
-
-    ``_is_unique_violation_of_client_expense_id`` is the *only* gate
-    between "fall through to the compare path" (serve
-    duplicate/conflict) and "propagate as 500" (unknown DB failure)
-    for the concurrent-POST paths. It decides by pattern-matching the
-    engine's English error messages, so a quiet diagnostic-text change
-    in a future engine release could silently flip every unique race
-    into a 500. These tests freeze the real SQLite error strings from
-    the version this code targets so the classifier's contract stays
-    observable in CI.
-
-    Paired with
-    ``TestInsertExpense::test_unique_client_id_raises_constraint``
-    (which pins that the *exception classes* SQLite raises stay the
-    set we catch), this covers the full input surface of the recovery
-    path without needing to fabricate synthetic exceptions.
-    """
+    """``_is_unique_violation_of_client_expense_id`` decides duplicate/conflict vs.
+    500 by pattern-matching SQLite's English error text — these tests pin the real
+    wording so a future SQLite release can't silently flip the classifier."""
 
     def _real_duplicate_key_exception(self) -> sqlite3.Error:
-        """Provoke a real ``IntegrityError`` from SQLite so we freeze
-        its actual wording, not a hand-crafted message we invented.
-        Uses a throwaway in-memory DB so it doesn't touch the per-test
-        tmp DB at all.
-
-        The schema mirrors the ``expenses.client_expense_id`` column
-        so the resulting message contains both ``UNIQUE constraint
-        failed`` and ``expenses.client_expense_id`` — the two tokens
-        the classifier keys on.
-        """
+        """Provokes a real ``IntegrityError`` (in-memory throwaway DB) so the message
+        is genuine SQLite wording, not hand-crafted."""
         con = sqlite3.connect(":memory:")
         try:
             con.execute(
@@ -217,13 +162,7 @@ class TestIsUniqueViolationOfClientExpenseId:
             con.close()
 
     def _real_fk_violation_exception(self) -> sqlite3.Error:
-        """Same idea for the FK path — catch the real SQLite wording
-        so we're classifier-against-truth, not
-        classifier-against-stub. The classifier's ``"foreign key"``
-        carve-out is the discriminator: SQLite's FK violation message
-        carries that phrase and none of the duplicate-key positive
-        keywords.
-        """
+        """Same idea for the FK path — real SQLite wording, not a hand-crafted stub."""
         con = sqlite3.connect(":memory:")
         con.execute("PRAGMA foreign_keys=ON")
         try:
@@ -286,11 +225,6 @@ class TestIsUniqueViolationOfClientExpenseId:
         ],
     )
     def test_fixed_message_matrix(self, message: str, expected: bool):
-        """Explicit matrix pinning the classifier against a mix of
-        unique / FK / unrelated-failure wordings. Any keyword
-        rearrangement in the classifier (dropping the table-qualified
-        column match, dropping the ``foreign key`` carve-out, etc.)
-        flips at least one row here.
-        """
+        """Matrix pinning the classifier against unique / FK / unrelated-failure wordings."""
         fake = RuntimeError(message)
         assert expenses_mod._is_unique_violation_of_client_expense_id(fake) is expected, message

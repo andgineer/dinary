@@ -120,16 +120,8 @@ class TestLoggingQueue:
         self,
         populated_catalog,
     ):
-        """``list_logging_jobs`` must:
-        - include ``pending`` rows
-        - exclude ``in_progress`` rows whose claim is newer than
-          ``stale_before`` (a recently-claimed row belongs to the
-          drain that claimed it; skipping avoids burning a
-          BEGIN/COMMIT on every iteration for the same row)
-        - include ``in_progress`` rows whose claim is older than
-          ``stale_before`` (that drain died; the row must surface
-          again so the next drain can recover it)
-        """
+        """Pending rows always list; a fresh ``in_progress`` claim is excluded
+        (still owned), a stale one resurfaces (owner drain died)."""
         pk = self._insert_one_expense()
         con = storage.get_connection()
         try:

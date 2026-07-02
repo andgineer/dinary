@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""GFS retention for dinary Yandex.Disk backups.
-
-Uploaded to VM2 as /usr/local/bin/dinary-backup-retention by
-``inv setup-replica``. Called from the daily ``dinary-backup``
-bash script with deployment-specific CLI args.
+"""Uploaded to VM2 as /usr/local/bin/dinary-backup-retention by ``inv setup-replica``.
 
 Pure stdlib — VM2 has no dinary venv.
 """
@@ -22,7 +18,6 @@ def _make_pattern(prefix: str, suffix: str) -> re.Pattern:
 
 
 def list_snapshots(remote: str, pattern: re.Pattern) -> list:
-    """Return [(date, name), ...] sorted oldest-first."""
     out = subprocess.check_output(["rclone", "lsf", remote, "--files-only"], text=True)
     snaps = []
     for line in out.splitlines():
@@ -35,18 +30,7 @@ def list_snapshots(remote: str, pattern: re.Pattern) -> list:
 
 
 def pick_keepers(snaps, *, daily: int, weekly: int, monthly: int) -> set:
-    """Return the set of filenames that must NOT be deleted (GFS policy).
-
-    Buckets overlap — a snapshot is pruned only when it belongs to
-    no keeper bucket.
-
-    * Last ``daily`` snapshots by date.
-    * Newest-per-ISO-week for the last ``weekly`` weeks.
-    * Newest-per-calendar-month for the last ``monthly`` months.
-    * One per calendar year, forever (closed years are immutable;
-      any drift between two yearly snapshots of the same closed year
-      signals corruption worth preserving).
-    """
+    """One snapshot per calendar year is kept forever, never pruned."""
     keepers = set()
     for _, name in snaps[-daily:]:
         keepers.add(name)

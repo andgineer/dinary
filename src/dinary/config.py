@@ -13,12 +13,8 @@ logger = logging.getLogger(__name__)
 
 _SPREADSHEET_URL_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9_-]+)")
 
-# ---------------------------------------------------------------------------
-# Repo-rooted paths. All instance config (``.deploy/.env``) is anchored
-# to the repo root so cron, systemd, and interactive ``uv run`` all agree
+# Anchored to the repo root so cron, systemd, and interactive `uv run` agree
 # regardless of CWD.
-# ---------------------------------------------------------------------------
-
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEPLOY_DIR = _REPO_ROOT / ".deploy"
 _ENV_FILE = _DEPLOY_DIR / ".env"
@@ -51,10 +47,8 @@ _DEPRECATED_ENV_RENAMES = {
     "DINARY_GOOGLE_SHEETS_SPREADSHEET_ID": "DINARY_SHEET_LOGGING_SPREADSHEET",
 }
 
-#: Env vars that are no longer recognised and have no successor.
-#: Unlike ``_DEPRECATED_ENV_RENAMES`` the warning does not suggest a new
-#: name — the feature was removed outright. Kept separate so the loop
-#: below can format its message appropriately.
+#: Env vars removed outright (vs. renamed) — kept separate so the warning
+#: doesn't suggest a nonexistent successor.
 _DEPRECATED_ENV_REMOVED: dict[str, str] = {
     "DINARY_ADMIN_API_TOKEN": (
         "the shared-token admin gate was removed; authentication will be "
@@ -71,12 +65,8 @@ _DEPRECATED_ENV_REMOVED: dict[str, str] = {
 
 
 def _warn_deprecated_env_vars() -> None:
-    """Warn when old env var names are still present.
-
-    Settings uses ``extra="ignore"``, so stale keys would otherwise be
-    silently ignored after the rename. Warn loudly to make upgrades
-    self-diagnosing without restoring the old names as supported config.
-    """
+    """Settings uses ``extra="ignore"``, so stale keys would otherwise be
+    silently ignored after a rename — warn loudly instead."""
     for old_name, new_name in _DEPRECATED_ENV_RENAMES.items():
         if os.getenv(old_name):
             warnings.warn(
@@ -94,14 +84,8 @@ def _warn_deprecated_env_vars() -> None:
 
 
 def _warn_missing_env_file() -> None:
-    """Warn once at startup if ``.deploy/.env`` is missing.
-
-    Gated on ``"pytest" not in sys.modules`` so test runs (which import
-    ``dinary.config`` during collection) don't spam the warning. Using
-    ``sys.modules`` — not ``PYTEST_CURRENT_TEST`` — because the latter
-    is only set around individual test bodies, but config.py is imported
-    during collection where the env var hasn't been set yet.
-    """
+    """Gated on ``sys.modules`` (not ``PYTEST_CURRENT_TEST``, which isn't set
+    until a test body runs) so collection-time import doesn't spam the warning."""
     if "pytest" in sys.modules:
         return
     if _ENV_FILE.exists():
@@ -125,21 +109,10 @@ class Settings(BaseSettings):
     google_sheets_credentials_path: Path = _GSPREAD_DEFAULT
     sheet_logging_spreadsheet: str = ""
 
-    # PWA / API user-facing default currency: the currency the UI
-    # works in and the fallback for ``POST /api/expenses`` requests
-    # that omit ``currency``. Typical ``expenses.currency_original``
-    # matches this value, since users type amounts in ``app_currency``.
+    # UI/API default currency, see specs/reference/currencies.md.
     app_currency: str = "RSD"
 
-    # Canonical accounting currency: ``expenses.amount`` and
-    # ``income.amount`` always live in this currency, and every
-    # ``inv report-*`` total is rendered in it. Source amounts from
-    # sheets / QR / PWA are recorded verbatim in
-    # ``expenses.amount_original`` + ``currency_original``; the
-    # NBS-anchored conversion to ``accounting_currency`` is what
-    # lives in ``amount``. The PWA default (``app_currency``) stays
-    # RSD because the user types in dinars; this setting is what the
-    # DB is denominated in.
+    # DB-wide amount denomination, see specs/reference/currencies.md.
     accounting_currency: str = "EUR"
     data_path: str = "data/dinary.db"
 
@@ -147,27 +120,17 @@ class Settings(BaseSettings):
     sheet_logging_drain_max_attempts_per_iteration: int = 15
     sheet_logging_drain_inter_row_delay_sec: float = 1.0
 
-    # Name of the worksheet tab on ``sheet_logging_spreadsheet`` that
-    # holds the curated 3D->2D runtime routing table. The drain loop
-    # polls this tab's ``modifiedTime`` via Drive API and only reparses
-    # the contents when the timestamp changes.
+    # The drain loop polls this tab's modifiedTime and only reparses on change.
     sheet_mapping_tab_name: str = "map"
 
-    # Startup preload budget for ``sheet_mapping.reload_now``. Bounded
-    # so a slow or unreachable Google backend cannot wedge lifespan
-    # startup and starve Railway's health probe. On timeout the drain
-    # loop retries on its own schedule, and the first expense pays
-    # the uncached Drive+Sheets round-trip (~1s). Raise for slow
-    # hosts; set to 0 to skip the warm-up entirely.
+    # Bounds the startup warm-up so a slow Google backend can't starve the
+    # health probe; 0 skips the warm-up entirely.
     warm_sheet_mapping_timeout_sec: float = 10.0
 
     receipt_classification_enabled: bool = True
 
-    # IANA timezone name used when storing expense timestamps.
-    # All expense datetimes are converted to this zone before writing to DB
-    # so that ORDER BY datetime DESC is consistent within the same UTC offset.
-    # Cross-DST comparisons (e.g. a +01:00 winter receipt vs a +02:00 summer
-    # receipt) may be off by 1 hour — accepted as an extremely rare edge case.
+    # Expense datetimes are stored in this zone; cross-DST ORDER BY comparisons
+    # may be off by 1 hour, accepted as a rare edge case.
     user_timezone: str = "Europe/Belgrade"
 
     host: str = "0.0.0.0"  # noqa: S104

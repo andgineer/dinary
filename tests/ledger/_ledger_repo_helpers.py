@@ -1,15 +1,4 @@
-"""Shared fixtures for the split ``test_ledger_repo_*.py`` files.
-
-Underscore prefix keeps pytest from collecting this as a test module.
-Each ``test_ledger_repo_*.py`` file imports the names it uses; pytest
-treats them as fixtures because they're in the test module's namespace.
-
-The autouse ``_tmp_data_dir`` is module-local (imported into each split
-file rather than promoted to ``conftest.py``) so the per-test DB-path
-override stays scoped to the ledger-repo suite — it must not leak into
-sibling tests that point at the real ``DATA_DIR`` or run against a
-mocked repo.
-"""
+"""Underscore prefix keeps pytest from collecting this as a test module."""
 
 import shutil
 
@@ -31,7 +20,6 @@ def fresh_db(tmp_path, blank_db):
 
 @pytest.fixture
 def populated_catalog(fresh_db):
-    """Seed the catalog with a minimal 3D dataset."""
     con = storage.get_connection()
     try:
         con.execute(

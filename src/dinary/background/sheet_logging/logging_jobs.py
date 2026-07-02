@@ -23,16 +23,9 @@ def list_logging_jobs(
     now: datetime | None = None,
     stale_before: datetime | None = None,
 ) -> list[int]:
-    """Return expense_ids the drain should attempt this pass.
-
-    That is: rows in ``pending`` plus rows in ``in_progress`` whose
-    claim is older than ``stale_before`` (orphaned claims from a
-    previous worker that crashed mid-drain). Fresh ``in_progress``
-    rows are excluded because ``claim_logging_job`` would just reject
-    them — listing them here would burn one BEGIN/COMMIT round-trip
-    per row per drain iteration for no reason. Poisoned rows are
-    always excluded.
-    """
+    """Pending rows plus stale ``in_progress`` orphans (crashed worker). Fresh
+    ``in_progress`` rows are excluded — ``claim_logging_job`` would just reject
+    them, burning a BEGIN/COMMIT round-trip for nothing."""
     if now is None:
         now = datetime.now()
     if stale_before is None:
@@ -68,12 +61,9 @@ def claim_logging_job(
     if stale_before is None:
         stale_before = now - default_claim_stale_timeout()
 
-    # ``BEGIN IMMEDIATE`` serializes multiple drain workers on the
-    # SQLite write lock from the start of the txn, so the race
-    # between SELECT and UPDATE can't be won by two workers at once.
-    # A contending worker either waits up to ``busy_timeout`` or
-    # surfaces as ``OperationalError`` ("database is locked"), which
-    # we treat as "another worker won".
+    # Serializes on the write lock so two workers can't both win the
+    # SELECT-then-UPDATE race; a losing worker's OperationalError means
+    # "another worker won".
     try:
         con.execute("BEGIN IMMEDIATE")
     except sqlite3.OperationalError:

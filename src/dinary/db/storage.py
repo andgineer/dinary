@@ -1,15 +1,6 @@
-"""DB connection management, shared row types, and SQLite adapter/converter registration.
-
-PRAGMAs applied on every connection: ``foreign_keys=ON``, ``journal_mode=WAL``,
-``synchronous=NORMAL``, ``busy_timeout`` (write handles only).
-
-``read_only=True`` requires the DB file to already exist — SQLite does not
-auto-create a file in read-only mode.
-
-Converter caveat: converters only fire for bare column references, not
-aggregates. ``SUM(amount)`` returns ``str`` — coerce explicitly with
-``Decimal(str(row[i]))``.
-"""
+"""DB connection management, shared row types, and SQLite adapter/converter
+registration. Registered converters only fire for bare column references, not
+aggregates — ``SUM(amount)`` returns ``str``; coerce explicitly."""
 
 import contextlib
 import dataclasses
@@ -88,16 +79,8 @@ def connect(
     read_only: bool = False,
     timeout: float = 5.0,
 ) -> sqlite3.Connection:
-    """Open a sqlite3 connection with the project's standard PRAGMAs.
-
-    PRAGMAs applied: ``isolation_level=None`` (autocommit mode),
-    ``detect_types`` (adapter/converter machinery), ``check_same_thread=False``,
-    ``foreign_keys=ON``, ``journal_mode=WAL``, ``synchronous=NORMAL``,
-    ``busy_timeout`` (write handles only).
-
-    ``read_only=True`` opens via ``file:...?mode=ro`` URI and requires the
-    file to exist. ``read_only=False`` creates the file if missing.
-    """
+    """Opens with the project's standard PRAGMAs (autocommit, FKs on, WAL,
+    synchronous=NORMAL). ``read_only=True`` requires the file to already exist."""
     if read_only:
         uri = f"file:{path}?mode=ro"
         con = sqlite3.connect(
@@ -225,22 +208,7 @@ def init_db() -> None:
 
 
 def _reconcile_accounting_currency(con: sqlite3.Connection) -> None:
-    """Reconcile ``settings.accounting_currency`` with the DB anchor.
-
-    Accounting-currency is a DB-wide invariant: every ``expenses.amount``
-    and ``income.amount`` row on disk is denominated in it.
-
-    Source-of-truth model:
-    * ``DINARY_ACCOUNTING_CURRENCY`` (env var) is a first-deploy-only seed.
-    * ``app_metadata.accounting_currency`` is the runtime source of truth.
-
-    Resolution matrix:
-    * Row absent + env non-empty -> seed.
-    * Row absent + env empty -> ``RuntimeError``.
-    * Row present + env empty -> take DB value silently.
-    * Row present + env matches -> no-op.
-    * Row present + env differs -> ``RuntimeError`` (typo-guard).
-    """
+    """See ``specs/reference/currencies.md`` for the source-of-truth / typo-guard rules."""
     desired = settings.accounting_currency.strip().upper()
 
     row = con.execute(

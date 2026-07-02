@@ -1,10 +1,5 @@
-"""Yandex.Disk rclone bootstrap — VM2 (via SSH) and local machine.
-
-Splits out the interactive credential prompt + ``rclone config create``
-flow so the bootstrap can be invoked from ``inv setup-replica`` (VM2,
-via SSH) or ``inv setup-yadisk`` (local machine, run directly on VM1 or
-the operator laptop) without dragging the rest of the backup pipeline.
-"""
+"""Yandex.Disk rclone bootstrap, shared by ``inv setup-replica`` (VM2, via SSH) and
+``inv setup-yadisk`` (local machine)."""
 
 import base64
 import getpass
@@ -17,28 +12,8 @@ from tasks.devtools.env import replica_host
 
 
 def replica_has_working_yandex_remote():
-    """Return True iff VM2's rclone has a ``yandex:`` remote that
-    actually works (auth + URL + scope + network all green).
-
-    The contract here is "do we need to prompt the operator?", not
-    "does a config section exist?". A half-written config (missing
-    ``url``, wrong app-password, revoked scope) still needs the
-    interactive bootstrap — otherwise the retention timer would
-    quietly fail every night against a broken remote. So the probe:
-
-    1. ``rclone listremotes`` must include exact line ``yandex:``
-       — substring match against e.g. ``yandex-old:`` would falsely
-       pass.
-    2. ``rclone lsd yandex:`` must succeed. This smoke-tests the
-       entire stack: URL scheme, credentials, scope, Yandex
-       reachability.
-
-    If the remote exists but fails the smoke-test, we delete it
-    inline before returning False. That way the next
-    :func:`ensure_yandex_rclone_configured` call prompts fresh
-    credentials instead of silently keeping a broken config around
-    across runs (the exact bug that bit us when
-    ``rclone config create`` silently dropped ``key=value`` fields).
+    """Exact-line match on ``yandex:`` (not substring) plus an ``rclone lsd`` smoke test.
+    Deletes a broken remote inline so the caller re-prompts instead of silently reusing it.
     """
     probe = (
         "set -eu\n"
@@ -63,14 +38,8 @@ def replica_has_working_yandex_remote():
 
 
 def prompt_yandex_credentials():
-    """Interactive prompt for Yandex login + app-password.
-
-    Split out so the IO layer is mockable — the in-flow tests stub
-    this to feed deterministic credentials without poking a real
-    terminal. Returns ``(login, app_password)``; raises SystemExit
-    on empty input to keep the caller out of the partial-config
-    weeds (a half-created rclone remote is worse than no remote).
-    """
+    """Split out so tests can mock the IO layer. Exits on empty input rather than
+    risk a half-created rclone remote."""
     print(
         "\n"
         "=== Yandex.Disk WebDAV credentials ===\n"
@@ -107,42 +76,10 @@ def prompt_yandex_credentials():
 
 
 def install_yandex_rclone_remote(login: str, app_password: str) -> None:
-    """Create the ``yandex:`` WebDAV remote on VM2 without shell leakage.
-
-    Security shape:
-
-    * Login AND app-password travel as two lines on the ssh stdin,
-      consumed by ``read -r`` / ``read -rs``. Neither lands in argv
-      (``ps`` listing), shell history, or the script image shipped
-      to VM2. The plaintext password additionally dies inside
-      ``rclone obscure -`` the moment it is converted to its
-      obscured on-disk form.
-    * ``rclone config create`` writes the obscured form to
-      ``~ubuntu/.config/rclone/rclone.conf``; that is the same format
-      the ``rclone config`` interactive wizard produces, so subsequent
-      manual edits remain possible.
-
-    Two sharp invariants past versions of this helper got wrong:
-
-    * ``rclone config create`` wants ``key value`` pairs separated by
-      spaces, NOT ``key=value``. The latter form silently drops
-      fields on current rclone releases: an earlier version of this
-      helper produced a ``[yandex]`` section with no ``url`` line,
-      which then failed every operation with
-      ``unsupported protocol scheme ""`` — and stuck around across
-      re-runs because ``rclone listremotes`` still reported
-      ``yandex:``.
-    * ``rclone config create`` re-obscures ``pass`` by default, so
-      feeding the already-obscured value without ``--no-obscure``
-      corrupts it. We pass ``--no-obscure`` explicitly.
-
-    Smoke-tests end-to-end with ``rclone lsd yandex:``. If the smoke
-    test fails (wrong app-password, wrong scope, typo, Yandex
-    unreachable) we **roll back** by deleting the just-written
-    ``yandex`` remote, so the next ``inv setup-replica``
-    re-prompts for fresh credentials instead of silently reusing the
-    broken config.
-    """
+    """Credentials travel via ssh stdin, never argv/shell history. Uses ``key value``
+    pairs, not ``key=value`` (rclone silently drops fields with the latter), and
+    ``--no-obscure`` (the password is pre-obscured; re-obscuring would corrupt it).
+    Rolls back the remote on a failed smoke test so the next run re-prompts."""
     inner = (
         "set -euo pipefail\n"
         "read -r LOGIN\n"
@@ -204,13 +141,7 @@ def install_yandex_rclone_remote(login: str, app_password: str) -> None:
 
 
 def local_has_working_yandex_remote() -> bool:
-    """Return True iff the local rclone has a working ``yandex:`` remote.
-
-    Uses the same two-step contract as :func:`replica_has_working_yandex_remote`:
-    exact-line match in ``listremotes`` + ``lsd`` smoke-test. A stale
-    remote (listed but lsd fails) is rolled back inline so the next
-    call re-prompts for fresh credentials.
-    """
+    """Local equivalent of :func:`replica_has_working_yandex_remote` (no SSH)."""
     listed = subprocess.run(
         ["rclone", "listremotes"],
         capture_output=True,
@@ -237,14 +168,8 @@ def local_has_working_yandex_remote() -> bool:
 
 
 def install_local_yandex_rclone_remote(login: str, app_password: str) -> None:
-    """Configure the ``yandex:`` WebDAV remote on the local machine.
-
-    Equivalent to :func:`install_yandex_rclone_remote` but runs all
-    ``rclone`` subcommands locally without SSH. The app-password travels
-    only on stdin of ``rclone obscure -`` and is never placed in argv.
-    Rolls back the remote and exits 1 if the smoke-test fails so the
-    next call re-prompts for fresh credentials.
-    """
+    """Local equivalent of :func:`install_yandex_rclone_remote` (no SSH); same
+    ``key value`` and ``--no-obscure`` requirements apply."""
     obs = subprocess.run(
         ["rclone", "obscure", "-"],
         input=app_password,
@@ -288,13 +213,8 @@ def install_local_yandex_rclone_remote(login: str, app_password: str) -> None:
 
 
 def ensure_local_yandex_rclone_configured() -> None:
-    """Idempotent: ensure the local machine has a working ``yandex:`` WebDAV remote.
-
-    Called by ``inv setup-yadisk`` and automatically by
-    ``inv restore-yadisk`` when the remote is absent. Uses
-    WebDAV + app-password so no browser OAuth is required on headless
-    machines (VM1).
-    """
+    """Called by ``inv setup-yadisk``, and by ``inv restore-yadisk`` when the
+    remote is absent."""
     if local_has_working_yandex_remote():
         print("yandex: remote already configured and healthy — skipping prompt.")
         return
@@ -305,31 +225,14 @@ def ensure_local_yandex_rclone_configured() -> None:
 
 @task(name="setup-yadisk")
 def setup_yadisk(c):  # noqa: ARG001
-    """Configure the yandex: WebDAV rclone remote on this machine.
-
-    Prompts for Yandex login + app-password. Idempotent; skips prompt when already configured.
-    restore-yadisk calls this automatically if the remote is absent.
-    """
+    """Configure the yandex: WebDAV rclone remote on this machine. Idempotent."""
     ensure_local_yandex_rclone_configured()
 
 
 def ensure_yandex_rclone_configured(c):  # noqa: ARG001
-    """Interactive bootstrap for the ``yandex:`` rclone remote on VM2.
-
-    No-op when the remote already exists — the typical flow on
-    re-runs of :func:`setup_replica`. The first-time path
-    prompts the operator for their Yandex login + app-password (app-
-    password URL printed in the prompt text) and writes the remote
-    to VM2 non-interactively via ``rclone config create``.
-
-    The interactive OAuth flow that the rclone wizard would trigger
-    is avoided on purpose: VM2 is headless, and the
-    laptop-authorize/copy-token dance across machines is an error
-    magnet during a future disaster recovery. WebDAV + an app-
-    password is equivalent for our access pattern (PUT/DELETE of
-    uploaded files) and the app-password can be revoked from
-    Yandex's account UI at any time.
-    """
+    """No-op if the remote already works. Uses WebDAV + app-password instead of
+    rclone's OAuth wizard because VM2 is headless — the laptop-authorize/copy-token
+    dance across machines is an error magnet during disaster recovery."""
     if replica_has_working_yandex_remote():
         print("yandex: remote already configured and healthy — skipping prompt.")
         return

@@ -108,15 +108,8 @@ class TestPostExpenseHappyPath:
 
     @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_event_auto_tags_unioned_into_expense(self, _mock_convert_fn, client):
-        """POST ``/api/expenses`` must union ``events.auto_tags`` into
-        the stored tag set so runtime writes carry the same invariant
-        the historical importer applies: attaching a vacation event to
-        an expense guarantees both ``vacation`` and ``travel`` show
-        up regardless of what the client submitted. This mirrors the
-        importer's ``_union_event_auto_tags`` behaviour and is the
-        main "same-invariant-on-both-paths" contract tests around
-        ``events.auto_tags`` rely on.
-        """
+        """``events.auto_tags`` must be unioned into the stored tag set, mirroring
+        the historical importer's ``_union_event_auto_tags`` behaviour."""
         con = storage.get_connection()
         try:
             con.execute(
@@ -218,12 +211,8 @@ class TestPostExpenseHappyPath:
         assert resp.json()["currency_original"] == settings.app_currency
 
     def test_non_identity_fx_stores_amount_in_accounting_currency(self, client):
-        """POST with a currency that differs from the accounting currency
-        must convert via ``convert`` and write the accounting-currency
-        value into ``expenses.amount``, while the response still echoes
-        the original amount/currency. The PWA default input currency
-        (``app_currency`` = RSD) becomes the source here so the stored
-        ``amount`` ends up in EUR (the accounting currency)."""
+        """A currency differing from the accounting currency must convert into
+        ``expenses.amount``, while the response still echoes the original."""
 
         def _rsd_to_eur(_con, _rate_date, from_ccy, to_ccy, *, offline=False):
             # 117 RSD = 1 EUR; return rate so amount * rate gives EUR
@@ -304,12 +293,8 @@ class TestPostExpenseSheetLogging:
         client,
         monkeypatch,
     ):
-        # Explicitly set a non-empty ``sheet_logging_spreadsheet`` so
-        # the test is deterministic regardless of the ambient
-        # ``DINARY_SHEET_LOGGING_SPREADSHEET`` env var (CI runs with
-        # it unset). The drain loop is still disabled by the autouse
-        # ``_disable_drain_loop`` fixture, so enqueued jobs just sit
-        # in the queue for us to assert on.
+        # Deterministic regardless of the ambient env var; drain stays disabled
+        # via the autouse fixture, so enqueued jobs just sit for us to assert on.
         monkeypatch.setattr(settings, "sheet_logging_spreadsheet", "test-spreadsheet-id")
         resp = client.post(
             "/api/expenses",

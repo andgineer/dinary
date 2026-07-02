@@ -1,20 +1,6 @@
-"""Aggregated expense viewer grouped by the 3D classification coord.
-
-Reads ``expenses`` + ``expense_tags`` from the runtime SQLite ledger
-and groups by the unique ``(category, event, tags)`` tuple — the
-"3D coordinate" the catalog is organized around. Two optional,
-mutually exclusive filters narrow the window: ``--year YYYY`` or
-``--month YYYY-MM``. Neither flag → whole ledger.
-
-Output is a ``rich`` table by default; ``--csv`` emits plain CSV to
-stdout instead, which is what ``inv report-expenses --csv`` consumes
-to pipe the result into downstream tooling.
-
-Strictly read-only. Opens a short-lived DB cursor, runs
-one aggregation SELECT, closes the cursor. Safe to run against live
-production data while the FastAPI service is serving HTTP — SQLite's
-WAL mode lets readers and the single writer coexist without blocking.
-"""
+"""Aggregated expense viewer grouped by the 3D classification coord
+(category, event, tags). Strictly read-only; safe against live production data —
+SQLite's WAL mode lets readers and the single writer coexist without blocking."""
 
 import argparse
 import csv
@@ -119,20 +105,8 @@ def _build_filter(
     year: int | None,
     month: tuple[int, int] | None,
 ) -> tuple[str, list[object]]:
-    """Return a ``(where_clause, params)`` pair.
-
-    ``year`` and ``month`` are mutually exclusive at the CLI layer;
-    this helper accepts either alone or both ``None`` (= no filter)
-    and keeps the SQL short. ``month`` accepts a pre-validated
-    ``(year, month)`` pair so invalid values cannot reach the DB.
-
-    Year/month parameters are bound as integers to match the shape
-    used by ``src/dinary/sql/get_month_expenses.sql`` — both sides
-    of the comparison are integers in SQL (``strftime`` output is
-    cast to ``INTEGER``) so the query planner can compare without
-    a per-row string coercion, and the two call sites agree on
-    parameter type.
-    """
+    """Both sides bind as integers (matching ``get_month_expenses.sql``'s cast
+    ``strftime`` output) so the query planner avoids a per-row string coercion."""
     if month is not None:
         return (
             "WHERE CAST(strftime('%Y', e.datetime) AS INTEGER) = ?"
@@ -150,27 +124,11 @@ def aggregate_expenses(
     year: int | None = None,
     month: tuple[int, int] | None = None,
 ) -> list[ExpenseSummaryRow]:
-    """Aggregate matching expense rows by the 3D coord.
-
-    The tag set is joined into a canonical, deterministic string
-    (``group_concat(t.name, ', ')`` over a pre-sorted subquery) so
-    two expenses whose
-    tags are the same set but inserted in different orders collapse
-    into one summary row. ``event`` is ``''`` when the expense has
-    no event; this matches the project's convention of rendering
-    ``event_id IS NULL`` as an empty cell in 2D/3D reports.
-
-    Rows are returned sorted by ``total DESC`` then by ``(category,
-    event, tags)`` ASC so ties break deterministically — the
-    secondary sort matters for test snapshots.
-    """
+    """Tags are joined via a pre-sorted ``group_concat`` so the same tag set in a
+    different insert order still collapses into one summary row. Sorted by
+    ``total DESC`` then ``(category, event, tags)`` ASC for deterministic ties."""
     where, params = _build_filter(year, month)
-    # S608 suppression: ``where`` is one of three hardcoded strings
-    # returned by ``_build_filter`` — it never contains user data.
-    # User-supplied ``year`` / ``month`` values travel through
-    # ``params`` as real positional bind parameters, not through
-    # string interpolation. ``str.format`` here just stitches the
-    # static fragment into the static SQL body.
+    # S608: `where` is one of three hardcoded fragments, never user data.
     sql = _EXPENSES_AGGREGATION_SQL.format(where=where)
     rows = con.execute(sql, params).fetchall()
     return [
@@ -197,16 +155,8 @@ def render_rich(
     title_suffix: str,
     stream: TextIO | None = None,
 ) -> None:
-    """Pretty-print the summary as a ``rich`` table.
-
-    This module (``dinary.reports.expenses``) is dev-only tooling: it
-    is invoked exclusively through ``inv report-expenses`` / ``python -m
-    dinary.reports.expenses`` and is never imported by the FastAPI
-    runtime. That is why depending on ``rich`` (a dev-only dep) at
-    module level is safe here — the runtime import graph never
-    transits through ``dinary.reports``. ``stream`` defaults to
-    ``sys.stdout`` via ``Console``'s own default.
-    """
+    """Depending on ``rich`` at module level is safe: this dev-only tool is never
+    imported by the FastAPI runtime."""
     console = Console(file=stream)
     title = f"Expenses by 3D coord — {title_suffix} ({currency})"
     table = Table(title=title, show_lines=False)
@@ -248,18 +198,10 @@ def render_csv(rows: list[ExpenseSummaryRow], *, stream: TextIO) -> None:
 
 
 def render_json(rows: Iterable[ExpenseSummaryRow], *, stream: TextIO) -> None:
-    """Emit the summary as a JSON array.
-
-    Wire format for ``inv report-expenses --remote``. See the
-    matching :func:`dinary.reports.income.render_json` docstring for
-    the shared rationale (Decimal-as-string, end-to-end UTF-8).
-
-    ``category`` / ``event`` / ``tags`` routinely contain non-ASCII text;
-    ``ensure_ascii=False``
-    keeps them readable in raw ``--json`` output and avoids a ~6×
-    payload blow-up from ``\\uXXXX`` escapes. UTF-8 on the wire is
-    the contract regardless.
-    """
+    """Wire format for ``inv report-expenses --remote`` (see
+    :func:`dinary.reports.income.render_json` for the shared Decimal/UTF-8
+    rationale). ``ensure_ascii=False`` avoids a ~6x payload blow-up from
+    ``\\uXXXX``-escaping the routinely non-ASCII category/event/tag text."""
     payload = [
         {
             "category": r.category,
@@ -275,13 +217,8 @@ def render_json(rows: Iterable[ExpenseSummaryRow], *, stream: TextIO) -> None:
 
 
 def rows_from_json(payload: list[dict]) -> list[ExpenseSummaryRow]:
-    """Inverse of :func:`render_json`.
-
-    ``int(entry["rows"])`` / ``Decimal(str(entry["total"]))`` are
-    tolerant of both int/str and Decimal/str encodings so the
-    payload survives a round-trip through a tool that stringifies
-    all scalars (``jq -r``, ``yq``, ...).
-    """
+    """Inverse of :func:`render_json`; tolerant of both int/str and Decimal/str
+    encodings so the payload survives round-tripping through ``jq -r``/``yq``."""
     return [
         ExpenseSummaryRow(
             category=str(entry["category"]),
@@ -311,13 +248,8 @@ def render(
     as_json: bool = False,
     stream: TextIO | None = None,
 ) -> None:
-    """Render prefetched rows in the requested format.
-
-    Single entry point used by both :func:`run` (local SQLite path)
-    and the ``tasks.py`` remote transport (JSON payload over SSH).
-    ``year`` / ``month`` are cosmetic — they land in the rich table
-    title only. Row filtering has already happened upstream.
-    """
+    """Shared by :func:`run` and the remote SSH/JSON transport. ``year``/``month``
+    are cosmetic (rich table title only) — filtering already happened upstream."""
     if as_csv and as_json:
         msg = "--csv and --json are mutually exclusive"
         raise ValueError(msg)
@@ -343,16 +275,8 @@ def run(
     as_json: bool = False,
     stream: TextIO | None = None,
 ) -> int:
-    """Headless entry point used by ``main()`` and tests.
-
-    Thin ``fetch → render`` composition: open the local SQLite DB,
-    aggregate (optionally filtered by ``year`` / ``month``), render.
-    Returns ``0`` unconditionally — "no matching expenses" is a
-    valid report outcome, not an error.
-
-    ``as_csv`` and ``as_json`` are mutually exclusive; see
-    :func:`dinary.reports.income.run` for the rationale.
-    """
+    """Headless entry point used by ``main()`` and tests. Returns ``0``
+    unconditionally — "no matching expenses" is a valid outcome, not an error."""
     if as_csv and as_json:
         msg = "--csv and --json are mutually exclusive"
         raise ValueError(msg)

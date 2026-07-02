@@ -1,13 +1,8 @@
-"""Tests for dashboard chart construction.
+"""Tests for dashboard chart construction: direct calls into
+``dinary_analytics.charts`` (same functions the notebook imports) plus
+``cell.run()`` tests against a real SQLite test DB."""
 
-Tests call make_chart_pair and make_event_chart from dinary_analytics.charts directly —
-the same functions the notebook imports — so any invalid Altair params
-or broken imports are caught here before runtime.
-
-cell.run() tests execute the actual notebook cells against a real SQLite test DB so
-regressions in cell logic are caught without duplicating that logic in the tests.
-"""
-
+import datetime
 import json
 import sqlite3
 from functools import partial
@@ -21,11 +16,21 @@ from dinary_analytics.charts import ChartSize, make_basket_chart, make_chart_pai
 from dinary_analytics.connection import open_ledger
 
 
+def _months_ago(months: int) -> datetime.date:
+    """First-of-month date `months` months before today, so the fixture data
+    always falls inside the dashboard's rolling last-12-months window."""
+    today = datetime.date.today()
+    total = today.year * 12 + (today.month - 1) - months
+    return datetime.date(total // 12, total % 12 + 1, 1)
+
+
 @pytest.fixture
 def ledger_db(tmp_path):
+    older = _months_ago(2)
+    newer = _months_ago(1)
     db = tmp_path / "ledger.db"
     con = sqlite3.connect(str(db))
-    con.executescript("""
+    con.executescript(f"""
         CREATE TABLE expenses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             datetime TIMESTAMP NOT NULL,
@@ -78,14 +83,14 @@ def ledger_db(tmp_path):
         INSERT INTO categories VALUES (1, 'food', 1, 1);
         INSERT INTO categories VALUES (2, 'rent', 1, 1);
         INSERT INTO tags VALUES (1, 'travel', 1);
-        INSERT INTO events VALUES (1, 'vacation', '2025-06-01', '2025-07-31', 1, 1);
-        INSERT INTO expenses VALUES (1, '2025-06-10 10:00:00', 500.0, 55000.0, 'RSD', 1, 1, NULL, NULL, NULL);
-        INSERT INTO expenses VALUES (2, '2025-06-15 12:00:00', 300.0, 33000.0, 'RSD', 2, 1, NULL, NULL, NULL);
-        INSERT INTO expenses VALUES (3, '2025-07-05 09:00:00', 480.0, 52800.0, 'RSD', 1, 1, NULL, NULL, NULL);
+        INSERT INTO events VALUES (1, 'vacation', '{older.isoformat()}', '{newer.replace(day=28).isoformat()}', 1, 1);
+        INSERT INTO expenses VALUES (1, '{older.replace(day=10)} 10:00:00', 500.0, 55000.0, 'RSD', 1, 1, NULL, NULL, NULL);
+        INSERT INTO expenses VALUES (2, '{older.replace(day=15)} 12:00:00', 300.0, 33000.0, 'RSD', 2, 1, NULL, NULL, NULL);
+        INSERT INTO expenses VALUES (3, '{newer.replace(day=5)} 09:00:00', 480.0, 52800.0, 'RSD', 1, 1, NULL, NULL, NULL);
         INSERT INTO expense_tags VALUES (1, 1);
         INSERT INTO expense_tags VALUES (2, 1);
-        INSERT INTO income VALUES (2025, 6, 2000.0);
-        INSERT INTO income VALUES (2025, 7, 2100.0);
+        INSERT INTO income VALUES ({older.year}, {older.month}, 2000.0);
+        INSERT INTO income VALUES ({newer.year}, {newer.month}, 2100.0);
     """)
     con.commit()
     con.close()
@@ -255,11 +260,8 @@ def test_dashboard_notebook_imports():
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
 def test_dashboard_selectors_cell_runs(ledger_db, monkeypatch):
-    """Run the actual dashboard selectors cell against a test DB.
-
-    Uses cell.run() so any regression in the real notebook code is caught here,
-    not via duplicated logic.
-    """
+    """Uses ``cell.run()`` so a regression in the real notebook code is caught
+    here, not via duplicated logic."""
     import datetime
     import marimo as mo
 

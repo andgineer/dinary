@@ -1,12 +1,4 @@
-"""Shared header/grid fixtures + worksheet stub for the split
-``test_sheets_*.py`` files.
-
-Underscore prefix keeps pytest from collecting this as a test
-module. Re-export only the surface the split files actually need —
-the layout constant ``HEADER``, the canonical ``SAMPLE_SHEET`` grid,
-and the ``_make_worksheet`` stub that mirrors the gspread surface
-under test.
-"""
+"""Underscore prefix keeps pytest from collecting this as a test module."""
 
 from unittest.mock import MagicMock
 

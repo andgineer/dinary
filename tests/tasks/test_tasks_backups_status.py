@@ -31,38 +31,24 @@ from tasks.backups.backup_snapshots import (
 @allure.feature("Backup")
 @allure.story("Cloud status")
 class TestBackupStatusHelpers:
-    """Pure helpers behind ``inv backup-cloud-status``. The task itself is a
-    thin wrapper over :func:`_replica_list_snapshots` (I/O) and
-    :func:`_check_backup_freshness` (pure) — these tests pin the
-    pure branches so the ok/stale/empty/unparseable transitions are
-    locked down independently of SSH/rclone plumbing.
-    """
+    """Pure helpers behind ``inv backup-cloud-status``, pinning the
+    ok/stale/empty/unparseable transitions independently of SSH/rclone plumbing."""
 
     def test_parse_timestamp_round_trips_canonical_filename(self):
-        """The canonical name produced by ``dinary-backup`` must parse
-        to the exact UTC datetime it encodes. The single source of
-        truth for "when was this backup produced" is the filename,
-        not Yandex-side ModTime, so a silent drift here would make
-        freshness checks lie.
-        """
+        """The filename, not Yandex-side ModTime, is the source of truth for
+        when a backup was produced — a drift here would make freshness checks lie."""
         ts = parse_snapshot_timestamp("dinary-2026-04-22T0317Z.db.zst")
         assert ts == _dt(2026, 4, 22, 3, 17, tzinfo=_tz.utc)
 
     def test_parse_timestamp_returns_none_on_unexpected_shape(self):
-        """Human-uploaded noise in the same Yandex folder must not
-        crash the parser: it returns ``None`` so the caller can treat
-        it the same as "no timestamp" rather than surfacing a
-        ValueError to cron.
-        """
+        """Human-uploaded noise must not crash the parser; returns None instead
+        of surfacing a ValueError to cron."""
         assert parse_snapshot_timestamp("random.txt") is None
         assert parse_snapshot_timestamp("dinary-bad.db.zst") is None
 
     def test_check_freshness_ok_when_newest_inside_threshold(self):
-        """Under-threshold → ``ok`` + exact age in hours. The newest
-        snapshot is always the last entry of the sorted list — any
-        regression that reads ``[0]`` would read the oldest and
-        false-alert every day.
-        """
+        """A regression reading ``[0]`` instead of the last (sorted) entry would
+        read the oldest snapshot and false-alert every day."""
         snaps = [
             ("dinary-2026-04-21T0317Z.db.zst", 100),
             ("dinary-2026-04-22T0317Z.db.zst", 200),
@@ -96,12 +82,8 @@ class TestBackupStatusHelpers:
         assert verdict["threshold_hours"] == 26.0
 
     def test_check_freshness_unparseable_newest_is_stale(self):
-        """A newest file that does not match the canonical timestamp
-        shape (e.g. someone manually uploaded ``dinary-final.db.zst``)
-        must surface as ``stale`` with ``age_hours=None`` — we refuse
-        to guess a timestamp and the operator sees something is
-        wrong.
-        """
+        """An unparseable filename surfaces as ``stale`` with ``age_hours=None``
+        rather than guessing a timestamp."""
         snaps = [("dinary-final.db.zst", 42)]
         verdict = check_backup_freshness(snaps, now=None, max_age_hours=26)
         assert verdict["status"] == "stale"
@@ -187,11 +169,8 @@ class TestBackupStatusTask:
         monkeypatch.setattr(tasks.backups.backups_status, "datetime", _FrozenDateTime)
 
     def test_ok_prints_summary_and_does_not_exit(self, monkeypatch, capsys, _mock_now):
-        """Happy path: fresh snapshot → one-line summary on stdout,
-        no sys.exit(1). The task's contract for cron is "exit code
-        0 means everything is fine"; a regression that exits 1 on OK
-        would false-alert the operator every hour.
-        """
+        """A regression that exits 1 on a fresh snapshot would false-alert cron
+        every hour."""
         monkeypatch.setattr(
             tasks.backups.backups_status,
             "replica_list_snapshots",

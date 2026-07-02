@@ -1,20 +1,5 @@
-"""Tests for ``GET /api/catalog`` — 3D catalog snapshot with ETag support.
-
-The PWA relies on two invariants:
-
-1. The snapshot shape (``category_groups``, ``categories``,
-   ``events``, ``tags``) matches exactly one primary-key-carrying
-   item per row; **every** row is returned (active and inactive) and
-   carries an ``is_active`` flag so the PWA can filter client-side
-   and expose per-picker "Show inactive" toggles.
-2. ``If-None-Match`` matching the current ETag returns 304 with
-   empty body; a mismatch returns the full payload plus a new
-   ``ETag`` header. The ETag rides on the HTTP header only — the
-   response body does not duplicate it.
-
-A broken ETag path would turn every catalog refresh into a full
-payload download, silently undoing the Phase 2 cache design.
-"""
+"""Tests for ``GET /api/catalog`` — 3D catalog snapshot with ETag support, see
+``specs/reference/catalog-api.md``."""
 
 import shutil
 
@@ -126,12 +111,8 @@ class TestCatalogGet:
 @allure.epic("Catalog")
 @allure.feature("API")
 class TestCatalogRemovableFlag:
-    """``removable`` must be ``true`` exactly when a DELETE on the row
-    would hard-delete (i.e. the row has no expense / mapping / auto_tags
-    reference anywhere). The PWA uses the flag to hide ``Delete`` on
-    rows that would silently soft-delete, which otherwise makes the
-    management UI look broken ("I pressed Delete and nothing happened").
-    """
+    """``removable`` is true exactly when a DELETE would hard-delete, see
+    ``specs/reference/catalog-api.md``."""
 
     def test_unreferenced_leaf_rows_are_removable(self, client):
         # Categories, events, and tags in the fixture have no
@@ -164,13 +145,6 @@ class TestCatalogRemovableFlag:
         assert cats[2] is True
 
     def test_event_becomes_non_removable_when_referenced_by_expense(self, client):
-        # Events used by at least one expense must report
-        # ``removable=false`` so the PWA hides the Delete button and
-        # avoids the silent soft-delete-then-hide UX. Without this
-        # guarantee the manage list offers Delete on used events;
-        # pressing it soft-deletes (because of the FK), the row
-        # vanishes from "active", and the operator is left wondering
-        # why expense history "lost" the event reference.
         con = storage.get_connection()
         try:
             con.execute(
@@ -205,10 +179,8 @@ class TestCatalogRemovableFlag:
 @allure.epic("Catalog")
 @allure.feature("API")
 class TestIfNoneMatchUnit:
-    """Direct unit coverage for the list/wildcard parser. The
-    integration tests above exercise it end-to-end, but the parser is
-    pure and small enough that edge cases are cheaper to pin down here
-    than through repeated ``client.get`` calls."""
+    """Direct unit coverage for the list/wildcard parser — cheaper to pin edge
+    cases here than through repeated ``client.get`` calls."""
 
     def test_empty_header_is_not_a_match(self):
 

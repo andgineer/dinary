@@ -1,5 +1,3 @@
-"""Tests for dinary.db.category_apply.apply_template and resolve_category_name."""
-
 import allure
 import pytest
 
@@ -86,9 +84,7 @@ class TestApplyTemplate:
         assert active_template["value"] == "active"
 
     def test_used_category_dropped_from_visible_set_stays_visible(self, con):
-        """A category with expenses keeps showing up via ``list_visible_categories``
-        even after a template switch moves it into the new template's hidden bucket,
-        because ``apply_template`` never deactivates a category with expense history."""
+        """``apply_template`` never deactivates a category with expense history."""
         apply_template(con, "active", "ru")  # 'fruit' is visible here
 
         cat_id = con.execute("SELECT id FROM categories WHERE code = 'fruit'").fetchone()[0]
@@ -108,8 +104,7 @@ class TestApplyTemplate:
         assert "fruit" in codes
 
     def test_hidden_category_stays_hidden_across_apply(self, con):
-        """``apply_template`` never touches ``is_hidden`` — a user-hidden
-        category remains hidden even when the new template marks it visible."""
+        """``apply_template`` never touches ``is_hidden``."""
         apply_template(con, "simple", "ru")  # 'groceries' is visible here
         con.execute("UPDATE categories SET is_hidden = 1 WHERE code = 'groceries'")
 

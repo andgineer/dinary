@@ -16,24 +16,10 @@ from tasks.ssh_utils import remote_snapshot_cmd, ssh_capture_bytes
 
 
 def _run_report_module(c, module: str, flags: list[str], *, remote: bool) -> None:
-    """Dispatch a ``tasks.reports.<module>`` run locally or over SSH.
-
-    Both modes follow the same shape: fetch rows → render locally.
-
-    * Local: ``uv run python -m tasks.reports.<module> <flags>`` —
-      a single process fetches from ``data/dinary.db`` and renders.
-    * Remote: the same module runs on the server in ``--json`` mode
-      via the SSH snapshot wrapper (see :func:`_remote_snapshot_cmd`
-      for why a SQLite snapshot is used), the JSON bytes come back
-      through :func:`_ssh_capture_bytes`, and the module's
-      ``render`` runs on the local terminal.
-
-    JSON is the wire format so stdout over SSH only ever carries
-    structured data: a single end-of-stream UTF-8 decode on the
-    client keeps Cyrillic and box-drawing glyphs intact regardless
-    of how the SSH transport chunks the stream. The local side then
-    picks any renderer (rich, csv, or raw JSON passthrough).
-    """
+    """Local: fetch + render in one process. Remote: the module runs on the server
+    in ``--json`` mode over SSH and rendering happens locally — JSON as the wire
+    format means a single end-of-stream UTF-8 decode keeps Cyrillic intact regardless
+    of how SSH chunks the stream."""
     if not remote:
         cmd = f"uv run python -m tasks.reports.{module}"
         if flags:
@@ -150,9 +136,6 @@ def sql_query(c, query="", file="", csv=False, json=False, write=False, remote=F
         inv sql -q "DELETE FROM expenses WHERE id = 999" --write
         inv sql -f scripts/summary.sql --csv > out.csv
         inv sql -q "SELECT * FROM app_metadata" --remote
-
-    --write enables mutations (rejected with --remote).
-    See https://andgineer.github.io/dinary/operations#reporting-and-data-access
     """
 
     if csv and json:

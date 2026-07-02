@@ -1,5 +1,3 @@
-"""inv tasks for analytics.db backup and restore (local file and Yandex.Disk)."""
-
 import json
 import shlex
 import subprocess
@@ -65,7 +63,6 @@ def _apply_yadisk_retention() -> None:
 
 
 def _do_backup(c, dest: Path) -> None:
-    """Create a local .db.zst backup of analytics.db via the analytics package."""
     assert_local_binaries(["zstd"])
     c.run(
         f"uv run python -m dinary_analytics.backup backup --output {shlex.quote(str(dest))}",

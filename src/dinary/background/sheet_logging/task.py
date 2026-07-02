@@ -13,29 +13,12 @@ logger = logging.getLogger(__name__)
 
 
 async def warm_sheet_mapping() -> None:
-    """Preload ``sheet_mapping`` from the ``map`` tab at startup.
-
-    Moves the ~1s Drive+Sheets round-trip off the first-expense hot
-    path. Skipped when the drain loop itself is disabled (interval
-    <= 0 — the test fixture uses this to avoid network I/O in
-    lifespan) or when sheet-logging is unconfigured, or when the
-    operator explicitly disabled the warm-up via
-    ``warm_sheet_mapping_timeout_sec <= 0``.
-
-    Bounded by ``settings.warm_sheet_mapping_timeout_sec`` so a slow
-    or unreachable Google backend cannot wedge the lifespan startup
-    and delay ``/api/health`` from answering (a long startup starves
-    Railway's health probe). On timeout or any other failure we log
-    and continue — the drain loop's ``ensure_fresh`` will retry on
-    its own schedule, and the cached mapping (from the last
-    successful reload before the restart) keeps the runtime
-    functional in the meantime.
-
-    Note on cancellation: ``asyncio.wait_for`` cancels the awaitable
-    but cannot cancel the underlying ``to_thread`` worker (sync
-    Google I/O). The worker continues running until its socket
-    timeout fires; the event loop is free to move on immediately.
-    """
+    """Moves the ~1s Drive+Sheets round-trip off the first-expense hot path. Bounded
+    by ``warm_sheet_mapping_timeout_sec`` so a slow Google backend can't delay
+    ``/api/health`` and starve the platform's health probe; on timeout/failure it
+    logs and continues, since the drain loop retries on its own schedule.
+    ``asyncio.wait_for`` cancels the awaitable but not the underlying ``to_thread``
+    worker, which keeps running until its socket timeout fires."""
     if settings.sheet_logging_drain_interval_sec <= 0:
         return
     if not settings.sheet_logging_enabled:
@@ -67,10 +50,8 @@ async def sheet_logging_task() -> None:
             "sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)",
         )
         return
-    # Register a wake-up event so producers (e.g. POST /api/expenses)
-    # can kick a sweep immediately instead of waiting for the next
-    # periodic tick. The timer is still the fallback for crash-recovery
-    # sweeps over jobs left behind by a previous worker.
+    # Lets producers (e.g. POST /api/expenses) kick a sweep immediately; the
+    # timer remains the fallback for crash-recovery sweeps.
     wake = asyncio.Event()
     loop = asyncio.get_running_loop()
     sheet_logging.register_wake_channel(wake, loop)

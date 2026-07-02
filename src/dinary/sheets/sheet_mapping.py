@@ -48,12 +48,8 @@ class MapRow:
 
 
 class MapTabError(Exception):
-    """Raised when the ``map`` tab cannot be parsed or contains unknown names.
-
-    Used by the admin reload endpoint to surface validation errors as
-    400-class HTTP responses; the drain loop logs and keeps the cached
-    (last known-good) mapping rather than crashing.
-    """
+    """Admin reload endpoint surfaces this as 400; the drain loop instead logs
+    and keeps the last known-good mapping."""
 
 
 # ---------------------------------------------------------------------------
@@ -214,21 +210,10 @@ def resolve_projection(
     tag_ids: set[int],
     default_sheet_category: str,
 ) -> tuple[str, str]:
-    """Apply the "first non-* wins per column" resolver.
-
-    ``rows`` must be ordered by ``row_order`` ascending. Returns the
-    resolved ``(sheet_category, sheet_group)`` pair; an empty string
-    is a legitimate per-column result (explicit clear).
-
-    NOTE: ``catalog.logging_projection`` contains a second copy of
-    this same semantics (running directly against ``sheet_mapping`` /
-    ``sheet_mapping_tags`` rows fetched from the DB). The two live
-    apart so this pure helper can stay as a dependency-free building
-    block that tests pin, while the DB-backed variant avoids
-    materializing every ``MapRow`` in memory on every drain. Any
-    change to the matching rule (new wildcard semantics, reorder
-    precedence, extra dimensions) **must** be applied in both places.
-    """
+    """``rows`` must be ordered by ``row_order`` ascending. Mirrors
+    ``catalog.logging_projection`` (kept separate so this pure helper stays a
+    dependency-free unit-tested building block) — any change to the matching
+    rule must go in both."""
     resolved_category: str | None = None
     resolved_group: str | None = None
 
@@ -263,19 +248,9 @@ def resolve_projection(
 def _load_catalog(
     con: sqlite3.Connection,
 ) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
-    """Load every catalog row (any visibility state) by name.
-
-    The map tab references names that must stay resolvable regardless of a
-    category's current visibility — ``is_active`` now means "in the active
-    template's visible subset" and is rewritten wholesale by
-    ``apply_template``, so a category referenced by the map can easily be
-    ``is_active=0`` (or ``is_hidden``/``is_retired``) without breaking the
-    mapping reload. Events and tags keep their original "hide from the
-    picker" ``is_active`` meaning, with the same "must stay
-    resolvable" requirement. Hard-deleted rows are the only invariant —
-    their names are simply absent and ``parse_rows`` will still raise
-    ``MapTabError`` with the "did you mean" hint.
-    """
+    """Loads every row regardless of ``is_active`` — the map tab must stay able to
+    resolve a name even after ``apply_template`` hides it. Only hard-deleted rows
+    are unresolvable, surfacing as ``MapTabError`` with a "did you mean" hint."""
     cat_rows = con.execute("SELECT name, id FROM categories").fetchall()
     event_rows = con.execute("SELECT name, id FROM events").fetchall()
     tag_rows = con.execute("SELECT name, id FROM tags").fetchall()
@@ -322,19 +297,9 @@ def _atomic_swap(con: sqlite3.Connection, rows: list[MapRow]) -> None:
 
 
 def reload_now(*, check_after: bool = True) -> dict:
-    """Unconditional reload: fetch the map tab, parse, swap the DB.
-
-    Returns a summary dict with the new ``modifiedTime``, number of
-    parsed rows, and the tab name. Raises ``MapTabError`` on
-    parse/validation failure without touching the DB; the current
-    ``sheet_mapping`` contents stay in place.
-
-    ``check_after`` controls the lost-update guard (two Drive metadata
-    GETs). The drain-loop path uses ``check_after=True`` so a
-    concurrent edit that shifts ``modifiedTime`` mid-reload leaves
-    the cache unset and the next tick retries; the admin path uses
-    ``check_after=False`` to halve the Drive quota cost.
-    """
+    """Raises ``MapTabError`` on parse/validation failure without touching the DB.
+    ``check_after`` (two Drive metadata GETs) guards against a lost update from a
+    concurrent edit mid-reload; the admin path disables it to halve Drive quota cost."""
     # Normalise the env value — operators may paste the full browser
     # URL instead of the bare id. The Sheets + Drive clients want the
     # bare id, so extract it here before any API call.
@@ -404,14 +369,7 @@ def ensure_fresh() -> None:
         return
     try:
         modified_time = drive_get_modified_time(spreadsheet_id)
-    except Exception:  # noqa: BLE001 — see comment below
-        # Drive failures are routine (token refresh, 5xx, network
-        # blips, gspread/google-auth transient errors) and we
-        # deliberately swallow *all* of them here: the cached
-        # ``sheet_mapping`` keeps serving writes while we wait for
-        # the next drain tick. ``exc_info=True`` preserves the
-        # traceback so a persistent failure still has enough
-        # context for triage.
+    except Exception:  # noqa: BLE001 — Drive failures are routine; keep serving cached sheet_mapping
         logger.warning(
             "sheet_mapping: drive_get_modified_time failed; keeping cached sheet_mapping",
             exc_info=True,
@@ -471,12 +429,8 @@ def _warn_if_existing_map_tab_is_stale(
 
 
 def ensure_default_map_tab() -> None:
-    """Create the ``map`` worksheet tab with an empty header if missing.
-
-    Idempotent: a second call dry-runs the existing tab against the
-    current active catalog and WARN-logs any stale references rather
-    than mutating.
-    """
+    """Idempotent: a second call dry-runs the existing tab against the current
+    catalog and WARN-logs stale references rather than mutating."""
     spreadsheet_id = spreadsheet_id_from_setting(settings.sheet_logging_spreadsheet)
     if not spreadsheet_id:
         logger.info("ensure_default_map_tab: sheet_logging_spreadsheet empty; skipping")
@@ -500,13 +454,7 @@ def ensure_default_map_tab() -> None:
 
     try:
         ws.columns_auto_resize(0, len(MAP_TAB_HEADER) - 1)
-    except Exception:  # noqa: BLE001 — see comment below
-        # Auto-resize is a cosmetic best-effort: gspread can raise
-        # APIError / HTTPError / TimeoutError / arbitrary JSON
-        # decode errors from the Sheets batchUpdate endpoint, and
-        # the tab is already fully populated at this point — a
-        # narrow resize failure must not fail the whole
-        # ``ensure_default_map_tab`` call.
+    except Exception:  # noqa: BLE001 — cosmetic best-effort, must not fail the whole call
         logger.warning(
             "ensure_default_map_tab: failed to auto-resize columns; using Sheets defaults",
         )
@@ -524,16 +472,8 @@ def ensure_default_map_tab() -> None:
 
 
 def decode_auto_tags_value(raw: object, *, context: str = "") -> list[int]:
-    """Decode a raw ``events.auto_tags`` JSON value into a list of integer tag IDs.
-
-    Single canonical implementation shared by every code path that
-    reads ``events.auto_tags`` (``api/catalog``, ``catalog_writer``,
-    ``sheet_mapping.load_event_auto_tag_ids``). Blank / NULL /
-    malformed payloads degrade to ``[]`` so a partially migrated DB
-    cannot wedge the read path; a WARN is logged once per bad value
-    with the caller-supplied ``context`` string so operators can trace
-    which event / endpoint surfaced the issue.
-    """
+    """Shared by every reader of ``events.auto_tags``. Blank/NULL/malformed payloads
+    degrade to ``[]`` (WARN-logged with ``context``) rather than wedging the read path."""
     if raw is None or raw == "":
         return []
     try:
