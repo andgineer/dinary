@@ -21,7 +21,7 @@ from dinary.background.classification.receipt_classifier import (
 import llmbroker
 import httpx
 
-from dinary.adapters.serbian_receipt_parser import (
+from dinary.adapters.receipt_types import (
     ParsedReceipt,
     ParserNotIndexedError,
     ParserParseError,

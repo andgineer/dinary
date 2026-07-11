@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from dinary.adapters.serbian_receipt_parser import ParsedReceipt
+from dinary.adapters.receipt_types import ParsedReceipt
 from dinary.db.storage import transaction
 
 

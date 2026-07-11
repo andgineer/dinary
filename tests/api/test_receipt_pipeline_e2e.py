@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import llmbroker
 
-from dinary.adapters.serbian_receipt_parser import ParsedReceipt, ReceiptItem
+from dinary.adapters.receipt_types import ParsedReceipt, ReceiptItem
 from dinary.background.classification.receipt_classifier import (
     ClassificationResult,
     ClassifyOutcome,

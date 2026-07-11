@@ -1,14 +1,33 @@
-// Pure helpers for the Serbian fiscal-receipt QR payload (suf.purs.gov.rs).
-// Extracted from the legacy app.js parseReceiptUrl so it can be unit
-// tested without DOM or scanner state.
+// Pure helpers for fiscal-receipt QR payloads.
+//
+// Serbia (suf.purs.gov.rs): a binary `vl=` query parameter encodes amount and
+// timestamp. Amounts are RSD.
+// Montenegro (mapr.tax.gov.me / efitest.tax.gov.me): the verify URL carries the
+// total (`prc`) and purchase time (`crtd`) as plain parameters that sit after
+// the `#` fragment. Amounts are EUR. The `+` timezone-offset sign in `crtd` is
+// decoded to a space by URLSearchParams and is restored here.
+//
+// The country is detected from the URL itself — the user never picks one.
 
-const FISCAL_HOST_FRAGMENT = "suf.purs.gov.rs";
+const SERBIAN_HOST_FRAGMENT = "suf.purs.gov.rs";
+const MONTENEGRIN_HOST_FRAGMENTS = ["mapr.tax.gov.me", "efitest.tax.gov.me"];
 
-export function isFiscalReceiptUrl(text) {
-  return typeof text === "string" && text.includes(FISCAL_HOST_FRAGMENT);
+function isSerbianReceiptUrl(text) {
+  return text.includes(SERBIAN_HOST_FRAGMENT);
 }
 
-export function parseReceiptUrl(url) {
+function isMontenegrinReceiptUrl(text) {
+  return MONTENEGRIN_HOST_FRAGMENTS.some((host) => text.includes(host));
+}
+
+export function isFiscalReceiptUrl(text) {
+  return (
+    typeof text === "string" &&
+    (isSerbianReceiptUrl(text) || isMontenegrinReceiptUrl(text))
+  );
+}
+
+function parseSerbianReceiptUrl(url) {
   const vl = new URL(url).searchParams.get("vl");
   if (!vl) throw new Error("No vl parameter");
 
@@ -23,5 +42,36 @@ export function parseReceiptUrl(url) {
   const ms = msHi * 0x100000000 + msLo;
 
   const date = new Date(ms).toISOString().slice(0, 10);
-  return { amount, date };
+  return { amount, date, currency: "RSD" };
+}
+
+function montenegrinParams(url) {
+  // The verify URL keeps its parameters after the `#/verify` fragment.
+  const parsed = new URL(url);
+  const fragmentQuery = parsed.hash.includes("?")
+    ? parsed.hash.slice(parsed.hash.indexOf("?") + 1)
+    : "";
+  const params = new URLSearchParams(
+    [parsed.search.replace(/^\?/, ""), fragmentQuery].filter(Boolean).join("&"),
+  );
+  const crtd = params.get("crtd");
+  return {
+    prc: params.get("prc"),
+    // URLSearchParams decodes the offset `+` to a space; restore it.
+    crtd: crtd ? crtd.replace(/ /g, "+") : null,
+  };
+}
+
+function parseMontenegrinReceiptUrl(url) {
+  const { prc, crtd } = montenegrinParams(url);
+  if (!prc || !crtd) throw new Error("No prc/crtd parameters");
+  const amount = Number.parseFloat(prc);
+  if (Number.isNaN(amount)) throw new Error("Invalid prc parameter");
+  const date = crtd.slice(0, 10);
+  return { amount, date, currency: "EUR" };
+}
+
+export function parseReceiptUrl(url) {
+  if (isMontenegrinReceiptUrl(url)) return parseMontenegrinReceiptUrl(url);
+  return parseSerbianReceiptUrl(url);
 }

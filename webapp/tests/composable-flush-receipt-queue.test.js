@@ -75,6 +75,25 @@ describe("flushReceiptQueue", () => {
     expect(showSpy).toHaveBeenCalledWith(expect.stringContaining("Receipt already recorded"), "info");
   });
 
+  it("shows a EUR amount label for a Montenegrin receipt", async () => {
+    const queue = useReceiptQueueStore();
+    await queue.enqueue(
+      "https://mapr.tax.gov.me/ic/#/verify?iic=X&tin=Y" +
+        "&crtd=2026-07-11T15:51:04+02:00&prc=59.10",
+    );
+
+    vi.spyOn(receiptsApi, "postReceipt").mockResolvedValue({ status: "ok" });
+    const toast = useToastStore();
+    const showSpy = vi.spyOn(toast, "show");
+
+    await flushReceiptQueue();
+
+    expect(showSpy).toHaveBeenCalledWith(
+      expect.stringContaining("59.1 EUR"),
+      "success",
+    );
+  });
+
   it("passes client_receipt_id and url to postReceipt", async () => {
     const queue = useReceiptQueueStore();
     await queue.enqueue("https://example.com/r");

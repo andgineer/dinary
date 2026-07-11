@@ -31,6 +31,12 @@ _PURCHASE_DT = datetime(2026, 5, 4, 12, 30, 0, tzinfo=UTC)
 _VL = _build_vl(1234500, int(_PURCHASE_DT.timestamp() * 1000))
 _RECEIPT_URL = f"https://suf.purs.gov.rs/v/?vl={_VL}"
 
+# Montenegrin verify URL: params after the `#/verify` fragment, EUR total in `prc`.
+_MNE_RECEIPT_URL = (
+    "https://mapr.tax.gov.me/ic/#/verify?iic=0D7C3EE1EEBAB4A08F4D5003FAE35E7B"
+    "&tin=03257746&crtd=2026-07-11T15:51:04+02:00&ord=27585&prc=59.10"
+)
+
 
 def _insert_receipt(
     *,
@@ -94,6 +100,20 @@ class TestReceiptQueue:
         assert Decimal(str(item["amount"])) == Decimal("123.45")
         assert item["currency"] == "RSD"
         assert item["purchase_date"] == _PURCHASE_DT.isoformat()
+
+    def test_lists_montenegrin_receipt_with_eur_currency(self, client, db):  # noqa: ARG002
+        rid = _insert_receipt(
+            url=_MNE_RECEIPT_URL,
+            client_receipt_id="rcid-mne",
+            store_name_raw="Blue Marlin",
+        )
+        _insert_job(rid, status="poisoned", last_error="boom")
+
+        resp = client.get("/api/receipts/queue")
+        item = resp.json()["items"][0]
+        assert Decimal(str(item["amount"])) == Decimal("59.10")
+        assert item["currency"] == "EUR"
+        assert item["purchase_date"] == "2026-07-11T15:51:04+02:00"
 
     def test_item_with_undecodable_url_has_null_amount(self, client, db):  # noqa: ARG002
         rid = _insert_receipt(
@@ -215,6 +235,25 @@ class TestResolveReceipt:
         # Resolved receipt drops out of the stuck-receipts queue.
         queue = client.get("/api/receipts/queue").json()
         assert queue["items"] == []
+
+    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
+    def test_resolve_montenegrin_receipt_stores_eur(self, _mock_rate, client, db):  # noqa: ARG002
+        rid = _insert_receipt(url=_MNE_RECEIPT_URL, client_receipt_id="rcid-mne-resolve")
+        _insert_job(rid, status="poisoned", last_error="boom")
+
+        resp = client.post(f"/api/receipts/{rid}/resolve", json={"category_id": 1})
+        assert resp.status_code == 204, resp.text
+
+        con = storage.get_connection()
+        try:
+            exp = con.execute(
+                "SELECT amount_original, currency_original FROM expenses WHERE receipt_id = ?",
+                [rid],
+            ).fetchone()
+            assert Decimal(str(exp["amount_original"])) == Decimal("59.10")
+            assert exp["currency_original"] == "EUR"
+        finally:
+            con.close()
 
     @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
     def test_resolve_with_tags_and_event_auto_tags(self, _mock_rate, client, db):  # noqa: ARG002

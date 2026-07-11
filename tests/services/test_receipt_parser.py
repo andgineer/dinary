@@ -6,9 +6,11 @@ import allure
 import httpx
 import pytest
 
-from dinary.adapters.serbian_receipt_parser import (
+from dinary.adapters.receipt_types import (
     ParserNotIndexedError,
     ParserRequestError,
+)
+from dinary.adapters.serbian_receipt_parser import (
     _parse_journal,
     _rsd,
     parse_receipt,

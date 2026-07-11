@@ -28,8 +28,8 @@ export async function flushReceiptQueue() {
         reportNetworkSuccess();
         let amountLabel = "";
         try {
-          const { amount } = parseReceiptUrl(item.url);
-          amountLabel = ` · ${amount.toLocaleString()} RSD`;
+          const { amount, currency } = parseReceiptUrl(item.url);
+          amountLabel = ` · ${amount.toLocaleString()} ${currency}`;
         } catch { /* URL may not be decodable */ }
         if (body?.status === "duplicate") {
           toast.show(`Receipt already recorded${amountLabel}`, "info");
