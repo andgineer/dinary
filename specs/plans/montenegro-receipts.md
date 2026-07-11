@@ -58,6 +58,38 @@ items as a list of objects with fields along the lines of `name`, `quantity`,
 an id/TIN field; a total field consistent with the QR's `prc`. Map from whatever the
 real payload contains.
 
+**Validation status (attempted live checks, July 2026).** Live API calls were
+attempted from the planning environment and are impossible from it: the sandbox
+egress policy denies `*.tax.gov.me` outright, and the portal itself answers
+**HTTP 403 to non-browser fetch services** (Anthropic's fetcher was rejected on both
+`mapr.tax.gov.me` and `efitest.tax.gov.me`), which suggests a WAF / bot filter in
+front of the portal. What *is* confirmed, from two independent open-source examples
+(`djordjen/ElektronskaFiskalizacijaNodeJS` and `digitalsolutionsmontenegro/fiskalapi`,
+each containing a full example verify URL):
+
+- the verify-URL format and the complete parameter set
+  (`iic`, `tin`, `crtd`, `ord`, `bu`, `cr`, `sw`, `prc`) — exactly as described above;
+- the query parameters sit after the `#/verify` fragment;
+- `crtd` is ISO 8601 with offset and `prc` is a plain decimal total.
+
+Unconfirmed and to be established in step 1: the `verifyInvoice` request/response
+shape. A ready-to-run probe (fill values from any real receipt QR):
+
+```bash
+curl -sS 'https://mapr.tax.gov.me/ic/api/verifyInvoice' \
+  -H 'User-Agent: Mozilla/5.0' -H 'Accept: application/json' \
+  --data-urlencode 'iic=<iic from QR>' \
+  --data-urlencode 'dateTimeCreated=<crtd from QR, offset included>' \
+  --data-urlencode 'tin=<tin from QR>'
+```
+
+**Caveat — WAF.** Because the portal rejected two different non-browser clients
+during research, the server-side fetch may need browser-like headers (at minimum a
+realistic `User-Agent`), and it is possible the service filters by geography. Run
+the probe above from the machine that will actually host dinary before writing the
+adapter; if it is blocked there, that is a blocking finding to report on the issue,
+not something to work around silently.
+
 **Caveat — verification window.** The tax administration documents that consumers can
 verify receipts within ~90 days of issuance. An old receipt may stop resolving via the
 API even though it is genuine. Since we scan receipts right after purchase this is not
@@ -110,10 +142,11 @@ passing (`uv run pytest`, `cd webapp && npm test`).
 
 ### Step 1 — capture real data (blocking prerequisite)
 
-Scan a real Montenegrin receipt (or use any publicly shared verify URL), call
-`POST https://mapr.tax.gov.me/ic/api/verifyInvoice` with form fields `iic`,
-`dateTimeCreated`, `tin` taken from the QR URL, and save the raw JSON response as a
-pytest fixture. Confirm/correct the field mapping assumed below. All parser tests are
+Scan a real Montenegrin receipt (or use any publicly shared verify URL), run the
+probe `curl` from the "Validation status" section above (POST `verifyInvoice` with
+form fields `iic`, `dateTimeCreated`, `tin` taken from the QR URL), and save the raw
+JSON response as a pytest fixture. Run it from the host that will run dinary in
+production — see the WAF caveat. Confirm/correct the field mapping assumed below. All parser tests are
 driven by this fixture — no live network in tests, same as the Serbian parser tests.
 
 ### Step 2 — backend Montenegro adapter
