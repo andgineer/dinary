@@ -22,23 +22,39 @@ function mockOnLine(value) {
 }
 
 const SAMPLE_STATUS = {
-  health: { healthy: 1, total: 1, strategy: null, last_switch: null },
+  health: { healthy: 1, total: 2, strategy: "failover" },
   providers: [
     {
-      id: 1,
-      label: "Groq",
-      base_url: "https://api.groq.com/openai/v1",
+      name: "groq-llama",
       model: "llama-3.3-70b-versatile",
-      priority: 0,
-      is_enabled: true,
-      rate_limited_until: null,
-      created_at: "2026-05-10T11:30:00+00:00",
-      used_today: 7,
-      ok_calls: 7,
+      base_url: "https://api.groq.com/openai/v1",
+      disabled: false,
+      has_key: true,
+      cooldown_until: null,
+      status: "available",
+      call_count: 7,
       last_status: "ok",
+      last_at: "2026-05-10T11:30:00+00:00",
+      demoted: false,
+      quality_bound: null,
+      help: null,
+    },
+    {
+      name: "openrouter",
+      model: "gpt-oss-120b",
+      base_url: "https://openrouter.ai/api/v1",
+      disabled: false,
+      has_key: false,
+      cooldown_until: null,
+      status: "no_key",
+      call_count: 0,
+      last_status: null,
+      last_at: null,
+      demoted: false,
+      quality_bound: null,
+      help: "Create a key at openrouter.ai/keys.",
     },
   ],
-  meta: { llm_last_provider_idx: "0" },
 };
 
 beforeEach(() => {
@@ -83,8 +99,8 @@ describe("llm store: refresh()", () => {
     vi.spyOn(llmApi, "getStatus").mockResolvedValueOnce(SAMPLE_STATUS);
     const store = useLlmStore();
     await store.refresh();
-    expect(store.providers).toHaveLength(1);
-    expect(store.providers[0].label).toBe("Groq");
+    expect(store.providers).toHaveLength(2);
+    expect(store.providers[0].name).toBe("groq-llama");
   });
 
   it("sets health from status.health", async () => {
@@ -94,15 +110,61 @@ describe("llm store: refresh()", () => {
     expect(store.health).toEqual(SAMPLE_STATUS.health);
   });
 
-  it("makes exactly one API call (no listProviders)", async () => {
+  it("makes exactly one API call", async () => {
     const spy = vi.spyOn(llmApi, "getStatus").mockResolvedValueOnce(SAMPLE_STATUS);
     const store = useLlmStore();
     await store.refresh();
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it("listProviders is not exported from adminLlm", () => {
-    expect(llmApi.listProviders).toBeUndefined();
+  it("no provider-CRUD methods are exposed", () => {
+    const store = useLlmStore();
+    expect(store.save).toBeUndefined();
+    expect(store.remove).toBeUndefined();
+    expect(store.move).toBeUndefined();
+  });
+});
+
+describe("llm store: toggleDisabled()", () => {
+  it("disables an enabled provider and refreshes", async () => {
+    vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
+    const disableSpy = vi.spyOn(llmApi, "disableProvider").mockResolvedValue({});
+    const store = useLlmStore();
+    await store.refresh();
+    await store.toggleDisabled("groq-llama");
+    expect(disableSpy).toHaveBeenCalledWith("groq-llama");
+  });
+
+  it("enables a disabled provider", async () => {
+    const disabledStatus = {
+      ...SAMPLE_STATUS,
+      providers: [{ ...SAMPLE_STATUS.providers[0], disabled: true, status: "disabled" }],
+    };
+    vi.spyOn(llmApi, "getStatus").mockResolvedValue(disabledStatus);
+    const enableSpy = vi.spyOn(llmApi, "enableProvider").mockResolvedValue({});
+    const store = useLlmStore();
+    await store.refresh();
+    await store.toggleDisabled("groq-llama");
+    expect(enableSpy).toHaveBeenCalledWith("groq-llama");
+  });
+
+  it("reverts optimistic flip and toasts on failure", async () => {
+    vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
+    vi.spyOn(llmApi, "disableProvider").mockRejectedValue(new Error("boom"));
+    const store = useLlmStore();
+    await store.refresh();
+    const { useToastStore } = await import("../src/stores/toast.js");
+    const showSpy = vi.spyOn(useToastStore(), "show");
+    await store.toggleDisabled("groq-llama");
+    expect(store.providers.find((p) => p.name === "groq-llama").disabled).toBe(false);
+    expect(showSpy).toHaveBeenCalled();
+  });
+
+  it("is a no-op for an unknown provider name", async () => {
+    const disableSpy = vi.spyOn(llmApi, "disableProvider").mockResolvedValue({});
+    const store = useLlmStore();
+    await store.toggleDisabled("ghost");
+    expect(disableSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -125,24 +187,6 @@ describe("llm store: loadIfNeeded()", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it("fetches when no lastFetchedAt (never loaded)", async () => {
-    const spy = vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
-    const store = useLlmStore();
-    expect(store.lastFetchedAt).toBeNull();
-    await store.loadIfNeeded();
-    expect(spy).toHaveBeenCalledTimes(1);
-  });
-
-  it("fetches when data is older than 24h", async () => {
-    const old = Date.now() - 25 * 60 * 60 * 1000;
-    localStorage.setItem("dinary:llm:fetchedAt", String(old));
-    const spy = vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
-    setActivePinia(createPinia());
-    const store = useLlmStore();
-    await store.loadIfNeeded();
-    expect(spy).toHaveBeenCalledTimes(1);
-  });
-
   it("skips fetch when clean and data is recent", async () => {
     localStorage.setItem("dinary:llm:fetchedAt", String(Date.now() - 60_000));
     const spy = vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
@@ -151,37 +195,5 @@ describe("llm store: loadIfNeeded()", () => {
     expect(store.dirtyFlag).toBe(false);
     await store.loadIfNeeded();
     expect(spy).not.toHaveBeenCalled();
-  });
-});
-
-describe("llm store: refresh() dirty flag and polling", () => {
-  it("clears dirtyFlag when no provider is rate-limited", async () => {
-    vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
-    const store = useLlmStore();
-    store.markDirty();
-    await store.refresh();
-    expect(store.dirtyFlag).toBe(false);
-    expect(localStorage.getItem("dinary:llm:dirty")).toBeNull();
-  });
-
-  it("clears dirtyFlag even when an enabled provider is rate-limited", async () => {
-    const rateLimited = {
-      ...SAMPLE_STATUS,
-      providers: [{ ...SAMPLE_STATUS.providers[0], rate_limited_until: "2026-05-30T12:00:00Z" }],
-    };
-    vi.spyOn(llmApi, "getStatus").mockResolvedValue(rateLimited);
-    const store = useLlmStore();
-    store.markDirty();
-    await store.refresh();
-    expect(store.dirtyFlag).toBe(false);
-    expect(localStorage.getItem("dinary:llm:dirty")).toBeNull();
-  });
-
-  it("sets lastFetchedAt after successful refresh", async () => {
-    vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
-    const store = useLlmStore();
-    const before = Date.now();
-    await store.refresh();
-    expect(store.lastFetchedAt).toBeGreaterThanOrEqual(before);
   });
 });

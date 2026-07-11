@@ -3,8 +3,9 @@ DELETE /api/expenses/{id}"""
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 
+from dinary.api.controllers.expense_corrections import record_correction_ratings
 from dinary.api.controllers.expenses import (
     ExpenseEditRequest,
     ExpenseRequest,
@@ -42,12 +43,15 @@ def get_expenses(
 
 
 @router.patch("/api/expenses/{expense_id}", status_code=204)
-def patch_expense(
+async def patch_expense(
     expense_id: int,
     req: ExpenseEditRequest,
+    request: Request,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> Response:
-    edit_expense_sync(expense_id, req, con)
+    pending_ratings: list[tuple[str, float]] = []
+    edit_expense_sync(expense_id, req, con, pending_ratings=pending_ratings)
+    await record_correction_ratings(request.app.state.llms, pending_ratings)
     return Response(status_code=204)
 
 

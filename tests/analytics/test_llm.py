@@ -104,7 +104,7 @@ def test_run_chat_turn_rate_limited(tmp_path, monkeypatch, real_ensure_pool):  #
     _write_providers(tmp_path, monkeypatch)
 
     def _raise(*_a, **_k):
-        raise llmbroker.NoLLMAvailableError
+        raise llmbroker.NoLLMAvailableError("no providers", reason="rate_limited")
 
     monkeypatch.setattr(llm_module.llmbroker, "run_tool_loop", _raise)
     reply = run_chat_turn("system", [], [], "now")
@@ -117,7 +117,7 @@ def test_run_chat_turn_all_failed(tmp_path, monkeypatch, real_ensure_pool):  # n
     _write_providers(tmp_path, monkeypatch)
 
     def _raise(*_a, **_k):
-        raise llmbroker.AllLLMsFailedError
+        raise llmbroker.LLMRequestError("all providers failed")
 
     monkeypatch.setattr(llm_module.llmbroker, "run_tool_loop", _raise)
     reply = run_chat_turn("system", [], [], "now")

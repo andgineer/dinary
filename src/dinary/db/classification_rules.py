@@ -32,6 +32,7 @@ class RuleSpec:
     source: str
     alternative_category_ids: tuple[int, ...] = ()
     tag_ids: tuple[int, ...] = ()
+    llm_name: str | None = None
 
 
 def classify_by_rules(
@@ -107,7 +108,7 @@ def create_or_update_rule(
             """
             UPDATE classification_rules
                SET category_id = ?, confidence_level = ?, source = ?,
-                   alternative_category_ids = ?, tag_ids = ?, updated_at = ?
+                   alternative_category_ids = ?, tag_ids = ?, llm_name = ?, updated_at = ?
              WHERE id = ?
             """,
             [
@@ -116,6 +117,7 @@ def create_or_update_rule(
                 source,
                 json.dumps(list(spec.alternative_category_ids)),
                 json.dumps(list(spec.tag_ids)),
+                spec.llm_name,
                 now,
                 existing["id"],
             ],
@@ -126,8 +128,8 @@ def create_or_update_rule(
             INSERT INTO classification_rules
                    (chain_id, item_name_normalized, category_id,
                     confidence_level, source, alternative_category_ids, tag_ids,
-                    created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    llm_name, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
         [
             chain_id,
@@ -137,6 +139,7 @@ def create_or_update_rule(
             source,
             json.dumps(list(spec.alternative_category_ids)),
             json.dumps(list(spec.tag_ids)),
+            spec.llm_name,
             now,
             now,
         ],

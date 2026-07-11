@@ -44,6 +44,7 @@ class _ReceiptContext:
     store_id: int | None
     chain_id: int | None
     receipt_id: int
+    llm_name: str | None
 
 
 def _find_auto_attach_event(conn: sqlite3.Connection, receipt_dt: str) -> int | None:
@@ -89,6 +90,7 @@ def _write_single_item(
                     "llm",
                     alternative_category_ids=tuple(llm_r.alternative_category_ids if llm_r else []),
                     tag_ids=tuple(tag_ids_for_item),
+                    llm_name=ctx.llm_name,
                 ),
             )
 
@@ -135,11 +137,12 @@ def persist_classification_results(
     classifications: dict[int, tuple[int | None, int]],
     rule_hits: dict[int, RuleHit],
     llm_results: dict[int, ClassificationResult],
-    store_id: int | None,
-    chain_id: int | None,
+    store: tuple[int | None, int | None],
     norms: dict[int, str],
+    llm_name: str | None = None,
 ) -> None:
     """Write classification results atomically; handles idempotency inside the transaction."""
+    store_id, chain_id = store
     with connection() as conn:
         receipt_dt_row = conn.execute(
             "SELECT COALESCE(purchase_datetime, created_at) FROM receipts WHERE id = ?",
@@ -183,6 +186,7 @@ def persist_classification_results(
             store_id=store_id,
             chain_id=chain_id,
             receipt_id=job.receipt_id,
+            llm_name=llm_name,
         )
         with transaction(conn):
             if conn.execute(

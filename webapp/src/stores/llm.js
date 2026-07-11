@@ -27,7 +27,8 @@ export const useLlmStore = defineStore("llm", () => {
     loading.value = true;
     try {
       const status = await llmApi.getStatus();
-      providers.value = status.providers ?? [];
+      // Copy so the optimistic disable/enable flip never mutates the caller's array.
+      providers.value = [...(status.providers ?? [])];
       health.value = status.health ?? null;
       writeCache({ providers: providers.value, health: health.value });
       stampFresh();
@@ -40,55 +41,24 @@ export const useLlmStore = defineStore("llm", () => {
     }
   }
 
-  async function toggle(id) {
-    const idx = providers.value.findIndex((p) => p.id === id);
+  // The provider list is owned by the preset file; the only mutation the UI
+  // offers is the persistent user disable/enable latch.
+  async function toggleDisabled(name) {
+    const idx = providers.value.findIndex((p) => p.name === name);
     if (idx === -1) return;
-    const prev = providers.value[idx].is_enabled;
-    providers.value[idx] = { ...providers.value[idx], is_enabled: !prev };
+    const wasDisabled = providers.value[idx].disabled;
+    // Optimistic flip so the toggle feels instant; refresh reconciles derived fields.
+    providers.value[idx] = { ...providers.value[idx], disabled: !wasDisabled };
     try {
-      const updated = await llmApi.updateProvider(id, { is_enabled: !prev });
-      providers.value[idx] = { ...providers.value[idx], ...updated };
-    } catch (err) {
-      providers.value[idx] = { ...providers.value[idx], is_enabled: prev };
-      useToastStore().show(err?.message || "Toggle failed", "error");
-    }
-  }
-
-  async function move(id, dir) {
-    const prov = providers.value.find((p) => p.id === id);
-    if (!prov) return;
-    const newPriority = dir === "up" ? prov.priority - 1 : prov.priority + 1;
-    try {
-      await llmApi.updateProvider(id, { priority: newPriority });
-      await refresh();
-    } catch (err) {
-      useToastStore().show(err?.message || "Reorder failed", "error");
-    }
-  }
-
-  async function save(data) {
-    try {
-      if (data.id) {
-        const { id, ...patch } = data;
-        await llmApi.updateProvider(id, patch);
+      if (wasDisabled) {
+        await llmApi.enableProvider(name);
       } else {
-        await llmApi.createProvider(data);
+        await llmApi.disableProvider(name);
       }
       await refresh();
     } catch (err) {
-      useToastStore().show(err?.message || "Save failed", "error");
-      throw err;
-    }
-  }
-
-  async function remove(id) {
-    try {
-      await llmApi.deleteProvider(id);
-      providers.value = providers.value.filter((p) => p.id !== id);
-      useToastStore().show("Provider removed", "info");
-    } catch (err) {
-      useToastStore().show(err?.message || "Delete failed", "error");
-      throw err;
+      providers.value[idx] = { ...providers.value[idx], disabled: wasDisabled };
+      useToastStore().show(err?.message || "Toggle failed", "error");
     }
   }
 
@@ -101,9 +71,6 @@ export const useLlmStore = defineStore("llm", () => {
     markDirty,
     loadIfNeeded,
     refresh,
-    toggle,
-    move,
-    save,
-    remove,
+    toggleDisabled,
   };
 });

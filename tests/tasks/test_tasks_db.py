@@ -190,11 +190,12 @@ class TestRestoreYoyo:
         assert "9999" in capsys.readouterr().err
 
     def test_nothing_to_rollback_prints_message(self, capsys):
-        """With only one migration file, --to=0001 finds the target but
+        """Rolling back --to the latest migration finds the target but has
         nothing to roll back. Must print a message and return without
         contacting the server at all.
         """
-        tasks.restore_yoyo.body(MagicMock(), to="0001")
+        latest = tasks.db.migration_ids()[-1]
+        tasks.restore_yoyo.body(MagicMock(), to=latest)
         out = capsys.readouterr().out
         assert "nothing to roll back" in out
 

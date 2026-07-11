@@ -1,16 +1,10 @@
-"""LLM provider API: /api/llm/*"""
+"""LLM provider API: /api/llm/* — read-only status plus user disable/enable."""
 
 import llmbroker
 from fastapi import APIRouter, Request, Response
 
-from dinary.api.controllers.llm import (
-    ProviderIn,
-    ProviderPatch,
-    add_provider,
-    delete_provider,
-    llm_status,
-    update_provider,
-)
+from dinary.api.controllers.llm import llm_status, set_provider_disabled
+from dinary.config import settings
 
 router = APIRouter()
 
@@ -19,23 +13,26 @@ def _get_llms(request: Request) -> llmbroker.AsyncBroker:
     return request.app.state.llms
 
 
-@router.post("/api/llm/providers", status_code=204)
-async def create_provider(body: ProviderIn, request: Request) -> Response:
-    await add_provider(body, _get_llms(request))
-    return Response(status_code=204)
-
-
-@router.patch("/api/llm/providers/{provider_name}")
-async def patch_provider(provider_name: str, body: ProviderPatch, request: Request) -> dict:
-    return await update_provider(provider_name, body, _get_llms(request))
-
-
-@router.delete("/api/llm/providers/{provider_name}", status_code=204)
-async def remove_provider(provider_name: str, request: Request) -> Response:
-    await delete_provider(provider_name, _get_llms(request))
-    return Response(status_code=204)
+def _get_optimizer(request: Request) -> llmbroker.Optimizer:
+    return request.app.state.llm_optimizer
 
 
 @router.get("/api/llm/status")
 async def get_llm_status(request: Request) -> dict:
-    return await llm_status(_get_llms(request))
+    return await llm_status(
+        _get_llms(request),
+        _get_optimizer(request),
+        settings.llm_providers_file,
+    )
+
+
+@router.post("/api/llm/providers/{provider_name}/disable", status_code=204)
+async def disable_provider(provider_name: str, request: Request) -> Response:
+    await set_provider_disabled(provider_name, disabled=True, llms=_get_llms(request))
+    return Response(status_code=204)
+
+
+@router.post("/api/llm/providers/{provider_name}/enable", status_code=204)
+async def enable_provider(provider_name: str, request: Request) -> Response:
+    await set_provider_disabled(provider_name, disabled=False, llms=_get_llms(request))
+    return Response(status_code=204)

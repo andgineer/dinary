@@ -48,7 +48,11 @@ from dinary.main import create_app
 
 
 def _broker() -> llmbroker.AsyncBroker:
-    return llmbroker.AsyncBroker(registry=llmbroker.Registry("/nonexistent.toml"))
+    # classify_receipt (and resolve_store where used) are patched in these tests, so the
+    # broker is only consulted for count(); 1 keeps max_attempts at 1 as before.
+    broker = MagicMock(spec=llmbroker.AsyncBroker)
+    broker.count = AsyncMock(return_value=1)
+    return broker
 
 
 def _item(name: str, price: float) -> ReceiptItem:
@@ -84,6 +88,7 @@ def _make_classify_outcome(
     else:
         execution = MagicMock()
         execution.text = "ok"
+        execution.llm_name = "test-model"
         execution.record_quality = AsyncMock()
     execution_failed = not broker_unavailable and any(r.category_id is None for r in results)
     return ClassifyOutcome(

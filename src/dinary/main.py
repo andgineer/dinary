@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import llmbroker
-import llmbroker.sqlite
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
@@ -71,16 +70,20 @@ async def _lifespan(_app: FastAPI):
     with storage.connection() as con:
         category_seed.bootstrap_categories(con)
     load_dotenv(_PROJECT_ROOT / ".deploy" / ".env", override=False)
-    llms = llmbroker.AsyncBroker(
-        registry=llmbroker.sqlite.Registry(storage.DB_PATH),
-        telemetry=llmbroker.sqlite.Telemetry(storage.DB_PATH),
-        secrets=llmbroker.sqlite.Secrets(storage.DB_PATH),
-        state_store=llmbroker.sqlite.StateStore(storage.DB_PATH),
-        seed=llmbroker.Registry(_PROJECT_ROOT / ".deploy" / "llms.toml"),
-        seed_policy=llmbroker.SeedPolicy.ADD,
-    )
+    opt = llmbroker.Optimizer()
+    llms = llmbroker.AsyncBroker(f"sqlite://{storage.DB_PATH}", optimize=opt)
     _app.state.llms = llms
-    await llms.ensure_pool()
+    _app.state.llm_optimizer = opt
+    # Total mirror (add/update/delete) of the preset file into the DB-backed
+    # provider registry — the startup analogue of db_migrations.migrate_db().
+    # load_dotenv above must precede it so any secret not yet in the DB seeds
+    # from the env vars; a key already present in the DB stays authoritative.
+    await llms.sync(settings.llm_providers_file)
+    # Provisioning an empty registry raises; a deployment with no providers yet
+    # (or a fresh install before .deploy/llms.toml is filled) must still start.
+    preset = settings.llm_providers_file
+    if preset.exists() and await llmbroker.Registry(preset).load():
+        await llms.ensure_pool()
     await warm_sheet_mapping()
     sheet_logging_bg = asyncio.create_task(sheet_logging_task(), name="sheet-logging-task")
     rate_prefetch_bg = asyncio.create_task(rate_prefetch_task(), name="rate-prefetch-task")
@@ -102,6 +105,7 @@ async def _lifespan(_app: FastAPI):
             await receipt_classification_bg
         await llms.aclose()
         _app.state.llms = None
+        _app.state.llm_optimizer = None
 
 
 def create_app() -> FastAPI:
@@ -113,6 +117,7 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
     app.state.llms = None
+    app.state.llm_optimizer = None
 
     app.include_router(analytics.router)
     app.include_router(expenses.router)

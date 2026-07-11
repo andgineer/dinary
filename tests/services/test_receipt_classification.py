@@ -112,12 +112,17 @@ def _make_job(receipt_id: int, claim_token: str = "tok") -> ReceiptJobRow:
 
 
 def _broker() -> llmbroker.AsyncBroker:
-    return llmbroker.AsyncBroker(registry=llmbroker.Registry("/nonexistent.toml"))
+    # classify_receipt is patched in these tests, so the broker is only consulted for
+    # count(); 1 keeps max_attempts at 1 (as an empty broker did under llmbroker 0.0.11).
+    broker = MagicMock(spec=llmbroker.AsyncBroker)
+    broker.count = AsyncMock(return_value=1)
+    return broker
 
 
 def _make_execution():
     execution = MagicMock()
     execution.text = "ok"
+    execution.llm_name = "test-model"
     execution.record_quality = AsyncMock()
     return execution
 
@@ -538,6 +543,7 @@ class TestClassifyAndPersist:
         async def _failing_record_quality(*_args, **_kwargs):
             execution = MagicMock()
             execution.text = "bad json"
+            execution.llm_name = "test-model"
             execution.record_quality = AsyncMock(side_effect=RuntimeError("telemetry down"))
             return ClassifyOutcome(
                 results=[],
@@ -606,6 +612,7 @@ def _exhausted_classify_side_effect():
     async def _side_effect(*_args, **_kwargs):
         execution = MagicMock()
         execution.text = "bad json"
+        execution.llm_name = "test-model"
         execution.record_quality = AsyncMock()
         return ClassifyOutcome(
             results=[],
@@ -726,9 +733,31 @@ class TestRunLLMPass:
             "dinary.background.classification.task.classify_receipt",
             return_value=outcome,
         ) as mock_classify:
-            result = asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
+            results, llm_name = asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
         assert mock_classify.call_count == 1
-        assert result[1] == expected
+        assert results[1] == expected
+        assert llm_name == "test-model"
+
+    def test_accepted_outcome_records_positive_quality(self):
+        """An accepted reply records a positive (1.0) quality rating on that model."""
+        broker = MagicMock(spec=llmbroker.AsyncBroker)
+        broker.count = AsyncMock(return_value=1)
+        job = _make_job(receipt_id=1)
+        execution = _make_execution()
+        outcome = ClassifyOutcome(
+            results=[
+                ClassificationResult(item_name_normalized="hleb", category_id=1, confidence_level=3)
+            ],
+            broker_unavailable=False,
+            execution_failed=False,
+            execution=execution,
+        )
+        with patch(
+            "dinary.background.classification.task.classify_receipt",
+            return_value=outcome,
+        ):
+            asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
+        execution.record_quality.assert_awaited_once_with(1.0)
 
     def test_three_providers_all_fail_raises_exhausted_after_3_calls(self):
         """provider_count=3 → max_attempts=3; all fail → ClassificationExhaustedError after 3 calls."""
@@ -765,6 +794,7 @@ class TestRunLLMPass:
         async def _failing_record_quality(*_args, **_kwargs):
             execution = MagicMock()
             execution.text = "bad json"
+            execution.llm_name = "test-model"
             execution.record_quality = AsyncMock(side_effect=RuntimeError("telemetry down"))
             return ClassifyOutcome(
                 results=[],
@@ -794,6 +824,7 @@ class TestRunLLMPass:
             call_count["n"] += 1
             execution = MagicMock()
             execution.text = "ok"
+            execution.llm_name = "test-model"
             execution.record_quality = AsyncMock()
             if call_count["n"] == 1:
                 return ClassifyOutcome(
@@ -810,9 +841,10 @@ class TestRunLLMPass:
             "dinary.background.classification.task.classify_receipt",
             side_effect=_side_effect,
         ) as mock_classify:
-            result = asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
+            results, llm_name = asyncio.run(_run_llm_pass(broker, job, [(1, "hleb")], {1: "x"}, {}))
         assert mock_classify.call_count == 2
-        assert result[1] == expected
+        assert results[1] == expected
+        assert llm_name == "test-model"
 
 
 @allure.epic("Receipts")
@@ -888,8 +920,7 @@ class TestPersistRollbackSafety:
                 {item.id: (1, 3) for item in items},
                 {},
                 {},
-                None,
-                None,
+                (None, None),
                 {item.id: normalize_item_name(item.name_raw) for item in items},
             )
 

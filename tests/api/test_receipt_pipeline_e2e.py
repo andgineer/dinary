@@ -47,12 +47,16 @@ _PARSED = ParsedReceipt(
 
 
 def _broker() -> llmbroker.AsyncBroker:
-    return llmbroker.AsyncBroker(registry=llmbroker.Registry("/nonexistent.toml"))
+    # classify_receipt is patched, so the broker is only consulted for count().
+    broker = MagicMock(spec=llmbroker.AsyncBroker)
+    broker.count = AsyncMock(return_value=1)
+    return broker
 
 
 def _make_classify_outcome(results: list[ClassificationResult]) -> ClassifyOutcome:
     execution = MagicMock()
     execution.text = "ok"
+    execution.llm_name = "test-model"
     execution.record_quality = AsyncMock()
     return ClassifyOutcome(
         results=results,

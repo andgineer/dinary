@@ -11,6 +11,10 @@ from dinary.db.catalog import list_visible_categories
 
 logger = logging.getLogger(__name__)
 
+#: Operation label for receipt-classification broker calls; also the key under
+#: which llmbroker tracks each model's quality window for this task.
+CLASSIFICATION_OPERATION = "receipt_classification"
+
 _CHAIN_NAME_PROMPT = (
     "Normalize this Serbian retail store name to its canonical brand name. "
     "Raw name: {store_name_raw}. "
@@ -122,7 +126,7 @@ async def classify_receipt(
     try:
         execution = await broker.chat(
             messages,
-            operation="receipt_classification",
+            operation=CLASSIFICATION_OPERATION,
             trace_id=str(execution_id) if execution_id is not None else None,
         )
     except LLMRequestError:

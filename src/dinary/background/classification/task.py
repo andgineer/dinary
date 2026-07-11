@@ -460,8 +460,11 @@ async def _run_llm_pass(
     llm_queue: list[tuple[int, str]],
     categories: dict[int, str],
     tags: dict[int, str],
-) -> dict[int, ClassificationResult]:
-    """Call LLM for queued items; return results keyed by item_id.
+) -> tuple[dict[int, ClassificationResult], str | None]:
+    """Call LLM for queued items; return (results keyed by item_id, model name).
+
+    The model name is the provider that produced the accepted reply, threaded on
+    to the rules so a later correction can rate it; ``None`` when no LLM pass ran.
 
     Raises ConnectionError when the broker is completely unavailable so the
     caller's transient-error handler retries the job instead of silently
@@ -469,7 +472,7 @@ async def _run_llm_pass(
     Raises ClassificationExhaustedError after all retry attempts fail.
     """
     if not llm_queue:
-        return {}
+        return {}, None
     normalized_names = [name for _, name in llm_queue]
     max_attempts = max(1, min(3, await broker.count()))
     for attempt in range(max_attempts):
@@ -487,10 +490,19 @@ async def _run_llm_pass(
                 " — all providers returned None, releasing for retry",
             )
         if not outcome.execution_failed:
+            if outcome.execution is not None:
+                try:
+                    await outcome.execution.record_quality(1.0)
+                except Exception:
+                    logger.exception(
+                        "record_quality(1.0) raised for receipt_id=%s — continuing",
+                        job.receipt_id,
+                    )
+            llm_name = outcome.execution.llm_name if outcome.execution is not None else None
             return {
                 item_id: result
                 for (item_id, _), result in zip(llm_queue, outcome.results, strict=True)
-            }
+            }, llm_name
         if outcome.execution is not None:
             try:
                 await outcome.execution.record_quality(0.0)
@@ -557,7 +569,7 @@ async def _classify_and_persist(
         tags = load_tags(conn)
 
     try:
-        llm_results = await _run_llm_pass(broker, job, llm_queue, categories, tags)
+        llm_results, llm_name = await _run_llm_pass(broker, job, llm_queue, categories, tags)
     except ClassificationExhaustedError:
         top_cats = await asyncio.to_thread(_load_top_fallback_categories, _FALLBACK_CATEGORY_COUNT)
         primary_cat = top_cats[0]
@@ -570,6 +582,7 @@ async def _classify_and_persist(
             )
             for item_id, norm in llm_queue
         }
+        llm_name = None
 
     total_penalty = 1 if job.used_journal_fallback else 0
     classifications = _compute_classifications(items, rule_hits, llm_results, total_penalty)
@@ -581,7 +594,7 @@ async def _classify_and_persist(
         classifications,
         rule_hits,
         llm_results,
-        store_id,
-        chain_id,
+        (store_id, chain_id),
         norms,
+        llm_name,
     )

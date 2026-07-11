@@ -4,14 +4,13 @@ Patterns that recur in multiple screens. When a new pattern starts to repeat, do
 
 ## Bottom sheets
 
-Used for: edit-expense, edit-income, category correction, provider CRUD, currency picker (popover variant). Any flow that needs to feel modal but be one-thumb-reachable.
+Used for: edit-expense, edit-income, category correction, currency picker (popover variant). Any flow that needs to feel modal but be one-thumb-reachable.
 
 ### Two shells
 
 | Component | Source | When |
 |---|---|---|
 | `BaseSheet` | `BaseSheet.vue` | Default. Every new sheet uses this. Provides scrim + drag handle + header slot with ✕ + scrollable body + optional footer slot. Props for `dimmed`, `tall`, `fullHeight`, `zIndex`. |
-| Inline shell | `ProviderSheet.vue` | Only when the body needs to manage its own multi-step state (preset switcher, show-key, two-step delete) that doesn't fit the `BaseSheet` slot model. Predates `BaseSheet`. Don't add new inline shells. |
 | `ConfirmDeleteSheet` | `ConfirmDeleteSheet.vue` | Stacked on top of another sheet — see "Confirm-delete" below. |
 
 ### Anatomy
@@ -50,7 +49,7 @@ References: `ExpenseEditSheet.vue`, `IncomeEditSheet.vue`, `CategorySheet.vue`, 
 
 ## Confirm-delete
 
-Every destructive action goes through `ConfirmDeleteSheet`. No JS `confirm()`. No inline two-step in the host except where a sheet would be overkill (`ProviderSheet`'s delete).
+Every destructive action goes through `ConfirmDeleteSheet`. No JS `confirm()`. No inline two-step in the host.
 
 ### Anatomy
 
@@ -406,45 +405,6 @@ Gate write actions and refresh buttons; render the per-view offline notice strip
 - Review / LLM: "Offline — changes not available".
 
 References: `composables/useOnline.js`, `App.vue`, every view file.
-
-## Provider sheet form
-
-The add/edit/delete sheet for LLM providers — currently the only sheet that doesn't use `BaseSheet` (predates it).
-
-### Layout
-
-```
-EYEBROW (ADD PROVIDER / EDIT PROVIDER)
-Title (label · model in edit; "New entry" otherwise)
-
-[Groq] [OpenRouter] [Gemini] [Custom]   ← preset chips
-
-LABEL          [____________]
-BASE URL       [____________]            ← mono
-MODEL          [____________]            ← mono
-               [ suggestion chips ]      ← when a preset matches
-API KEY        [••••••••]    [👁]        ← show/hide toggle
-
-[ ] Enabled in failover pool
-
-────── dashed separator (edit only) ──────
-[🗑 Remove provider]                       ← ghost-danger button
-  on tap →
-  ┌────────────────────────────────┐
-  │ Remove <label>? Logs are kept. │     ← inline confirmation in danger-tint bg
-  │ [Cancel]            [🗑 Remove]│
-  └────────────────────────────────┘
-
-[Cancel]                    [✓ Save changes]
-```
-
-### Rules
-
-- Preset chips prefill `base_url`; if the preset has a model list, those appear as one-tap suggestion chips below the model input.
-- API-key field in edit mode is empty with the hint *"Leave empty to keep the existing key"* — never display the stored secret.
-- Delete is two-step inline: ghost button → danger-tinted block with Cancel + Remove. Two-step inline is OK here only because the rest of the sheet would be lost behind a stacked `ConfirmDeleteSheet`. Don't reach for two-step inline elsewhere — use `ConfirmDeleteSheet`.
-
-References: `ProviderSheet.vue`.
 
 ## Per-context primary color
 

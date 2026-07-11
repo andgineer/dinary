@@ -4,7 +4,6 @@ import sqlite3
 import unittest.mock
 from pathlib import Path
 
-import llmbroker
 import pytest
 from fastapi.testclient import TestClient
 
@@ -21,7 +20,6 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _BUILT_STATIC = _PROJECT_ROOT / "_static"
 
 _REAL_ENSURE_FRESH = sheet_mapping.ensure_fresh
-_REAL_ENSURE_POOL = llmbroker.AsyncBroker.ensure_pool
 
 
 def _migration_connect(self, dburi):
@@ -64,14 +62,12 @@ def _reset_db_connection():
 
 
 @pytest.fixture(autouse=True)
-def _disable_llm_broker_sync(monkeypatch):
-    """Tests assert on broker state starting from an empty pool; the operator's
-    real credentials/local TOML must not interfere."""
-
-    async def _no_op(self, *args, **kwargs):  # noqa: ARG001
-        return
-
-    monkeypatch.setattr(llmbroker.AsyncBroker, "ensure_pool", _no_op)
+def _empty_llm_provider_preset(monkeypatch, tmp_path):
+    """Tests assert on broker state starting from an empty pool; point the preset
+    at a non-existent file so the lifespan ``sync`` mirrors nothing and the
+    operator's real ``.deploy/llms.toml`` never interferes. Tests that need a
+    populated pool override ``settings.llm_providers_file`` themselves."""
+    monkeypatch.setattr(settings, "llm_providers_file", tmp_path / "no-llms.toml")
 
 
 @pytest.fixture(autouse=True)
@@ -99,10 +95,13 @@ def _stub_sheet_mapping_ensure_fresh(monkeypatch):
 
 
 @pytest.fixture
-def real_ensure_pool(monkeypatch):
-    """Opt out of ``_disable_llm_broker_sync`` for tests validating pool-init
-    behaviour directly."""
-    monkeypatch.setattr(llmbroker.AsyncBroker, "ensure_pool", _REAL_ENSURE_POOL)
+def real_ensure_pool():
+    """No-op retained for tests that provision a real pool from their own preset.
+
+    ``ensure_pool`` is no longer stubbed globally (the empty pool now comes from an
+    absent preset file), so nothing needs to be restored — the fixture only marks
+    intent at the call site."""
+    return
 
 
 @pytest.fixture
