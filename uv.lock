@@ -402,7 +402,7 @@ dependencies = [
     { name = "holidays" },
     { name = "httpx" },
     { name = "invoke" },
-    { name = "llmbroker" },
+    { name = "llmbroker", extra = ["sqlite"] },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -447,7 +447,7 @@ requires-dist = [
     { name = "holidays", specifier = ">=0.94" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "invoke", specifier = ">=2.2.0" },
-    { name = "llmbroker", specifier = "==1.3.0" },
+    { name = "llmbroker", extras = ["sqlite"], specifier = "==1.3.0" },
     { name = "pydantic-settings", specifier = ">=2.8.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
@@ -848,6 +848,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/71/79/0bddd2e111ffbdb890cc0382c8816670ecf67beef5f55ff701a073877a5c/llmbroker-1.3.0.tar.gz", hash = "sha256:fd0d9ef37b7e0612fbd171ba658fc98ffef82c294a836fda8d6fded567d26700", size = 254205, upload-time = "2026-07-11T09:54:12.511Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/78/5c/4edec12e81493b71d6a1cc6b1046c6165b3ae2458528d8d9587b0b6eee79/llmbroker-1.3.0-py3-none-any.whl", hash = "sha256:e5cb62a61851d839b57c03a4d08bbbc25b67852f729fc12c6cd976e53dc024d2", size = 64159, upload-time = "2026-07-11T09:54:11.337Z" },
+]
+
+[package.optional-dependencies]
+sqlite = [
+    { name = "aiosqlite" },
 ]
 
 [[package]]

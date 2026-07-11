@@ -31,7 +31,9 @@ dependencies = [
     # produce a lean prod env that still has the orchestrator those flows
     # need, instead of silently re-pulling the full ``dev`` group.
     "invoke>=2.2.0",
-    "llmbroker==1.3.0",
+    # [sqlite] pulls aiosqlite for the broker's sqlite:// source; keep it
+    # explicit instead of leaning on dinary's own aiosqlite dependency.
+    "llmbroker[sqlite]==1.3.0",
     "python-dotenv>=1.0.0",
 ]
 [[project.authors]]

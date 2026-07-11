@@ -12,7 +12,7 @@ import llmbroker
 from fastapi import HTTPException
 from llmbroker.models import LLMSnapshot
 
-_OPERATION = "receipt_classification"
+from dinary.background.classification.receipt_classifier import CLASSIFICATION_OPERATION
 
 
 def _derive_status(snap: LLMSnapshot, *, cooling: bool) -> str:
@@ -47,8 +47,8 @@ def _snapshot_to_dict(
         "call_count": metrics.call_count if metrics else 0,
         "last_status": (metrics.last_status.value if metrics and metrics.last_status else None),
         "last_at": metrics.last_at.isoformat() if metrics and metrics.last_at else None,
-        "demoted": _OPERATION in snap.demoted_operations,
-        "quality_bound": optimizer.wilson_bound(name, _OPERATION),
+        "demoted": CLASSIFICATION_OPERATION in snap.demoted_operations,
+        "quality_bound": optimizer.wilson_bound(name, CLASSIFICATION_OPERATION),
         "help": None if snap.has_key else key_help.get(snap.config.api_key_ref),
     }
 

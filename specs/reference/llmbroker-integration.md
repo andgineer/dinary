@@ -40,10 +40,17 @@ before starting the server.
 
 ## API keys
 
-API keys live in the database. `.deploy/.env` is only the bootstrap source: on startup,
-a key that is not yet resolvable in the database is seeded from its env var, and from
-then on the database copy is authoritative — later env changes do not overwrite it.
-Changing an already-seeded key is a manual database operation.
+For the server, API keys live in the database. `.deploy/.env` is only the bootstrap
+source: on startup, a key that is not yet resolvable in the database is seeded from its
+env var, and from then on the database copy is authoritative — later env changes do not
+overwrite it. Changing an already-seeded key is a manual database operation.
+
+The analytics chat is the exception: it never touches the server's database, so its
+broker resolves keys from its own process environment. The dashboard launcher exports
+every key it can resolve from `.deploy/.env` under the exact ref names the preset file
+declares. A key changed only in the database therefore does not reach analytics; its
+broker state (cooldowns, quality, the user disable) is likewise separate from the
+server's, so a provider disabled on the LLM screen stays available to the chat.
 
 A provider whose key cannot be resolved is reported on the LLM screen with the
 onboarding hint carried in the preset (how and where to get the key).
