@@ -22,8 +22,16 @@ from dinary.adapters.receipt_types import (
 )
 
 _FIXTURE = json.loads(
-    (Path(__file__).resolve().parent.parent / "fixtures" / "montenegro_verify_invoice.json").read_text(),
+    (
+        Path(__file__).resolve().parent.parent / "fixtures" / "montenegro_verify_invoice.json"
+    ).read_text(),
 )
+
+# The fixture is a real `verifyInvoice` response captured from mapr.tax.gov.me
+# for the URL below (2026-07-11). Two fields — `invoiceRequest` (a signed SOAP
+# blob) and `iicSignature` (an RSA signature) — are trimmed to placeholders: the
+# parser never reads them and the originals embed the seller's personal X.509
+# certificate. Every field the parser does read is verbatim from the live response.
 
 # A real production verify URL (captured 2026-07-11). Note the params sit after
 # the `#/verify` fragment and `crtd` carries a literal `+02:00` offset.
@@ -166,7 +174,9 @@ class TestParseReceipt:
 
     def test_url_missing_params_is_parse_error(self):
         with pytest.raises(ParserParseError):
-            _run("https://mapr.tax.gov.me/ic/#/verify?prc=1", _make_response(200, deepcopy(_FIXTURE)))
+            _run(
+                "https://mapr.tax.gov.me/ic/#/verify?prc=1", _make_response(200, deepcopy(_FIXTURE))
+            )
 
     def test_network_error_is_request_error(self):
         client = AsyncMock()
