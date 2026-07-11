@@ -6,11 +6,12 @@ what the plan assumes, the issue wins.
 
 ## Prerequisite
 
-llmbroker must have shipped delayed quality ratings (https://github.com/andgineer/llmbroker/issues/9):
-`AsyncBroker.record_quality(llm_name, operation, score, call_id=None)` and public
-`llm_name` / `operation` / `call_id` on results. Update the pin in `pyproject.toml` from
-`llmbroker==0.0.11` to that release and run `uv lock`. Nothing below compiles against 0.0.11 —
-the broker constructor, snapshot shape, and exceptions all changed.
+The target release is **llmbroker 1.3.0** — the version that ships delayed quality ratings
+(https://github.com/andgineer/llmbroker/issues/9): `AsyncBroker.record_quality(llm_name,
+operation, score, *, call_id=None)` and public `llm_name` / `operation` / `call_id` on results,
+with sync mirrors. Update the pin in `pyproject.toml` from `llmbroker==0.0.11` to
+`llmbroker==1.3.0` and run `uv lock`. Nothing below compiles against 0.0.11 — the broker
+constructor, snapshot shape, and exceptions all changed.
 
 ## Step 1 — One-time drop of legacy llmbroker tables
 
@@ -67,7 +68,9 @@ Ordering and rationale:
   `ClassifyOutcome.execution`; in `src/dinary/background/classification/task.py` pass
   `outcome.execution.llm_name` down to `persist_classification_results`, which forwards it into
   `_write_single_item` → the `RuleSpec(..., source="llm", llm_name=...)` it builds
-  (`src/dinary/background/classification/persist.py`). Rules created from user corrections keep
+  (`src/dinary/background/classification/persist.py`). The threaded value is `str | None` —
+  `None` when the receipt needed no LLM pass (all items resolved by rule hits), which is safe:
+  no `source="llm"` rules are created in that case. Rules created from user corrections keep
   `llm_name=NULL`.
 
 ## Step 4 — Quality signals
@@ -89,8 +92,11 @@ Ordering and rationale:
   ratings (or accepts a callback list), and the async controller awaits `record_quality` after.
   Dedup is structural: the upsert flips the rule to `source='user_correction'`, so a second
   correction of the same rule finds no `source='llm'` row and records nothing — matching the
-  issue's "no repeated ratings" requirement. Rating failures must not fail the correction
-  (log and continue).
+  issue's "no repeated ratings" requirement. Consequence: rate only when the rule is actually
+  upserted — in the `skip_rule=True` mode (see the `correct_category_sync` signature and its
+  caller in `controllers/expenses.py`) the rule keeps `source='llm'`, so rating there would
+  repeat on every correction; skip rating in that mode. Rating failures must not fail the
+  correction (log and continue).
 - The operation string is the one already used by `classify_receipt`:
   `"receipt_classification"`.
 
