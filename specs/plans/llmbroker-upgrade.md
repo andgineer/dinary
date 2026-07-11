@@ -12,7 +12,19 @@ llmbroker must have shipped delayed quality ratings (https://github.com/andginee
 `llmbroker==0.0.11` to that release and run `uv lock`. Nothing below compiles against 0.0.11 —
 the broker constructor, snapshot shape, and exceptions all changed.
 
-## Step 1 — Broker wiring in `src/dinary/main.py::_lifespan`
+## Step 1 — One-time drop of legacy llmbroker tables
+
+There is a single dinary installation and no llmbroker data survives the upgrade (issue #24).
+Add a dinary migration in `src/dinary/db/migrations/` that drops every llmbroker table:
+`DROP TABLE IF EXISTS llmbroker_registry; ... llmbroker_calls; ... llmbroker_secrets; ...
+llmbroker_state;` (the full 0.0.11 set — all llmbroker tables are `llmbroker_`-prefixed).
+The migration runs inside `db_migrations.migrate_db()` before the broker is constructed, so the
+new llmbroker recreates its own schema from scratch on first use. Provider list rebuilds from
+`.deploy/llms.toml`, API keys re-seed from `.deploy/.env` (Step 2), telemetry and quality
+windows start empty. Going forward llmbroker owns and migrates its `llmbroker_`-prefixed tables
+itself — this drop is a one-time legacy cleanup, not a pattern.
+
+## Step 2 — Broker wiring in `src/dinary/main.py::_lifespan`
 
 Replace the current construction (its kwargs `telemetry=`, `state_store=`, `seed=`,
 `seed_policy=` and the classes `llmbroker.sqlite.Telemetry` / `StateStore` no longer exist) with
@@ -31,23 +43,21 @@ Ordering and rationale:
 
 - Keep this right after `storage.init_db()` and `load_dotenv(...)`. `sync()` is a **total
   mirror** (add/update/delete) — the startup analogue of `db_migrations.migrate_db()` for the
-  provider registry, which is exactly what issue #24 asks for. `load_dotenv` must run first:
-  `sync()` seeds any secret that is not yet resolvable from the env vars into the DB-backed
-  secrets store, so keys from `.deploy/.env` start resolving with no extra code. (Known
-  behavior, do not fight it: an already-stored secret is preserved, so rotating a key requires
-  updating the DB secret or clearing the row — not a goal of this change.)
+  provider registry, which is exactly what issue #24 asks for.
+- Secrets model (issue #24): API keys live in the DB; `.deploy/.env` is only the bootstrap
+  source. This is exactly what the wiring above gives for free: the one-line source stores
+  secrets in the DB, and `sync()` seeds any secret not yet resolvable there from the env vars —
+  so `load_dotenv` must run before `sync()`. A key already present in the DB is preserved and
+  authoritative; env changes do not overwrite it.
 - The explicit `Optimizer` instance is kept on `app.state` because the status endpoint reads
-  `opt.wilson_bound(name, operation)` for the numeric quality indicator (Step 4). Passing
+  `opt.wilson_bound(name, operation)` for the numeric quality indicator (Step 5). Passing
   `optimize=opt` gives the broker that same instance.
-- llmbroker owns its `llmbroker_`-prefixed tables in the same DB file and migrates them itself —
-  no dinary migration needed for them. Telemetry from 0.0.11 is not carried over; quality
-  windows start empty.
-- Deployment note (README / `.deploy.example/llms.toml` comment): providers previously added via
-  the admin UI disappear unless present in `llms.toml`; regenerate the file before rolling out
-  (`llmbroker preset freetier > .deploy/llms.toml`). Update the stale comment in
+- Deployment note: after the Step 1 drop everything rebuilds from `llms.toml`, so before rolling
+  out make sure the file lists the wanted providers (regenerate if needed:
+  `llmbroker preset freetier > .deploy/llms.toml`). Update the stale comment in
   `.deploy.example/llms.toml` that says the live deployment is managed via the admin UI.
 
-## Step 2 — Rules remember the model that created them
+## Step 3 — Rules remember the model that created them
 
 - New migration in `src/dinary/db/migrations/`: `ALTER TABLE classification_rules ADD COLUMN
   llm_name TEXT` (nullable; existing rows stay NULL and are simply never rated).
@@ -60,7 +70,7 @@ Ordering and rationale:
   (`src/dinary/background/classification/persist.py`). Rules created from user corrections keep
   `llm_name=NULL`.
 
-## Step 3 — Quality signals
+## Step 4 — Quality signals
 
 - **Immediate positive**: in `_run_llm_pass` (`task.py`), when the outcome is accepted
   (`not outcome.execution_failed` and results are used), call
@@ -84,7 +94,7 @@ Ordering and rationale:
 - The operation string is the one already used by `classify_receipt`:
   `"receipt_classification"`.
 
-## Step 4 — API: read-only status + disable
+## Step 5 — API: read-only status + disable
 
 `src/dinary/api/llm.py` and `src/dinary/api/controllers/llm.py`:
 
@@ -106,7 +116,7 @@ Ordering and rationale:
   `snapshot()`. The latch persists across restarts and preset reloads (llmbroker stores it),
   and `snapshot()` reflects it as `disabled` — nothing to store on the dinary side.
 
-## Step 5 — Web UI (`webapp/`)
+## Step 6 — Web UI (`webapp/`)
 
 - `views/LLMView.vue`: read-only dashboard — per-provider card with status badge (available /
   cooling / no key / disabled), usage counters, quality (demoted flag + numeric bound when
@@ -117,7 +127,7 @@ Ordering and rationale:
 - Update frontend tests (`cd webapp && npm test`) for the removed editing flows and the new
   status fields.
 
-## Step 6 — Analytics chat (`src/dinary_analytics/llm.py`)
+## Step 7 — Analytics chat (`src/dinary_analytics/llm.py`)
 
 `llmbroker.AllLLMsFailedError` no longer exists (exceptions are `LLMRequestError` and its
 subclass `NoLLMAvailableError`). Keep the `NoLLMAvailableError` branch, replace the
@@ -125,7 +135,7 @@ subclass `NoLLMAvailableError`). Keep the `NoLLMAvailableError` branch, replace 
 construction and `run_tool_loop` are still current. Update `tests/analytics/test_llm.py`
 accordingly.
 
-## Step 7 — Specs and docs
+## Step 8 — Specs and docs
 
 - Rewrite `specs/reference/llmbroker-integration.md` to the current state: preset file is the
   single source of the provider list, mirrored on startup; admin UI is read-only plus a
@@ -134,7 +144,7 @@ accordingly.
 - Check `specs/reference/architecture.md` and `specs/ui/` for mentions of provider editing; fix
   where stale.
 
-## Step 8 — Tests and done gate
+## Step 9 — Tests and done gate
 
 Python tests to add/adjust (backend): migration applies and `create_or_update_rule` round-trips
 `llm_name`; accepted classification records a positive rating and parse failure still records
@@ -151,5 +161,6 @@ green. Run `inv pre` after each discrete batch.
 ## Non-goals
 
 - Any provider editing path besides `.deploy/llms.toml`.
-- Key rotation UX for already-seeded secrets.
+- Key management UX beyond the env bootstrap (changing an already-seeded key is a manual DB
+  operation).
 - Rating policy beyond issue #24 (no LLM-as-judge — that is llmbroker's issue #8 — and no decay).
