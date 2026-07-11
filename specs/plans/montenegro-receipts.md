@@ -72,16 +72,39 @@ each containing a full example verify URL):
 - the query parameters sit after the `#/verify` fragment;
 - `crtd` is ISO 8601 with offset and `prc` is a plain decimal total.
 
+**Confirmed against a real receipt (2026-07-11).** A QR scanned from an actual
+Montenegrin receipt produced exactly the expected production URL:
+
+```
+https://mapr.tax.gov.me/ic/#/verify?iic=0D7C3EE1EEBAB4A08F4D5003FAE35E7B&tin=03257746&crtd=2026-07-11T15:51:04+02:00&ord=27585&bu=sc782yk198&cr=pe967bd413&sw=qo391jt923&prc=59.10
+```
+
+Production host `mapr.tax.gov.me`, 32-hex `iic`, 8-digit seller `tin`, `crtd` with
+`+02:00` offset matching the purchase moment, decimal `prc` (EUR total) — all as
+planned. Use these values for the step-1 probe and as the basis of test fixtures.
+
+**Gotcha — the `+` in `crtd`.** The offset sign is a literal `+` inside a query
+string, so every standard query parser (JS `URLSearchParams`, Python `parse_qs`)
+decodes it as a **space**, silently corrupting the datetime — this mangling was
+observed in the wild while capturing the sample above. The adapter (backend and
+frontend) must restore it after parsing (an ISO 8601 datetime contains no spaces, so
+replacing space with `+` is safe), and must send it back **URL-encoded as `%2B`** in
+the `verifyInvoice` form body. A test must cover exactly this.
+
 Unconfirmed and to be established in step 1: the `verifyInvoice` request/response
 shape. A ready-to-run probe (fill values from any real receipt QR):
 
 ```bash
 curl -sS 'https://mapr.tax.gov.me/ic/api/verifyInvoice' \
   -H 'User-Agent: Mozilla/5.0' -H 'Accept: application/json' \
-  --data-urlencode 'iic=<iic from QR>' \
-  --data-urlencode 'dateTimeCreated=<crtd from QR, offset included>' \
-  --data-urlencode 'tin=<tin from QR>'
+  --data-urlencode 'iic=0D7C3EE1EEBAB4A08F4D5003FAE35E7B' \
+  --data-urlencode 'dateTimeCreated=2026-07-11T15:51:04+02:00' \
+  --data-urlencode 'tin=03257746'
 ```
+
+(Values from the captured sample receipt above; substitute any fresh receipt's
+values the same way. Mind the 90-day verification window — an expired sample needs
+replacing, not debugging.)
 
 **Caveat — WAF.** Because the portal rejected two different non-browser clients
 during research, the server-side fetch may need browser-like headers (at minimum a
