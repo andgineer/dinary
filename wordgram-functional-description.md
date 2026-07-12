@@ -33,22 +33,28 @@ with zero extra effort.
    collocation — anything that makes a valid flashcard). Prefixing the
    message with `?` ("? word") requests a lookup-only analysis: the
    answer and audio arrive as usual but no Anki card is created.
-2. The bot validates the input: Latin script, length within a small limit,
-   not a command. Anything else gets a short hint instead of an LLM call.
+2. The bot validates the input: Latin script (accented letters as in
+   café or naïve are fine), length within a small limit, not a command.
+   Anything else gets a short hint instead of an LLM call.
 3. The bot immediately posts a placeholder message ("⏳ *word* …") so the
    user sees the request was accepted.
-4. The LLM agent runs in streaming mode. As text arrives, the bot edits
-   the placeholder in place, within Telegram's message-edit rate limits.
-   The first translations are visible within a few seconds; the full
-   answer completes without a second message.
-5. The LLM produces **both outputs in one generation**: the full
+4. The LLM agent runs in streaming mode when it supports it (the
+   default agent does). As text arrives, the bot edits the placeholder
+   in place, within Telegram's message-edit rate limits. The first
+   translations are visible within a few seconds; the full answer
+   completes without a second message. Agents that cannot stream
+   deliver the complete answer in a single edit instead.
+5. Words are processed one at a time, in the order sent. A batch that
+   accumulated while the backend was down (see "Resilience") drains
+   sequentially — never as parallel LLM runs.
+6. The LLM produces **both outputs in one generation**: the full
    explanation for Telegram and a compact card payload. The card payload
    is never shown to the user. The explanation uses light text
    formatting (bold for the headword, italics for examples).
-6. In parallel with the LLM call (the input word is known before
+7. In parallel with the LLM call (the input word is known before
    generation starts), the backend obtains pronunciation audio for the
    word/phrase (see "Pronunciation audio").
-7. When generation completes, the backend sends the pronunciation as a
+8. When generation completes, the backend sends the pronunciation as a
    voice message in the chat, adds the note (with the audio attached) to
    Anki, and appends a status line to the analysis message:
    "✅ added to Anki" / "📌 already in Anki" / "🕓 Anki is not running —
@@ -106,23 +112,29 @@ both in the chat and on the flashcard.
 
 ## Anki cards
 
-- **One card per distinct meaning.** Usually a word yields one card, but
+- **One note per word.** Usually the back carries a single meaning, but
   when meanings are genuinely unrelated (bank «банк» / bank «берег») the
-  LLM splits them into separate cards — at most three — each carrying a
-  short meaning label, its own translations, and its own examples.
+  LLM splits the back into numbered meaning blocks — at most three —
+  each with a short meaning label, its own translations, and its own
+  examples. A word never produces more than one note, so a review shows
+  the word once and asks for everything it means; two cards with an
+  identical front (which the reviewer could not tell apart) can never
+  exist.
 - **Compact by design.** Front: the word/phrase with IPA transcription
-  and pronunciation audio. Back: the meaning label, the top 2–4
-  translations, plus 1–2 short examples. The long-form analysis
-  (etymology, full meaning list) stays in Telegram only — cards must
-  remain quick to review.
+  and pronunciation audio. Back: the meaning block(s) — label (when
+  there is more than one), the top 2–4 translations, plus 1–2 short
+  examples. The long-form analysis (etymology, full meaning list) stays
+  in Telegram only — cards must remain quick to review.
 - **Single deck, set in configuration** (e.g. `English::Vocabulary`).
   No per-message or per-chat deck switching.
-- **Duplicates**: if any note for the same word already exists, nothing
-  is added or modified; the bot reports "already in Anki".
-- **Anki unavailable** (application closed, laptop just woke up): the card
-  goes into a persistent local queue and is retried until Anki responds;
-  the user is told the card is queued. The Telegram answer is never
-  delayed by Anki problems.
+- **Duplicates**: if a note for the same word already exists in Anki —
+  or is still waiting in the delivery queue (see below) — nothing is
+  added or modified; the bot reports "already in Anki".
+- **Anki unavailable** (application closed, laptop just woke up): the
+  note goes into a persistent local queue and is retried until Anki
+  responds; before each delivery the duplicate check runs again. The
+  user is told the card is queued. The Telegram answer is never delayed
+  by Anki problems.
 
 ## Bot commands
 
@@ -132,24 +144,37 @@ Kept minimal:
   `?` lookup-only prefix).
 - `/status` — agent health, Anki reachability, pending card queue size.
 - `/stats` — how many words were added today, over the last 7 days, and
-  in total.
-- `/undo` — remove the card(s) created by the last added word (mistaken
-  sends).
+  in total, plus how many sends were duplicates or lookup-only.
+- `/undo` — remove the note created by the last sent word: delete it
+  from Anki, or drop it from the delivery queue if it never reached
+  Anki (mistaken sends).
 - `/redo` — re-run the analysis for the last word (e.g. after a poor
-  generation).
+  generation). The note from the previous run (added or still queued)
+  is replaced by the new one, so a bad card does not survive a redo.
+  A lookup-only (`?`) request stays lookup-only on redo.
 
-Everything else is plain text input.
+Everything else is plain text input. `/undo` and `/redo` remember only
+the most recent word and only since the backend started — acceptable
+for a personal tool.
 
 ## Non-functional requirements
 
-- **Latency**: first visible content within ~3–5 s; complete answer
-  within ~20–30 s; card added within ~5 s after generation ends. Audio
-  is fetched concurrently and must not extend these budgets.
+- **Latency**: first visible content within ~3–5 s (applies to
+  streaming-capable agents — the default one streams; non-streaming
+  agents show only the placeholder until the answer is ready); complete
+  answer within ~20–30 s; card added within ~5 s after generation ends.
+  Audio is fetched concurrently and must not extend these budgets.
 - **Cost**: LLM usage rides the existing coding-agent subscription; the
   design must not require a metered API key.
+- **Safety**: user text is forwarded to a coding agent running on the
+  user's own laptop, so the agents must run with tool execution
+  disabled — no input (including a malicious or mistyped phrase that
+  passes validation) may ever cause the agent to read files, run
+  commands, or reach the network on the host machine.
 - **Resilience**: the laptop is not always on. Telegram keeps undelivered
   updates for 24 h, so words sent while the backend is down are processed
-  when it starts. The Anki queue survives restarts.
+  when it starts — sequentially, one word at a time. The Anki queue
+  survives restarts.
 - **Single instance, single user** (whitelist may hold a few family IDs).
   No horizontal scaling concerns.
 - **Accent**: one accent for all audio (dictionary recording choice and
