@@ -31,7 +31,9 @@ Rules:
 |---|---|
 | Telegram framework | `python-telegram-bot` v21+ (async, long polling) |
 | HTTP client (AnkiConnect, dictionary) | `httpx` (async) |
-| TTS fallback | `edge-tts` (MS Edge voices, free, outputs mp3) |
+| TTS (primary) | Kokoro-82M via `kokoro-onnx` — local, Apache 2.0, near-natural English, faster than real time on CPU; nothing external to break. Model (~300 MB) auto-downloaded on first use into `WORDGRAM_DATA_DIR/models/` |
+| TTS (last resort) | `edge-tts` (MS Edge voices, free online, outputs mp3) — only when Kokoro fails; its known flakiness (unofficial API, recurring 403 breakage) is acceptable in this role |
+| mp3 encoding | `lameenc` (pure-wheel LAME bindings) to convert Kokoro's WAV output to mp3 — no ffmpeg system dependency |
 | Dictionary pronunciation | `https://api.dictionaryapi.dev/api/v2/entries/en/{word}` — take the first `phonetics[].audio` non-empty URL (they are Wiktionary recordings); prefer entries whose URL contains the configured accent (`-us` / `-uk`), else any |
 | Settings | `pydantic-settings`, env prefix `WORDGRAM_`, `.env` support |
 | Persistent queue | stdlib `sqlite3`, single DB file |
@@ -52,8 +54,9 @@ Rules:
 | `WORDGRAM_AGENT_TIMEOUT` | seconds | `120` |
 | `WORDGRAM_ANKI_URL` | AnkiConnect endpoint | `http://127.0.0.1:8765` |
 | `WORDGRAM_DECK` | target deck | `English::Vocabulary` |
-| `WORDGRAM_ACCENT` | `us` or `uk`, used for dictionary audio choice and TTS voice | `us` |
-| `WORDGRAM_TTS_VOICE` | edge-tts voice | `en-US-AriaNeural` (or `en-GB-SoniaNeural` when accent=uk) |
+| `WORDGRAM_ACCENT` | `us` or `uk`, used for dictionary audio choice and TTS voices | `us` |
+| `WORDGRAM_TTS_VOICE` | Kokoro voice | `af_heart` (us) / `bf_emma` (uk) |
+| `WORDGRAM_EDGE_TTS_VOICE` | last-resort edge-tts voice | `en-US-AriaNeural` (us) / `en-GB-SoniaNeural` (uk) |
 | `WORDGRAM_DATA_DIR` | queue DB + downloaded audio | `~/.wordgram` |
 
 ## Module layout
@@ -209,16 +212,33 @@ payloads for bootstrap, dedup, add-with-audio, and error propagation.
 
 ### M6 — pronunciation audio
 
-`audio.py`: `async def fetch_pronunciation(word: str) -> Path | None`.
-Try dictionaryapi.dev (accent preference, first non-empty audio URL,
-download to `WORDGRAM_DATA_DIR/audio/`); on any failure or for
-multi-word input, fall back to edge-tts with the configured voice; on
-TTS failure return `None`. Runs via `asyncio.create_task` in parallel
-with the agent stream; awaited only after the final edit. Send to chat
-with `send_voice` (mp3 is accepted); if Telegram rejects it, fall back
-to `send_audio`; if no audio, add "🔇 no audio" to the status line.
-Tests: mocked httpx for the dictionary path (hit, miss, HTTP error),
-monkeypatched edge-tts, phrase input goes straight to TTS.
+`audio.py`: `async def fetch_pronunciation(word: str) -> Path | None`,
+a three-step chain where each step falls through to the next on ANY
+exception (log at warning level, never raise):
+
+1. **Dictionary recording** — dictionaryapi.dev (accent preference,
+   first non-empty audio URL, download mp3 to
+   `WORDGRAM_DATA_DIR/audio/`). Skipped for multi-word input.
+2. **Kokoro (local TTS)** — `kokoro-onnx` with the configured voice.
+   On first use download `kokoro-v1.0.onnx` + `voices-v1.0.bin` into
+   `WORDGRAM_DATA_DIR/models/` (log progress; a failed download must
+   not corrupt the cache — download to a temp name, rename on success).
+   Run inference in `asyncio.to_thread` (it is CPU-bound). Encode the
+   returned samples to mp3 with `lameenc`. Import `kokoro_onnx` lazily
+   at call time so a broken install degrades to step 3 instead of
+   killing the bot at startup — this is the one sanctioned exception to
+   the top-level-imports rule; mark it with a comment.
+3. **edge-tts (online, last resort)** — `WORDGRAM_EDGE_TTS_VOICE`,
+   native mp3 output. On failure return `None`.
+
+Runs via `asyncio.create_task` in parallel with the agent stream;
+awaited only after the final edit. Send to chat with `send_voice` (mp3
+is accepted); if Telegram rejects it, fall back to `send_audio`; if no
+audio, add "🔇 no audio" to the status line. Tests: mocked httpx for
+the dictionary path (hit, miss, HTTP error); fake kokoro module
+(success, import failure, inference failure) asserting fall-through
+order; monkeypatched edge-tts (success, failure → `None`); phrase input
+skips the dictionary step.
 
 ### M7 — pending queue and remaining commands
 

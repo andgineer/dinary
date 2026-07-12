@@ -86,7 +86,10 @@ both in the chat and on the flashcard.
   not (keeps cards light and generation fast).
 - **Source priority**: a real native-speaker recording from free
   dictionary sources when one exists. When no recording exists (phrases,
-  rare words), fall back to a local free TTS engine with a fixed voice.
+  rare words), generate audio with a local free TTS engine — local so
+  that audio keeps working with no external service to break. If the
+  local engine fails for any reason, a free online TTS is tried as a
+  last resort.
 - **Delivery**:
   - Telegram: a short voice message right after the analysis, so the user
     hears the word immediately.
