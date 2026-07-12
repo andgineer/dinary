@@ -20,9 +20,10 @@ with zero extra effort.
 - **Backend** — a single service running on the user's laptop, the same
   machine that runs Anki. It connects to Telegram via long polling, so no
   public IP, domain, or webhook is needed.
-- **LLM** — a pluggable CLI coding agent under a flat-rate subscription
-  (e.g. `claude -p`), following the approach proven in `news-recap`.
-  No per-token API cost.
+- **LLM** — a pluggable CLI coding agent under a flat-rate subscription,
+  following the approach proven in `news-recap`. Supported agents:
+  Claude, Antigravity (Gemini models), and the Gemini CLI; the agent is
+  selected via configuration. No per-token API cost.
 - **Anki** — Anki desktop with the AnkiConnect add-on, reachable from the
   backend on localhost.
 
