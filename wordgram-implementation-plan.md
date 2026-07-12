@@ -35,7 +35,7 @@ Rules:
 | Dictionary pronunciation | `https://api.dictionaryapi.dev/api/v2/entries/en/{word}` — take the first `phonetics[].audio` non-empty URL (they are Wiktionary recordings); prefer entries whose URL contains the configured accent (`-us` / `-uk`), else any |
 | Settings | `pydantic-settings`, env prefix `WORDGRAM_`, `.env` support |
 | Persistent queue | stdlib `sqlite3`, single DB file |
-| LLM | CLI agent subprocess; three supported agents — `claude` (default), `antigravity` (the `agy` CLI running Gemini models), `gemini` (Google's Gemini CLI); see Milestone 2 |
+| LLM | CLI agent subprocess; the same three agents as news-recap — `claude` (default), `codex`, `antigravity` (the `agy` CLI running Gemini models); see Milestone 2 |
 | Lint | `ruff` (line-length 99), run in CI after tests |
 
 ## Configuration (env vars)
@@ -44,11 +44,11 @@ Rules:
 |---|---|---|
 | `WORDGRAM_BOT_TOKEN` | Telegram bot token | required |
 | `WORDGRAM_ALLOWED_USER_IDS` | comma-separated Telegram user IDs | required |
-| `WORDGRAM_AGENT` | `claude`, `antigravity`, or `gemini` | `claude` |
+| `WORDGRAM_AGENT` | `claude`, `codex`, or `antigravity` | `claude` |
 | `WORDGRAM_CLAUDE_CMD` | claude argv template | `claude -p {prompt} --model {model} --output-format stream-json --include-partial-messages --verbose` |
+| `WORDGRAM_CODEX_CMD` | codex argv template | `codex exec --model {model} -c model_reasoning_effort=low --output-last-message {out_file} {prompt}` |
 | `WORDGRAM_ANTIGRAVITY_CMD` | antigravity argv template | `agy --model {model} --dangerously-skip-permissions -p {prompt}` |
-| `WORDGRAM_GEMINI_CMD` | gemini argv template | `gemini --model {model} -p {prompt}` |
-| `WORDGRAM_MODEL` | model substituted into the template | per agent: `haiku` (claude), `gemini-3.5-flash` (antigravity, gemini) |
+| `WORDGRAM_MODEL` | model substituted into the template | per agent: `haiku` (claude), `gpt-5.2` (codex), `gemini-3.5-flash` (antigravity) |
 | `WORDGRAM_AGENT_TIMEOUT` | seconds | `120` |
 | `WORDGRAM_ANKI_URL` | AnkiConnect endpoint | `http://127.0.0.1:8765` |
 | `WORDGRAM_DECK` | target deck | `English::Vocabulary` |
@@ -141,28 +141,36 @@ word replies with a stub. Tests: validation function, whitelist filter
 `agent.py`: `async def stream_completion(prompt: str) -> AsyncIterator[str]`
 — spawns the agent selected by `WORDGRAM_AGENT` from its command
 template. Template handling: `shlex.split` the template FIRST, then
-substitute `{model}` and `{prompt}` inside individual argv tokens with
-`str.replace` — substitution after splitting means prompt content can
-never break quoting; no shell is involved.
+substitute `{model}`, `{prompt}`, and `{out_file}` inside individual
+argv tokens with `str.replace` — substitution after splitting means
+prompt content can never break quoting; no shell is involved.
+`{out_file}` is a temp file path the runner always provides (only the
+codex template uses it).
 
-Two output parsers, chosen by agent:
+Three output parsers, chosen by agent:
 
 - `stream-json` (claude): parse JSON-lines on stdout, yield text deltas
   from `stream_event`/`content_block_delta` events; if none arrived by
   process exit, fall back to the `result` event's full text as a single
   yield.
-- `plain` (antigravity, gemini): yield decoded stdout chunks as they
-  arrive. If the CLI buffers its output, the whole answer arrives as one
-  late chunk — acceptable degradation, the streaming bridge (M3) handles
-  it transparently.
+- `last-message` (codex): stdout carries codex's session header and
+  reasoning noise, so it is ignored for content; after a zero exit, read
+  the answer from `{out_file}` and yield it once. No incremental
+  streaming for codex.
+- `plain` (antigravity): yield decoded stdout chunks as they arrive. If
+  the CLI buffers its output, the whole answer arrives as one late
+  chunk — acceptable degradation, the streaming bridge (M3) handles it
+  transparently.
 
 Enforce `WORDGRAM_AGENT_TIMEOUT` (kill process, raise `AgentError`).
-Non-zero exit or empty output → `AgentError` with stderr tail in the
-message. Tests: fake agents = tiny Python scripts in `tests/` — a
-stream-json one (happy path, no-deltas path, nonzero exit, hang for the
-timeout path with a sub-second timeout) and a plain one (chunked output,
-single-blob output); plus template rendering tests proving `{prompt}`
-with quotes/spaces/newlines survives intact for every default template.
+Non-zero exit, empty output, or missing/empty `{out_file}` →
+`AgentError` with stderr tail in the message. Tests: fake agents = tiny
+Python scripts in `tests/` — a stream-json one (happy path, no-deltas
+path, nonzero exit, hang for the timeout path with a sub-second
+timeout), a last-message one (writes the out file; also the
+missing-out-file failure), and a plain one (chunked output, single-blob
+output); plus template rendering tests proving `{prompt}` with
+quotes/spaces/newlines survives intact for every default template.
 
 ### M3 — streaming bridge
 

@@ -21,9 +21,9 @@ with zero extra effort.
   machine that runs Anki. It connects to Telegram via long polling, so no
   public IP, domain, or webhook is needed.
 - **LLM** — a pluggable CLI coding agent under a flat-rate subscription,
-  following the approach proven in `news-recap`. Supported agents:
-  Claude, Antigravity (Gemini models), and the Gemini CLI; the agent is
-  selected via configuration. No per-token API cost.
+  with the same three working agents as `news-recap`: Claude, Codex, and
+  Antigravity (Gemini models); the agent is selected via configuration.
+  No per-token API cost.
 - **Anki** — Anki desktop with the AnkiConnect add-on, reachable from the
   backend on localhost.
 
