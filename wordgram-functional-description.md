@@ -30,7 +30,9 @@ with zero extra effort.
 ## Core flow
 
 1. The user sends an English word or short phrase (idiom, phrasal verb,
-   collocation — anything that makes a valid flashcard).
+   collocation — anything that makes a valid flashcard). Prefixing the
+   message with `?` ("? word") requests a lookup-only analysis: the
+   answer and audio arrive as usual but no Anki card is created.
 2. The bot validates the input: Latin script, length within a small limit,
    not a command. Anything else gets a short hint instead of an LLM call.
 3. The bot immediately posts a placeholder message ("⏳ *word* …") so the
@@ -41,7 +43,8 @@ with zero extra effort.
    answer completes without a second message.
 5. The LLM produces **both outputs in one generation**: the full
    explanation for Telegram and a compact card payload. The card payload
-   is never shown to the user.
+   is never shown to the user. The explanation uses light text
+   formatting (bold for the headword, italics for examples).
 6. In parallel with the LLM call (the input word is known before
    generation starts), the backend obtains pronunciation audio for the
    word/phrase (see "Pronunciation audio").
@@ -82,8 +85,9 @@ Additional behavior:
 Audio is a core feature, not an add-on: every word gets pronunciation
 both in the chat and on the flashcard.
 
-- **Scope**: only the word/phrase itself is voiced. Example sentences are
-  not (keeps cards light and generation fast).
+- **Scope**: only the word/phrase itself is voiced. Example sentences
+  are never voiced — a final decision, not a deferral: cards must stay
+  light and generation fast.
 - **Source priority**: a real native-speaker recording from free
   dictionary sources when one exists. When no recording exists (phrases,
   rare words), generate audio with a local free TTS engine — local so
@@ -100,16 +104,21 @@ both in the chat and on the flashcard.
   TTS is available, the card and answer go out without audio and the
   status line says so.
 
-## Anki card
+## Anki cards
 
+- **One card per distinct meaning.** Usually a word yields one card, but
+  when meanings are genuinely unrelated (bank «банк» / bank «берег») the
+  LLM splits them into separate cards — at most three — each carrying a
+  short meaning label, its own translations, and its own examples.
 - **Compact by design.** Front: the word/phrase with IPA transcription
-  and pronunciation audio. Back: the top 2–4 translations plus 1–2 short
-  examples. The long-form analysis (etymology, full meaning list) stays
-  in Telegram only — cards must remain quick to review.
-- **Deck and note type are configurable**; single deck by default
-  (e.g. `English::Vocabulary`).
-- **Duplicates**: if a note for the same word already exists, no second
-  card is created; the bot reports "already in Anki".
+  and pronunciation audio. Back: the meaning label, the top 2–4
+  translations, plus 1–2 short examples. The long-form analysis
+  (etymology, full meaning list) stays in Telegram only — cards must
+  remain quick to review.
+- **Single deck, set in configuration** (e.g. `English::Vocabulary`).
+  No per-message or per-chat deck switching.
+- **Duplicates**: if any note for the same word already exists, nothing
+  is added or modified; the bot reports "already in Anki".
 - **Anki unavailable** (application closed, laptop just woke up): the card
   goes into a persistent local queue and is retried until Anki responds;
   the user is told the card is queued. The Telegram answer is never
@@ -119,9 +128,13 @@ both in the chat and on the flashcard.
 
 Kept minimal:
 
-- `/start`, `/help` — what the bot does, how to use it.
+- `/start`, `/help` — what the bot does, how to use it (including the
+  `?` lookup-only prefix).
 - `/status` — agent health, Anki reachability, pending card queue size.
-- `/undo` — remove the most recently added card (mistaken sends).
+- `/stats` — how many words were added today, over the last 7 days, and
+  in total.
+- `/undo` — remove the card(s) created by the last added word (mistaken
+  sends).
 - `/redo` — re-run the analysis for the last word (e.g. after a poor
   generation).
 
@@ -139,16 +152,11 @@ Everything else is plain text input.
   when it starts. The Anki queue survives restarts.
 - **Single instance, single user** (whitelist may hold a few family IDs).
   No horizontal scaling concerns.
+- **Accent**: one accent for all audio (dictionary recording choice and
+  TTS voices), set in configuration; American by default. Never two
+  recordings per card.
 
-## Open questions
+## Out of scope — final
 
-1. Multiple distinct meanings of one word: one combined card (current
-   assumption) or several cards, one per meaning?
-2. Duplicate word sent again: just report, or offer to update/extend the
-   existing card?
-3. An escape hatch to look a word up *without* adding it to Anki
-   (e.g. message prefix `?`) — needed or noise?
-4. Should decks be switchable per message/session (e.g. separate deck for
-   idioms)?
-5. Preferred accent for pronunciation (British vs American) — pick one,
-   or both recordings when the dictionary offers them?
+These are decisions, not deferrals: webhooks, Docker, multiple users
+with separate decks, example-sentence audio, any web UI.

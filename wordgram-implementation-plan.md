@@ -103,15 +103,22 @@ Add `wordgram = "wordgram.main:cli"` to `[project.scripts]`.
 …» и разбирай исправленный вариант.
 Если это идиома или фразовый глагол — объясни буквальный и переносный
 смысл и типичные ситуации употребления.
-Не используй markdown-разметку, только простой текст.
+Для выделения используй ТОЛЬКО HTML-теги <b> и <i>: разбираемое слово —
+жирным, английские примеры — курсивом. Никакого markdown, никаких
+других тегов.
 Весь разбор — не длиннее 3500 символов.
 
 После разбора выведи строку ровно ===CARD=== и сразу за ней JSON в одну
-строку без пояснений:
-{"word": "...", "ipa": "...", "translations": ["...", "..."],
- "examples": [{"en": "...", "ru": "..."}]}
-translations — 2-4 главных перевода; examples — 1-2 самых коротких
-примера из разбора.
+строку без пояснений и без HTML-тегов внутри значений:
+{"cards": [{"word": "...", "meaning": "...", "ipa": "...",
+ "translations": ["...", "..."],
+ "examples": [{"en": "...", "ru": "..."}]}]}
+Обычно cards содержит одну карточку. Раздели на несколько (не более
+трёх) только если значения слова не связаны между собой (как bank
+«банк» и bank «берег»). meaning — помета в 1-3 русских слова,
+различающая значения; если карточка одна — пустая строка.
+translations — 2-4 главных перевода этого значения; examples — 1-2
+самых коротких примера именно этого значения.
 ```
 
 Parsing rules (`prompt.py` / `card.py`):
@@ -119,11 +126,21 @@ Parsing rules (`prompt.py` / `card.py`):
 - Everything before `===CARD===` is the Telegram text. During streaming,
   cut the displayed text at the delimiter as soon as any prefix of it
   appears at the end of the buffer (never flash `===CA` to the user).
-- After the run, parse the JSON after the delimiter into `Card`
-  (`word`, `ipa`, `translations: list[str]` non-empty,
-  `examples: list[Example]`). On any parse/validation failure: the
-  Telegram answer still goes out, no card is created, status line says
-  the card failed — never crash the handler.
+- After the run, parse the JSON after the delimiter into
+  `list[Card]` (each: `word`, `meaning` possibly empty, `ipa`,
+  `translations: list[str]` non-empty, `examples: list[Example]`);
+  reject an empty list or more than three cards. On any
+  parse/validation failure: the Telegram answer still goes out, no
+  cards are created, status line says the card failed — never crash
+  the handler.
+
+HTML safety (`streaming.py`): Telegram gets `parse_mode=HTML`, and the
+LLM is only *asked* to emit `<b>`/`<i>` — the code must enforce it.
+Sanitizer over the visible text: escape `&`, `<`, `>` everywhere except
+whitelisted `<b>`, `</b>`, `<i>`, `</i>` tags; auto-close tags left
+open at the current cut point (streaming can split a tag pair across
+edits). If Telegram still rejects an edit with an entity-parse error,
+retry that edit without `parse_mode` — degraded but delivered.
 
 ## Milestones
 
@@ -133,11 +150,14 @@ Each milestone = one or more commits, tests included, CI green.
 
 `config.py`, `main.py`, `bot.py`: application starts, long polling,
 whitelist filter (non-whitelisted updates are ignored, only debug-logged),
-`/start` and `/help` reply with static text. Input validation for word
-messages per the functional description (Latin letters, spaces, hyphens,
-apostrophes; max ~50 chars; otherwise a short hint). Handler for a valid
-word replies with a stub. Tests: validation function, whitelist filter
-(use PTB objects directly, no live bot).
+`/start` and `/help` reply with static text (help mentions the `?`
+prefix). Input validation for word messages per the functional
+description (Latin letters, spaces, hyphens, apostrophes; max ~50
+chars; otherwise a short hint). A leading `?` (with optional space)
+marks the request lookup-only and is stripped before validation.
+Handler for a valid word replies with a stub. Tests: validation
+function including the `?` prefix, whitelist filter (use PTB objects
+directly, no live bot).
 
 ### M2 — agent runner
 
@@ -179,36 +199,49 @@ quotes/spaces/newlines survives intact for every default template.
 
 `streaming.py`: post placeholder "⏳ {word} …", accumulate deltas, edit
 the message at most every 1.5 s and only when visible text changed
-(remember: cut at delimiter, see LLM contract). Final edit with the
-complete text; append the status line placeholder later (M5). On
-`AgentError`: edit the message to a short apology + `/redo` hint.
-Truncate visible text at 4000 chars with an ellipsis. Handle Telegram
-`RetryAfter`/`BadRequest("message is not modified")` gracefully. Tests:
-fake `Message.edit_text` recorder + scripted delta sequences; assert edit
-cadence, delimiter cutting, truncation, error path.
+(remember: cut at delimiter, see LLM contract), passing every edit
+through the HTML sanitizer (see LLM contract) with `parse_mode=HTML`.
+Final edit with the complete text; append the status line placeholder
+later (M5). On `AgentError`: edit the message to a short apology +
+`/redo` hint. Truncate visible text at 4000 chars with an ellipsis.
+Handle Telegram `RetryAfter`/`BadRequest("message is not modified")`
+gracefully; entity-parse `BadRequest` → retry the edit without
+`parse_mode`. Tests: fake `Message.edit_text` recorder + scripted delta
+sequences; assert edit cadence, delimiter cutting, truncation, error
+path; sanitizer cases — stray `<`/`&`, disallowed tags escaped, `<b>`
+split across two deltas, unclosed `<i>` auto-closed at the cut.
 
 ### M4 — card extraction
 
 `card.py` + prompt module: parse the payload per the LLM contract.
-Tests: valid payload, payload with trailing garbage, missing delimiter,
-malformed JSON, empty translations.
+Tests: valid single-card payload, valid multi-card payload (2-3 cards
+with meaning labels), payload with trailing garbage, missing delimiter,
+malformed JSON, empty translations, empty cards list, four cards
+(rejected).
 
 ### M5 — Anki integration
 
 `anki.py`, httpx-based AnkiConnect client (`version`, `createDeck`,
 `modelNames`, `createModel`, `findNotes`, `addNote`, `deleteNotes`,
 `storeMediaFile`). On startup (lazily, first use): ensure deck and note
-type `Wordgram` exist. Note type fields: `Word`, `IPA`, `Translations`,
-`Examples`, `Audio`; one card template — Front: `{{Word}} {{Audio}}`,
-Back: `{{IPA}}<br>{{Translations}}<hr>{{Examples}}`; minimal CSS.
-Duplicate check: `findNotes` with query `note:Wordgram "Word:{word}"`
-(case-insensitive match is Anki's default). `add_card(card, audio_path)`
-returns `added | duplicate`; audio is sent with `storeMediaFile`
-(filename `wordgram-{slug}.mp3`) and referenced as `[sound:...]` in the
-`Audio` field. Wire into the handler after the final edit: status line
-appended to the message. Track the last added note id in memory for
-`/undo` (M7). Tests: mock httpx transport; assert exact AnkiConnect
-payloads for bootstrap, dedup, add-with-audio, and error propagation.
+type `Wordgram` exist. Note type fields: `Word`, `Meaning`, `IPA`,
+`Translations`, `Examples`, `Audio`; one card template — Front:
+`{{Word}} {{Audio}}`, Back:
+`{{IPA}}<br>{{Meaning}}<br>{{Translations}}<hr>{{Examples}}`; minimal
+CSS. Duplicate check is per WORD, not per card: `findNotes` with query
+`note:Wordgram "Word:{word}"` (case-insensitive match is Anki's
+default) — if any note exists, nothing is added and the whole send
+reports duplicate. `add_cards(cards, audio_path)` returns
+`added(note_ids) | duplicate`; all cards of one word share the same
+audio file, sent once with `storeMediaFile` (filename
+`wordgram-{slug}.mp3`) and referenced as `[sound:...]` in the `Audio`
+field. Skipped entirely for lookup-only (`?`) requests — status line
+"👁 lookup only". Wire into the handler after the final edit: status
+line appended to the message. Track the note ids of the last added
+word in memory for `/undo` (M7). Tests: mock httpx transport; assert
+exact AnkiConnect payloads for bootstrap, dedup, single- and
+multi-card add with shared audio, lookup-only skip, and error
+propagation.
 
 ### M6 — pronunciation audio
 
@@ -240,17 +273,28 @@ the dictionary path (hit, miss, HTTP error); fake kokoro module
 order; monkeypatched edge-tts (success, failure → `None`); phrase input
 skips the dictionary step.
 
-### M7 — pending queue and remaining commands
+### M7 — pending queue, stats, and remaining commands
 
-`pending.py`: sqlite table `pending_cards(id, card_json, audio_path,
-created_at)`. When `add_card` fails with a connection error, enqueue and
-set status "🕓 card queued". Background task retries the whole queue
-every 60 s; on success, edit nothing (cards just appear in Anki) but log.
-Queue survives restarts (DB in `WORDGRAM_DATA_DIR`). Implement `/status`
-(selected agent and model, Anki reachable yes/no, queue size), `/undo` (delete
-last added note via `deleteNotes`, confirm), `/redo` (re-run last word
-for this chat). Tests: enqueue on connection error, retry drains queue,
-undo/redo state machine (per chat, in memory).
+`pending.py`: sqlite (DB in `WORDGRAM_DATA_DIR`, survives restarts)
+with two tables:
+
+- `pending_cards(id, cards_json, audio_path, created_at)` — when
+  `add_cards` fails with a connection error, enqueue the word's whole
+  card set and set status "🕓 card queued". Background task retries the
+  queue every 60 s; on success, edit nothing (cards just appear in
+  Anki) but log.
+- `word_log(id, word, cards_count, action, created_at)` where action is
+  `added | duplicate | lookup`, written on every processed word — the
+  source for `/stats`.
+
+Commands: `/status` (selected agent and model, Anki reachable yes/no,
+queue size), `/stats` (words added today / last 7 days / all time,
+plus duplicates and lookups counts), `/undo` (delete ALL notes of the
+last added word via `deleteNotes`, confirm with the word name), `/redo`
+(re-run last word for this chat, preserving its lookup-only flag).
+Tests: enqueue on connection error, retry drains queue, stats
+aggregation windows, undo removes the full multi-card set, undo/redo
+state machine (per chat, in memory).
 
 ### M8 — polish and release
 
@@ -260,19 +304,24 @@ no unit files). Bump version to `0.1.0`. Ensure `ruff check` is clean and
 wired into CI. Do NOT push the `v0.1.0` tag — publishing is deferred
 until PyPI credentials are configured; note this in the README.
 
-## Decisions pre-made for v0.1 (do not re-open)
+## Product decisions (all questions resolved — do not re-open)
 
-- One combined card per word, even for multiple meanings.
-- Duplicate send → report only, card untouched.
-- No "lookup without Anki" escape hatch.
-- Single fixed deck from config.
-- Accent: config-level only (`WORDGRAM_ACCENT`), no per-message choice.
-- Plain text in Telegram (no parse_mode) — formatting is a later
-  iteration, not v0.1.
+- One card per distinct meaning, split by the LLM, at most three per
+  word; usually one.
+- Duplicate send → report only ("📌 already in Anki"), existing cards
+  untouched.
+- `?` prefix = lookup-only: analysis and audio, no Anki card.
+- Single fixed deck from config, no switching.
+- Accent: config-level only (`WORDGRAM_ACCENT`), US default, one
+  recording per card, no per-message choice.
+- Telegram formatting IS in v0.1: HTML `<b>`/`<i>` only, enforced by
+  the sanitizer, plain-text fallback on parse errors.
+- Word/phrase audio only — example sentences are never voiced (final).
+- `/stats` IS in v0.1 (see M7).
 - One globally selected agent (`WORDGRAM_AGENT`) — no per-task routing
   tables like news-recap has; a single-user bot doesn't need them.
 
-## Out of scope for v0.1
+## Out of scope — final, not deferred
 
 Webhooks, Docker, multiple users with separate decks, example-sentence
-audio, spaced-repetition statistics, any web UI.
+audio, any web UI.
