@@ -169,6 +169,13 @@ Parsing rules (`prompt.py` / `card.py`):
   only for the placeholder message and the speculative audio fetch
   (see M6) — when the LLM corrects a misspelling, everything downstream
   runs on the corrected word.
+- The canonical word is LLM output, so it must itself pass the same
+  validation as user input (M1: Latin letters including accented ones,
+  spaces, hyphens, apostrophes, the same length limit); a payload
+  failing this is treated exactly like a parse failure. Besides
+  catching a hallucinated "correction", this guarantees the word is
+  safe to interpolate into an Anki search query and a media filename —
+  no `"`, `*`, `_`, `:`, or `\` can reach either.
 
 HTML safety (`streaming.py`): Telegram gets `parse_mode=HTML`, and the
 LLM is only *asked* to emit `<b>`/`<i>` — the code must enforce it.
@@ -254,24 +261,30 @@ Handle Telegram `RetryAfter`/`BadRequest("message is not modified")`
 gracefully; entity-parse `BadRequest` → retry the edit without
 `parse_mode`.
 
-Word messages are processed strictly one at a time — a single global
-`asyncio.Lock` around the whole word pipeline. After downtime Telegram
-delivers up to 24 h of backlog in one burst; without the lock that
-means parallel agent subprocesses and interleaved edit loops flooding
-Telegram's rate limits. Each queued word still gets its own
-placeholder immediately, so the user sees the backlog was accepted.
-PTB processes updates sequentially by default (`block=True`), which
-would hold back the placeholders too: build the application with
-`concurrent_updates=True` so handlers start immediately, post the
-placeholder *before* acquiring the lock, and let the lock serialize
-the rest of the pipeline.
+Word messages are processed strictly one at a time and in the order
+sent: a single FIFO `asyncio.Queue` consumed by one worker task — not
+a bare lock, whose acquisition order would depend on how fast each
+handler reached `acquire()`. After downtime Telegram delivers up to
+24 h of backlog in one burst; without serialization that means
+parallel agent subprocesses and interleaved edit loops flooding
+Telegram's rate limits. PTB processes updates sequentially by default
+(`block=True`), which would hold back the placeholders: build the
+application with `concurrent_updates=True` so handlers start
+immediately. Each handler puts its job on the queue *before its first
+`await`* (handler tasks start in update order, so queue order equals
+send order), then posts the placeholder and attaches the resulting
+message to the job; the worker awaits the job's placeholder before
+streaming into it. Each queued word thus still gets its placeholder
+immediately, so the user sees the backlog was accepted. `RetryAfter`
+handling applies to the placeholder *send* too, not only to edits — a
+drained backlog posts many messages in a burst.
 
 Tests: fake `Message.edit_text` recorder + scripted delta sequences;
 assert edit cadence, delimiter cutting, truncation, error path;
 sanitizer cases — stray `<`/`&`, disallowed tags escaped, `<b>` split
 across two deltas, unclosed `<i>` auto-closed at the cut; two words
-sent together → second agent run starts only after the first pipeline
-finishes.
+sent together → both placeholders appear, agent runs execute one at a
+time in send order; placeholder send hitting `RetryAfter` is retried.
 
 ### M4 — card extraction
 
@@ -279,14 +292,21 @@ finishes.
 Tests: valid single-meaning payload, valid multi-meaning payload (2-3
 meanings with labels), payload with trailing garbage, missing
 delimiter, malformed JSON, empty translations, empty meanings list,
-four meanings (rejected), missing `pos` (tolerated, defaults to `""`).
+four meanings (rejected), missing `pos` (tolerated, defaults to `""`),
+canonical word failing input validation (rejected).
 
 ### M5 — Anki integration
 
 `anki.py`, httpx-based AnkiConnect client (`version`, `createDeck`,
-`modelNames`, `createModel`, `findNotes`, `addNote`, `deleteNotes`,
-`storeMediaFile`, `sync`). On startup (lazily, first use): ensure deck
-and note type `Wordgram` exist. Note type fields: `Word`, `IPA`,
+`modelNames`, `createModel`, `modelFieldNames`, `modelTemplates`,
+`findNotes`, `addNote`, `deleteNotes`, `storeMediaFile`, `sync`). On
+startup (lazily, first use): ensure deck and note type `Wordgram`
+exist. When the model already exists, verify its field names and its
+two template names match the expected set (`modelFieldNames`,
+`modelTemplates`); on mismatch fail with a clear status-line error
+("note type Wordgram is misconfigured — fix or delete it in Anki")
+rather than feed notes into a model with unknown fields. No
+auto-migration in v0.1. Note type fields: `Word`, `IPA`,
 `Translations`, `Meanings`, `Audio`; two card templates:
 
 - **Recognition** — Front: `{{Word}} {{Audio}}<br>{{IPA}}` (the
@@ -327,8 +347,10 @@ One word = one note, so the first field (`Word`) is naturally unique
 and Anki's own `addNote` duplicate rejection never fires against our
 own notes. Duplicate check before adding: `findNotes` with query
 `note:Wordgram "Word:{word}"` — `{word}` is the canonical word from
-the payload; case-insensitive match is Anki's default. If a note
-exists, nothing is added and the send reports duplicate. Belt and
+the payload; case-insensitive match is Anki's default, and the
+validation of the canonical word (see the LLM contract) guarantees it
+carries no Anki search syntax, so plain interpolation is safe. If a
+note exists, nothing is added and the send reports duplicate. Belt and
 braces: an `addNote` "duplicate" error (a note added by hand between
 check and add) is treated as the duplicate status, not as a failure.
 
@@ -353,7 +375,8 @@ account, network) is logged at warning level and never affects the
 status line.
 
 Tests: mock httpx transport; assert exact AnkiConnect payloads for
-bootstrap (both card templates in `createModel`), dedup, single- and
+bootstrap (both card templates in `createModel`), existing model with
+mismatched fields or templates → clear error, dedup, single- and
 multi-meaning rendering of `Translations` and `Meanings`, masking
 (exact match, inflected form via the prefix rule, multi-word phrase,
 irregular form falling back to `pos`, no example maskable and `pos`
@@ -444,36 +467,52 @@ Anki when it is not.
 
 Commands:
 
-- `/status` — selected agent and model, Anki reachable yes/no, queue
-  size.
+- `/status` — selected agent and model, whether the agent CLI is found
+  on PATH (`shutil.which`), time and outcome of the last agent run,
+  Anki reachable yes/no (AnkiConnect `version` call), queue size. The
+  functional description says "agent health" — the PATH check plus the
+  last-run outcome is that health, without spending a real agent run
+  on every `/status`.
 - `/stats` — words added today / last 7 days / all time, plus
   duplicates and lookups counts.
-- `/undo` — remove whatever the last sent word produced: delete its
-  note via `deleteNotes` if it reached Anki, or delete its
-  `pending_notes` row (together with its audio file in
-  `WORDGRAM_DATA_DIR/audio/`) if it is still queued; confirm with the
-  word name.
-- `/redo` — re-run the last word for this chat, preserving its
-  lookup-only flag. Before adding the new note, remove the previous
-  run's result exactly like `/undo` does — `/redo` exists to fix a
-  poor generation, and without the removal the duplicate check would
-  block the replacement ("already in Anki") and the bad card would
-  survive.
+- `/undo` — remove whatever the last sent word produced. The target is
+  resolved at invocation time by the canonical word, never by a stored
+  id: delete the word's `pending_notes` row (together with its audio
+  file in `WORDGRAM_DATA_DIR/audio/`) if one is queued, otherwise find
+  the note with `findNotes` and delete it via `deleteNotes`; confirm
+  with the word name. Resolving by word keeps `/undo` correct when the
+  background retry drained the queue between the send and the undo —
+  a stored row id would go stale there and the card would silently
+  survive. If the last word's action was `duplicate` or `lookup`,
+  reply "nothing to undo" and touch nothing: `/undo` must never delete
+  a note that existed before the last send.
+- `/redo` — re-run the last word for this chat through the normal word
+  pipeline (the same FIFO queue and placeholder flow as a plain
+  message), preserving its lookup-only flag. Before adding the new
+  note, remove the previous run's result exactly like `/undo` does
+  (same resolution by canonical word) — `/redo` exists to fix a poor
+  generation, and without the removal the duplicate check would block
+  the replacement ("already in Anki") and the bad card would survive.
 
-Undo/redo state (last word, its note id or pending row id, lookup
-flag) is per chat, in memory, lost on restart — documented behavior.
+Undo/redo state (last canonical word, its action —
+`added | queued | duplicate | lookup`) is per chat, in memory, lost on
+restart — documented behavior.
 Tests: enqueue on connection error, retry drains queue and triggers
 sync, retry re-checks duplicates and drops the entry, handler dedup
 consults the queue case-insensitively and reports the queued status,
 stats aggregation windows, undo removes an added note, undo removes a
-queued row together with its audio file, redo replaces the previous
-note, undo/redo state machine.
+queued row together with its audio file, undo after the retry task
+drained the queued note still deletes it from Anki (resolution by
+word), undo after a duplicate or lookup is a no-op with a "nothing to
+undo" reply, redo replaces the previous note, undo/redo state machine.
 
 ### M8 — polish and release
 
 README: install (`uv tool install wordgram` / `uvx wordgram`), required
 env vars, AnkiConnect setup pointer, systemd/launchd hint (one paragraph,
-no unit files). Bump version to `0.1.0`. Ensure `ruff check` is clean and
+no unit files). Mention that `WORDGRAM_DATA_DIR/audio/` keeps one small
+mp3 per looked-up word and has no cleanup policy in v0.1 — old files
+are safe to delete except those referenced by still-queued notes. Bump version to `0.1.0`. Ensure `ruff check` is clean and
 wired into CI. Do NOT push the `v0.1.0` tag — publishing is deferred
 until PyPI credentials are configured; note this in the README.
 
@@ -503,8 +542,11 @@ until PyPI credentials are configured; note this in the README.
 - Anki sync to AnkiWeb runs automatically after additions and queue
   drains, debounced; `WORDGRAM_ANKI_SYNC=false` turns it off.
 - `?` prefix = lookup-only: analysis and audio, no Anki card.
-- `/undo` covers queued notes; `/redo` replaces the previous run's
-  note instead of being blocked by the duplicate check.
+- `/undo` covers queued notes and resolves its target by the canonical
+  word at invocation time; after a `duplicate` or `lookup` it is an
+  explicit no-op — it never deletes a pre-existing note. `/redo`
+  replaces the previous run's note instead of being blocked by the
+  duplicate check.
 - Single fixed deck from config, no switching.
 - Accent: config-level only (`WORDGRAM_ACCENT`), US default, one
   recording per card, no per-message choice.
@@ -516,8 +558,9 @@ until PyPI credentials are configured; note this in the README.
   tables like news-recap has; a single-user bot doesn't need them.
 - Agents run with tool execution disabled (see "Agent hardening") —
   not optional, an agent that can't be restricted is dropped.
-- Words are processed sequentially (global lock), so a 24 h Telegram
-  backlog drains one word at a time.
+- Words are processed sequentially and in send order (a single worker
+  over a FIFO queue), so a 24 h Telegram backlog drains one word at a
+  time.
 
 ## Out of scope — final, not deferred
 

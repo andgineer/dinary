@@ -58,7 +58,9 @@ with zero extra effort.
    always the word from the card payload, not the raw input. When the
    LLM corrects a misspelling the two differ: the speculative audio is
    discarded and fetched again for the corrected word, so neither the
-   chat nor the card ever carries a recording of a typo.
+   chat nor the card ever carries a recording of a typo. A canonical
+   word that does not itself pass the same validation as user input is
+   rejected: the analysis is still delivered, but no card is created.
 8. When generation completes, the backend sends the pronunciation as a
    voice message in the chat, adds the note (with the audio attached) to
    Anki, and appends a status line to the analysis message:
@@ -176,7 +178,9 @@ Kept minimal:
   in total, plus how many sends were duplicates or lookup-only.
 - `/undo` — remove the note created by the last sent word: delete it
   from Anki, or drop it from the delivery queue if it never reached
-  Anki (mistaken sends).
+  Anki (mistaken sends). If the last word created nothing (a duplicate
+  or a lookup-only request), `/undo` says there is nothing to undo —
+  it never touches a note that existed before.
 - `/redo` — re-run the analysis for the last word (e.g. after a poor
   generation). The note from the previous run (added or still queued)
   is replaced by the new one, so a bad card does not survive a redo.
