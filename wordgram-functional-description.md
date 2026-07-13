@@ -53,12 +53,18 @@ with zero extra effort.
    formatting (bold for the headword, italics for examples).
 7. In parallel with the LLM call (the input word is known before
    generation starts), the backend obtains pronunciation audio for the
-   word/phrase (see "Pronunciation audio").
+   word/phrase (see "Pronunciation audio"). The **canonical word** — the
+   key for the card, deduplication, statistics, and undo/redo — is
+   always the word from the card payload, not the raw input. When the
+   LLM corrects a misspelling the two differ: the speculative audio is
+   discarded and fetched again for the corrected word, so neither the
+   chat nor the card ever carries a recording of a typo.
 8. When generation completes, the backend sends the pronunciation as a
    voice message in the chat, adds the note (with the audio attached) to
    Anki, and appends a status line to the analysis message:
-   "✅ added to Anki" / "📌 already in Anki" / "🕓 Anki is not running —
-   card queued".
+   "✅ added to Anki" / "📌 already in Anki" / "🕓 already queued" (a
+   duplicate of a card still waiting for Anki) / "🕓 Anki is not
+   running — card queued".
 
 ## Analysis content (the Telegram answer)
 
@@ -106,9 +112,11 @@ both in the chat and on the flashcard.
   - Anki: the audio is attached to the card front, so it plays during
     review.
 - **Resilience**: audio lookup runs in parallel with the LLM call and
-  must never delay or fail the text answer. If neither a recording nor
-  TTS is available, the card and answer go out without audio and the
-  status line says so.
+  must never delay or fail the text answer. When the LLM corrects a
+  misspelling, audio is re-fetched for the corrected (canonical) word —
+  the only case where the voice message may arrive noticeably after the
+  text. If neither a recording nor TTS is available, the card and
+  answer go out without audio and the status line says so.
 
 ## Anki cards
 
@@ -120,21 +128,35 @@ both in the chat and on the flashcard.
   the word once and asks for everything it means; two cards with an
   identical front (which the reviewer could not tell apart) can never
   exist.
-- **Compact by design.** Front: the word/phrase with IPA transcription
-  and pronunciation audio. Back: the meaning block(s) — label (when
-  there is more than one), the top 2–4 translations, plus 1–2 short
-  examples. The long-form analysis (etymology, full meaning list) stays
-  in Telegram only — cards must remain quick to review.
+- **Compact by design.** Recognition card — front: the word/phrase with
+  IPA transcription and pronunciation audio; back: the meaning
+  block(s) — label (when there is more than one), the top 2–4
+  translations, plus 1–2 short examples. The long-form analysis
+  (etymology, full meaning list) stays in Telegram only — cards must
+  remain quick to review.
+- **Reverse (recall) card.** Every note also produces a second card:
+  front — the Russian translations (with meaning labels when there are
+  several blocks), back — the word/phrase with IPA and pronunciation
+  audio. Each word is therefore reviewed in both directions, EN→RU and
+  RU→EN, from the same single note.
 - **Single deck, set in configuration** (e.g. `English::Vocabulary`).
   No per-message or per-chat deck switching.
-- **Duplicates**: if a note for the same word already exists in Anki —
-  or is still waiting in the delivery queue (see below) — nothing is
-  added or modified; the bot reports "already in Anki".
+- **Duplicates**: keyed by the canonical word, case-insensitively. If a
+  note already exists in Anki, nothing is added or modified and the bot
+  reports "already in Anki"; if it is still waiting in the delivery
+  queue (see below), the bot reports "already queued" instead — the
+  status never claims a card is in Anki when it is not.
 - **Anki unavailable** (application closed, laptop just woke up): the
   note goes into a persistent local queue and is retried until Anki
   responds; before each delivery the duplicate check runs again. The
   user is told the card is queued. The Telegram answer is never delayed
   by Anki problems.
+- **Sync**: after cards are added — directly or by a queue drain — the
+  backend asks Anki to synchronize with AnkiWeb, so new cards reach the
+  user's other devices (e.g. the phone) without manual action. Sync is
+  debounced; its failures are only logged and never affect the answer
+  or the card status. Can be turned off in configuration for setups
+  without an AnkiWeb account.
 
 ## Bot commands
 
