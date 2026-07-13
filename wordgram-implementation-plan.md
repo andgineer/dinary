@@ -47,11 +47,12 @@ Rules:
 | `WORDGRAM_BOT_TOKEN` | Telegram bot token | required |
 | `WORDGRAM_ALLOWED_USER_IDS` | comma-separated Telegram user IDs | required |
 | `WORDGRAM_AGENT` | `claude`, `codex`, or `antigravity` | `claude` |
-| `WORDGRAM_CLAUDE_CMD` | claude argv template | `claude -p {prompt} --model {model} --output-format stream-json --include-partial-messages --verbose --disallowedTools "Bash,Edit,Write,NotebookEdit,Read,Glob,Grep,WebFetch,WebSearch,Task"` |
+| `WORDGRAM_CLAUDE_CMD` | claude argv template | `claude -p {prompt} --model {model} --output-format stream-json --include-partial-messages --verbose --allowed-tools ""` (empty allow-list = nothing allowed; see "Agent hardening") |
 | `WORDGRAM_CODEX_CMD` | codex argv template | `codex exec --model {model} --sandbox read-only -c model_reasoning_effort=low --output-last-message {out_file} {prompt}` |
 | `WORDGRAM_ANTIGRAVITY_CMD` | antigravity argv template | `agy --model {model} -p {prompt}` — never with `--dangerously-skip-permissions`; see "Agent hardening" |
 | `WORDGRAM_MODEL` | model substituted into the template | per agent: `sonnet` (claude — nuanced Russian linguistic analysis is worth more than haiku's latency on a flat-rate plan), `gpt-5.2` (codex), `gemini-3.5-flash` (antigravity) |
 | `WORDGRAM_AGENT_TIMEOUT` | seconds | `120` |
+| `WORDGRAM_AGENT_ENV_PASSTHROUGH` | CSV escape hatch: extra env var names allowed into the agent subprocess (see "Agent hardening") | empty |
 | `WORDGRAM_ANKI_URL` | AnkiConnect endpoint | `http://127.0.0.1:8765` |
 | `WORDGRAM_DECK` | target deck | `English::Vocabulary` |
 | `WORDGRAM_ANKI_SYNC` | trigger AnkiConnect `sync` after additions (see M5) | `true` |
@@ -62,27 +63,80 @@ Rules:
 
 ## Agent hardening
 
-The bot forwards user text into a coding agent running with the user's
+The bot forwards user text into a coding agent running under the user's
 own account on the user's own laptop. Input validation (Latin letters,
 ~50 chars) is NOT a security boundary — "delete all files in home dir"
-passes it. The agents therefore must not be able to act on the text at
-all: no shell, no file access, no web tools. The default templates
-above encode this — `--disallowedTools` for claude, `--sandbox
-read-only` for codex, and no permission-skipping flag for antigravity.
-M2 must verify by hand that each agent completes a plain-text
-generation under these restrictions (exact flag names may need
-adjusting to the installed CLI versions); if an agent cannot run
-non-interactively without being granted tool permissions, drop it from
-the supported list rather than run it unrestricted.
+passes it, and a poisoned phrase is textbook **indirect prompt injection**
+(OWASP LLM01): the prompt-level instructions in `prompt.py` are requests,
+not controls; what matters is what the agent process *can do* if the text
+hijacks it. The design target is the one `news-recap` settled on in
+`spec/plan-agent-sandboxing.md` (findings verified 2026-07-13): break one
+leg of the **lethal trifecta** (private data / untrusted content /
+exfiltration) using each vendor's **own** built-in protection — preferring
+the exfiltration leg — rather than a hand-built kernel sandbox. Probability
+is low (a single whitelisted family member typing a word) but the blast
+radius is irreversible (a leaked SSH key does not come back), so the
+controls are cheap and proportionate: deny the agent file, shell, and
+network tools, and do not build a custom sandbox unless a vendor's own
+protection demonstrably fails.
 
-The claude deny-list above is a stopgap: it enumerates today's tools,
-so any tool added in a future CLI version is silently allowed. During
-the M2 manual check, test whether the installed CLI supports
-"nothing is allowed" semantics — an allow-list flag left empty, a
-deny-all wildcard, or a permission mode that denies every tool — and
-switch the default template to that form if it works. Keep the
-explicit enumeration only if no such form exists, and re-review it on
-every CLI upgrade.
+wordgram has one advantage over news-recap. news-recap must deliver a
+multi-KB prompt via a file (`{prompt_file}`), so it has to give each agent
+a **read** tool to open it — its floor is "read-only". wordgram's prompt is
+one short word passed as an argv positional (M2), never a file, so it needs
+no tool at all — its floor is "**nothing allowed**".
+
+Per agent (defaults in the config table; exact flag names may drift between
+CLI versions — the M2 canary check below is the real gate):
+
+- **claude — allow-list, not deny-list.** news-recap proved live (CLI
+  v2.1.207) that `--allowed-tools "Read"` with no `--permission-mode` and
+  no network tools is necessary and sufficient for its file-read flow;
+  `dontAsk` / `bypassPermissions` are unneeded and `WebFetch` /
+  `Bash(curl:*)` are pure exfil surface. An **allow-list is strictly
+  better** than the deny-list this plan first sketched: a deny-list
+  enumerates today's tools and silently permits any tool a future CLI adds.
+  Because wordgram delivers the prompt via argv, not a file, it does not
+  even need `Read`, so the default is `--allowed-tools ""` (nothing
+  allowed). If the installed CLI rejects an empty allow-list, fall back to
+  `--allowed-tools "Read"` — harmless here, since argv delivery never reads
+  a file — which is exactly the value news-recap verified.
+- **codex — read-only sandbox, no network flag.** codex's sandbox applies
+  to the shell commands the agent spawns, not to codex's own model API call
+  (made by the un-sandboxed launcher), so `--sandbox read-only` does **not**
+  block codex from reaching its API — and a text→text task never needs the
+  agent's shell to touch the network. That is why the default carries no
+  `network_access=true`. (macOS Seatbelt has known network edge cases —
+  codex#10390, #9298 — so confirm with one probe run in M2.)
+- **antigravity — turn on agy's OWN sandbox, don't just omit the dangerous
+  flag.** `agy` ships a native **Terminal Sandbox** (`sandbox-exec` on
+  macOS, `nsjail` on Linux) plus a permission layer, configured in
+  `~/.gemini/antigravity-cli/settings.json`: `enableTerminalSandbox` (bool,
+  default **false**), `toolPermission` (`always-proceed` | `request-review`
+  | `strict` | `proceed-in-sandbox`, default `request-review`), and
+  `permissions.allow` / `permissions.deny` (e.g.
+  `deny: ["command(curl)","command(wget)","command(rm -rf)"]`).
+  `--dangerously-skip-permissions` is not merely "skip approvals" — it also
+  auto-approves the *"bypass the sandbox"* prompt (antigravity-cli#36), so
+  it specifically defeats agy's own protection; the default template must
+  never carry it. agy has **no** read-only / plan mode for a
+  non-interactive `-p` run (antigravity-cli#45, unresolved), so hardening
+  agy means shipping the safe `settings.json` (`enableTerminalSandbox:
+  true`, `toolPermission: proceed-in-sandbox`, deny-list for
+  curl/wget/rm) — applied through a pipeline-owned config path so the
+  operator's global settings file is never clobbered. If M2 finds agy
+  cannot run headless under any setting that also contains it, drop agy
+  from the supported list rather than run it unrestricted; the community
+  fallback is a disposable Docker container with an egress allowlist and
+  headless OAuth (`shelajev/agy-sbx-kit`), out of scope for v0.1.
+
+**Environment hygiene (all agents).** The agent subprocess must not inherit
+the operator's whole shell. Do not pass `os.environ.copy()`; build a
+default-deny env — `PATH`, `HOME`, `LANG`, `LC_ALL`, `TERM`, `TMPDIR`, plus
+the selected agent's own auth vars and the `WORDGRAM_*` settings — so an
+unrelated secret in the shell (an API key, a token) can never reach a
+hijacked agent. `WORDGRAM_AGENT_ENV_PASSTHROUGH` (CSV) is the escape hatch
+for the rare extra var a specific setup needs.
 
 ## Module layout
 
@@ -200,7 +254,9 @@ substitute `{model}`, `{prompt}`, and `{out_file}` inside individual
 argv tokens with `str.replace` — substitution after splitting means
 prompt content can never break quoting; no shell is involved.
 `{out_file}` is a temp file path the runner always provides (only the
-codex template uses it).
+codex template uses it). The subprocess is spawned with a **default-deny
+env** built here, not `os.environ.copy()` (see "Agent hardening"): the
+allowlist plus `WORDGRAM_AGENT_ENV_PASSTHROUGH`, nothing else.
 
 Three output parsers, chosen by agent:
 
@@ -228,13 +284,34 @@ path, nonzero exit, hang for the timeout path with a sub-second
 timeout), a last-message one (writes the out file; also the
 missing-out-file failure), and a plain one (chunked output, single-blob
 output); plus template rendering tests proving `{prompt}` with
-quotes/spaces/newlines survives intact for every default template.
+quotes/spaces/newlines survives intact for every default template. Also
+test the env builder — seed a `FAKE_SECRET` and assert it is absent from
+the built env, and assert the claude template's `--allowed-tools` is empty
+(or exactly `Read`) and carries no `curl`/`WebFetch`, the codex template
+has no `network_access`, and no template carries
+`--dangerously-skip-permissions`.
 
-Closing this milestone requires the manual check from "Agent
-hardening": run each real CLI once with its default template and
-confirm the answer arrives with tools disabled. This is the only
-sanctioned manual step in the plan — real CLIs stay out of the test
-suite.
+Closing this milestone requires the manual check from "Agent hardening" —
+the only sanctioned manual step in the plan; real CLIs stay out of the
+test suite. For each supported agent, run its default template once and
+confirm two things: (1) a plain word generation completes with tools
+disabled — for claude, that an empty `--allowed-tools ""` is accepted (else
+fall back to `"Read"`); for codex, the single probe that `--sandbox
+read-only` still lets it reach its API; for agy, that it runs headless
+without hanging under `enableTerminalSandbox: true` + `toolPermission:
+proceed-in-sandbox`. (2) The **containment canaries** hold, mirroring
+news-recap's acceptance bar (`spec/plan-agent-sandboxing.md`, E3): feed a
+prompt whose "word" is actually an injection payload and assert, on the
+host, that a *read* canary (a file the payload tells the agent to read and
+print) never appears in stdout; a *write* canary (payload tells the agent
+to create `~/.ssh/probe`) is never written; a *network* canary (payload
+tells the agent to `curl`/POST to a remote host) produces no egress; and an
+*env* canary (a `FAKE_SECRET` seeded into the allowlisted env, which the
+payload tells the agent to `echo`) never surfaces — proving the env
+allowlist and the sandbox together. "Does it answer?" is necessary but not
+sufficient; the canaries are the gate. An agent that cannot both answer and
+pass all four canaries under a headless setting is dropped from the
+supported list.
 
 ### M3 — streaming bridge
 
@@ -485,8 +562,14 @@ until PyPI credentials are configured; note this in the README.
 - `/stats` IS in v0.1 (see M7).
 - One globally selected agent (`WORDGRAM_AGENT`) — no per-task routing
   tables like news-recap has; a single-user bot doesn't need them.
-- Agents run with tool execution disabled (see "Agent hardening") —
-  not optional, an agent that can't be restricted is dropped.
+- Agents run with tool execution denied via each vendor's **own**
+  protection — claude allow-list (empty; `Read` fallback), codex
+  `--sandbox read-only`, agy's own Terminal Sandbox settings — never
+  `--dangerously-skip-permissions`, and never `os.environ.copy()` into the
+  subprocess (default-deny env allowlist). Not optional: an agent that
+  can't be restricted is dropped. Verified by containment canaries in M2,
+  following news-recap's `spec/plan-agent-sandboxing.md` (see "Agent
+  hardening").
 - Words are processed sequentially (global lock), so a 24 h Telegram
   backlog drains one word at a time.
 

@@ -188,11 +188,19 @@ for a personal tool.
   Audio is fetched concurrently and must not extend these budgets.
 - **Cost**: LLM usage rides the existing coding-agent subscription; the
   design must not require a metered API key.
-- **Safety**: user text is forwarded to a coding agent running on the
-  user's own laptop, so the agents must run with tool execution
-  disabled — no input (including a malicious or mistyped phrase that
-  passes validation) may ever cause the agent to read files, run
-  commands, or reach the network on the host machine.
+- **Safety**: user text is forwarded to a coding agent running under the
+  user's own account on the user's own laptop. The text is untrusted — a
+  malicious or mistyped phrase that passes validation is **indirect prompt
+  injection** (OWASP LLM01), and input validation is not a security
+  boundary. The invariant: no input may ever cause the agent to read
+  files, run commands, reach the network, or see the operator's
+  environment secrets on the host. Prompt-level wording is a request, not
+  a control; the boundary is what the agent process *can do* if the text
+  hijacks it. This is enforced by each agent's **own** sandbox/permission
+  controls — never by disabling them — breaking the exfiltration leg of
+  the attack; an agent that cannot be restricted this way is dropped, not
+  run unrestricted. See the implementation plan's "Agent hardening",
+  grounded in `news-recap`'s agent-sandboxing research.
 - **Resilience**: the laptop is not always on. Telegram keeps undelivered
   updates for 24 h, so words sent while the backend is down are processed
   when it starts — sequentially, one word at a time. The Anki queue
