@@ -135,15 +135,18 @@ Add `wordgram = "wordgram.main:cli"` to `[project.scripts]`.
 
 После разбора выведи строку ровно ===CARD=== и сразу за ней JSON в одну
 строку без пояснений и без HTML-тегов внутри значений:
-{"word": "...", "ipa": "...",
+{"word": "...", "ipa": "...", "pos": "...",
  "meanings": [{"label": "...", "translations": ["...", "..."],
  "examples": [{"en": "...", "ru": "..."}]}]}
+pos — часть(и) речи кратко по-русски («глагол», «сущ.», «фразовый
+глагол»).
 Обычно meanings содержит один элемент с пустым label. Раздели на
 несколько (не более трёх) только если значения слова не связаны между
 собой (как bank «банк» и bank «берег»); тогда label — помета в 1-3
 русских слова, различающая значения. translations — 2-4 главных
 перевода этого значения; examples — 1-2 самых коротких примера именно
-этого значения.
+этого значения, каждый обязан содержать разбираемое слово или его
+форму.
 ```
 
 Parsing rules (`prompt.py` / `card.py`):
@@ -152,10 +155,12 @@ Parsing rules (`prompt.py` / `card.py`):
   cut the displayed text at the delimiter as soon as any prefix of it
   appears at the end of the buffer (never flash `===CA` to the user).
 - After the run, parse the JSON after the delimiter into a single
-  `Note` (`word`, `ipa`, `meanings: list[Meaning]` where each meaning
-  has `label` possibly empty, `translations: list[str]` non-empty,
-  `examples: list[Example]`); reject an empty meanings list or more
-  than three meanings. On any parse/validation failure: the Telegram
+  `Note` (`word`, `ipa`, `pos`, `meanings: list[Meaning]` where each
+  meaning has `label` possibly empty, `translations: list[str]`
+  non-empty, `examples: list[Example]`); reject an empty meanings list
+  or more than three meanings. A missing or empty `pos` is tolerated
+  (default `""`) — it is a display hint for the recall card (M5), not
+  core data, and must never fail an otherwise valid payload. On any parse/validation failure: the Telegram
   answer still goes out, no note is created, status line says the card
   failed — never crash the handler.
 - The payload's `word` field is the **canonical word**: the key for the
@@ -274,7 +279,7 @@ finishes.
 Tests: valid single-meaning payload, valid multi-meaning payload (2-3
 meanings with labels), payload with trailing garbage, missing
 delimiter, malformed JSON, empty translations, empty meanings list,
-four meanings (rejected).
+four meanings (rejected), missing `pos` (tolerated, defaults to `""`).
 
 ### M5 — Anki integration
 
@@ -291,10 +296,26 @@ and note type `Wordgram` exist. Note type fields: `Word`, `IPA`,
   `{{Word}} {{Audio}}<br>{{IPA}}<hr>{{Meanings}}`.
 
 Minimal CSS. `Translations` and `Meanings` are rendered by the backend
-from the parsed payload. `Translations`: one line per meaning — label
-in bold (only when the note has more than one meaning) followed by
-that meaning's translations; no examples, so the recall front never
-gives the answer away. `Meanings`: one block per meaning — label in
+from the parsed payload. `Translations` (the recall front): one entry
+per meaning — label in bold (only when the note has more than one
+meaning), that meaning's translations, then the meaning's first
+maskable example in italics with the canonical word replaced by `___`,
+followed by the example's Russian translation. A bare translation
+often matches several English words; the gapped example tells the
+reviewer which word is being asked without giving the answer away.
+
+Masking (a pure function in `card.py`, tested on its own): compare
+case-insensitively over word tokens. For a single-word canonical word,
+replace every token equal to it, else the first token that shares a
+prefix of at least 4 characters with it (covers walked/walking;
+irregular forms like went won't match). For a multi-word phrase, mask
+the full phrase when it occurs, else its longest word by the same
+token rules. Pick the first example of the meaning where masking
+succeeds; if none, that meaning's entry shows `pos` (when non-empty)
+instead of an example — an unmasked example must never reach the
+recall front. Examples may therefore appear both on the recall front
+(masked) and on the recognition back (plain) — accepted. `Meanings`:
+one block per meaning — label in
 bold (same condition), translations on one line, examples in italics
 with their Russian translations — numbered `<ol>`-style when there is
 more than one block. Every payload value is HTML-escaped before being
@@ -333,7 +354,10 @@ status line.
 
 Tests: mock httpx transport; assert exact AnkiConnect payloads for
 bootstrap (both card templates in `createModel`), dedup, single- and
-multi-meaning rendering of `Translations` and `Meanings`, HTML
+multi-meaning rendering of `Translations` and `Meanings`, masking
+(exact match, inflected form via the prefix rule, multi-word phrase,
+irregular form falling back to `pos`, no example maskable and `pos`
+empty → translations only), HTML
 escaping of payload values, audio reference and filename hashing,
 lookup-only skip, addNote-duplicate-error → duplicate status, sync
 trigger with debounce (and the `WORDGRAM_ANKI_SYNC=false` no-op), and
@@ -470,7 +494,12 @@ until PyPI credentials are configured; note this in the README.
   re-fetched for the canonical word and the speculative fetch is
   discarded.
 - Every note produces two cards: recognition (EN→RU) and recall
-  (RU→EN) — see M5. Still one note per word.
+  (RU→EN) — see M5. Still one note per word. The recall front carries,
+  besides the translations, a gapped example per meaning (the word
+  masked as `___`) so that a translation shared by several English
+  words (получать → get / receive / obtain) still identifies the one
+  being asked; when no example can be masked, the part of speech is
+  shown instead.
 - Anki sync to AnkiWeb runs automatically after additions and queue
   drains, debounced; `WORDGRAM_ANKI_SYNC=false` turns it off.
 - `?` prefix = lookup-only: analysis and audio, no Anki card.

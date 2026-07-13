@@ -136,9 +136,16 @@ both in the chat and on the flashcard.
   remain quick to review.
 - **Reverse (recall) card.** Every note also produces a second card:
   front — the Russian translations (with meaning labels when there are
-  several blocks), back — the word/phrase with IPA and pronunciation
-  audio. Each word is therefore reviewed in both directions, EN→RU and
-  RU→EN, from the same single note.
+  several blocks), each followed by one of that meaning's example
+  sentences with the word masked out ("I ___ a parcel from Amazon
+  yesterday", with its Russian translation). A bare translation often
+  matches several English words (получать → get / receive / obtain);
+  the gapped example pins down which word is being asked. When the word
+  cannot be located in any example of a meaning (e.g. an irregular
+  form), that meaning shows the part of speech instead of an example —
+  the front never carries an unmasked example. Back — the word/phrase
+  with IPA and pronunciation audio. Each word is therefore reviewed in
+  both directions, EN→RU and RU→EN, from the same single note.
 - **Single deck, set in configuration** (e.g. `English::Vocabulary`).
   No per-message or per-chat deck switching.
 - **Duplicates**: keyed by the canonical word, case-insensitively. If a
