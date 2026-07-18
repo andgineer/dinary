@@ -7,8 +7,8 @@ manual-resolution flow call these helpers instead of a country-specific parser.
 
 from urllib.parse import urlparse
 
-from dinary.adapters import montenegrin_receipt_parser, serbian_receipt_parser
-from dinary.adapters.receipt_types import ParsedReceipt, ParserParseError, QrPayload
+from dinary.adapters.receipts import montenegrin, serbian
+from dinary.adapters.receipts.types import ParsedReceipt, ParserParseError, QrPayload
 
 SERBIAN_HOST = "suf.purs.gov.rs"
 
@@ -22,7 +22,7 @@ def _is_serbian_url(url: str) -> bool:
 
 def receipt_currency(url: str) -> str:
     """Return the currency a receipt is denominated in, decided by its URL host."""
-    if montenegrin_receipt_parser.is_montenegrin_url(url):
+    if montenegrin.is_montenegrin_url(url):
         return _EUR
     return _RSD
 
@@ -33,9 +33,9 @@ async def parse_receipt(url: str) -> ParsedReceipt:
     Raises ParserParseError for a URL from no recognised fiscal system.
     """
     if _is_serbian_url(url):
-        return await serbian_receipt_parser.parse_receipt(url)
-    if montenegrin_receipt_parser.is_montenegrin_url(url):
-        return await montenegrin_receipt_parser.parse_receipt(url)
+        return await serbian.parse_receipt(url)
+    if montenegrin.is_montenegrin_url(url):
+        return await montenegrin.parse_receipt(url)
     raise ParserParseError(f"Unrecognised fiscal receipt URL: {url}")
 
 
@@ -45,6 +45,6 @@ def decode_qr_payload(url: str) -> QrPayload | None:
     Returns None when the URL is not a recognised fiscal receipt or the payload
     cannot be decoded.
     """
-    if montenegrin_receipt_parser.is_montenegrin_url(url):
-        return montenegrin_receipt_parser.decode_qr_payload(url)
-    return serbian_receipt_parser.decode_qr_payload(url)
+    if montenegrin.is_montenegrin_url(url):
+        return montenegrin.decode_qr_payload(url)
+    return serbian.decode_qr_payload(url)

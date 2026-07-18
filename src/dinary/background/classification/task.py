@@ -13,8 +13,8 @@ from datetime import UTC, datetime, timedelta
 import httpx
 from llmbroker import AsyncBroker
 
-from dinary.adapters.receipt_parsing import parse_receipt
-from dinary.adapters.receipt_types import (
+from dinary.adapters.receipts.dispatch import parse_receipt
+from dinary.adapters.receipts.types import (
     ParsedReceipt,
     ParserNotIndexedError,
     ParserParseError,

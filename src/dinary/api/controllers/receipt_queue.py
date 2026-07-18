@@ -10,8 +10,8 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from dinary.adapters.exchange_rates import convert_to_accounting_amount
-from dinary.adapters.receipt_parsing import decode_qr_payload, receipt_currency
-from dinary.adapters.receipt_types import QrPayload
+from dinary.adapters.receipts.dispatch import decode_qr_payload, receipt_currency
+from dinary.adapters.receipts.types import QrPayload
 from dinary.api.http_errors import value_error_as_422
 from dinary.background.sheet_logging.sheet_logging import notify_new_work
 from dinary.config import settings

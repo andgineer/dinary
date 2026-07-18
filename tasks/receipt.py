@@ -6,11 +6,8 @@ from pathlib import Path
 import llmbroker
 from invoke import task
 
-from dinary.adapters.serbian_receipt_parser import (
-    ParserParseError,
-    ParserRequestError,
-    parse_receipt,
-)
+from dinary.adapters.receipts.serbian import parse_receipt
+from dinary.adapters.receipts.types import ParserParseError, ParserRequestError
 from dinary.background.classification.item_normalizer import normalize_item_name
 from dinary.background.classification.receipt_classifier import (
     classify_receipt as llm_classify_receipt,

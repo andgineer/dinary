@@ -10,19 +10,21 @@ import allure
 import httpx
 import pytest
 
-from dinary.adapters.montenegrin_receipt_parser import (
+from dinary.adapters.receipts.montenegrin import (
     decode_qr_payload,
     is_montenegrin_url,
     parse_receipt,
 )
-from dinary.adapters.receipt_types import (
+from dinary.adapters.receipts.types import (
     ParserNotIndexedError,
     ParserParseError,
     ParserRequestError,
 )
 
 _FIXTURE = json.loads(
-    (Path(__file__).resolve().parent.parent / "fixtures" / "montenegro_verify_invoice.json").read_text(),
+    (
+        Path(__file__).resolve().parent.parent / "fixtures" / "montenegro_verify_invoice.json"
+    ).read_text(),
 )
 
 # A real production verify URL (captured 2026-07-11). Note the params sit after
@@ -59,7 +61,7 @@ def _mock_client(response: MagicMock):
 def _run(url: str, response: MagicMock):
     ctx, client = _mock_client(response)
     with patch(
-        "dinary.adapters.montenegrin_receipt_parser.httpx.AsyncClient",
+        "dinary.adapters.receipts.montenegrin.httpx.AsyncClient",
         return_value=ctx,
     ):
         receipt = asyncio.run(parse_receipt(url))
@@ -166,7 +168,9 @@ class TestParseReceipt:
 
     def test_url_missing_params_is_parse_error(self):
         with pytest.raises(ParserParseError):
-            _run("https://mapr.tax.gov.me/ic/#/verify?prc=1", _make_response(200, deepcopy(_FIXTURE)))
+            _run(
+                "https://mapr.tax.gov.me/ic/#/verify?prc=1", _make_response(200, deepcopy(_FIXTURE))
+            )
 
     def test_network_error_is_request_error(self):
         client = AsyncMock()
@@ -175,7 +179,7 @@ class TestParseReceipt:
         ctx.__aenter__ = AsyncMock(return_value=client)
         ctx.__aexit__ = AsyncMock(return_value=False)
         with patch(
-            "dinary.adapters.montenegrin_receipt_parser.httpx.AsyncClient",
+            "dinary.adapters.receipts.montenegrin.httpx.AsyncClient",
             return_value=ctx,
         ):
             with pytest.raises(ParserRequestError):

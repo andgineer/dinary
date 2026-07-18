@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, MagicMock
 import llmbroker
 
 from dinary.adapters import rate_helpers
-from dinary.adapters.receipt_types import (
+from dinary.adapters.receipts.types import (
     ParsedReceipt,
     ParserNotIndexedError,
     ParserParseError,

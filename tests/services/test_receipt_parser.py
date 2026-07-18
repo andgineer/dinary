@@ -6,11 +6,11 @@ import allure
 import httpx
 import pytest
 
-from dinary.adapters.receipt_types import (
+from dinary.adapters.receipts.types import (
     ParserNotIndexedError,
     ParserRequestError,
 )
-from dinary.adapters.serbian_receipt_parser import (
+from dinary.adapters.receipts.serbian import (
     _parse_journal,
     _rsd,
     parse_receipt,
@@ -107,21 +107,21 @@ def _mock_async_client(json_resp, html_resp, specs_resp):
 class TestParseReceiptPrimary:
     def test_returns_store_info(self):
         ctx, _ = _mock_async_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
         assert receipt.store_name == "LIDL SRBIJA KD"
         assert receipt.store_pib == "106884584"
 
     def test_all_items_from_specs(self):
         ctx, _ = _mock_async_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
         assert len(receipt.items) == 3
         assert receipt.items[0].tax_label == "Е"  # tax_label only from /specifications
 
     def test_kg_decimal_quantity_from_specs(self):
         ctx, _ = _mock_async_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
         grejpfrut = next(i for i in receipt.items if "Grejpfrut" in i.name_raw)
         assert grejpfrut.quantity == pytest.approx(2.6)
@@ -129,7 +129,7 @@ class TestParseReceiptPrimary:
 
     def test_total_ok(self):
         ctx, _ = _mock_async_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
         assert receipt.total_ok is True
 
@@ -139,13 +139,13 @@ class TestParseReceiptPrimary:
             "invoiceResult": {"totalAmount": 999.99, "invoiceNumber": "TEST-TEST-001"},
         }
         ctx, _ = _mock_async_client(bad, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
         assert receipt.total_ok is False
 
     def test_token_and_invoice_number_sent(self):
         ctx, client = _mock_async_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
         post_call = client.post.call_args
         assert post_call.kwargs["data"]["token"] == "abc-token-123"
@@ -153,7 +153,7 @@ class TestParseReceiptPrimary:
 
     def test_purchase_datetime_extracted(self):
         ctx, _ = _mock_async_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
         assert receipt.purchase_datetime == "2026-05-01T08:30:00.000Z"
 
@@ -163,7 +163,7 @@ class TestParseReceiptPrimary:
             "invoiceResult": {"totalAmount": 974.76, "invoiceNumber": "TEST-TEST-001"},
         }
         ctx, _ = _mock_async_client(no_time, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
         assert receipt.purchase_datetime is None
 
@@ -174,20 +174,20 @@ class TestParseReceiptPrimary:
 class TestParseReceiptFallback:
     def test_falls_back_when_specs_empty(self):
         ctx, _ = _mock_async_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_EMPTY)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
         assert len(receipt.items) == 3
 
     def test_falls_back_when_token_missing(self):
         ctx, _ = _mock_async_client(_JSON_RESPONSE, "<html>no token</html>", _SPECS_RESPONSE)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
         assert len(receipt.items) == 3
         assert all(i.tax_label == "" for i in receipt.items)  # no tax label in journal
 
     def test_fallback_kg_decimal_quantity(self):
         ctx, _ = _mock_async_client(_JSON_RESPONSE, "<html>no token</html>", _SPECS_RESPONSE)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
         grejpfrut = next(i for i in receipt.items if "Grejpfrut" in i.name_raw)
         assert grejpfrut.quantity == pytest.approx(2.6)
@@ -196,7 +196,7 @@ class TestParseReceiptFallback:
     def test_raises_when_both_paths_fail(self):
         no_journal = {**_JSON_RESPONSE, "journal": ""}
         ctx, _ = _mock_async_client(no_journal, "<html>no token</html>", _SPECS_EMPTY)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             with pytest.raises(ParserNotIndexedError):
                 asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
 
@@ -206,7 +206,7 @@ class TestParseReceiptFallback:
         ctx = MagicMock()
         ctx.__aenter__ = AsyncMock(return_value=client)
         ctx.__aexit__ = AsyncMock(return_value=False)
-        with patch("dinary.adapters.serbian_receipt_parser.httpx.AsyncClient", return_value=ctx):
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             with pytest.raises(ParserRequestError):
                 asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
 

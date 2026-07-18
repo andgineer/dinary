@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
-from dinary.adapters.receipt_types import (
+from dinary.adapters.receipts.types import (
     ParsedReceipt,
     ParserNotIndexedError,
     ParserParseError,
