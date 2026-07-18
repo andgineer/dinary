@@ -1,5 +1,6 @@
 """Expense corrections API: PATCH /api/expenses/{id}/category"""
 
+import asyncio
 import sqlite3
 
 from fastapi import APIRouter, Depends, Request
@@ -23,6 +24,15 @@ async def correct_expense_category(
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> CategoryCorrectionResponse:
     pending_ratings: list[tuple[str, float]] = []
-    resp = correct_category_sync(expense_id, req, con, pending_ratings=pending_ratings)
+    # Offload the blocking sqlite work to a thread so this async handler does not
+    # run it on the event loop; every other DB endpoint is sync `def` and gets
+    # the same threadpool offload from Starlette automatically.
+    resp = await asyncio.to_thread(
+        correct_category_sync,
+        expense_id,
+        req,
+        con,
+        pending_ratings=pending_ratings,
+    )
     await record_correction_ratings(request.app.state.llms, pending_ratings)
     return resp

@@ -94,6 +94,14 @@ class TestPendingRatingForCorrection:
         )
         assert _pending_rating_for_correction(conn, None, "cola", 2) == ("m", 0.0)
 
+    def test_confirming_primary_category_not_rated(self, conn):
+        create_or_update_rule(
+            conn, None, "cola", RuleSpec(1, 3, "llm", alternative_category_ids=(2, 3), llm_name="m")
+        )
+        # Correcting to category 1 == the rule's own primary pick is a confirmation,
+        # not a miss, so the model must not be rated.
+        assert _pending_rating_for_correction(conn, None, "cola", 1) is None
+
     def test_user_sourced_rule_not_rated(self, conn):
         create_or_update_rule(conn, None, "cola", RuleSpec(1, 3, "user_correction", llm_name="m"))
         assert _pending_rating_for_correction(conn, None, "cola", 2) is None

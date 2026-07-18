@@ -107,19 +107,25 @@ def _pending_rating_for_correction(
     Returns ``(llm_name, score)`` when the existing rule is ``source='llm'`` with
     a known model: partial credit if the corrected-to category was one of that
     model's own proposed alternatives, else a full negative. Returns ``None`` for
-    user-sourced rules, rules with no recorded model, or a miss — those are never
-    rated. Must be read before the upsert flips the rule to
+    user-sourced rules, rules with no recorded model, or a correction that just
+    re-affirms the model's own primary category (a confirmation, not a miss) —
+    those are never rated. Must be read before the upsert flips the rule to
     ``source='user_correction'`` (which is what dedups repeated corrections).
     """
     row = con.execute(
         """
-        SELECT source, llm_name, alternative_category_ids FROM classification_rules
+        SELECT source, llm_name, category_id, alternative_category_ids
+          FROM classification_rules
          WHERE (chain_id IS ? OR (chain_id IS NULL AND ? IS NULL))
            AND item_name_normalized = ?
         """,
         [chain_id, chain_id, item_name_normalized],
     ).fetchone()
     if row is None or row["source"] != "llm" or not row["llm_name"]:
+        return None
+    if corrected_to_category_id == row["category_id"]:
+        # Re-selecting the model's own primary category confirms it, so it is not
+        # a miss — rating it a full negative would penalize a correct answer.
         return None
     alternatives: list[int] = []
     if row["alternative_category_ids"]:
