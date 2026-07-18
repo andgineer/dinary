@@ -19,7 +19,7 @@ def _mock_get_rate(con, rate_date, source, target, *, offline=False):
 
 
 def _insert_expense(client, date_str, amount, category_id=1):
-    with patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate):
+    with patch("dinary.adapters.rates.service.get_rate", side_effect=_mock_get_rate):
         resp = client.post(
             "/api/expenses",
             json={
@@ -34,7 +34,7 @@ def _insert_expense(client, date_str, amount, category_id=1):
 
 
 def _insert_income(client, year, month, amount):
-    with patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate):
+    with patch("dinary.adapters.rates.service.get_rate", side_effect=_mock_get_rate):
         resp = client.post(
             "/api/incomes",
             json={

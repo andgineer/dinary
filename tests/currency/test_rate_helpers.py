@@ -5,7 +5,7 @@ import httpx
 import pytest
 from tenacity import RetryError
 
-from dinary.adapters.rate_helpers import _get_json_or_none, _get_json_with_retry
+from dinary.adapters.rates.helpers import _get_json_or_none, _get_json_with_retry
 
 _URL = "https://kurs.resenje.org/api/v1/currencies/eur/rates/2025-02-24"
 
@@ -35,24 +35,24 @@ def _resp(status: int, body: dict | None = None) -> MagicMock:
 @allure.feature("Rate resolution")
 @allure.story("_get_json_with_retry — HTTP fetch with retry")
 class TestGetJsonWithRetry:
-    @patch("dinary.adapters.rate_helpers.httpx.get")
+    @patch("dinary.adapters.rates.helpers.httpx.get")
     def test_returns_json_on_200(self, mock_get):
         mock_get.return_value = _resp(200, {"rate": 117.32})
         assert _get_json_with_retry(_URL) == {"rate": 117.32}
 
-    @patch("dinary.adapters.rate_helpers.httpx.get")
+    @patch("dinary.adapters.rates.helpers.httpx.get")
     def test_returns_none_on_404(self, mock_get):
         mock_get.return_value = _resp(404)
         assert _get_json_with_retry(_URL) is None
 
-    @patch("dinary.adapters.rate_helpers.httpx.get")
+    @patch("dinary.adapters.rates.helpers.httpx.get")
     def test_raises_on_500_after_retries(self, mock_get):
         mock_get.return_value = _resp(500)
         with pytest.raises(RetryError):
             _get_json_with_retry(_URL)
         assert mock_get.call_count == 3
 
-    @patch("dinary.adapters.rate_helpers.httpx.get")
+    @patch("dinary.adapters.rates.helpers.httpx.get")
     def test_retries_on_network_error_then_succeeds(self, mock_get):
         mock_get.side_effect = [
             httpx.ConnectError("timeout"),
@@ -62,7 +62,7 @@ class TestGetJsonWithRetry:
         assert _get_json_with_retry(_URL) == {"rate": 1.0}
         assert mock_get.call_count == 3
 
-    @patch("dinary.adapters.rate_helpers.httpx.get")
+    @patch("dinary.adapters.rates.helpers.httpx.get")
     def test_passes_kwargs_to_httpx(self, mock_get):
         mock_get.return_value = _resp(200, {})
         _get_json_with_retry(_URL, params={"base": "EUR"})
@@ -73,22 +73,22 @@ class TestGetJsonWithRetry:
 @allure.feature("Rate resolution")
 @allure.story("_get_json_or_none — HTTP errors as None")
 class TestGetJsonOrNone:
-    @patch("dinary.adapters.rate_helpers.httpx.get")
+    @patch("dinary.adapters.rates.helpers.httpx.get")
     def test_returns_json_on_success(self, mock_get):
         mock_get.return_value = _resp(200, {"exchange_middle": 117.32})
         assert _get_json_or_none(_URL) == {"exchange_middle": 117.32}
 
-    @patch("dinary.adapters.rate_helpers.httpx.get")
+    @patch("dinary.adapters.rates.helpers.httpx.get")
     def test_returns_none_on_persistent_500(self, mock_get):
         mock_get.return_value = _resp(500)
         assert _get_json_or_none(_URL) is None
 
-    @patch("dinary.adapters.rate_helpers.httpx.get")
+    @patch("dinary.adapters.rates.helpers.httpx.get")
     def test_returns_none_on_network_error(self, mock_get):
         mock_get.side_effect = httpx.ConnectError("timeout")
         assert _get_json_or_none(_URL) is None
 
-    @patch("dinary.adapters.rate_helpers.httpx.get")
+    @patch("dinary.adapters.rates.helpers.httpx.get")
     def test_returns_none_on_invalid_json(self, mock_get):
         r = MagicMock(spec=httpx.Response)
         r.status_code = 200

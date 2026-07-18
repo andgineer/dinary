@@ -14,7 +14,7 @@ import llmbroker
 import pytest
 from fastapi.testclient import TestClient
 
-from dinary.adapters import rate_helpers
+from dinary.adapters.rates import helpers
 from dinary.config import settings
 from dinary.db import category_seed, db_migrations, storage
 from dinary.main import create_app
@@ -45,7 +45,7 @@ def _build_client():
     """Mirrors the shared ``client`` fixture but keeps the network stubs active for
     the whole lifespan (startup, requests, and shutdown)."""
     with (
-        unittest.mock.patch.object(rate_helpers, "_get_json_or_none", return_value=None),
+        unittest.mock.patch.object(helpers, "_get_json_or_none", return_value=None),
         unittest.mock.patch.object(db_migrations, "migrate_db"),
         unittest.mock.patch.object(category_seed, "bootstrap_categories"),
     ):

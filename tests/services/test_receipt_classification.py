@@ -12,14 +12,13 @@ import allure
 import llmbroker
 import pytest
 
-from dinary.adapters.rate_helpers import save_db_rate
+from dinary.adapters.rates.helpers import save_db_rate
 from dinary.background.classification.receipt_classifier import (
     ClassificationResult,
     ClassifyOutcome,
 )
 from dinary.background.classification.item_normalizer import normalize_item_name
 from dinary.background.classification.persist import (
-    RECEIPT_CURRENCY,
     RateMissingError,
     persist_classification_results,
 )
@@ -421,7 +420,7 @@ class TestClassifyAndPersist:
             [receipt_id],
         )
         insert_job(conn, receipt_id)
-        save_db_rate(conn, date(2026, 5, 1), RECEIPT_CURRENCY, "EUR", Decimal("0.009"))
+        save_db_rate(conn, date(2026, 5, 1), "RSD", "EUR", Decimal("0.009"))
         job = claim_next_job(conn)
         items = get_receipt_items(conn, receipt_id)
         conn.close()
@@ -442,7 +441,49 @@ class TestClassifyAndPersist:
         assert exp is not None
         assert float(exp[0]) == pytest.approx(1.08)  # 120 * 0.009
         assert exp[1] == 120.0
-        assert exp[2] == RECEIPT_CURRENCY
+        assert exp[2] == "RSD"
+
+    def test_montenegrin_receipt_stored_in_eur_and_converted(self, conn):
+        """A Montenegrin receipt keeps its EUR original and converts to accounting RSD."""
+        _seed_catalog(conn)
+        mne_url = (
+            "https://mapr.tax.gov.me/ic/#/verify?iic=X&tin=Y"
+            "&crtd=2026-05-01T10:00:00+02:00&prc=120.0"
+        )
+        conn.execute(
+            "INSERT INTO receipts (client_receipt_id, url, parsed_at, purchase_datetime)"
+            " VALUES ('r_mne', ?, '2026-05-01T10:00:00', '2026-05-01T10:00:00')",
+            [mne_url],
+        )
+        receipt_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+        conn.execute(
+            "INSERT INTO receipt_items (receipt_id, name_raw, total_price, quantity, unit_price)"
+            " VALUES (?, 'hleb', 120.0, 1, 120.0)",
+            [receipt_id],
+        )
+        insert_job(conn, receipt_id)
+        save_db_rate(conn, date(2026, 5, 1), "EUR", "RSD", Decimal("117.0"))
+        job = claim_next_job(conn)
+        items = get_receipt_items(conn, receipt_id)
+        conn.close()
+
+        with _classify_patch([_hleb_result(cat_id=1, conf=3)]):
+            asyncio.run(_classify_and_persist(_broker(), job, items, None, None))
+
+        conn2 = storage.get_connection()
+        try:
+            exp = conn2.execute(
+                "SELECT amount, amount_original, currency_original"
+                " FROM expenses WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+        finally:
+            conn2.close()
+
+        assert exp is not None
+        assert float(exp[0]) == pytest.approx(14040.0)  # 120 * 117
+        assert exp[1] == 120.0
+        assert exp[2] == "EUR"
 
     def test_fallback_preserves_item_name_normalized(self, conn):
         """Fallback ClassificationResult carries the original item name, not the category label."""

@@ -8,7 +8,8 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from dinary.adapters.exchange_rates import get_rate
+from dinary.adapters.rates.service import get_rate
+from dinary.adapters.receipts.dispatch import receipt_currency
 from dinary.background.classification.item_normalizer import normalize_item_name
 from dinary.background.classification.receipt_classifier import ClassificationResult
 from dinary.background.sheet_logging import sheet_logging
@@ -26,8 +27,6 @@ from dinary.sheets.sheet_mapping import resolve_event_auto_tag_ids
 
 logger = logging.getLogger(__name__)
 
-RECEIPT_CURRENCY = "RSD"  # Serbian fiscal receipts are always denominated in RSD
-
 
 class RateMissingError(Exception):
     """Exchange rate unavailable; release job for retry."""
@@ -36,6 +35,7 @@ class RateMissingError(Exception):
 @dataclasses.dataclass(frozen=True, slots=True)
 class _ReceiptContext:
     receipt_dt: datetime
+    currency: str
     accounting_rate: Decimal
     auto_event_id: int | None
     event_auto_tag_ids: list[int]
@@ -108,7 +108,7 @@ def _write_single_item(
                 (Decimal(str(item.total_price)) * ctx.accounting_rate).quantize(Decimal("0.01")),
             ),
             item.total_price,
-            RECEIPT_CURRENCY,
+            ctx.currency,
             cat_id,
             conf,
             ctx.receipt_id,
@@ -159,25 +159,26 @@ def persist_classification_results(
         event_auto_tag_ids: list[int] = (
             resolve_event_auto_tag_ids(conn, auto_event_id) if auto_event_id is not None else []
         )
-        if settings.accounting_currency.upper() != RECEIPT_CURRENCY:
+        currency = receipt_currency(job.url)
+        if settings.accounting_currency.upper() != currency:
             try:
                 receipt_date = date.fromisoformat(receipt_dt[:10])
                 accounting_rate = get_rate(
                     conn,
                     receipt_date,
-                    RECEIPT_CURRENCY,
+                    currency,
                     settings.accounting_currency,
                     offline=True,
                 )
             except ValueError as exc:
                 raise RateMissingError(
-                    f"No {RECEIPT_CURRENCY}/{settings.accounting_currency}"
-                    f" rate for {receipt_dt[:10]}",
+                    f"No {currency}/{settings.accounting_currency} rate for {receipt_dt[:10]}",
                 ) from exc
         else:
             accounting_rate = Decimal(1)
         ctx = _ReceiptContext(
             receipt_dt=receipt_dt_obj,
+            currency=currency,
             accounting_rate=accounting_rate,
             auto_event_id=auto_event_id,
             event_auto_tag_ids=event_auto_tag_ids,

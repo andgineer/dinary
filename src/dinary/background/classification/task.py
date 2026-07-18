@@ -13,12 +13,12 @@ from datetime import UTC, datetime, timedelta
 import httpx
 from llmbroker import AsyncBroker
 
-from dinary.adapters.serbian_receipt_parser import (
+from dinary.adapters.receipts.dispatch import parse_receipt
+from dinary.adapters.receipts.types import (
     ParsedReceipt,
     ParserNotIndexedError,
     ParserParseError,
     ParserRequestError,
-    parse_receipt,
 )
 from dinary.background.classification.item_normalizer import normalize_item_name
 from dinary.background.classification.persist import (

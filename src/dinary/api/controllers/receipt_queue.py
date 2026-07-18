@@ -9,10 +9,10 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from dinary.adapters.exchange_rates import convert_to_accounting_amount
-from dinary.adapters.serbian_receipt_parser import QrPayload, decode_qr_payload
+from dinary.adapters.rates.service import convert_to_accounting_amount
+from dinary.adapters.receipts.dispatch import decode_qr_payload, receipt_currency
+from dinary.adapters.receipts.types import QrPayload
 from dinary.api.http_errors import value_error_as_422
-from dinary.background.classification.persist import RECEIPT_CURRENCY
 from dinary.background.sheet_logging.sheet_logging import notify_new_work
 from dinary.config import settings
 from dinary.db.expenses import enqueue_for_logging, validate_expense_refs
@@ -66,7 +66,7 @@ def list_stuck_receipts(con: sqlite3.Connection, page: int, page_size: int) -> d
                 "created_at": str(row["created_at"]),
                 "store_name_raw": str(row["store_name_raw"]) if row["store_name_raw"] else "",
                 "amount": float(payload.amount) if payload else None,
-                "currency": RECEIPT_CURRENCY if payload else None,
+                "currency": receipt_currency(str(row["url"])) if payload else None,
                 "purchase_date": payload.purchase_datetime.isoformat() if payload else None,
             },
         )
@@ -134,7 +134,7 @@ def _insert_resolved_expense(
             expense_dt,
             float(amount_acc),
             float(payload.amount),
-            RECEIPT_CURRENCY,
+            receipt_currency(str(row["url"])),
             req.category_id,
             req.comment,
             receipt_id,
@@ -170,12 +170,13 @@ def resolve_receipt_manually(
     with value_error_as_422():
         validate_expense_refs(con, req.category_id, req.event_id, req.tag_ids)
 
+    currency = receipt_currency(str(row["url"]))
     expense_dt = _resolve_expense_datetime(row, payload)
     with value_error_as_422():
         amount_acc = convert_to_accounting_amount(
             con,
             payload.amount,
-            RECEIPT_CURRENCY,
+            currency,
             expense_dt.date(),
         )
     tag_ids = resolve_effective_tag_ids(con, req.tag_ids, req.event_id)

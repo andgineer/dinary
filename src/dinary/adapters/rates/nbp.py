@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from cachetools import TTLCache, cached
 
-from dinary.adapters.rate_helpers import (
+from dinary.adapters.rates.helpers import (
     _FETCH_RATE_CACHE_TIME,
     _get_json_or_none,
     save_db_rate,

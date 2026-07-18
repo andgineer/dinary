@@ -9,6 +9,19 @@ uv sync
 cp -r .deploy.example .deploy   # .deploy/ is gitignored — edit as needed
 ```
 
+To run the **full** test suite (`inv test` / `uv run pytest`), install every
+dependency group plus two CLI tools the backup/restore tests shell out to.
+The idempotent helper does both:
+
+```bash
+bash scripts/setup-test-env.sh
+```
+
+Equivalent to `uv sync --all-groups` (adds the `analytics` group — duckdb,
+marimo, polars, …) plus `apt-get install -y zstd sqlite3`. Without the
+`analytics` group the `tests/analytics/` suite fails to collect; without
+`zstd`/`sqlite3` the backup-restore tests fail.
+
 Credentials are read from `~/.config/gspread/service_account.json`.
 Don't have a service account key yet? See [Google Sheets Setup](google-sheets-setup.md).
 

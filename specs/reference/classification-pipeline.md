@@ -44,10 +44,10 @@ Network/parse errors on receipt fetch are treated differently:
 - Structural parse errors (the response itself is malformed, not just empty):
   poison the job.
 
-This distinction matters because the government fiscal API is unreliable;
+This distinction matters because the government fiscal APIs are unreliable;
 treating all failures as permanent would silently discard valid receipts. See
 [receipt-fetching.md](receipt-fetching.md) for the fetch strategy and
-reliability characteristics of `suf.purs.gov.rs`.
+reliability characteristics of the Serbian and Montenegrin fiscal services.
 
 A poisoned job — or one stuck retrying indefinitely — is not a dead end; see
 "Manual resolution" below.

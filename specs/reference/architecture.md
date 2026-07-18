@@ -2,7 +2,7 @@
 
 ## What this system is
 
-An expense tracker for Serbia. Fiscal receipts are
+An expense tracker for Serbia and Montenegro. Fiscal receipts are
 scanned via QR code, line items are classified with an LLM, and the result
 optionally syncs to Google Sheets for familiar pivot-table views. The system
 prioritises clean data, scriptability, and low hosting cost over UI polish.
@@ -87,7 +87,7 @@ Evaluation criteria (a tool was disqualified if it failed any):
 | 2 | Cross-platform — Android and iOS |
 | 3 | Custom REST API — POST to a FastAPI backend |
 | 4 | Free for low-traffic load |
-| 5 | QR scanning — camera access for Serbian fiscal QR codes |
+| 5 | QR scanning — camera access for Serbian and Montenegrin fiscal QR codes |
 
 | Candidate | Offline (#1) | QR (#5) | Verdict |
 |---|---|---|---|
@@ -193,7 +193,7 @@ For implementation detail on each subsystem see `specs/reference/`:
 | `classification-pipeline.md` | Pipeline design, confidence rules, error handling, event auto-attach |
 | `llm-providers.md` | Broker design, provider pool rationale, failover, prompt design |
 | `pwa-offline.md` | Offline queue, IndexedDB, reconnect pattern |
-| `receipt-fetching.md` | Three-path fetch, `suf.purs.gov.rs` reliability |
+| `receipt-fetching.md` | Serbian and Montenegrin fiscal receipt fetch paths |
 | `sheets.md` | Column layout, map-tab resolver, atomic reload, idempotency |
 | `stores.md` | Chain vs location model, PIB-based normalisation |
 | `timestamps.md` | Timezone storage policy |

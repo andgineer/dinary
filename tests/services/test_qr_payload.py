@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import allure
 
-from dinary.adapters.serbian_receipt_parser import decode_qr_payload
+from dinary.adapters.receipts.serbian import decode_qr_payload
 
 
 def _build_vl(amount_units: int, epoch_ms: int) -> str:

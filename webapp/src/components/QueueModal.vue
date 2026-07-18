@@ -137,7 +137,7 @@ function close() {
           <template v-for="parsed in [parseReceiptDisplay(it.url)]" :key="it.id">
             <span class="qi-receipt-label">QR receipt</span>
             <template v-if="parsed">
-              — <span class="qi-amount">{{ parsed.amount.toFixed(2) }} RSD</span>
+              — <span class="qi-amount">{{ parsed.amount.toFixed(2) }} {{ parsed.currency }}</span>
               <div class="qi-meta">{{ parsed.date }}</div>
             </template>
           </template>

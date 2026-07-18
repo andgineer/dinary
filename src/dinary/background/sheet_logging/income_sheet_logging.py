@@ -19,7 +19,7 @@ from decimal import Decimal
 import gspread
 from gspread.utils import ValueInputOption
 
-from dinary.adapters.exchange_rates import get_rate
+from dinary.adapters.rates.service import get_rate
 from dinary.adapters.sheets_client import get_sheet
 from dinary.background.sheet_logging.sheet_logging import (
     _is_transient,
