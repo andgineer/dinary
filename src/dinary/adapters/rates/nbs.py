@@ -11,7 +11,7 @@ from decimal import Decimal
 import holidays
 from cachetools import TTLCache, cached
 
-from dinary.adapters.rate_helpers import (
+from dinary.adapters.rates.helpers import (
     _FETCH_RATE_CACHE_TIME,
     _get_json_or_none,
     get_db_rate,

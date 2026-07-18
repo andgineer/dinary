@@ -12,7 +12,7 @@ import allure
 import llmbroker
 import pytest
 
-from dinary.adapters.rate_helpers import save_db_rate
+from dinary.adapters.rates.helpers import save_db_rate
 from dinary.background.classification.receipt_classifier import (
     ClassificationResult,
     ClassifyOutcome,

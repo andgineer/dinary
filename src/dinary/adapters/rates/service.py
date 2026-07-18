@@ -8,9 +8,9 @@ import sqlite3
 from datetime import date
 from decimal import Decimal
 
-from dinary.adapters.nbp import resolve_from_nbp
-from dinary.adapters.nbs import resolve_from_nbs
-from dinary.adapters.rate_helpers import get_db_rate, save_db_rate
+from dinary.adapters.rates.helpers import get_db_rate, save_db_rate
+from dinary.adapters.rates.nbp import resolve_from_nbp
+from dinary.adapters.rates.nbs import resolve_from_nbs
 from dinary.config import settings
 
 logger = logging.getLogger(__name__)

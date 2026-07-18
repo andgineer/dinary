@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from dinary.adapters.exchange_rates import convert_to_accounting_amount
+from dinary.adapters.rates.service import convert_to_accounting_amount
 from dinary.api.controllers.catalog import (
     FrequentCategory,
     frequent_categories_sync,

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, call, patch
 
 import allure
 
-from dinary.adapters.nbp import _fetch_nbp_pln_leg, _pln_leg, resolve_from_nbp
+from dinary.adapters.rates.nbp import _fetch_nbp_pln_leg, _pln_leg, resolve_from_nbp
 
 from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
     _MON,
@@ -17,7 +17,7 @@ from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
 @allure.feature("NBP rates")
 @allure.story("_fetch_nbp_pln_leg — table A then table B")
 class TestFetchNbpPlnLeg:
-    @patch("dinary.adapters.nbp._get_json_or_none")
+    @patch("dinary.adapters.rates.nbp._get_json_or_none")
     def test_table_a_hit_skips_table_b(self, mock_json):
         # USD lives in table A: NBP responds to the table-A URL and
         # we never need to ask table B.
@@ -28,7 +28,7 @@ class TestFetchNbpPlnLeg:
         ((url,), _kwargs) = mock_json.call_args
         assert "/rates/A/usd/" in url
 
-    @patch("dinary.adapters.nbp._get_json_or_none")
+    @patch("dinary.adapters.rates.nbp._get_json_or_none")
     def test_table_b_used_when_table_a_404(self, mock_json):
         # RSD lives only in table B (less-common, weekly). Table-A
         # call 404s; table-B call returns the rate.
@@ -40,14 +40,14 @@ class TestFetchNbpPlnLeg:
         assert "/rates/A/rsd/" in urls[0]
         assert "/rates/B/rsd/" in urls[1]
 
-    @patch("dinary.adapters.nbp._get_json_or_none")
+    @patch("dinary.adapters.rates.nbp._get_json_or_none")
     def test_returns_none_when_both_tables_404(self, mock_json):
         mock_json.return_value = None
         assert _fetch_nbp_pln_leg(_MON, "ZZZ") is None
         # Both tables consulted before giving up.
         assert mock_json.call_count == 2  # noqa: PLR2004
 
-    @patch("dinary.adapters.nbp._get_json_or_none")
+    @patch("dinary.adapters.rates.nbp._get_json_or_none")
     def test_no_date_form_when_rate_date_is_none(self, mock_json):
         # ``rate_date=None`` means "give me the latest published rate".
         mock_json.return_value = {"rates": [{"mid": "0.0362"}]}
@@ -65,14 +65,14 @@ class TestPlnLeg:
         # PLN/PLN does not need an HTTP call; it's just 1.
         assert _pln_leg(_MON, "PLN") == Decimal(1)
 
-    @patch("dinary.adapters.nbp._fetch_nbp_pln_leg")
+    @patch("dinary.adapters.rates.nbp._fetch_nbp_pln_leg")
     def test_returns_date_specific_rate_when_available(self, mock_fetch):
         mock_fetch.return_value = Decimal("3.6303")
         rate = _pln_leg(_MON, "USD")
         assert rate == Decimal("3.6303")
         mock_fetch.assert_called_once_with(_MON, "USD")
 
-    @patch("dinary.adapters.nbp._fetch_nbp_pln_leg")
+    @patch("dinary.adapters.rates.nbp._fetch_nbp_pln_leg")
     def test_falls_back_to_latest_when_date_specific_404(self, mock_fetch):
         # Date-specific 404 (typical for table-B currencies on a
         # non-Wednesday): walk to the no-date "latest published" form.
@@ -84,7 +84,7 @@ class TestPlnLeg:
             call(None, "RSD"),
         ]
 
-    @patch("dinary.adapters.nbp._fetch_nbp_pln_leg")
+    @patch("dinary.adapters.rates.nbp._fetch_nbp_pln_leg")
     def test_returns_none_when_both_date_and_latest_404(self, mock_fetch):
         mock_fetch.return_value = None
         assert _pln_leg(_MON, "ZZZ") is None
@@ -94,8 +94,8 @@ class TestPlnLeg:
 @allure.feature("NBP rates")
 @allure.story("resolve_from_nbp — bridge through PLN")
 class TestResolveFromNbp:
-    @patch("dinary.adapters.nbp.save_db_rate")
-    @patch("dinary.adapters.nbp._pln_leg")
+    @patch("dinary.adapters.rates.nbp.save_db_rate")
+    @patch("dinary.adapters.rates.nbp._pln_leg")
     def test_bridges_two_legs(self, mock_leg, mock_save):
         # X/Y = (X/PLN) / (Y/PLN). RSD/EUR ≈ 0.0362 / 4.27 ≈ 0.008479.
         mock_leg.side_effect = [Decimal("0.0362"), Decimal("4.2700")]
@@ -105,8 +105,8 @@ class TestResolveFromNbp:
         assert rate == expected
         mock_save.assert_called_once_with(con, _MON, "RSD", "EUR", expected)
 
-    @patch("dinary.adapters.nbp.save_db_rate")
-    @patch("dinary.adapters.nbp._pln_leg")
+    @patch("dinary.adapters.rates.nbp.save_db_rate")
+    @patch("dinary.adapters.rates.nbp._pln_leg")
     def test_returns_none_when_source_leg_missing(self, mock_leg, mock_save):
         mock_leg.return_value = None
         con = MagicMock()
@@ -115,8 +115,8 @@ class TestResolveFromNbp:
         mock_leg.assert_called_once()
         mock_save.assert_not_called()
 
-    @patch("dinary.adapters.nbp.save_db_rate")
-    @patch("dinary.adapters.nbp._pln_leg")
+    @patch("dinary.adapters.rates.nbp.save_db_rate")
+    @patch("dinary.adapters.rates.nbp._pln_leg")
     def test_returns_none_when_target_leg_missing(self, mock_leg, mock_save):
         # Source resolved but target has no NBP coverage.
         mock_leg.side_effect = [Decimal("0.0362"), None]
@@ -124,8 +124,8 @@ class TestResolveFromNbp:
         assert resolve_from_nbp(con, _MON, "RSD", "ZZZ") is None
         mock_save.assert_not_called()
 
-    @patch("dinary.adapters.nbp.save_db_rate")
-    @patch("dinary.adapters.nbp._pln_leg")
+    @patch("dinary.adapters.rates.nbp.save_db_rate")
+    @patch("dinary.adapters.rates.nbp._pln_leg")
     def test_identity_pair_short_circuits_without_fetch_or_db_write(self, mock_leg, mock_save):
         # Defends identity here too (get_rate already short-circuits it) so direct
         # callers can't pollute the DB with a useless (X, X, 1) row.

@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import llmbroker
 
-from dinary.adapters import rate_helpers
+from dinary.adapters.rates import helpers
 from dinary.adapters.receipts.types import (
     ParsedReceipt,
     ParserNotIndexedError,
@@ -104,7 +104,7 @@ def pipeline(db, monkeypatch):  # noqa: ARG001
     """TestClient with RSD accounting and catalog seeded."""
     monkeypatch.setattr(settings, "accounting_currency", "RSD")
     with (
-        unittest.mock.patch.object(rate_helpers, "_get_json_or_none", return_value=None),
+        unittest.mock.patch.object(helpers, "_get_json_or_none", return_value=None),
         unittest.mock.patch.object(db_migrations, "migrate_db"),
         unittest.mock.patch.object(category_seed, "bootstrap_categories"),
     ):

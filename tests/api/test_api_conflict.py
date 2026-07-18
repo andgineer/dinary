@@ -13,7 +13,7 @@ from _api_helpers import _mock_get_rate, db  # noqa: F401  (autouse + helper)
 @allure.epic("Expenses")
 @allure.feature("API")
 class TestPostExpenseConflict:
-    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.rates.service.get_rate", side_effect=_mock_get_rate)
     def test_conflict_on_modified_amount(self, _mock_convert_fn, client):
         base = {
             "client_expense_id": "e3",
@@ -29,7 +29,7 @@ class TestPostExpenseConflict:
         resp = client.post("/api/expenses", json=modified)
         assert resp.status_code == 409
 
-    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.rates.service.get_rate", side_effect=_mock_get_rate)
     def test_conflict_on_modified_date(self, _mock_convert_fn, client):
         """Same ``client_expense_id``, different date is a conflict.
         With the single-DB refactor this replaces the old "cross-year
@@ -48,7 +48,7 @@ class TestPostExpenseConflict:
         resp = client.post("/api/expenses", json=modified)
         assert resp.status_code == 409
 
-    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.rates.service.get_rate", side_effect=_mock_get_rate)
     def test_conflict_on_modified_category(self, _mock_convert_fn, client):
         """Replaying the same ``client_expense_id`` with a different
         category is a 409 conflict.

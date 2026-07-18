@@ -6,9 +6,9 @@ import allure
 import pytest
 
 from dinary.db import db_migrations, storage
-from dinary.adapters.exchange_rates import convert_to_accounting_amount, get_rate
-from dinary.adapters.nbp import _fetch_nbp_pln_leg
-from dinary.adapters.nbs import _fetch_nbs_rate
+from dinary.adapters.rates.service import convert_to_accounting_amount, get_rate
+from dinary.adapters.rates.nbp import _fetch_nbp_pln_leg
+from dinary.adapters.rates.nbs import _fetch_nbs_rate
 from dinary.config import settings
 
 from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
@@ -23,7 +23,7 @@ from _currency_rates_helpers import (  # noqa: F401  (autouse + fixtures)
 @allure.epic("Currencies")
 @allure.feature("Rate resolution")
 class TestExchangeRate:
-    @patch("dinary.adapters.rate_helpers.httpx.get")
+    @patch("dinary.adapters.rates.helpers.httpx.get")
     def test_get_rate_fetches_and_stores(self, mock_get, tmp_path):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"exchange_middle": 117.32}
@@ -52,7 +52,7 @@ class TestExchangeRate:
     def test_get_rate_identity_for_same_currency(self):
         assert get_rate(None, date(2026, 4, 1), "EUR", "EUR") == Decimal(1)
 
-    @patch("dinary.adapters.rate_helpers.httpx.get")
+    @patch("dinary.adapters.rates.helpers.httpx.get")
     def test_get_rate_rsd_to_eur(self, mock_get, tmp_path):
         db_path = tmp_path / "dinary.db"
         db_migrations.migrate_db(db_path)
@@ -83,7 +83,7 @@ class TestConvertToAccountingAmount:
     def test_converts_via_rate(self, monkeypatch):
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
         with patch(
-            "dinary.adapters.exchange_rates.get_rate",
+            "dinary.adapters.rates.service.get_rate",
             return_value=Decimal("0.0085"),
         ):
             result = convert_to_accounting_amount(None, Decimal("1000"), "RSD", date(2026, 5, 1))
@@ -93,7 +93,7 @@ class TestConvertToAccountingAmount:
         monkeypatch.setattr(settings, "accounting_currency", "EUR")
         with (
             patch(
-                "dinary.adapters.exchange_rates.get_rate",
+                "dinary.adapters.rates.service.get_rate",
                 side_effect=ValueError("Could not find rate for RSD/EUR on 2026-05-01"),
             ),
             pytest.raises(ValueError, match="Could not find rate"),
@@ -108,14 +108,14 @@ class TestFailureCaching:
     """HTTP failures are cached for the full TTL (DOS guard) — do not
     change caching to skip ``None`` results."""
 
-    @patch("dinary.adapters.nbs._get_json_or_none")
+    @patch("dinary.adapters.rates.nbs._get_json_or_none")
     def test_nbs_failure_is_cached(self, mock_json):
         mock_json.return_value = None
         assert _fetch_nbs_rate(_MON, _SOURCE) is None
         assert _fetch_nbs_rate(_MON, _SOURCE) is None
         mock_json.assert_called_once()
 
-    @patch("dinary.adapters.nbp._get_json_or_none")
+    @patch("dinary.adapters.rates.nbp._get_json_or_none")
     def test_nbp_failure_is_cached(self, mock_json):
         mock_json.return_value = None
         # Both table-A and table-B paths run on a single NBP miss
@@ -131,8 +131,8 @@ class TestFailureCaching:
 @allure.feature("Rate resolution")
 @allure.story("get_rate — NBS → NBP fallback chain")
 class TestGetRateFallbackChain:
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
+    @patch("dinary.adapters.rates.service.resolve_from_nbp")
+    @patch("dinary.adapters.rates.service.resolve_from_nbs")
     def test_rsd_pair_uses_nbs_direct(self, mock_nbs, mock_nbp):
         # RSD pair: NBS resolves directly. NBP must not be touched.
         mock_nbs.return_value = Decimal("117.32")
@@ -144,9 +144,9 @@ class TestGetRateFallbackChain:
         mock_nbp.assert_not_called()
         mock_nbs.assert_called_once_with(con, _MON, "EUR", "RSD")
 
-    @patch("dinary.adapters.exchange_rates.save_db_rate")
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
+    @patch("dinary.adapters.rates.service.save_db_rate")
+    @patch("dinary.adapters.rates.service.resolve_from_nbp")
+    @patch("dinary.adapters.rates.service.resolve_from_nbs")
     def test_non_rsd_pair_bridges_through_rsd_via_nbs(
         self,
         mock_nbs,
@@ -167,8 +167,8 @@ class TestGetRateFallbackChain:
         mock_nbp.assert_not_called()
         mock_save.assert_called_once_with(con, _MON, "BAM", "EUR", expected)
 
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
+    @patch("dinary.adapters.rates.service.resolve_from_nbp")
+    @patch("dinary.adapters.rates.service.resolve_from_nbs")
     def test_rsd_pair_falls_back_to_nbp_when_nbs_unavailable(
         self,
         mock_nbs,
@@ -181,7 +181,7 @@ class TestGetRateFallbackChain:
         mock_nbp.return_value = Decimal("0.008519")
         con = MagicMock()
 
-        with caplog.at_level("WARNING", logger="dinary.adapters.exchange_rates"):
+        with caplog.at_level("WARNING", logger="dinary.adapters.rates.service"):
             rate = get_rate(con, _MON, "RSD", "EUR")
 
         assert rate == Decimal("0.008519")
@@ -192,8 +192,8 @@ class TestGetRateFallbackChain:
             "falling back to NBP" in r.message and r.levelname == "WARNING" for r in caplog.records
         )
 
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
+    @patch("dinary.adapters.rates.service.resolve_from_nbp")
+    @patch("dinary.adapters.rates.service.resolve_from_nbs")
     def test_non_rsd_pair_falls_back_to_nbp_when_nbs_bridge_fails(
         self,
         mock_nbs,
@@ -210,8 +210,8 @@ class TestGetRateFallbackChain:
         assert rate == Decimal("0.5113")
         mock_nbp.assert_called_once_with(con, _MON, "BAM", "EUR")
 
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
+    @patch("dinary.adapters.rates.service.resolve_from_nbp")
+    @patch("dinary.adapters.rates.service.resolve_from_nbs")
     def test_raises_when_both_sources_fail(self, mock_nbs, mock_nbp):
         # Surface ValueError so ``POST /api/expenses`` can propagate
         # an error instead of silently returning a stale or zero rate.
@@ -227,8 +227,8 @@ class TestGetRateFallbackChain:
 @allure.feature("Rate resolution")
 @allure.story("get_rate — offline mode")
 class TestGetRateOffline:
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
-    @patch("dinary.adapters.exchange_rates.get_db_rate")
+    @patch("dinary.adapters.rates.service.resolve_from_nbs")
+    @patch("dinary.adapters.rates.service.get_db_rate")
     def test_offline_returns_db_rate_without_fetch(self, mock_db, mock_nbs):
         mock_db.return_value = _RATE
         con = MagicMock()
@@ -236,9 +236,9 @@ class TestGetRateOffline:
         assert result == _RATE
         mock_nbs.assert_not_called()
 
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbp")
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
-    @patch("dinary.adapters.exchange_rates.get_db_rate")
+    @patch("dinary.adapters.rates.service.resolve_from_nbp")
+    @patch("dinary.adapters.rates.service.resolve_from_nbs")
+    @patch("dinary.adapters.rates.service.get_db_rate")
     def test_offline_falls_back_to_online_when_db_empty(
         self,
         mock_db,
@@ -253,8 +253,8 @@ class TestGetRateOffline:
         mock_nbs.assert_called_once()
         mock_nbp.assert_not_called()
 
-    @patch("dinary.adapters.exchange_rates.resolve_from_nbs")
-    @patch("dinary.adapters.exchange_rates.get_db_rate")
+    @patch("dinary.adapters.rates.service.resolve_from_nbs")
+    @patch("dinary.adapters.rates.service.get_db_rate")
     def test_online_does_not_check_db_first(self, mock_db, mock_nbs):
         mock_nbs.return_value = _RATE
         con = MagicMock()

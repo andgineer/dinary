@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from dinary.adapters.exchange_rates import get_rate
+from dinary.adapters.rates.service import get_rate
 from dinary.adapters.receipts.dispatch import receipt_currency
 from dinary.background.classification.item_normalizer import normalize_item_name
 from dinary.background.classification.receipt_classifier import ClassificationResult

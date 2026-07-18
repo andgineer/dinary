@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dinary.adapters.nbp import _fetch_nbp_pln_leg
-from dinary.adapters.nbs import _fetch_nbs_rate
+from dinary.adapters.rates.nbp import _fetch_nbp_pln_leg
+from dinary.adapters.rates.nbs import _fetch_nbs_rate
 
 # 2025-02-24 Mon, 25 Tue, 28 Fri, Mar 1 Sat, Mar 2 Sun
 _MON = date(2025, 2, 24)
@@ -37,9 +37,9 @@ def _clear_ttl_caches():
 @pytest.fixture
 def nbs_mocks():
     with (
-        patch("dinary.adapters.nbs.get_db_rate") as get_db,
-        patch("dinary.adapters.nbs.save_db_rate") as save_db,
-        patch("dinary.adapters.nbs._fetch_nbs_rate") as fetch_nbs,
+        patch("dinary.adapters.rates.nbs.get_db_rate") as get_db,
+        patch("dinary.adapters.rates.nbs.save_db_rate") as save_db,
+        patch("dinary.adapters.rates.nbs._fetch_nbs_rate") as fetch_nbs,
     ):
         get_db.return_value = None
         fetch_nbs.return_value = None

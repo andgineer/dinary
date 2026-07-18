@@ -7,7 +7,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from dinary.adapters.exchange_rates import convert_to_accounting_amount
+from dinary.adapters.rates.service import convert_to_accounting_amount
 from dinary.api.http_errors import value_error_as_422
 from dinary.config import settings
 from dinary.db.income import (

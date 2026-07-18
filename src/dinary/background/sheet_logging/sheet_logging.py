@@ -18,7 +18,7 @@ from decimal import Decimal
 
 import gspread
 
-from dinary.adapters.exchange_rates import get_rate
+from dinary.adapters.rates.service import get_rate
 from dinary.adapters.sheets_client import get_sheet
 from dinary.background.sheet_logging.logging_jobs import (
     claim_logging_job,

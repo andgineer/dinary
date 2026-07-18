@@ -9,8 +9,8 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from dinary.adapters.exchange_rates import get_rate
-from dinary.adapters.rate_helpers import get_db_rate
+from dinary.adapters.rates.helpers import get_db_rate
+from dinary.adapters.rates.service import get_rate
 from dinary.config import settings
 from dinary.db import storage
 

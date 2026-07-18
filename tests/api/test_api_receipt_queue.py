@@ -201,7 +201,7 @@ class TestReceiptQueue:
 @allure.feature("API")
 @allure.story("Manual receipt resolution")
 class TestResolveReceipt:
-    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.rates.service.get_rate", side_effect=_mock_get_rate)
     def test_resolve_creates_expense(self, _mock_rate, client, db):  # noqa: ARG002
         rid = _insert_receipt()
         _insert_job(rid, status="poisoned", retry_count=4, last_error="boom")
@@ -236,7 +236,7 @@ class TestResolveReceipt:
         queue = client.get("/api/receipts/queue").json()
         assert queue["items"] == []
 
-    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.rates.service.get_rate", side_effect=_mock_get_rate)
     def test_resolve_montenegrin_receipt_stores_eur(self, _mock_rate, client, db):  # noqa: ARG002
         rid = _insert_receipt(url=_MNE_RECEIPT_URL, client_receipt_id="rcid-mne-resolve")
         _insert_job(rid, status="poisoned", last_error="boom")
@@ -255,7 +255,7 @@ class TestResolveReceipt:
         finally:
             con.close()
 
-    @patch("dinary.adapters.exchange_rates.get_rate", side_effect=_mock_get_rate)
+    @patch("dinary.adapters.rates.service.get_rate", side_effect=_mock_get_rate)
     def test_resolve_with_tags_and_event_auto_tags(self, _mock_rate, client, db):  # noqa: ARG002
         con = storage.get_connection()
         try:

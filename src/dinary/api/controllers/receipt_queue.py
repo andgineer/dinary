@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from dinary.adapters.exchange_rates import convert_to_accounting_amount
+from dinary.adapters.rates.service import convert_to_accounting_amount
 from dinary.adapters.receipts.dispatch import decode_qr_payload, receipt_currency
 from dinary.adapters.receipts.types import QrPayload
 from dinary.api.http_errors import value_error_as_422
