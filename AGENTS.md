@@ -90,6 +90,11 @@ skipping tests.
 > cannot be committed. `scripts/setup-test-env.sh` is the tracked source
 > of truth; point any local (untracked) hook at it rather than duplicating
 > the steps.
+>
+> For true auto-provisioning in Claude Code on the web, set the
+> **environment's setup script** (configured per-environment in the Claude
+> Code web settings, not in the repo) to `bash scripts/setup-test-env.sh`.
+> Then every session in that environment starts already provisioned.
 
 ## Tests
 
