@@ -5,14 +5,14 @@
 | Name                                                           |    Stmts |     Miss |   Cover |   Missing |
 |--------------------------------------------------------------- | -------: | -------: | ------: | --------: |
 | src/dinary/\_\_about\_\_.py                                    |        1 |        0 |    100% |           |
-| src/dinary/adapters/exchange\_rates.py                         |       43 |        1 |     98% |        32 |
-| src/dinary/adapters/montenegrin\_receipt\_parser.py            |       90 |        9 |     90% |84-85, 87, 94, 102, 117, 178-179, 193 |
-| src/dinary/adapters/nbp.py                                     |       37 |        0 |    100% |           |
-| src/dinary/adapters/nbs.py                                     |       47 |        0 |    100% |           |
-| src/dinary/adapters/rate\_helpers.py                           |       27 |        0 |    100% |           |
-| src/dinary/adapters/receipt\_parsing.py                        |       22 |        0 |    100% |           |
-| src/dinary/adapters/receipt\_types.py                          |       14 |        0 |    100% |           |
-| src/dinary/adapters/serbian\_receipt\_parser.py                |      116 |       18 |     84% |76, 82, 91-97, 111, 118, 152-153, 157-158, 161, 186-188, 215-221 |
+| src/dinary/adapters/rates/helpers.py                           |       27 |        0 |    100% |           |
+| src/dinary/adapters/rates/nbp.py                               |       37 |        0 |    100% |           |
+| src/dinary/adapters/rates/nbs.py                               |       47 |        0 |    100% |           |
+| src/dinary/adapters/rates/service.py                           |       43 |        1 |     98% |        32 |
+| src/dinary/adapters/receipts/dispatch.py                       |       22 |        0 |    100% |           |
+| src/dinary/adapters/receipts/montenegrin.py                    |       90 |        9 |     90% |84-85, 87, 94, 102, 117, 178-179, 193 |
+| src/dinary/adapters/receipts/serbian.py                        |      116 |       18 |     84% |76, 82, 91-97, 111, 118, 152-153, 157-158, 161, 186-188, 215-221 |
+| src/dinary/adapters/receipts/types.py                          |       14 |        0 |    100% |           |
 | src/dinary/adapters/sheets\_client.py                          |       44 |       28 |     36% |26-35, 39, 51-60, 69-81 |
 | src/dinary/api/analytics.py                                    |       52 |        2 |     96% |    33, 36 |
 | src/dinary/api/catalog.py                                      |       81 |        9 |     89% |68-70, 105-113, 158-169 |
@@ -64,16 +64,17 @@
 | src/dinary/main.py                                             |       95 |        8 |     92% |45-47, 134, 140, 146, 156, 166 |
 | src/dinary/sheets/sheet\_mapping.py                            |      224 |       47 |     79% |224, 289-291, 308-309, 316-322, 369, 372-377, 391-392, 402-420, 434-462, 478, 489-494, 499-500 |
 | src/dinary/sheets/sheets.py                                    |      104 |        6 |     94% |51-52, 71, 100, 118, 201 |
-| src/dinary\_analytics/ai\_service.py                           |       77 |       77 |      0% |     1-142 |
-| src/dinary\_analytics/backup.py                                |       66 |       66 |      0% |      1-91 |
-| src/dinary\_analytics/charts.py                                |       57 |       57 |      0% |     3-292 |
-| src/dinary\_analytics/connection.py                            |       11 |       11 |      0% |      3-94 |
-| src/dinary\_analytics/llm.py                                   |       61 |       61 |      0% |     9-133 |
-| src/dinary\_analytics/paths.py                                 |       17 |        5 |     71% | 11, 13-16 |
-| src/dinary\_analytics/refresh.py                               |      100 |      100 |      0% |     3-159 |
-| src/dinary\_analytics/settings.py                              |       49 |       49 |      0% |      3-80 |
-| src/dinary\_analytics/views.py                                 |       23 |       23 |      0% |      5-64 |
-| **TOTAL**                                                      | **4684** |  **884** | **81%** |           |
+| src/dinary\_analytics/ai\_service.py                           |       77 |       10 |     87% |53, 59, 132-138, 142 |
+| src/dinary\_analytics/backup.py                                |       66 |       21 |     68% |18-19, 36-37, 54-55, 69-87, 91 |
+| src/dinary\_analytics/charts.py                                |       57 |        0 |    100% |           |
+| src/dinary\_analytics/connection.py                            |       11 |        0 |    100% |           |
+| src/dinary\_analytics/llm.py                                   |       61 |       10 |     84% |39-44, 66, 69, 130-131 |
+| src/dinary\_analytics/notebooks/dashboard.py                   |      425 |      166 |     61% |32, 76, 85, 98, 115, 131-134, 148-190, 212-214, 216, 220-221, 270-340, 352, 443, 455-525, 538-549, 554-584, 589-619, 631-644, 649-651, 683-691, 702, 707-711, 716-720, 746, 762, 895, 911-913, 980-1016, 1021-1044, 1065-1068, 1072-1076, 1080-1084, 1088-1090, 1104-1105, 1110, 1149 |
+| src/dinary\_analytics/paths.py                                 |       17 |        0 |    100% |           |
+| src/dinary\_analytics/refresh.py                               |      100 |        2 |     98% |   50, 157 |
+| src/dinary\_analytics/settings.py                              |       49 |        1 |     98% |        56 |
+| src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        62 |
+| **TOTAL**                                                      | **5109** |  **646** | **87%** |           |
 
 
 ## Setup coverage badge
