@@ -101,10 +101,9 @@ def run_chat_turn(
     history items are {"role": "user"|"model", "content": str}. Provider/network
     errors (including rate limits) are returned as user-facing text, not raised.
     """
+    if not providers_available():
+        return _NO_PROVIDERS_MESSAGE
     with llmbroker.Broker(registry=llmbroker.Registry(_providers_path())) as llms:
-        if llms.count() == 0:
-            return _NO_PROVIDERS_MESSAGE
-
         schemas = [_tool_schema(fn) for fn in tools]
         dispatch = {tool_name(fn): fn for fn in tools}
 
@@ -125,7 +124,7 @@ def run_chat_turn(
             )
         except llmbroker.NoLLMAvailableError:
             return "**All providers are busy right now.** Press 🔁 Retry in a moment."
-        except llmbroker.AllLLMsFailedError:
+        except llmbroker.LLMRequestError:
             return "**AI providers unavailable.** Check `.deploy/llms.toml`."
         except Exception as exc:  # noqa: BLE001 - surfaced to the user, not swallowed
             return f"**AI error:** {str(exc)[:300]}"

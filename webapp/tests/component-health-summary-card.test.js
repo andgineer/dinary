@@ -42,10 +42,9 @@ describe("HealthSummaryCard — status dot", () => {
 });
 
 
-describe("HealthSummaryCard — add button", () => {
-  it("emits add when the + button is clicked", async () => {
-    const w = mountCard({ healthy: 1, total: 1, strategy: null, last_switch: null });
-    await w.find('[data-testid="add-provider-btn"]').trigger("click");
-    expect(w.emitted("add")).toBeTruthy();
+describe("HealthSummaryCard — read-only", () => {
+  it("has no add-provider button", () => {
+    const w = mountCard({ healthy: 1, total: 1, strategy: null });
+    expect(w.find('[data-testid="add-provider-btn"]').exists()).toBe(false);
   });
 });

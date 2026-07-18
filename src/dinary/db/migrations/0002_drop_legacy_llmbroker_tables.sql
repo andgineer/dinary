@@ -1,0 +1,23 @@
+-- One-time cleanup of the legacy llmbroker 0.0.11 schema.
+--
+-- There is a single dinary installation and no llmbroker data survives the
+-- upgrade to llmbroker 1.3.0. Dropping the tables here — before the broker is
+-- constructed in the app lifespan — lets the new llmbroker recreate its own
+-- (llmbroker_-prefixed) schema from scratch on first use: the provider list
+-- rebuilds from .deploy/llms.toml, API keys re-seed from .deploy/.env,
+-- telemetry and quality windows start empty.
+--
+-- Going forward llmbroker owns and migrates its own tables; this is a
+-- one-time legacy cleanup, not a pattern.
+
+DROP TABLE IF EXISTS llmbroker_registry;
+DROP TABLE IF EXISTS llmbroker_calls;
+DROP TABLE IF EXISTS llmbroker_secrets;
+DROP TABLE IF EXISTS llmbroker_state;
+
+-- llmbroker's sqlite backend tracks its schema version in the file-global
+-- PRAGMA user_version. Version 0.0.11 stamped it to 1; llmbroker 1.3.0 accepts
+-- only 0 or its own version and otherwise raises "schema version 1 found …".
+-- DROP TABLE does not clear a header value, so reset it here to hand a fresh
+-- database to the new llmbroker, which re-stamps it when it recreates its schema.
+PRAGMA user_version = 0;

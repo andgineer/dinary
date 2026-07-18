@@ -296,6 +296,7 @@ def edit_expense_sync(
     expense_id: int,
     req: ExpenseEditRequest,
     con: sqlite3.Connection,
+    pending_ratings: list[tuple[str, float]] | None = None,
 ) -> None:
     row = con.execute(
         "SELECT id, receipt_id FROM expenses WHERE id = ?",
@@ -312,6 +313,7 @@ def edit_expense_sync(
             CategoryCorrectionRequest(category_id=req.category_id, scope=req.scope),
             con,
             skip_rule=req.update_rule,
+            pending_ratings=pending_ratings,
         )
 
     with transaction(con):

@@ -16,8 +16,6 @@ _LLM_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llms.toml"
 _NOTEBOOKS_DIR = Path("src/dinary_analytics/notebooks")
 _DEFAULT_MARIMO_PORT = 2718
 
-_GEMINI_URLS = ("generativelanguage.googleapis.com", "aistudio.google.com")
-
 
 def _ensure_dinary_ai(c) -> None:
     try:
@@ -39,37 +37,43 @@ def _ensure_dinary_ai(c) -> None:
     raise SystemExit(f"dinary-ai did not start on port {MCP_PORT} after setup")
 
 
-async def _find_gemini_key_ref() -> str | None:
-    configs = await llmbroker.Registry(_LLM_TOML).load()
-    for cfg in configs:
-        if any(u in cfg.base_url for u in _GEMINI_URLS):
-            return cfg.api_key_ref
-    return None
+def _llm_api_keys() -> dict[str, str]:
+    """Resolve every provider's ``api_key_ref`` from ``.deploy/.env``, keyed by ref.
 
-
-def _gemini_api_key() -> str | None:
+    The analytics broker inside the marimo process resolves keys from its
+    environment by the exact ref name in ``llms.toml``, so the values must be
+    exported under those names unchanged. Providers whose ref is missing from
+    the env file are reported and skipped — the broker treats them as keyless.
+    """
     if not _LLM_TOML.exists():
         raise SystemExit(f".deploy/llms.toml not found at {_LLM_TOML} — cannot resolve LLM keys")
-    ref = asyncio.run(_find_gemini_key_ref())
-    if ref is None:
-        return None
+    configs = asyncio.run(llmbroker.Registry(_LLM_TOML).load())
     env = dotenv_values(LOCAL_ENV_PATH)
-    key = env.get(ref)
-    if key is None:
-        raise SystemExit(f"{ref!r} not found in {LOCAL_ENV_PATH} — add it and retry")
-    return key
+    keys: dict[str, str] = {}
+    missing: list[str] = []
+    seen: set[str] = set()
+    for cfg in configs:
+        ref = cfg.api_key_ref
+        if ref in seen:
+            continue
+        seen.add(ref)
+        value = env.get(ref)
+        if value:
+            keys[ref] = value
+        else:
+            missing.append(f"{cfg.name} ({ref})")
+    if missing:
+        print(f"Warning: no key in {LOCAL_ENV_PATH} for: {', '.join(missing)}")
+    return keys
 
 
 @task(help={"port": f"Marimo dashboard port (default {_DEFAULT_MARIMO_PORT})."})
 def analytics(c, port=_DEFAULT_MARIMO_PORT):
     """Ensure dinary-ai is running, then open Marimo dashboard."""
     _ensure_dinary_ai(c)
-    extra_env: dict[str, str] = {}
-    gemini_key = _gemini_api_key()
-    if gemini_key:
-        extra_env["GOOGLE_AI_STUDIO_API_KEY"] = gemini_key
-    else:
-        print("Warning: no Gemini provider in .deploy/llms.toml — AI chat disabled.")
+    extra_env = _llm_api_keys()
+    if not extra_env:
+        print("Warning: no LLM API keys resolved — AI chat disabled.")
     c.run(
         f"uv run marimo run {_NOTEBOOKS_DIR / 'dashboard.py'} --port {port} --no-token "
         "--no-skew-protection",

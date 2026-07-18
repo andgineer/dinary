@@ -9,7 +9,7 @@ Checklist for adding a new screen so it feels like part of Dinary. Read this bef
 - [ ] **Is this actually a new view, or a sheet from an existing one?** Default to sheet — see "Where does this belong" below.
 - [ ] **If it's a top-level view: frequent or rare?** Frequent → add it as a third inline tab in `HeaderSegmented` (shrink Add + Review accordingly). Rare → append to `RARE_TABS`. No layout change needed for rare.
 - [ ] **Does an existing pattern in `patterns.md` cover the interaction?** If yes, use it verbatim.
-- [ ] **Destructive action?** Bottom-sheet confirm via `ConfirmDeleteSheet`. Never `confirm()`. Never inline two-step except in `ProviderSheet`-style cases where the parent must stay visible.
+- [ ] **Destructive action?** Bottom-sheet confirm via `ConfirmDeleteSheet`. Never `confirm()`. Never inline two-step.
 - [ ] **Are there labels I can drop?** Every label that survives needs justification.
 - [ ] **Are there text affordances I can swap for icons?** `+`, ⚙, ⏻, 👁, ⚡, 🗑 are the lingua franca.
 - [ ] **Does any state pair (active/inactive, on/off) show as words?** Replace with the state-divider pattern.
@@ -116,7 +116,7 @@ Items in `RARE_TABS` are things people open weekly or less. Don't park frequent-
 | A primary workflow used weekly | Append to `RARE_TABS` (overflow) |
 | A secondary task launched from one screen | Bottom sheet on that screen (`BaseSheet`) |
 | Settings, profile, dev tools | Settings sheet — not a main nav slot |
-| A confirmation or destructive action | `ConfirmDeleteSheet` (single-record) or `ProviderSheet`'s inline two-step (only when the parent must stay visible). Never `confirm()`. |
+| A confirmation or destructive action | `ConfirmDeleteSheet` (single-record). Never `confirm()`. |
 | A picker for a catalog item | Extend `CatalogSelectField` if the chevron-trigger form fits; otherwise build a section like `ExpenseForm`'s event chips with `IconBtn` plus + cog |
 | Anything that resembles "click to edit a record" | Bottom sheet pre-filled with the record — model on `ExpenseEditSheet` and `IncomeEditSheet` |
 

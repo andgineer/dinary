@@ -182,6 +182,31 @@ class TestCreateOrUpdateRule:
         assert json.loads(row[0]) == [2]
         assert json.loads(row[1]) == [10]
 
+    def test_insert_persists_llm_name(self, conn):
+        create_or_update_rule(conn, 1, "mango", RuleSpec(1, 3, "llm", llm_name="groq-llama"))
+        row = conn.execute(
+            "SELECT llm_name FROM classification_rules WHERE item_name_normalized = 'mango'",
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "groq-llama"
+
+    def test_llm_name_defaults_null(self, conn):
+        create_or_update_rule(conn, 1, "limun", RuleSpec(1, 3, "user_correction"))
+        row = conn.execute(
+            "SELECT llm_name FROM classification_rules WHERE item_name_normalized = 'limun'",
+        ).fetchone()
+        assert row is not None
+        assert row[0] is None
+
+    def test_update_overwrites_llm_name(self, conn):
+        create_or_update_rule(conn, 1, "breskva", RuleSpec(1, 3, "llm", llm_name="groq-llama"))
+        create_or_update_rule(conn, 1, "breskva", RuleSpec(2, 4, "user_correction"))
+        row = conn.execute(
+            "SELECT llm_name FROM classification_rules WHERE item_name_normalized = 'breskva'",
+        ).fetchone()
+        assert row is not None
+        assert row[0] is None
+
     def test_user_correction_preserves_spec_alternative_category_ids(self, conn):
         create_or_update_rule(
             conn,

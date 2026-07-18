@@ -5,9 +5,11 @@ After the storage-engine port there is only one migration target:
 migrations to a fresh file produces the expected schema and seed rows.
 """
 
+import asyncio
 import sqlite3
 
 import allure
+import llmbroker
 import pytest
 
 from dinary.config import settings
@@ -357,3 +359,68 @@ class TestAccountingCurrencyAnchor:
         finally:
             con.close()
         assert row[0] == "EUR"
+
+
+@allure.epic("Infrastructure")
+@allure.feature("Migrations")
+class TestLegacyLlmbrokerCleanup:
+    """0002 drops the legacy llmbroker tables AND resets PRAGMA user_version.
+
+    llmbroker 0.0.11 stamped the file-global ``user_version`` to 1; llmbroker
+    1.3.0 accepts only 0 or its own schema version and otherwise raises. ``DROP
+    TABLE`` cannot clear a header value, so the migration must reset it or the
+    0.0.11 -> 1.3.0 upgrade crashes on the first broker call.
+    """
+
+    def _seed_0_0_11_database(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(storage, "DB_PATH", tmp_path / "dinary.db")
+        con = sqlite3.connect(str(storage.DB_PATH), isolation_level=None)
+        try:
+            con.execute("CREATE TABLE llmbroker_registry (name TEXT)")
+            con.execute("CREATE TABLE llmbroker_state (name TEXT)")
+            con.execute("PRAGMA user_version = 1")
+        finally:
+            con.close()
+        return storage.DB_PATH
+
+    def test_resets_user_version_and_drops_legacy_tables(self, tmp_path, monkeypatch):
+        db = self._seed_0_0_11_database(tmp_path, monkeypatch)
+
+        db_migrations.migrate_db(db)
+
+        con = _connect(db)
+        try:
+            user_version = con.execute("PRAGMA user_version").fetchone()[0]
+            tables = _table_names(con)
+        finally:
+            con.close()
+        assert user_version == 0
+        assert "llmbroker_registry" not in tables
+        assert "llmbroker_state" not in tables
+
+    def test_broker_starts_on_upgraded_db(self, tmp_path, monkeypatch):
+        """After the migration a real llmbroker broker provisions its schema on
+        the upgraded DB without raising the stale-version error."""
+        db = self._seed_0_0_11_database(tmp_path, monkeypatch)
+        db_migrations.migrate_db(db)
+
+        preset = tmp_path / "llms.toml"
+        preset.write_text("# no providers\n")  # enough to trigger schema setup
+
+        async def _run() -> None:
+            broker = llmbroker.AsyncBroker(f"sqlite://{db}", optimize=llmbroker.Optimizer())
+            # Would raise "schema version 1 found, this release expects N" if
+            # 0002 had not reset user_version.
+            await broker.sync(preset)
+            await broker.aclose()
+
+        asyncio.run(_run())
+
+        con = _connect(db)
+        try:
+            user_version = con.execute("PRAGMA user_version").fetchone()[0]
+        finally:
+            con.close()
+        # llmbroker took over the freed header and stamped its own schema version.
+        assert user_version != 1

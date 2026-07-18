@@ -1,13 +1,16 @@
 # LLM Provider Strategy
 
+The provider list is defined solely in the preset file and mirrored into the broker on
+startup — see [llmbroker-integration.md](llmbroker-integration.md). This document covers
+which providers to pick and why.
+
 ## Provider identity
 
-`label` is the stable identifier for a provider. It is used as the primary key in
-call-log history, quality-failure stats, and any cross-session or cross-backend
-linking. Once a provider is in use, its `label` must not be changed — doing so
-orphans all historical records for that provider. The label is also what is shown
-in the UI, so pick a short, human-readable name when adding a provider
-(e.g. `"Groq"`, `"OpenRouter-GPT"`, `"Gemini"`).
+Each provider's name (from the preset file) is its stable identifier: telemetry, quality
+history, and the user-disable latch all key on it. Renaming a provider in the preset
+orphans its history, so treat the name as fixed once a provider is in use. The name is
+also what the admin screen shows, so keep it short and human-readable
+(e.g. `groq-llama-3.3-70b`).
 
 ## Provider pool rationale
 
@@ -37,14 +40,16 @@ processes jobs at a steady low-volume pace; at normal load the pool is
 never exhausted. Rate-limit cooldown is tracked per provider so the primary is
 preferred again as soon as its window resets.
 
-## Quality failure tracking
+## Quality tracking
 
-Each execution failure (a classification result deemed unusable — see
-[classification-pipeline.md](classification-pipeline.md)) is counted per
-provider label and surfaced in the admin UI alongside rate-limit and call-log
-stats. This lets operators identify unreliable providers without digging through
-server logs. For the TOML-backed path, counts are persisted to a JSON sidecar
-file whose location is configurable via the providers TOML.
+llmbroker keeps a rolling quality window per provider for the receipt-classification
+operation, fed by the ratings described in
+[llmbroker-integration.md](llmbroker-integration.md): accepted replies count positive,
+malformed replies count negative, and user corrections feed a delayed verdict on the
+model that created the corrected rule. When a model's window drops far enough it is
+demoted for that operation (deprioritised in routing); positive ratings let it recover.
+The admin screen surfaces both the demotion flag and a numeric quality indicator so
+operators can spot unreliable providers without digging through server logs.
 
 ## Prompt design principles
 

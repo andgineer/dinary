@@ -129,6 +129,10 @@ class Settings(BaseSettings):
 
     receipt_classification_enabled: bool = True
 
+    # Single source of truth for the LLM provider list, mirrored into the broker
+    # on startup. Regenerate with `llmbroker preset freetier > .deploy/llms.toml`.
+    llm_providers_file: Path = _DEPLOY_DIR / "llms.toml"
+
     # Expense datetimes are stored in this zone; cross-DST ORDER BY comparisons
     # may be off by 1 hour, accepted as a rare edge case.
     user_timezone: str = "Europe/Belgrade"

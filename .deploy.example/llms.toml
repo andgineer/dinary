@@ -4,8 +4,12 @@
 # Then scaffold the required API-key env vars:
 #   llmbroker env .deploy/llms.toml >> .deploy/.env
 #
-# Seeded into the broker on first start; manage a live deployment via the
-# admin UI (/llm screen).  api_key_ref names an env var holding the actual key.
+# This file is the single source of truth for the provider list: it is mirrored
+# into the broker on every startup (providers added/changed/removed here appear,
+# change, or disappear in the pool). The /llm admin screen is read-only apart from
+# a persistent per-provider disable.  api_key_ref names an env var holding the
+# actual key; keys are seeded into the DB on first start and are authoritative there
+# afterwards.
 
 [[llms]]
 name        = "groq-llama-3.3-70b"

@@ -1,10 +1,12 @@
 """Expenses API: POST /api/expenses, GET /api/expenses, PATCH /api/expenses/{id},
 DELETE /api/expenses/{id}"""
 
+import asyncio
 import sqlite3
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 
+from dinary.api.controllers.expense_corrections import record_correction_ratings
 from dinary.api.controllers.expenses import (
     ExpenseEditRequest,
     ExpenseRequest,
@@ -42,12 +44,24 @@ def get_expenses(
 
 
 @router.patch("/api/expenses/{expense_id}", status_code=204)
-def patch_expense(
+async def patch_expense(
     expense_id: int,
     req: ExpenseEditRequest,
+    request: Request,
     con: sqlite3.Connection = Depends(get_db),  # noqa: B008
 ) -> Response:
-    edit_expense_sync(expense_id, req, con)
+    pending_ratings: list[tuple[str, float]] = []
+    # Offload the blocking sqlite work to a thread so this async handler does not
+    # run it on the event loop; every other DB endpoint is sync `def` and gets
+    # the same threadpool offload from Starlette automatically.
+    await asyncio.to_thread(
+        edit_expense_sync,
+        expense_id,
+        req,
+        con,
+        pending_ratings=pending_ratings,
+    )
+    await record_correction_ratings(request.app.state.llms, pending_ratings)
     return Response(status_code=204)
 
 

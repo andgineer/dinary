@@ -82,9 +82,8 @@ Every shipped UI component, with its source file and one-line contract. The `.vu
 
 | Component | File | Contract |
 |---|---|---|
-| `HealthSummaryCard` | `components/HealthSummaryCard.vue` | Card at top of LLM screen: status dot (`ok` when `healthy > 0`, otherwise `error`) + "N / M healthy" + `+` button (accent-bordered on hover). Strategy + last-switch shown as a separate muted sub-line below the card. |
-| `ProviderCard` | `components/ProviderCard.vue` | Per-provider tile. **Card body** (tappable, opens edit sheet): priority chip `[N]` mono, status dot, label, rate-limit countdown pill (warning-tinted, mono `Xs`), model code (mono), optional `last_error_detail` line in `--danger`. **Usage row**: 3-px bar + `used / limit` mono numbers when a daily cap is set, falls through to `N calls today · no daily cap` otherwise; bar fills `--accent` until 80 %, then `--warning`. **Latency chip** inline right of "today" / "no daily cap", `--warning` when > 3000 ms. **Action row** (bottom, divider above): chevron-up / chevron-down / power. Actions use `@click.stop`. Power dims to `--muted-2` when disabled. |
-| `ProviderSheet` | `components/ProviderSheet.vue` | Bottom sheet (custom shell — predates `BaseSheet`) for add / edit / delete. Preset chips (Groq / OpenRouter / Gemini / Custom) prefill `base_url` and offer model suggestions. Show/hide on API-key field; two-step inline delete confirmation in edit mode (ghost-danger button → inline danger-tinted block with Cancel + Remove). |
+| `HealthSummaryCard` | `components/HealthSummaryCard.vue` | Read-only card at top of LLM screen: status dot (`ok` when `healthy > 0`, otherwise `error`) + "N / M healthy". No add button. |
+| `ProviderCard` | `components/ProviderCard.vue` | Read-only per-provider tile: status dot + name + status badge (available / cooling down / no key / disabled), model code (mono), key-onboarding hint for no-key providers, usage line (call count + last call status), quality line (demoted pill and numeric quality bound, or "no ratings yet"). **Action row** (bottom, divider above): a single disable/enable toggle that emits `toggle`. |
 
 ## Composables (non-component reusable logic)
 
@@ -111,7 +110,7 @@ Every shipped UI component, with its source file and one-line contract. The `.vu
 - **Reusable across screens** → `components/`
 - **Owns a top-level view** → `views/` (and add it to the router in `App.vue`)
 - **Wraps a foreign API or shared reactive logic** → `composables/`
-- **A new sheet/dialog** → `components/`. Default to `BaseSheet`; only roll a custom shell if `ProviderSheet`-style state (preset switcher, key visibility, etc.) demands it.
+- **A new sheet/dialog** → `components/`. Default to `BaseSheet`; only roll a custom shell if multi-step body state genuinely doesn't fit the `BaseSheet` slot model.
 
 ## Where it's worth duplicating
 

@@ -1,88 +1,95 @@
-"""LLM provider business logic — broker-only, no raw SQL."""
+"""LLM provider business logic — read-only status plus a persistent user disable.
+
+The provider list is owned by the preset file (`.deploy/llms.toml`), mirrored
+into the broker on startup. There is no add/edit/delete path here; the only
+mutation is the user disable/enable latch, which llmbroker persists.
+"""
+
+from datetime import UTC, datetime
+from pathlib import Path
 
 import llmbroker
 from fastapi import HTTPException
-from llmbroker.models import LLMConfig, LLMSnapshot
-from pydantic import BaseModel
+from llmbroker.models import LLMSnapshot
+
+from dinary.background.classification.receipt_classifier import CLASSIFICATION_OPERATION
 
 
-class ProviderIn(BaseModel):
-    name: str
-    base_url: str
-    api_key_ref: str
-    model: str
+def _derive_status(snap: LLMSnapshot, *, cooling: bool) -> str:
+    """Precedence: disabled → no_key → cooling → available."""
+    if snap.disabled:
+        return "disabled"
+    if not snap.has_key:
+        return "no_key"
+    if cooling:
+        return "cooling"
+    return "available"
 
 
-class ProviderPatch(BaseModel):
-    base_url: str | None = None
-    api_key_ref: str | None = None
-    model: str | None = None
-
-
-def _snapshot_to_dict(name: str, snap: LLMSnapshot) -> dict:
+def _snapshot_to_dict(
+    name: str,
+    snap: LLMSnapshot,
+    optimizer: llmbroker.Optimizer,
+    key_help: dict[str, str],
+) -> dict:
+    cooldown_until = snap.cooldown_until
+    cooling = cooldown_until is not None and cooldown_until > datetime.now(UTC)
+    status = _derive_status(snap, cooling=cooling)
+    metrics = snap.metrics
     return {
         "name": name,
-        "label": name,
-        "base_url": snap.config.base_url,
         "model": snap.config.model,
-        "api_key_ref": snap.config.api_key_ref,
-        "rate_limited_until": (
-            snap.state.cooldown_until.isoformat() if snap.state.cooldown_until else None
-        ),
-        "execution_fail_count": snap.state.fail_count,
-        "used_today": snap.metrics.call_count if snap.metrics else 0,
-        "last_status": (
-            snap.metrics.last_status.value if snap.metrics and snap.metrics.last_status else None
-        ),
+        "base_url": snap.config.base_url,
+        "disabled": snap.disabled,
+        "has_key": snap.has_key,
+        "cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
+        "status": status,
+        "call_count": metrics.call_count if metrics else 0,
+        "last_status": (metrics.last_status.value if metrics and metrics.last_status else None),
+        "last_at": metrics.last_at.isoformat() if metrics and metrics.last_at else None,
+        "demoted": CLASSIFICATION_OPERATION in snap.demoted_operations,
+        "quality_bound": optimizer.wilson_bound(name, CLASSIFICATION_OPERATION),
+        "help": None if snap.has_key else key_help.get(snap.config.api_key_ref),
     }
 
 
-async def add_provider(body: ProviderIn, llms: llmbroker.AsyncBroker) -> None:
-    cfg = LLMConfig(
-        name=body.name,
-        base_url=body.base_url,
-        model=body.model,
-        api_key_ref=body.api_key_ref,
-    )
+async def llm_status(
+    llms: llmbroker.AsyncBroker,
+    optimizer: llmbroker.Optimizer,
+    providers_file: Path,
+) -> dict:
     try:
-        await llms.add(cfg)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail="Provider already exists") from exc
+        snapshot = await llms.snapshot()
+    except RuntimeError:
+        # llmbroker raises when the registry is empty (no providers configured yet);
+        # a read-only status view should report an empty pool, not 500.
+        snapshot = {}
+    key_help: dict[str, str] = {}
+    if any(not snap.has_key for snap in snapshot.values()) and providers_file.exists():
+        key_info = await llmbroker.Registry(providers_file).key_info()
+        key_help = {ref: info.help for ref, info in key_info.items()}
 
-
-async def update_provider(name: str, body: ProviderPatch, llms: llmbroker.AsyncBroker) -> dict:
-    try:
-        old = (await llms.get(name)).config
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Provider not found") from exc
-    updated = LLMConfig(
-        name=name,
-        base_url=body.base_url if body.base_url is not None else old.base_url,
-        model=body.model if body.model is not None else old.model,
-        api_key_ref=body.api_key_ref if body.api_key_ref is not None else old.api_key_ref,
-    )
-    await llms.update(updated)
-    return {"status": "ok"}
-
-
-async def delete_provider(name: str, llms: llmbroker.AsyncBroker) -> None:
-    snapshot = await llms.snapshot()
-    if name not in snapshot:
-        raise HTTPException(status_code=404, detail="Provider not found")
-    enabled = [n for n in snapshot if snapshot[n].state.phase.value != "offline"]
-    if len(enabled) <= 1 and name in enabled:
-        raise HTTPException(status_code=409, detail="Cannot delete the only enabled provider")
-    await llms.remove(name)
-
-
-async def llm_status(llms: llmbroker.AsyncBroker) -> dict:
-    snapshot = await llms.snapshot()
-    provider_list = [_snapshot_to_dict(name, snap) for name, snap in snapshot.items()]
-    total = len(provider_list)
-    healthy = sum(1 for p in provider_list if p["rate_limited_until"] is None)
+    providers = [
+        _snapshot_to_dict(name, snap, optimizer, key_help) for name, snap in snapshot.items()
+    ]
+    total = len(providers)
+    healthy = sum(1 for p in providers if p["status"] == "available")
     health = {
         "healthy": healthy,
         "total": total,
         "strategy": "failover" if total >= 2 else None,
     }
-    return {"health": health, "providers": provider_list}
+    return {"health": health, "providers": providers}
+
+
+async def set_provider_disabled(name: str, *, disabled: bool, llms: llmbroker.AsyncBroker) -> None:
+    try:
+        snapshot = await llms.snapshot()
+    except RuntimeError:
+        snapshot = {}
+    if name not in snapshot:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    if disabled:
+        await llms.disable_llm(name)
+    else:
+        await llms.enable_llm(name)

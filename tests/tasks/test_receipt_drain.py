@@ -1116,8 +1116,13 @@ class TestReceiptSheetLogging:
 
 
 def _make_broker() -> llmbroker.AsyncBroker:
-    """Return a minimal broker instance (never called in unit tests)."""
-    return llmbroker.AsyncBroker(registry=llmbroker.Registry("/nonexistent.toml"))
+    """Return a minimal broker stand-in; only count() is consulted (classify_receipt
+    is patched in these tests). count()=1 keeps max_attempts at 1."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    broker = MagicMock(spec=llmbroker.AsyncBroker)
+    broker.count = AsyncMock(return_value=1)
+    return broker
 
 
 def _make_classify_outcome(
@@ -1131,6 +1136,7 @@ def _make_classify_outcome(
     else:
         execution = MagicMock()
         execution.text = "ok"
+        execution.llm_name = "test-model"
         execution.record_quality = AsyncMock()
     execution_failed = not broker_unavailable and (any(r.category_id is None for r in results))
     return ClassifyOutcome(

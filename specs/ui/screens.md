@@ -321,38 +321,40 @@ Reads still render from cache. Writes are blocked with an info toast. Refresh is
 
 ## LLM view
 
-Provider pool management. Backend API: `/api/admin/llm-providers` + `/api/admin/llm-status`.
+Read-only provider dashboard plus a per-provider disable toggle. The provider list is
+owned by the preset file (`.deploy/llms.toml`) and cannot be added to, edited, or
+deleted from the UI. Backend API: `/api/llm/status` for the dashboard;
+`/api/llm/providers/{name}/disable` and `.../enable` for the toggle.
 
 ```
 ┌──────────────────────────────────────┐
-│  ●  3 / 4 healthy                [+] │ HealthSummaryCard
-│  round-robin failover · last switch  │
+│  ●  1 / 2 healthy                    │ HealthSummaryCard (no add button)
 │                                      │
 │  RECEIPT QUEUE                       │ optional, only if classification job present
 │  [12 ready][3 processing][1 sleeping]│
 │  [2 failed]                          │
 │                                      │
-│  PROVIDER POOL          priority  ⟳  │
+│  PROVIDER POOL   from llms.toml   ⟳  │
 │  ┌────────────────────────────────┐  │
-│  │ [1] ● Groq                     │  │ ProviderCard
-│  │     llama-3.3-70b-versatile    │  │
-│  │ ───────────────  412 / 14 000  │  │ usage bar + numbers
-│  │              today        940ms│  │ latency chip
-│  │ ────────────── divider ──────  │  │
-│  │              [↑] [↓] [⏻]        │  │ action row
+│  │ ● groq-llama        available  │  │ ProviderCard: status badge
+│  │   llama-3.3-70b-versatile      │  │
+│  │   412 calls · last: ok         │  │ usage + last call status
+│  │   quality 83%                  │  │ demoted pill / numeric bound
+│  │ ──────────────────  [⏻ Disable]│  │ disable/enable toggle
 │  └────────────────────────────────┘  │
 │  ┌────────────────────────────────┐  │
-│  │ [3] ● OpenRouter   [86s]       │  │ rate-limited countdown pill
-│  │     nvidia/nemotron-3-…        │  │
-│  │ 12 calls today · no daily cap  │  │ no bar — uncapped
-│  │              [↑] [↓] [⏻]        │  │
+│  │ ● openrouter          no key   │  │
+│  │   gpt-oss-120b                 │  │
+│  │   Create a free key at …       │  │ onboarding hint for no-key providers
+│  │   0 calls · no ratings yet     │  │
+│  │ ──────────────────  [⏻ Disable]│  │
 │  └────────────────────────────────┘  │
 └──────────────────────────────────────┘
 ```
 
 Owned by `views/LLMView.vue`. Refresh polled every 30 s when online.
 
-### Receipt queue strip (new)
+### Receipt queue strip
 
 Above the provider pool, when any of `pending`, `in_progress`, `sleeping`, `poisoned` is > 0, a `RECEIPT QUEUE` label sits above a row of chips:
 
@@ -367,15 +369,14 @@ Each chip is a thin outlined pill. The strip is informational — no actions.
 
 ### `ProviderCard` rules
 
-- **Status dot kinds** — see `patterns.md`.
-- **Usage row** — bar + numbers when a daily limit is set; "N calls today · no daily cap" otherwise. Bar fills `--accent` until > 80 %, then `--warning`.
-- **Latency chip** — inline with the right-side label. `--warning` if > 3000 ms.
-- **Action row** — bottom-aligned, separated from the card body by a 1-px `--border` line. Move-up / Move-down disabled at list extremes. Power dims when disabled. No standalone "test" button in v0.10.
-- **Card body tappable** — opens `ProviderSheet` in edit mode. Actions in the bottom row use `@click.stop` so they don't bubble.
-
-### CRUD flow
-
-`HealthSummaryCard`'s `+` opens `ProviderSheet` in add mode. Tapping a card body opens edit mode. See `patterns.md#provider-sheet-form`.
+- **Status badge** — one of available / cooling down / no key / disabled, derived from the
+  provider's resolved key, cooldown, and user-disable state. Status dot kinds: see `patterns.md`.
+- **Usage line** — call count plus the last call status.
+- **Quality line** — a demoted pill when the model is demoted for receipt classification,
+  and a numeric quality indicator when ratings exist (otherwise "no ratings yet").
+- **Key hint** — no-key providers show the onboarding hint from the preset.
+- **Toggle** — a single disable/enable button in the action row. There is no add, edit,
+  delete, reorder, or test control.
 
 ## When to add a new view
 

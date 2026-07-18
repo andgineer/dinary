@@ -20,7 +20,9 @@ _CATEGORIES = {1: "Food: food", 2: "Housing: household-goods", 3: "Beauty: hygie
 def _make_broker(raw_content: str | None) -> llmbroker.AsyncBroker:
     broker = MagicMock(spec=llmbroker.AsyncBroker)
     if raw_content is None:
-        broker.chat = AsyncMock(side_effect=llmbroker.NoLLMAvailableError("no slot"))
+        broker.chat = AsyncMock(
+            side_effect=llmbroker.NoLLMAvailableError("no slot", reason="rate_limited")
+        )
     else:
         result = MagicMock()
         result.text = raw_content

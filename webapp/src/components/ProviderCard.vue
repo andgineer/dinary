@@ -1,144 +1,78 @@
 <script setup>
 import { computed } from "vue";
-import { ChevronUp, ChevronDown, Power } from "lucide-vue-next";
+import { Power } from "lucide-vue-next";
 import StatusDot from "./StatusDot.vue";
 
 const props = defineProps({
   provider: { type: Object, required: true },
-  isFirst: { type: Boolean, default: false },
-  isLast: { type: Boolean, default: false },
 });
-const emit = defineEmits(["edit", "toggle", "move-up", "move-down"]);
+const emit = defineEmits(["toggle"]);
 
-const statusKind = computed(() => {
-  const p = props.provider;
-  if (!p.is_enabled) return "off";
-  if (p.rate_limited_until > 0) return "rate_limited";
-  if (p.last_status === "error") return "error";
-  return "ok";
-});
+const STATUS_LABELS = {
+  available: "available",
+  cooling: "cooling down",
+  no_key: "no key",
+  disabled: "disabled",
+};
 
-const rateLimitSecsLeft = computed(() => {
-  const until = props.provider.rate_limited_until;
-  if (!until) return 0;
-  return Math.max(0, Math.ceil((until * 1000 - Date.now()) / 1000));
-});
+const STATUS_DOTS = {
+  available: "ok",
+  cooling: "rate_limited",
+  no_key: "off",
+  disabled: "off",
+};
 
-const usagePercent = computed(() => {
-  const p = props.provider;
-  if (!p.limit_today) return null;
-  return Math.min(100, (p.used_today / p.limit_today) * 100);
-});
+const statusLabel = computed(() => STATUS_LABELS[props.provider.status] ?? props.provider.status);
+const statusDot = computed(() => STATUS_DOTS[props.provider.status] ?? "off");
 
-const usageBarColor = computed(() => {
-  const pct = usagePercent.value;
-  if (pct === null) return null;
-  return pct > 80 ? "var(--warning)" : "var(--accent)";
-});
-
-const latencyColor = computed(() => {
-  const ms = props.provider.avg_latency_ms;
-  if (ms == null) return "var(--muted)";
-  return ms > 3000 ? "var(--warning)" : "var(--muted)";
-});
-
-const errorMessage = computed(() => {
-  const raw = props.provider.last_error_detail;
-  if (!raw) return null;
-  try {
-    let parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) parsed = parsed[0];
-    return parsed?.error?.message ?? raw;
-  } catch {
-    return raw;
-  }
+const qualityPercent = computed(() => {
+  const q = props.provider.quality_bound;
+  if (q == null) return null;
+  return Math.round(q * 100);
 });
 </script>
 
 <template>
   <div
     class="provider-card"
-    :class="{ 'is-disabled': !provider.is_enabled }"
+    :class="{ 'is-disabled': provider.disabled }"
     data-testid="provider-card"
   >
-    <div
-      class="card-body"
-      role="button"
-      tabindex="0"
-      @click="emit('edit')"
-      @keydown.enter="emit('edit')"
-    >
-      <div class="card-top">
-        <span class="priority-chip">[{{ provider.priority }}]</span>
-        <StatusDot :kind="statusKind" />
-        <span class="provider-label">{{ provider.label }}</span>
-        <span v-if="rateLimitSecsLeft > 0" class="rate-limit-pill">{{ rateLimitSecsLeft }}s</span>
-      </div>
-      <div class="card-model">{{ provider.model }}</div>
-      <div v-if="errorMessage" class="error-detail">{{ errorMessage }}</div>
+    <div class="card-top">
+      <StatusDot :kind="statusDot" />
+      <span class="provider-label">{{ provider.name }}</span>
+      <span class="status-badge" :data-status="provider.status">{{ statusLabel }}</span>
     </div>
 
-    <div class="usage-row">
-      <template v-if="provider.limit_today != null">
-        <div class="usage-bar-wrap">
-          <div
-            class="usage-bar-fill"
-            :style="{ width: `${usagePercent}%`, background: usageBarColor }"
-          />
-        </div>
-        <div class="usage-labels">
-          <span class="usage-numbers">{{ provider.used_today }} / {{ provider.limit_today }}</span>
-          <span class="usage-right">
-            today
-            <span
-              v-if="provider.avg_latency_ms != null"
-              class="latency-chip"
-              :style="{ color: latencyColor }"
-            >{{ provider.avg_latency_ms }}ms</span>
-          </span>
-        </div>
-      </template>
-      <template v-else>
-        <div class="usage-labels">
-          <span class="usage-numbers">{{ provider.used_today ?? 0 }} calls today</span>
-          <span class="usage-right">
-            no daily cap
-            <span
-              v-if="provider.avg_latency_ms != null"
-              class="latency-chip"
-              :style="{ color: latencyColor }"
-            >{{ provider.avg_latency_ms }}ms</span>
-          </span>
-        </div>
-      </template>
+    <div class="card-model">{{ provider.model }}</div>
+
+    <div v-if="provider.status === 'no_key' && provider.help" class="key-hint">
+      {{ provider.help }}
+    </div>
+
+    <div class="meta-row">
+      <span class="usage">{{ provider.call_count ?? 0 }} calls</span>
+      <span v-if="provider.last_status" class="last-status" :data-status="provider.last_status">
+        last: {{ provider.last_status }}
+      </span>
+    </div>
+
+    <div class="quality-row">
+      <span v-if="provider.demoted" class="demoted-pill">demoted</span>
+      <span v-if="qualityPercent !== null" class="quality-chip">quality {{ qualityPercent }}%</span>
+      <span v-else class="quality-chip muted">no ratings yet</span>
     </div>
 
     <div class="card-actions">
       <button
         type="button"
-        class="icon-action"
-        :disabled="isFirst"
-        aria-label="Move up"
-        @click.stop="emit('move-up')"
+        class="toggle-btn"
+        :class="{ 'is-off': provider.disabled }"
+        :aria-label="provider.disabled ? 'Enable provider' : 'Disable provider'"
+        @click="emit('toggle')"
       >
-        <ChevronUp :size="15" />
-      </button>
-      <button
-        type="button"
-        class="icon-action"
-        :disabled="isLast"
-        aria-label="Move down"
-        @click.stop="emit('move-down')"
-      >
-        <ChevronDown :size="15" />
-      </button>
-      <button
-        type="button"
-        class="icon-action"
-        aria-label="Toggle provider"
-        @click.stop="emit('toggle')"
-      >
-        <Power :size="15" :class="{ 'is-off': !provider.is_enabled }" />
+        <Power :size="15" />
+        <span>{{ provider.disabled ? "Enable" : "Disable" }}</span>
       </button>
     </div>
   </div>
@@ -158,31 +92,11 @@ const errorMessage = computed(() => {
   opacity: 0.55;
 }
 
-.card-body {
-  cursor: pointer;
-}
-
-.card-body:focus {
-  outline: none;
-}
-
-.card-body:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
 .card-top {
   display: flex;
   align-items: center;
   gap: 0.4rem;
   margin-bottom: 2px;
-}
-
-.priority-chip {
-  font-family: var(--font-num);
-  font-size: 0.72rem;
-  color: var(--muted-2);
 }
 
 .provider-label {
@@ -192,25 +106,25 @@ const errorMessage = computed(() => {
   flex: 1;
 }
 
-.rate-limit-pill {
+.status-badge {
   font-size: 0.68rem;
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 999px;
-  background: rgba(245, 158, 11, 0.15);
-  color: var(--warning);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  font-family: var(--font-num);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: var(--border);
+  color: var(--muted);
 }
 
-.error-detail {
-  font-size: 0.7rem;
-  color: var(--danger, #ef4444);
-  margin-top: 0.2rem;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.status-badge[data-status="available"] {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--success);
+}
+
+.status-badge[data-status="cooling"] {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
 }
 
 .card-model {
@@ -223,83 +137,83 @@ const errorMessage = computed(() => {
   white-space: nowrap;
 }
 
-.usage-row {
-  margin-bottom: 0.35rem;
-}
-
-.usage-bar-wrap {
-  height: 3px;
-  background: var(--border);
-  border-radius: 2px;
-  margin-bottom: 3px;
-  overflow: hidden;
-}
-
-.usage-bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.3s;
-}
-
-.usage-labels {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.usage-numbers {
-  font-family: var(--font-num);
-  font-size: 0.7rem;
+.key-hint {
+  font-size: 0.72rem;
   color: var(--muted);
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.4rem;
 }
 
-.usage-right {
-  font-size: 0.7rem;
-  color: var(--muted);
+.meta-row,
+.quality-row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
 }
 
-.latency-chip {
+.usage {
   font-family: var(--font-num);
-  font-size: 0.7rem;
+}
+
+.last-status[data-status="error"],
+.last-status[data-status="unavailable"] {
+  color: var(--danger, #ef4444);
+}
+
+.demoted-pill {
+  font-size: 0.66rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger, #ef4444);
+  text-transform: uppercase;
+}
+
+.quality-chip {
+  font-family: var(--font-num);
+}
+
+.quality-chip.muted {
+  color: var(--muted-2);
 }
 
 .card-actions {
   display: flex;
-  gap: 0.25rem;
   justify-content: flex-end;
   border-top: 1px solid var(--border);
   padding-top: 0.35rem;
   margin-top: 0.25rem;
 }
 
-.icon-action {
+.toggle-btn {
   background: none;
-  border: none;
+  border: 1px solid var(--border);
   color: var(--muted);
   cursor: pointer;
-  padding: 0.25rem;
+  padding: 0.3rem 0.6rem;
   width: auto;
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  transition: color 0.12s, background 0.12s;
+  gap: 0.3rem;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
 }
 
-.icon-action:hover:not(:disabled) {
+.toggle-btn:hover {
   color: var(--text);
-  background: var(--border);
+  border-color: var(--accent);
 }
 
-.icon-action:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.is-off {
-  color: var(--muted-2);
+.toggle-btn.is-off {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 </style>

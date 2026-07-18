@@ -402,7 +402,7 @@ dependencies = [
     { name = "holidays" },
     { name = "httpx" },
     { name = "invoke" },
-    { name = "llmbroker" },
+    { name = "llmbroker", extra = ["sqlite"] },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -447,7 +447,7 @@ requires-dist = [
     { name = "holidays", specifier = ">=0.94" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "invoke", specifier = ">=2.2.0" },
-    { name = "llmbroker", specifier = "==0.0.11" },
+    { name = "llmbroker", extras = ["sqlite"], specifier = "==1.3.0" },
     { name = "pydantic-settings", specifier = ">=2.8.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
@@ -839,15 +839,20 @@ wheels = [
 
 [[package]]
 name = "llmbroker"
-version = "0.0.11"
+version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiosqlite" },
     { name = "httpx" },
+    { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9a/67/eb0bba55d0f6be5b233fd396765c0e33756a9cdbb58673d4a4ade0f3fb64/llmbroker-0.0.11.tar.gz", hash = "sha256:30f3020e2e4ffc73b713e3b9d91535722a14bb471935fe8a68d7bf33af0790bf", size = 106970, upload-time = "2026-06-24T04:41:49.963Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/79/0bddd2e111ffbdb890cc0382c8816670ecf67beef5f55ff701a073877a5c/llmbroker-1.3.0.tar.gz", hash = "sha256:fd0d9ef37b7e0612fbd171ba658fc98ffef82c294a836fda8d6fded567d26700", size = 254205, upload-time = "2026-07-11T09:54:12.511Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/05/0b9025f77ac0c219fafa2579a5dac7856f00eb73114ccaf1e3fe29107083/llmbroker-0.0.11-py3-none-any.whl", hash = "sha256:0445e51ea33e8a8e43317a0857a0383d01a7a206062fe147ee96ca4d7f6a2225", size = 38132, upload-time = "2026-06-24T04:41:48.873Z" },
+    { url = "https://files.pythonhosted.org/packages/78/5c/4edec12e81493b71d6a1cc6b1046c6165b3ae2458528d8d9587b0b6eee79/llmbroker-1.3.0-py3-none-any.whl", hash = "sha256:e5cb62a61851d839b57c03a4d08bbbc25b67852f729fc12c6cd976e53dc024d2", size = 64159, upload-time = "2026-07-11T09:54:11.337Z" },
+]
+
+[package.optional-dependencies]
+sqlite = [
+    { name = "aiosqlite" },
 ]
 
 [[package]]
