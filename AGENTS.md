@@ -67,6 +67,30 @@
 - Reply to the user in the language they used (Russian or English), using
   proper native script. Do not transliterate Cyrillic into Latin letters.
 
+## Environment setup
+
+The **full** test suite and `inv pre` need more than a bare `uv sync`:
+
+1. **All dependency groups** — `uv sync --all-groups`. The `analytics`
+   group (duckdb, lmdb, marimo, mcp, altair, polars, google-genai) is
+   required: without it the `tests/analytics/` suite fails to collect and
+   pyrefly reports missing-import errors. A plain `uv sync` installs only
+   the default group and is **not** enough to reach a green suite.
+2. **System binaries `zstd` and `sqlite3`** — the backup/restore tasks and
+   their tests shell out to these real CLIs (`apt-get install -y zstd
+   sqlite3` on Debian/Ubuntu).
+
+Both steps are wrapped in the idempotent, tracked script
+**`scripts/setup-test-env.sh`** — run it once at the start of a fresh
+session (or whenever a run is missing analytics deps or `zstd`/`sqlite3`)
+before doing anything else. Do not work around a missing dependency by
+skipping tests.
+
+> Note: `.claude/` is intentionally git-ignored, so a SessionStart hook
+> cannot be committed. `scripts/setup-test-env.sh` is the tracked source
+> of truth; point any local (untracked) hook at it rather than duplicating
+> the steps.
+
 ## Tests
 
 - **Always write unit tests for new code.** Every new function or module
@@ -76,6 +100,18 @@
   component / composable / store, mirroring the source path.
 - Do not run only a narrow subset (`pytest -k …`) when verifying your
   work — run the full suite.
+- **Never leave a failing test. Every session starts from green.** There is
+  no such thing as a "pre-existing failing test" you may ignore — main is
+  green, so any red is either something you broke (fix it) or a test that
+  rots over time. The usual culprit is a **flaky or date-dependent test**
+  (a hardcoded date that has aged out of a rolling `datetime('now', …)`
+  window, an order-dependent assumption, a real clock/network dependency).
+  Diagnose the root cause and fix the test so it is deterministic — e.g.
+  anchor dates relative to "now" instead of hardcoding them. Do not skip,
+  `xfail`, delete, or "defer" it, and do not hand back a red suite calling
+  the failures unrelated. If a failure is genuinely environmental (a
+  missing dependency or binary), fix the environment (see Environment
+  setup above), not the assertion.
 
 ## Verification before claiming done
 
@@ -117,7 +153,7 @@ Details:
   trailing-whitespace, etc.), re-run it until it converges to
   "All checks passed!" / `0 errors`. A "modified by hook" exit is
   not green — it is a pending fixup that must be committed.
-- If `uv run pytest` reports a failure, fix it in the same change.
-  A test that was broken by your edit is your responsibility to
-  repair or to explicitly flag + get user agreement to defer.
-  "329 passed" from a previous turn is not evidence; re-run.
+- If `uv run pytest` reports **any** failure, fix it in the same change —
+  there is no defer path for tests (see the "Never leave a failing test"
+  rule under Tests). "329 passed" from a previous turn is not evidence;
+  re-run. A green suite three turns ago does not survive new edits.

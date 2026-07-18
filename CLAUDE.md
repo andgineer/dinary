@@ -24,6 +24,17 @@ For architecture, system layout, technology decisions, data model, deployment, a
 
 ---
 
+## Environment setup
+
+A bare `uv sync` is **not** enough to reach a green suite. The full test run and `inv pre` also need:
+
+1. **All dependency groups**: `uv sync --all-groups` — the `analytics` group (duckdb, lmdb, marimo, mcp, altair, polars) is required, or `tests/analytics/` fails to collect and pyrefly reports missing-import errors.
+2. **`zstd` and `sqlite3` CLIs**: the backup/restore tasks and tests shell out to them (`apt-get install -y zstd sqlite3`).
+
+Both are wrapped in the tracked, idempotent script **`scripts/setup-test-env.sh`** — run it once on a fresh session (or whenever deps/binaries are missing) before anything else; never work around the gap by skipping tests. (`.claude/` is git-ignored, so a SessionStart hook can't be committed — this script is the tracked source of truth.)
+
+---
+
 ## Non-negotiable done gate
 
 Before claiming anything is done, both must be green:
@@ -32,6 +43,8 @@ Before claiming anything is done, both must be green:
 2. `uv run pytest` → `N passed` with zero failures or errors
 
 Run `inv pre` after each discrete batch of changes, not only at the end.
+
+**Never leave a failing test.** Every session starts from green (main is green). There is no "pre-existing failing test" to ignore: red is either something you broke or a test that rotted — most often a **flaky or date-dependent** test (e.g. a hardcoded date aged out of a rolling `datetime('now', …)` window). Fix the root cause so it is deterministic; do not skip, `xfail`, or defer it. If the cause is a missing dependency or binary, fix the environment (see above), not the assertion.
 
 ---
 
