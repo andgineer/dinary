@@ -119,5 +119,5 @@ commit/PR so review can focus on a mechanical rename.
 - `cd webapp && npm test` — unaffected by this backend-only move, but run once to
   confirm no accidental coupling.
 
-Delete this plan file once both phases are merged (or once Phase 1 is merged and
-Phase 2 is explicitly declined).
+Both phases are in scope. Do them as separate commits/PRs (Phase 1 first), and
+delete this plan file once both are merged.
