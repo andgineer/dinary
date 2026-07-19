@@ -1,0 +1,4 @@
+2026-07-18 03:46:17,182 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-07-18 03:46:17,184 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-07-18 03:46:17,249 WARNING  llmbroker.broker — LLM p1: api_key_ref 'GROQ_API_KEY' could not be resolved — calls will fail until the env var / secret is set
+2026-07-18 03:46:17,255 WARNING  llmbroker.broker — LLM p2: api_key_ref 'GROQ_API_KEY' could not be resolved — calls will fail until the env var / secret is set

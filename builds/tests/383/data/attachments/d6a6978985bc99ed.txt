@@ -1,0 +1,56 @@
+2026-07-18 11:50:23,132 INFO     yoyo.migrations — Applying 0001_initial_schema
+2026-07-18 11:50:23,133 INFO     yoyo.migrations —  - applying step 0
+2026-07-18 11:50:23,133 INFO     yoyo.migrations —  - applying step 1
+2026-07-18 11:50:23,133 INFO     yoyo.migrations —  - applying step 2
+2026-07-18 11:50:23,134 INFO     yoyo.migrations —  - applying step 3
+2026-07-18 11:50:23,134 INFO     yoyo.migrations —  - applying step 4
+2026-07-18 11:50:23,134 INFO     yoyo.migrations —  - applying step 5
+2026-07-18 11:50:23,134 INFO     yoyo.migrations —  - applying step 6
+2026-07-18 11:50:23,134 INFO     yoyo.migrations —  - applying step 7
+2026-07-18 11:50:23,135 INFO     yoyo.migrations —  - applying step 8
+2026-07-18 11:50:23,135 INFO     yoyo.migrations —  - applying step 9
+2026-07-18 11:50:23,135 INFO     yoyo.migrations —  - applying step 10
+2026-07-18 11:50:23,135 INFO     yoyo.migrations —  - applying step 11
+2026-07-18 11:50:23,136 INFO     yoyo.migrations —  - applying step 12
+2026-07-18 11:50:23,136 INFO     yoyo.migrations —  - applying step 13
+2026-07-18 11:50:23,136 INFO     yoyo.migrations —  - applying step 14
+2026-07-18 11:50:23,136 INFO     yoyo.migrations —  - applying step 15
+2026-07-18 11:50:23,137 INFO     yoyo.migrations —  - applying step 16
+2026-07-18 11:50:23,137 INFO     yoyo.migrations —  - applying step 17
+2026-07-18 11:50:23,137 INFO     yoyo.migrations —  - applying step 18
+2026-07-18 11:50:23,137 INFO     yoyo.migrations —  - applying step 19
+2026-07-18 11:50:23,138 INFO     yoyo.migrations —  - applying step 20
+2026-07-18 11:50:23,138 INFO     yoyo.migrations —  - applying step 21
+2026-07-18 11:50:23,138 INFO     yoyo.migrations —  - applying step 22
+2026-07-18 11:50:23,138 INFO     yoyo.migrations —  - applying step 23
+2026-07-18 11:50:23,139 INFO     yoyo.migrations —  - applying step 24
+2026-07-18 11:50:23,139 INFO     yoyo.migrations —  - applying step 25
+2026-07-18 11:50:23,139 INFO     yoyo.migrations —  - applying step 26
+2026-07-18 11:50:23,139 INFO     yoyo.migrations —  - applying step 27
+2026-07-18 11:50:23,139 INFO     yoyo.migrations —  - applying step 28
+2026-07-18 11:50:23,140 INFO     yoyo.migrations —  - applying step 29
+2026-07-18 11:50:23,140 INFO     yoyo.migrations —  - applying step 30
+2026-07-18 11:50:23,140 INFO     yoyo.migrations —  - applying step 31
+2026-07-18 11:50:23,140 INFO     yoyo.migrations —  - applying step 32
+2026-07-18 11:50:23,141 INFO     yoyo.migrations —  - applying step 33
+2026-07-18 11:50:23,141 INFO     yoyo.migrations —  - applying step 34
+2026-07-18 11:50:23,141 INFO     yoyo.migrations —  - applying step 35
+2026-07-18 11:50:23,144 INFO     yoyo.migrations — Marking 0001_initial_schema applied
+2026-07-18 11:50:23,145 INFO     yoyo.migrations — Applying 0002_drop_legacy_llmbroker_tables
+2026-07-18 11:50:23,145 INFO     yoyo.migrations —  - applying step 0
+2026-07-18 11:50:23,146 INFO     yoyo.migrations —  - applying step 1
+2026-07-18 11:50:23,146 INFO     yoyo.migrations —  - applying step 2
+2026-07-18 11:50:23,146 INFO     yoyo.migrations —  - applying step 3
+2026-07-18 11:50:23,146 INFO     yoyo.migrations —  - applying step 4
+2026-07-18 11:50:23,148 INFO     yoyo.migrations — Marking 0002_drop_legacy_llmbroker_tables applied
+2026-07-18 11:50:23,149 INFO     yoyo.migrations — Applying 0003_classification_rules_llm_name
+2026-07-18 11:50:23,149 INFO     yoyo.migrations —  - applying step 0
+2026-07-18 11:50:23,152 INFO     yoyo.migrations — Marking 0003_classification_rules_llm_name applied
+2026-07-18 11:50:23,165 ERROR    dinary.background.classification.task — Unhandled exception in _process_job for receipt_id=1
+Traceback (most recent call last):
+  File "/opt/hostedtoolcache/Python/3.13.14/x64/lib/python3.13/unittest/mock.py", line 2338, in _execute_mock_call
+    result = await effect(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/dinary/dinary/tests/tasks/test_receipt_drain.py", line 1761, in mixed_job
+    raise RuntimeError("simulated failure")
+RuntimeError: simulated failure

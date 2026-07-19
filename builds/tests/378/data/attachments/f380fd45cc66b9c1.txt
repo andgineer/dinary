@@ -1,0 +1,5 @@
+2026-07-11 14:20:00,249 INFO     dinary.background.sheet_logging.task — sheet-logging task started: interval=0.05s
+2026-07-11 14:20:00,251 INFO     dinary.background.sheet_logging.task — drain sweep: {'years': 1, 'attempted': 2, 'appended': 2, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}
+2026-07-11 14:20:00,303 INFO     dinary.background.sheet_logging.task — drain sweep: {'years': 1, 'attempted': 2, 'appended': 2, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}
+2026-07-11 14:20:00,355 INFO     dinary.background.sheet_logging.task — drain sweep: {'years': 1, 'attempted': 2, 'appended': 2, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}
+2026-07-11 14:20:00,407 INFO     dinary.background.sheet_logging.task — drain sweep: {'years': 1, 'attempted': 2, 'appended': 2, 'already_logged': 0, 'failed': 0, 'recovered_with_duplicate': 0, 'noop_orphan': 0, 'poisoned': 0, 'cap_reached': False}

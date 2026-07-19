@@ -1,0 +1,4 @@
+2026-07-19 08:31:41,224 INFO     llmbroker.broker — LLM groq-llama: api_key_ref 'GROQ_API_KEY' not resolved — inactive until the env var / secret is set; this is normal, the pool routes over whatever keys are present
+2026-07-19 08:31:41,226 INFO     llmbroker.broker — LLM openrouter: api_key_ref 'OPENROUTER_API_KEY' not resolved — inactive until the env var / secret is set; this is normal, the pool routes over whatever keys are present
+2026-07-19 08:31:41,235 INFO     llmbroker.broker — LLM groq-llama: api_key_ref 'GROQ_API_KEY' not resolved — inactive until the env var / secret is set; this is normal, the pool routes over whatever keys are present
+2026-07-19 08:31:41,236 INFO     llmbroker.broker — LLM openrouter: api_key_ref 'OPENROUTER_API_KEY' not resolved — inactive until the env var / secret is set; this is normal, the pool routes over whatever keys are present

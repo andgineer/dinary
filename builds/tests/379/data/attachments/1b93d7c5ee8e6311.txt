@@ -1,0 +1,2 @@
+WARNING  dinary.adapters.serbian_receipt_parser:serbian_receipt_parser.py:191 Token not found in HTML for https://suf.purs.gov.rs/v/?vl=test, falling back to journal
+INFO     dinary.adapters.serbian_receipt_parser:serbian_receipt_parser.py:247 Using journal fallback for https://suf.purs.gov.rs/v/?vl=test
