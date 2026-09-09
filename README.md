@@ -14,7 +14,7 @@
 | src/dinary/adapters/receipts/serbian.py                        |      149 |       22 |     85% |78, 89-95, 120-121, 149, 158, 161-162, 174, 200-201, 205-206, 209, 234-236, 263-269 |
 | src/dinary/adapters/receipts/types.py                          |       15 |        0 |    100% |           |
 | src/dinary/adapters/sheets\_client.py                          |       44 |       28 |     36% |26-35, 39, 51-60, 69-81 |
-| src/dinary/api/analytics.py                                    |       52 |        1 |     98% |        36 |
+| src/dinary/api/analytics.py                                    |       52 |        2 |     96% |    33, 36 |
 | src/dinary/api/catalog.py                                      |       81 |        9 |     89% |68-70, 105-113, 158-169 |
 | src/dinary/api/category\_templates.py                          |       33 |        0 |    100% |           |
 | src/dinary/api/controllers/catalog.py                          |      136 |        0 |    100% |           |
@@ -75,7 +75,7 @@
 | src/dinary\_analytics/refresh.py                               |      100 |        2 |     98% |   50, 157 |
 | src/dinary\_analytics/settings.py                              |       49 |        1 |     98% |        56 |
 | src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        62 |
-| **TOTAL**                                                      | **5337** |  **649** | **88%** |           |
+| **TOTAL**                                                      | **5337** |  **650** | **88%** |           |
 
 
 ## Setup coverage badge
