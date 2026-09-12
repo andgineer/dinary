@@ -1,0 +1,4 @@
+2026-09-12 17:08:05,384 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-09-12 17:08:05,389 ERROR    llmbroker.broker — pool degraded, no failover left: 1 of 2 providers usable — no key for OPENROUTER_API_KEY
+2026-09-12 17:08:05,390 INFO     llmbroker.broker — api_key_ref 'OPENROUTER_API_KEY' not resolved — openrouter inactive until the env var / secret is set; this is normal, the pool routes over whatever keys are present
+2026-09-12 17:08:05,397 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)

@@ -1,0 +1,7 @@
+2026-09-12 17:08:45,867 ERROR    dinary.main — llm model-list sync failed — serving the stored registry
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/main.py", line 82, in _sync_llm_pool
+    await llms.sync()
+  File "/home/runner/work/dinary/dinary/tests/test_main.py", line 266, in sync
+    raise self._sync_error
+OSError: no route to host

@@ -1,0 +1,13 @@
+2026-09-12 17:08:17,655 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-09-12 17:08:17,666 ERROR    dinary.main — llm pool not provisioned — classification is disabled
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/main.py", line 86, in _sync_llm_pool
+    await llms.ensure_pool()
+  File "/home/runner/work/dinary/dinary/.venv/lib/python3.13/site-packages/llmbroker/broker/broker.py", line 323, in ensure_pool
+    self._catalog.check_not_empty()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/runner/work/dinary/dinary/.venv/lib/python3.13/site-packages/llmbroker/broker/catalog.py", line 240, in check_not_empty
+    raise EmptyRegistryError(_EMPTY_NOT_FILLED if self._autofill else _EMPTY_NO_AUTOFILL)
+llmbroker.exceptions.EmptyRegistryError: registry is empty and this installation fetches nothing on its own (sync_interval=None) — fill it from the deploy job that runs your migrations, with `await broker.sync()`
+2026-09-12 17:08:17,667 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-09-12 17:08:17,714 INFO     dinary.background.rate_prefetch.task — prefetched RSD/EUR rate for 2026-09-12: 0.008521

@@ -1,0 +1,1 @@
+2026-09-09 09:56:21,748 INFO     dinary.api.controllers.catalog_writer — catalog_writer add_group(reactivate name='retired'): bumped catalog_version

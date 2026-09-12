@@ -1,0 +1,71 @@
+INFO     yoyo.migrations:base.py:527 Applying 0001_initial_schema
+INFO     yoyo.migrations:migrations.py:402  - applying step 0
+INFO     yoyo.migrations:migrations.py:402  - applying step 1
+INFO     yoyo.migrations:migrations.py:402  - applying step 2
+INFO     yoyo.migrations:migrations.py:402  - applying step 3
+INFO     yoyo.migrations:migrations.py:402  - applying step 4
+INFO     yoyo.migrations:migrations.py:402  - applying step 5
+INFO     yoyo.migrations:migrations.py:402  - applying step 6
+INFO     yoyo.migrations:migrations.py:402  - applying step 7
+INFO     yoyo.migrations:migrations.py:402  - applying step 8
+INFO     yoyo.migrations:migrations.py:402  - applying step 9
+INFO     yoyo.migrations:migrations.py:402  - applying step 10
+INFO     yoyo.migrations:migrations.py:402  - applying step 11
+INFO     yoyo.migrations:migrations.py:402  - applying step 12
+INFO     yoyo.migrations:migrations.py:402  - applying step 13
+INFO     yoyo.migrations:migrations.py:402  - applying step 14
+INFO     yoyo.migrations:migrations.py:402  - applying step 15
+INFO     yoyo.migrations:migrations.py:402  - applying step 16
+INFO     yoyo.migrations:migrations.py:402  - applying step 17
+INFO     yoyo.migrations:migrations.py:402  - applying step 18
+INFO     yoyo.migrations:migrations.py:402  - applying step 19
+INFO     yoyo.migrations:migrations.py:402  - applying step 20
+INFO     yoyo.migrations:migrations.py:402  - applying step 21
+INFO     yoyo.migrations:migrations.py:402  - applying step 22
+INFO     yoyo.migrations:migrations.py:402  - applying step 23
+INFO     yoyo.migrations:migrations.py:402  - applying step 24
+INFO     yoyo.migrations:migrations.py:402  - applying step 25
+INFO     yoyo.migrations:migrations.py:402  - applying step 26
+INFO     yoyo.migrations:migrations.py:402  - applying step 27
+INFO     yoyo.migrations:migrations.py:402  - applying step 28
+INFO     yoyo.migrations:migrations.py:402  - applying step 29
+INFO     yoyo.migrations:migrations.py:402  - applying step 30
+INFO     yoyo.migrations:migrations.py:402  - applying step 31
+INFO     yoyo.migrations:migrations.py:402  - applying step 32
+INFO     yoyo.migrations:migrations.py:402  - applying step 33
+INFO     yoyo.migrations:migrations.py:402  - applying step 34
+INFO     yoyo.migrations:migrations.py:402  - applying step 35
+INFO     yoyo.migrations:base.py:557 Marking 0001_initial_schema applied
+INFO     yoyo.migrations:base.py:527 Applying 0002_llmbroker_1_3_0_upgrade
+INFO     yoyo.migrations:migrations.py:402  - applying step 0
+INFO     yoyo.migrations:migrations.py:402  - applying step 1
+INFO     yoyo.migrations:migrations.py:402  - applying step 2
+INFO     yoyo.migrations:migrations.py:402  - applying step 3
+INFO     yoyo.migrations:migrations.py:402  - applying step 4
+INFO     yoyo.migrations:migrations.py:402  - applying step 5
+INFO     yoyo.migrations:migrations.py:402  - applying step 6
+INFO     yoyo.migrations:migrations.py:402  - applying step 7
+INFO     yoyo.migrations:base.py:557 Marking 0002_llmbroker_1_3_0_upgrade applied
+INFO     yoyo.migrations:base.py:527 Applying 0003_llmbroker_1_9_0_upgrade
+INFO     yoyo.migrations:migrations.py:402  - applying step 0
+INFO     yoyo.migrations:migrations.py:402  - applying step 1
+INFO     yoyo.migrations:migrations.py:402  - applying step 2
+INFO     yoyo.migrations:migrations.py:402  - applying step 3
+INFO     yoyo.migrations:migrations.py:402  - applying step 4
+INFO     yoyo.migrations:migrations.py:402  - applying step 5
+INFO     yoyo.migrations:migrations.py:402  - applying step 6
+INFO     yoyo.migrations:base.py:557 Marking 0003_llmbroker_1_9_0_upgrade applied
+INFO     dinary.db.storage:storage.py:240 anchored accounting_currency=EUR in app_metadata
+ERROR    dinary.main:main.py:90 llm pool not provisioned — classification is disabled
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/main.py", line 86, in _sync_llm_pool
+    await llms.ensure_pool()
+  File "/home/runner/work/dinary/dinary/.venv/lib/python3.13/site-packages/llmbroker/broker/broker.py", line 323, in ensure_pool
+    self._catalog.check_not_empty()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/runner/work/dinary/dinary/.venv/lib/python3.13/site-packages/llmbroker/broker/catalog.py", line 240, in check_not_empty
+    raise EmptyRegistryError(_EMPTY_NOT_FILLED if self._autofill else _EMPTY_NO_AUTOFILL)
+llmbroker.exceptions.EmptyRegistryError: registry is empty and this installation fetches nothing on its own (sync_interval=None) — fill it from the deploy job that runs your migrations, with `await broker.sync()`
+INFO     dinary.background.sheet_logging.task:task.py:49 sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+INFO     dinary.api.controllers.catalog_writer:catalog_writer.py:82 catalog_writer add_tag(name='t1'): bumped catalog_version
+INFO     dinary.adapters.rates.nbs:nbs.py:41 Got rate from NBS
