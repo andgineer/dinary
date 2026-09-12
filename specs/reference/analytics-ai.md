@@ -72,13 +72,16 @@ DuckDB-WASM without rewrite.
 
 ## LLM strategy
 
-**Default — shared provider pool.** The Marimo dashboard chat uses the same
-OpenAI-compatible providers as the receipt pipeline, read from
-`.deploy/llms.toml` (path overridable via `DINARY_LLM_PROVIDERS_FILE`).
-Providers are tried in declaration order; a rate-limited (429/503) provider is
-skipped for the next. The request/response transport and tool-calling loop are
-shared with the server's LLM broker — analytics never calls the running server.
-The model receives the ledger schema and executes DuckDB queries via tool calls.
+**Default — the curated free pool, kept separate from the server's.** The Marimo
+dashboard chat runs its own zero-config broker: llmbroker keeps the model list and
+call journal in its own directory and resolves provider keys from the dashboard
+process's environment, which the launcher fills from the deploy env file. So
+analytics reads neither the server nor its database, and its broker state —
+cooldowns, quality, the user disable — is separate from the server's. Providers are
+tried by pool order; a rate-limited (429/503) one is skipped for the next. The
+request/response transport and tool-calling loop are shared with the server's LLM
+broker. The model receives the ledger schema and executes DuckDB queries via tool
+calls.
 
 **Power users — Claude Code / Claude Desktop via MCP.** User connects their Claude
 subscription to the `dinary-analytics` MCP server. Claude can answer arbitrary

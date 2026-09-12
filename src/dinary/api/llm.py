@@ -4,7 +4,6 @@ import llmbroker
 from fastapi import APIRouter, Request, Response
 
 from dinary.api.controllers.llm import llm_status, set_provider_disabled
-from dinary.config import settings
 
 router = APIRouter()
 
@@ -19,11 +18,7 @@ def _get_optimizer(request: Request) -> llmbroker.Optimizer:
 
 @router.get("/api/llm/status")
 async def get_llm_status(request: Request) -> dict:
-    return await llm_status(
-        _get_llms(request),
-        _get_optimizer(request),
-        settings.llm_providers_file,
-    )
+    return await llm_status(_get_llms(request), _get_optimizer(request))
 
 
 @router.post("/api/llm/providers/{provider_name}/disable", status_code=204)

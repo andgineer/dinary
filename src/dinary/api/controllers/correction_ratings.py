@@ -6,8 +6,6 @@ import sqlite3
 
 import llmbroker
 
-from dinary.background.classification.receipt_classifier import CLASSIFICATION_OPERATION
-
 logger = logging.getLogger(__name__)
 
 #: A model's classification rule corrected to one of its own proposed
@@ -22,15 +20,15 @@ def _rating_for_rule_row(
 ) -> tuple[str, float] | None:
     """Rate the model that created an llm-sourced rule now being corrected.
 
-    Returns ``(llm_name, score)`` when the rule is ``source='llm'`` with a known
-    model: partial credit if the corrected-to category was one of that model's
+    Returns ``(call_id, score)`` when the rule is ``source='llm'`` with a recorded
+    call: partial credit if the corrected-to category was one of that model's
     own proposed alternatives, else a full negative. Returns ``None`` for
-    user-sourced rules, rules with no recorded model, or a correction that just
+    user-sourced rules, rules with no recorded call, or a correction that just
     re-affirms the model's own primary category (a confirmation, not a miss) —
     those are never rated. Must be read before the write flips the rule to
     ``source='user_correction'`` (which is what dedups repeated corrections).
     """
-    if row is None or row["source"] != "llm" or not row["llm_name"]:
+    if row is None or row["source"] != "llm" or not row["llm_call_id"]:
         return None
     if corrected_to_category_id == row["category_id"]:
         return None
@@ -46,7 +44,7 @@ def _rating_for_rule_row(
     score = (
         _PARTIAL_CREDIT_SCORE if corrected_to_category_id in alternatives else _FULL_NEGATIVE_SCORE
     )
-    return str(row["llm_name"]), score
+    return str(row["llm_call_id"]), score
 
 
 def pending_rating_for_item(
@@ -57,7 +55,7 @@ def pending_rating_for_item(
 ) -> tuple[str, float] | None:
     row = con.execute(
         """
-        SELECT item_name_normalized, source, llm_name, category_id, alternative_category_ids
+        SELECT item_name_normalized, source, llm_call_id, category_id, alternative_category_ids
           FROM classification_rules
          WHERE (chain_id IS ? OR (chain_id IS NULL AND ? IS NULL))
            AND item_name_normalized = ?
@@ -74,7 +72,7 @@ def pending_rating_for_rule(
 ) -> tuple[str, float] | None:
     row = con.execute(
         """
-        SELECT item_name_normalized, source, llm_name, category_id, alternative_category_ids
+        SELECT item_name_normalized, source, llm_call_id, category_id, alternative_category_ids
           FROM classification_rules
          WHERE id = ?
         """,
@@ -93,12 +91,16 @@ async def record_correction_ratings(
     """
     if broker is None:
         return
-    for llm_name, score in pending_ratings:
+    for call_id, score in pending_ratings:
         try:
-            await broker.record_quality(llm_name, CLASSIFICATION_OPERATION, score)
+            await broker.record_quality(score, call_id=call_id)
+        except llmbroker.UnknownCallError:
+            # Routine: the rated call aged out of llmbroker's rating window, and a
+            # correction may arrive any time after the receipt was classified.
+            logger.info("no rateable call %s — correction stands unrated", call_id)
         except Exception:
             logger.exception(
-                "record_quality failed for llm_name=%s score=%s — continuing",
-                llm_name,
+                "record_quality failed for call_id=%s score=%s — continuing",
+                call_id,
                 score,
             )

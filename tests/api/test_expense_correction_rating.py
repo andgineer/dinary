@@ -13,6 +13,7 @@ import sqlite3
 import unittest.mock
 
 import allure
+import llmbroker
 import pytest
 
 from dinary.api.controllers.correction_ratings import (
@@ -91,26 +92,37 @@ def _seed_expense_with_item(
 class TestPendingRatingForCorrection:
     def test_alternative_gets_partial_credit(self, conn):
         create_or_update_rule(
-            conn, None, "cola", RuleSpec(1, 3, "llm", alternative_category_ids=(2, 3), llm_name="m")
+            conn,
+            None,
+            "cola",
+            RuleSpec(1, 3, "llm", alternative_category_ids=(2, 3), llm_call_id="call-m"),
         )
-        assert pending_rating_for_item(conn, None, "cola", 2) == ("m", 0.5)
+        assert pending_rating_for_item(conn, None, "cola", 2) == ("call-m", 0.5)
 
     def test_non_alternative_gets_full_negative(self, conn):
         create_or_update_rule(
-            conn, None, "cola", RuleSpec(1, 3, "llm", alternative_category_ids=(3,), llm_name="m")
+            conn,
+            None,
+            "cola",
+            RuleSpec(1, 3, "llm", alternative_category_ids=(3,), llm_call_id="call-m"),
         )
-        assert pending_rating_for_item(conn, None, "cola", 2) == ("m", 0.0)
+        assert pending_rating_for_item(conn, None, "cola", 2) == ("call-m", 0.0)
 
     def test_confirming_primary_category_not_rated(self, conn):
         create_or_update_rule(
-            conn, None, "cola", RuleSpec(1, 3, "llm", alternative_category_ids=(2, 3), llm_name="m")
+            conn,
+            None,
+            "cola",
+            RuleSpec(1, 3, "llm", alternative_category_ids=(2, 3), llm_call_id="call-m"),
         )
         # Correcting to category 1 == the rule's own primary pick is a confirmation,
         # not a miss, so the model must not be rated.
         assert pending_rating_for_item(conn, None, "cola", 1) is None
 
     def test_user_sourced_rule_not_rated(self, conn):
-        create_or_update_rule(conn, None, "cola", RuleSpec(1, 3, "user_correction", llm_name="m"))
+        create_or_update_rule(
+            conn, None, "cola", RuleSpec(1, 3, "user_correction", llm_call_id="call-m")
+        )
         assert pending_rating_for_item(conn, None, "cola", 2) is None
 
     def test_llm_rule_without_model_not_rated(self, conn):
@@ -129,39 +141,39 @@ class TestCorrectCategoryRatings:
             conn,
             name_norm="cola",
             category_id=1,
-            rule=RuleSpec(1, 3, "llm", alternative_category_ids=(3,), llm_name="groq"),
+            rule=RuleSpec(1, 3, "llm", alternative_category_ids=(3,), llm_call_id="call-groq"),
         )
         pending: list[tuple[str, float]] = []
         correct_category_sync(
             1, CategoryCorrectionRequest(category_id=2), conn, pending_ratings=pending
         )
-        assert pending == [("groq", 0.0)]
+        assert pending == [("call-groq", 0.0)]
 
     def test_correction_to_alternative_records_partial(self, conn):
         _seed_expense_with_item(
             conn,
             name_norm="cola",
             category_id=1,
-            rule=RuleSpec(1, 3, "llm", alternative_category_ids=(2,), llm_name="groq"),
+            rule=RuleSpec(1, 3, "llm", alternative_category_ids=(2,), llm_call_id="call-groq"),
         )
         pending: list[tuple[str, float]] = []
         correct_category_sync(
             1, CategoryCorrectionRequest(category_id=2), conn, pending_ratings=pending
         )
-        assert pending == [("groq", 0.5)]
+        assert pending == [("call-groq", 0.5)]
 
     def test_second_correction_records_nothing(self, conn):
         _seed_expense_with_item(
             conn,
             name_norm="cola",
             category_id=1,
-            rule=RuleSpec(1, 3, "llm", alternative_category_ids=(3,), llm_name="groq"),
+            rule=RuleSpec(1, 3, "llm", alternative_category_ids=(3,), llm_call_id="call-groq"),
         )
         first: list[tuple[str, float]] = []
         correct_category_sync(
             1, CategoryCorrectionRequest(category_id=2), conn, pending_ratings=first
         )
-        assert first == [("groq", 0.0)]
+        assert first == [("call-groq", 0.0)]
         # The rule is now source='user_correction'; a second correction rates nothing.
         second: list[tuple[str, float]] = []
         correct_category_sync(
@@ -190,7 +202,7 @@ class TestCorrectCategoryRatings:
             conn,
             name_norm="cola",
             category_id=1,
-            rule=RuleSpec(1, 3, "llm", alternative_category_ids=(3,), llm_name="groq"),
+            rule=RuleSpec(1, 3, "llm", alternative_category_ids=(3,), llm_call_id="call-groq"),
         )
         pending: list[tuple[str, float]] = []
         correct_category_sync(
@@ -215,7 +227,9 @@ class TestEditExpenseRatings:
             conn,
             name_norm="cola",
             category_id=1,
-            rule=RuleSpec(1, 3, "llm", alternative_category_ids=alternatives, llm_name="groq"),
+            rule=RuleSpec(
+                1, 3, "llm", alternative_category_ids=alternatives, llm_call_id="call-groq"
+            ),
         )
         rule_id = conn.execute("SELECT id FROM classification_rules").fetchone()[0]
         conn.execute("UPDATE expenses SET rule_id = ? WHERE id = 1", [rule_id])
@@ -229,7 +243,7 @@ class TestEditExpenseRatings:
             conn,
             pending_ratings=pending,
         )
-        assert pending == [("groq", 0.5)]
+        assert pending == [("call-groq", 0.5)]
 
     def test_edit_without_rule_update_records_nothing(self, conn):
         self._seed_expense_on_llm_rule(conn)
@@ -242,7 +256,7 @@ class TestEditExpenseRatings:
         )
         # update_rule=False routes through the plain correction path, which
         # upserts the rule itself and rates there.
-        assert pending == [("groq", 0.5)]
+        assert pending == [("call-groq", 0.5)]
 
 
 @allure.epic("Review & Rules")
@@ -258,16 +272,16 @@ class TestApproveRuleRatings:
             conn,
             None,
             "cola",
-            RuleSpec(1, 3, "llm", alternative_category_ids=alternatives, llm_name="groq"),
+            RuleSpec(1, 3, "llm", alternative_category_ids=alternatives, llm_call_id="call-groq"),
         )
 
     def test_alternative_gets_partial_credit(self, conn):
         rule_id = self._llm_rule(conn, alternatives=(2, 3))
-        assert pending_rating_for_rule(conn, rule_id, 2) == ("groq", 0.5)
+        assert pending_rating_for_rule(conn, rule_id, 2) == ("call-groq", 0.5)
 
     def test_non_alternative_gets_full_negative(self, conn):
         rule_id = self._llm_rule(conn)
-        assert pending_rating_for_rule(conn, rule_id, 2) == ("groq", 0.0)
+        assert pending_rating_for_rule(conn, rule_id, 2) == ("call-groq", 0.0)
 
     def test_confirming_primary_category_not_rated(self, conn):
         rule_id = self._llm_rule(conn)
@@ -280,20 +294,20 @@ class TestApproveRuleRatings:
         rule_id = self._llm_rule(conn, alternatives=(2,))
         pending: list[tuple[str, float]] = []
         approve_rule_category(rule_id, 2, conn, pending)
-        assert pending == [("groq", 0.5)]
+        assert pending == [("call-groq", 0.5)]
 
     def test_second_approve_records_nothing(self, conn):
         rule_id = self._llm_rule(conn)
         first: list[tuple[str, float]] = []
         approve_rule_category(rule_id, 2, conn, first)
-        assert first == [("groq", 0.0)]
+        assert first == [("call-groq", 0.0)]
         second: list[tuple[str, float]] = []
         approve_rule_category(rule_id, 3, conn, second)
         assert second == []
 
     def test_user_sourced_rule_records_nothing(self, conn):
         rule_id = create_or_update_rule(
-            conn, None, "cola", RuleSpec(1, 4, "user_correction", llm_name="groq")
+            conn, None, "cola", RuleSpec(1, 4, "user_correction", llm_call_id="call-groq")
         )
         pending: list[tuple[str, float]] = []
         approve_rule_category(rule_id, 2, conn, pending)
@@ -307,22 +321,31 @@ class TestRecordCorrectionRatings:
         calls: list[tuple] = []
 
         class _Broker:
-            async def record_quality(self, name, operation, score):
-                calls.append((name, operation, score))
+            async def record_quality(self, score, *, call_id=None, trace_id=None):  # noqa: ARG002
+                calls.append((call_id, score))
 
-        asyncio.run(record_correction_ratings(_Broker(), [("groq", 0.0), ("openrouter", 0.5)]))
-        assert calls == [
-            ("groq", "receipt_classification", 0.0),
-            ("openrouter", "receipt_classification", 0.5),
-        ]
+        asyncio.run(
+            record_correction_ratings(_Broker(), [("call-groq", 0.0), ("call-openrouter", 0.5)]),
+        )
+        assert calls == [("call-groq", 0.0), ("call-openrouter", 0.5)]
 
     def test_none_broker_is_noop(self):
-        asyncio.run(record_correction_ratings(None, [("groq", 0.0)]))
+        asyncio.run(record_correction_ratings(None, [("call-groq", 0.0)]))
 
     def test_rating_failure_swallowed(self):
         class _Broker:
-            async def record_quality(self, name, operation, score):
+            async def record_quality(self, score, *, call_id=None, trace_id=None):
                 raise RuntimeError("telemetry down")
 
         # Must not raise.
-        asyncio.run(record_correction_ratings(_Broker(), [("groq", 0.0)]))
+        asyncio.run(record_correction_ratings(_Broker(), [("call-groq", 0.0)]))
+
+    def test_call_outside_rating_window_is_not_an_error(self):
+        """A correction may arrive long after the call it rates aged out of
+        llmbroker's journal; the correction still stands."""
+
+        class _Broker:
+            async def record_quality(self, score, *, call_id=None, trace_id=None):
+                raise llmbroker.UnknownCallError("too old")
+
+        asyncio.run(record_correction_ratings(_Broker(), [("call-groq", 0.0)]))

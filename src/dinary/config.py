@@ -6,6 +6,7 @@ import sys
 import warnings
 from pathlib import Path
 
+from dotenv import dotenv_values
 from pydantic import computed_field
 from pydantic_settings import BaseSettings
 
@@ -61,21 +62,38 @@ _DEPRECATED_ENV_REMOVED: dict[str, str] = {
     "DINARY_SHEET_IMPORT_SOURCES_JSON": (
         "the bulk-import pipeline has been removed; this env var is no longer used."
     ),
+    "DINARY_LLM_PROVIDERS_FILE": (
+        "the provider list is no longer a file this installation maintains; it is "
+        "llmbroker's curated model list, merged into the database on startup. See "
+        "DINARY_LLM_SYNC_SOURCE and DINARY_LLM_SYNC_INTERVAL_SEC."
+    ),
 }
+
+
+def _configured(name: str) -> str | None:
+    """Where an operator may have set a variable. The env file is read explicitly
+    because pydantic-settings consumes it without exporting anything, so a setting
+    made the documented way is invisible to ``os.getenv``."""
+    from_env = os.getenv(name)
+    if from_env:
+        return from_env
+    if not _ENV_FILE.exists():
+        return None
+    return dotenv_values(_ENV_FILE).get(name)
 
 
 def _warn_deprecated_env_vars() -> None:
     """Settings uses ``extra="ignore"``, so stale keys would otherwise be
     silently ignored after a rename — warn loudly instead."""
     for old_name, new_name in _DEPRECATED_ENV_RENAMES.items():
-        if os.getenv(old_name):
+        if _configured(old_name):
             warnings.warn(
                 f"{old_name} is deprecated and ignored; rename it to {new_name}.",
                 UserWarning,
                 stacklevel=2,
             )
     for old_name, reason in _DEPRECATED_ENV_REMOVED.items():
-        if os.getenv(old_name):
+        if _configured(old_name):
             warnings.warn(
                 f"{old_name} is no longer supported and is ignored: {reason}",
                 UserWarning,
@@ -129,9 +147,13 @@ class Settings(BaseSettings):
 
     receipt_classification_enabled: bool = True
 
-    # Single source of truth for the LLM provider list, mirrored into the broker
-    # on startup. Regenerate with `llmbroker preset freetier > .deploy/llms.toml`.
-    llm_providers_file: Path = _DEPLOY_DIR / "llms.toml"
+    # Curated llmbroker model list this installation follows, or None to follow
+    # none and serve whatever the registry already holds.
+    llm_sync_source: str | None = "freetier"
+
+    # None makes the process open no outbound connection of its own: it stops both
+    # llmbroker's refresh clock and dinary's own startup merge.
+    llm_sync_interval_sec: float | None = 86400.0
 
     # Expense datetimes are stored in this zone; cross-DST ORDER BY comparisons
     # may be off by 1 hour, accepted as a rare edge case.

@@ -1,25 +1,27 @@
 """LLM chat turn for the analytics dashboard.
 
-Uses the standalone ``llmbroker`` package for OpenAI-compatible completion with
-provider failover. Providers come from ``.deploy/llms.toml`` — the same
-static config the server seeds from — so analytics never calls the running
-dinary server. Tool calling drives the draft view (propose_view, query_ledger, …).
+Uses the standalone ``llmbroker`` package in its zero-config form: llmbroker keeps
+the model list and journal in its own directory and resolves provider keys from
+this process's environment, so analytics touches neither the server nor its
+database.
+Tool calling drives the draft view (propose_view, query_ledger, …).
 """
 
+import contextlib
 import inspect
 import os
 import re
-import tomllib
 import typing
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import llmbroker
+from llmbroker.standalone.secrets import parse_env_file
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_PROVIDERS_FILE = _REPO_ROOT / ".deploy" / "llms.toml"
-
-_NO_PROVIDERS_MESSAGE = "**No LLM providers configured.** Add them to `.deploy/llms.toml`."
+_NO_PROVIDERS_MESSAGE = (
+    "**No LLM providers configured.** Add a provider key to `.deploy/.env`"
+    " — `llmbroker env freetier` prints the ones the pool uses."
+)
 
 _JSON_TYPES: dict[type, str] = {
     str: "string",
@@ -29,19 +31,33 @@ _JSON_TYPES: dict[type, str] = {
 }
 
 
-def _providers_path() -> Path:
-    override = os.getenv("DINARY_LLM_PROVIDERS_FILE")
-    return Path(override) if override else _DEFAULT_PROVIDERS_FILE
+def key_refs() -> list[str]:
+    """The env-var names the curated pool wants, in declaration order. Read from the
+    copy of the list already on this machine, never the network."""
+    return list(llmbroker.curated_pool().keys)
+
+
+def _filled(value: str | None) -> bool:
+    """``llmbroker env`` writes bare ``KEY=`` lines, and llmbroker itself counts a
+    blank one as absent — so must this, or the chat calls with no key at all."""
+    return bool(value and value.strip())
 
 
 def providers_available() -> bool:
-    """Return True if at least one LLM is configured in the providers file."""
-    path = _providers_path()
-    if not path.exists():
-        return False
-    with path.open("rb") as fh:
-        data = tomllib.load(fh)
-    return bool(data.get("llms"))
+    """Return True if at least one pool provider's key is resolvable here.
+
+    Both sources a zero-config ``Broker`` reads, in its order: the environment,
+    then a ``.env`` beside the working directory. This gate does not merely warn —
+    ``run_chat_turn`` refuses to call on a False — so missing the second source
+    would disable a chat that would have worked.
+    """
+    refs = key_refs()
+    if any(_filled(os.getenv(ref)) for ref in refs):
+        return True
+    values: dict[str, str] = {}
+    with contextlib.suppress(OSError):
+        values = parse_env_file(Path(".env").read_text(encoding="utf-8"))
+    return any(_filled(values.get(ref)) for ref in refs)
 
 
 # Functions defined inside Marimo cells get a `_cell_<id>_` prefix on __name__.
@@ -103,7 +119,7 @@ def run_chat_turn(
     """
     if not providers_available():
         return _NO_PROVIDERS_MESSAGE
-    with llmbroker.Broker(registry=llmbroker.Registry(_providers_path())) as llms:
+    with llmbroker.Broker() as llms:
         schemas = [_tool_schema(fn) for fn in tools]
         dispatch = {tool_name(fn): fn for fn in tools}
 
@@ -115,18 +131,20 @@ def run_chat_turn(
         messages.append({"role": "user", "content": user_text})
 
         try:
-            reply = llmbroker.run_tool_loop(
+            result = llmbroker.run_tool_loop(
                 llms,
                 messages,
                 tools=schemas,
                 dispatch=dispatch,
                 operation="analytics_chat",
             )
+        except llmbroker.ToolLoopLimitError:
+            return "**The model kept calling tools without answering.** Rephrase and retry."
         except llmbroker.NoLLMAvailableError:
             return "**All providers are busy right now.** Press 🔁 Retry in a moment."
         except llmbroker.LLMRequestError:
-            return "**AI providers unavailable.** Check `.deploy/llms.toml`."
+            return "**AI providers unavailable.** Check the provider keys in `.deploy/.env`."
         except Exception as exc:  # noqa: BLE001 - surfaced to the user, not swallowed
             return f"**AI error:** {str(exc)[:300]}"
 
-        return reply or "*(view updated — see the draft below)*"
+        return result.text or "*(view updated — see the draft below)*"

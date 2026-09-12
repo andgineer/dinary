@@ -36,7 +36,7 @@ class RateMissingError(Exception):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class PersistenceOptions:
-    llm_name: str | None = None
+    llm_call_id: str | None = None
     journal_correction_category_id: int | None = None
 
 
@@ -52,7 +52,7 @@ class _ReceiptContext:
     store_id: int | None
     chain_id: int | None
     receipt_id: int
-    llm_name: str | None
+    llm_call_id: str | None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -104,7 +104,7 @@ def _write_single_item(
                     "llm",
                     alternative_category_ids=tuple(llm_r.alternative_category_ids if llm_r else []),
                     tag_ids=tuple(tag_ids_for_item),
-                    llm_name=ctx.llm_name,
+                    llm_call_id=ctx.llm_call_id,
                 ),
             )
 
@@ -265,7 +265,7 @@ def persist_classification_results(
             store_id=store_id,
             chain_id=chain_id,
             receipt_id=job.receipt_id,
-            llm_name=options.llm_name,
+            llm_call_id=options.llm_call_id,
         )
         with transaction(conn):
             if conn.execute(

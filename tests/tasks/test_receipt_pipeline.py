@@ -88,7 +88,7 @@ def _make_classify_outcome(
     else:
         execution = MagicMock()
         execution.text = "ok"
-        execution.llm_name = "test-model"
+        execution.call_id = "call-test-model"
         execution.record_quality = AsyncMock()
     execution_failed = not broker_unavailable and any(r.category_id is None for r in results)
     return ClassifyOutcome(

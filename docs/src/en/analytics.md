@@ -28,6 +28,6 @@ Alongside the chat, four visual summaries give you the big picture at a glance:
 
 ## Setup
 
-The chat requires a Gemini API key configured as a provider in `.deploy/llm_providers.toml`. Without it, the charts still work — only the chat shows a warning.
+The chat requires at least one LLM provider key in `.deploy/.env` — the same keys the receipt pipeline uses. Without one, the charts still work — only the chat shows a warning.
 
 The **year comparison**, **tag**, and **tag year** selectors remember your last choice across restarts. The **event** selector always opens on the most recent completed event.

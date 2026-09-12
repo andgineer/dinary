@@ -56,6 +56,11 @@ DINARY_SERVICE = (
     "[Service]\nType=simple\nUser=ubuntu\n"
     "WorkingDirectory=/home/ubuntu/dinary\n"
     "EnvironmentFile=/home/ubuntu/dinary/.deploy/.env\n"
+    # ProtectHome=read-only puts llmbroker's default cache dir out of reach, leaving
+    # the PrivateTmp dir that every restart wipes. The startup merge fetches either
+    # way, so what a durable home buys is the fallback copy to serve from when that
+    # fetch fails, and sync stamps that outlive a restart.
+    "Environment=LLMBROKER_HOME=/home/ubuntu/dinary/data/llmbroker\n"
     + _DINARY_EXEC_START_PRE_TAILSCALE
     + "\n"
     + _DINARY_EXEC

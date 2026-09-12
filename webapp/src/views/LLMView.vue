@@ -39,7 +39,7 @@ onBeforeUnmount(() => {
 
     <div class="pool-header">
       <span class="pool-label">PROVIDER POOL</span>
-      <span class="pool-hint">from .deploy/llms.toml</span>
+      <span class="pool-hint">curated free-tier pool</span>
       <IconBtn
         icon="refresh"
         tone="muted"
@@ -64,7 +64,7 @@ onBeforeUnmount(() => {
       v-if="!llmStore.loading && llmStore.providers.length === 0"
       class="empty-state"
     >
-      No providers configured — add them to <code>.deploy/llms.toml</code>.
+      No providers configured — the model list has not been synced yet.
     </div>
   </div>
 </template>

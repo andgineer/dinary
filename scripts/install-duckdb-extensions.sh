@@ -22,7 +22,7 @@ timeout_cmd=()
 command -v timeout >/dev/null 2>&1 && timeout_cmd=(timeout 120)
 
 for attempt in 1 2 3; do
-  if "${timeout_cmd[@]}" "$python_cmd" -c \
+  if ${timeout_cmd[@]+"${timeout_cmd[@]}"} "$python_cmd" -c \
     "import duckdb; con = duckdb.connect(':memory:'); con.execute('INSTALL sqlite'); con.execute('LOAD sqlite')"; then
     echo "install-duckdb-extensions: sqlite extension ready"
     exit 0

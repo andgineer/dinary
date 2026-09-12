@@ -473,9 +473,9 @@ async def _run_llm_pass(
     categories: dict[int, str],
     tags: dict[int, str],
 ) -> tuple[dict[int, ClassificationResult], str | None]:
-    """Call LLM for queued items; return (results keyed by item_id, model name).
+    """Call LLM for queued items; return (results keyed by item_id, call id).
 
-    The model name is the provider that produced the accepted reply, threaded on
+    The call id names the broker call that produced the accepted reply, threaded on
     to the rules so a later correction can rate it; ``None`` when no LLM pass ran.
 
     Raises ConnectionError when the broker is completely unavailable so the
@@ -510,11 +510,11 @@ async def _run_llm_pass(
                         "record_quality(1.0) raised for receipt_id=%s — continuing",
                         job.receipt_id,
                     )
-            llm_name = outcome.execution.llm_name if outcome.execution is not None else None
+            call_id = outcome.execution.call_id if outcome.execution is not None else None
             return {
                 item_id: result
                 for (item_id, _), result in zip(llm_queue, outcome.results, strict=True)
-            }, llm_name
+            }, call_id
         if outcome.execution is not None:
             try:
                 await outcome.execution.record_quality(0.0)
@@ -603,7 +603,7 @@ async def _classify_and_persist(
         )[0]
 
     try:
-        llm_results, llm_name = await _run_llm_pass(broker, job, llm_queue, categories, tags)
+        llm_results, call_id = await _run_llm_pass(broker, job, llm_queue, categories, tags)
     except ClassificationExhaustedError:
         top_cats = await asyncio.to_thread(_load_top_fallback_categories, _FALLBACK_CATEGORY_COUNT)
         primary_cat = top_cats[0]
@@ -616,7 +616,7 @@ async def _classify_and_persist(
             )
             for item_id, norm in llm_queue
         }
-        llm_name = None
+        call_id = None
 
     classifications = _compute_classifications(classification_items, rule_hits, llm_results)
 
@@ -629,5 +629,5 @@ async def _classify_and_persist(
         llm_results,
         (store_id, chain_id),
         norms,
-        PersistenceOptions(llm_name, journal_correction_category_id),
+        PersistenceOptions(call_id, journal_correction_category_id),
     )

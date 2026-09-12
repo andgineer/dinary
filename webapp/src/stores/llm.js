@@ -41,8 +41,8 @@ export const useLlmStore = defineStore("llm", () => {
     }
   }
 
-  // The provider list is owned by the preset file; the only mutation the UI
-  // offers is the persistent user disable/enable latch.
+  // The provider list is owned by llmbroker's curated model list; the only
+  // mutation the UI offers is the persistent user disable/enable latch.
   async function toggleDisabled(name) {
     const idx = providers.value.findIndex((p) => p.name === name);
     if (idx === -1) return;

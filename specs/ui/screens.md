@@ -322,7 +322,7 @@ Reads still render from cache. Writes are blocked with an info toast. Refresh is
 ## LLM view
 
 Read-only provider dashboard plus a per-provider disable toggle. The provider list is
-owned by the preset file (`.deploy/llms.toml`) and cannot be added to, edited, or
+owned by llmbroker's curated free-tier list and cannot be added to, edited, or
 deleted from the UI. Backend API: `/api/llm/status` for the dashboard;
 `/api/llm/providers/{name}/disable` and `.../enable` for the toggle.
 
@@ -334,7 +334,7 @@ deleted from the UI. Backend API: `/api/llm/status` for the dashboard;
 │  [12 ready][3 processing][1 sleeping]│
 │  [2 failed]                          │
 │                                      │
-│  PROVIDER POOL   from llms.toml   ⟳  │
+│  PROVIDER POOL   curated pool     ⟳  │
 │  ┌────────────────────────────────┐  │
 │  │ ● groq-llama        available  │  │ ProviderCard: status badge
 │  │   llama-3.3-70b-versatile      │  │
@@ -374,7 +374,9 @@ Each chip is a thin outlined pill. The strip is informational — no actions.
 - **Usage line** — call count plus the last call status.
 - **Quality line** — a demoted pill when the model is demoted for receipt classification,
   and a numeric quality indicator when ratings exist (otherwise "no ratings yet").
-- **Key hint** — no-key providers show the onboarding hint from the preset.
+- **Key hint** — no-key providers show the onboarding hint for that key when
+  llmbroker supplies one. It supplies none for a database-backed registry, so
+  the server's screen currently renders the no-key state without a hint.
 - **Toggle** — a single disable/enable button in the action row. There is no add, edit,
   delete, reorder, or test control.
 

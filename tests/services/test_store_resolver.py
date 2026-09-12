@@ -37,8 +37,14 @@ def conn(tmp_path, monkeypatch):
     c.close()
 
 
+class _EmptyRegistry:
+    async def load(self) -> list[llmbroker.LLMConfig]:
+        return []
+
+
 def _broker() -> llmbroker.AsyncBroker:
-    return llmbroker.AsyncBroker(registry=llmbroker.Registry("/nonexistent.toml"))
+    """Empty pool, no clocks: every test here patches the LLM call out."""
+    return llmbroker.AsyncBroker(registry=_EmptyRegistry(), sync=None, sync_interval=None)
 
 
 @allure.epic("Receipts")

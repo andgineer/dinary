@@ -56,7 +56,7 @@ def _broker() -> llmbroker.AsyncBroker:
 def _make_classify_outcome(results: list[ClassificationResult]) -> ClassifyOutcome:
     execution = MagicMock()
     execution.text = "ok"
-    execution.llm_name = "test-model"
+    execution.call_id = "call-test-model"
     execution.record_quality = AsyncMock()
     return ClassifyOutcome(
         results=results,

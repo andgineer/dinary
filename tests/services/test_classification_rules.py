@@ -182,27 +182,27 @@ class TestCreateOrUpdateRule:
         assert json.loads(row[0]) == [2]
         assert json.loads(row[1]) == [10]
 
-    def test_insert_persists_llm_name(self, conn):
-        create_or_update_rule(conn, 1, "mango", RuleSpec(1, 3, "llm", llm_name="groq-llama"))
+    def test_insert_persists_llm_call_id(self, conn):
+        create_or_update_rule(conn, 1, "mango", RuleSpec(1, 3, "llm", llm_call_id="call-1"))
         row = conn.execute(
-            "SELECT llm_name FROM classification_rules WHERE item_name_normalized = 'mango'",
+            "SELECT llm_call_id FROM classification_rules WHERE item_name_normalized = 'mango'",
         ).fetchone()
         assert row is not None
-        assert row[0] == "groq-llama"
+        assert row[0] == "call-1"
 
-    def test_llm_name_defaults_null(self, conn):
+    def test_llm_call_id_defaults_null(self, conn):
         create_or_update_rule(conn, 1, "limun", RuleSpec(1, 3, "user_correction"))
         row = conn.execute(
-            "SELECT llm_name FROM classification_rules WHERE item_name_normalized = 'limun'",
+            "SELECT llm_call_id FROM classification_rules WHERE item_name_normalized = 'limun'",
         ).fetchone()
         assert row is not None
         assert row[0] is None
 
-    def test_update_overwrites_llm_name(self, conn):
-        create_or_update_rule(conn, 1, "breskva", RuleSpec(1, 3, "llm", llm_name="groq-llama"))
+    def test_update_overwrites_llm_call_id(self, conn):
+        create_or_update_rule(conn, 1, "breskva", RuleSpec(1, 3, "llm", llm_call_id="call-1"))
         create_or_update_rule(conn, 1, "breskva", RuleSpec(2, 4, "user_correction"))
         row = conn.execute(
-            "SELECT llm_name FROM classification_rules WHERE item_name_normalized = 'breskva'",
+            "SELECT llm_call_id FROM classification_rules WHERE item_name_normalized = 'breskva'",
         ).fetchone()
         assert row is not None
         assert row[0] is None

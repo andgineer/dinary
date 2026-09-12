@@ -1,37 +1,26 @@
 # LLM Provider Strategy
 
-The provider list is defined solely in the preset file and mirrored into the broker on
-startup — see [llmbroker-integration.md](llmbroker-integration.md). This document covers
-which providers to pick and why.
+The provider pool is llmbroker's curated free-tier list, merged into the broker's
+registry on startup — see [llmbroker-integration.md](llmbroker-integration.md). This
+document covers what dinary relies on that pool for.
 
 ## Provider identity
 
-Each provider's name (from the preset file) is its stable identifier: telemetry, quality
-history, and the user-disable latch all key on it. Renaming a provider in the preset
-orphans its history, so treat the name as fixed once a provider is in use. The name is
-also what the admin screen shows, so keep it short and human-readable
-(e.g. `groq-llama-3.3-70b`).
+Each provider's name is its stable identifier: telemetry, quality history, and the
+user-disable latch all key on it. A provider renamed upstream orphans its history and
+starts over as a new entry. The name is also what the admin screen shows.
 
 ## Provider pool rationale
 
-Provider selection (validated against real Serbian fiscal receipts):
+Which endpoints are worth pooling is llmbroker's curation, not dinary's: the list is
+multi-provider and free-tier only, one model per provider, and it changes without a
+dinary release. What dinary requires of it is a pool wide enough that a single
+provider's rate limit never stops classification — the failover below is the whole
+reason a pool exists rather than one configured model.
 
-- **Groq / llama-3.3-70b-versatile** — primary. Best classification quality and
-  speed. Correctly handles non-food items (clothing) and Serbian vocabulary without
-  any Serbian-specific fine-tuning.
-- **OpenRouter / gpt-oss-120b:free** — first fallback. Good quality; occasional
-  conservative confidence on ambiguous items is acceptable.
-- **OpenRouter / nemotron-3-super-120b-a12b:free** — second fallback. Similar
-  quality to above. Same API key as the first fallback, so shares a rate limit
-  bucket — they do not provide independent throughput.
-- **Google Gemini / gemini-2.5-flash** — third fallback. Equivalent classification
-  quality to Groq but capped at 20 RPM and intermittently returns 503 under load.
-  Lower priority for these reasons; provides genuine independence from the
-  OpenRouter bucket.
-
-The two OpenRouter entries use the same API key. If both hit 429 simultaneously,
-Gemini provides the only real fallback — that's why it stays in the pool despite
-its limitations.
+A key is needed per provider, and the pool routes over whichever keys are present:
+a provider with no key stays inactive rather than failing anything. Keys and how to
+obtain them are in [llmbroker-integration.md](llmbroker-integration.md).
 
 ## Failover strategy
 
@@ -46,7 +35,7 @@ llmbroker keeps a rolling quality window per provider for the receipt-classifica
 operation, fed by the ratings described in
 [llmbroker-integration.md](llmbroker-integration.md): accepted replies count positive,
 malformed replies count negative, and user corrections feed a delayed verdict on the
-model that created the corrected rule. When a model's window drops far enough it is
+call that created the corrected rule. When a model's window drops far enough it is
 demoted for that operation (deprioritised in routing); positive ratings let it recover.
 The admin screen surfaces both the demotion flag and a numeric quality indicator so
 operators can spot unreliable providers without digging through server logs.

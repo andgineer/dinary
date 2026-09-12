@@ -172,20 +172,20 @@ class TestApproveRuleRatesModel:
     unit-tested elsewhere, what matters here is that the route is wired to it.
     """
 
-    def _seed_llm_rule(self, con, *, llm_name="groq", alternatives="[2]"):
+    def _seed_llm_rule(self, con, *, call_id="call-groq", alternatives="[2]"):
         _seed(con)
         con.execute(
-            "UPDATE classification_rules SET llm_name = ?, alternative_category_ids = ?"
+            "UPDATE classification_rules SET llm_call_id = ?, alternative_category_ids = ?"
             " WHERE id = 10",
-            [llm_name, alternatives],
+            [call_id, alternatives],
         )
 
     def test_rating_reaches_the_broker(self, client, db):  # noqa: ARG002
         calls: list[tuple] = []
 
         class _Broker:
-            async def record_quality(self, name, operation, score):
-                calls.append((name, operation, score))
+            async def record_quality(self, score, *, call_id=None, trace_id=None):  # noqa: ARG002
+                calls.append((call_id, score))
 
         con = storage.get_connection()
         try:
@@ -197,14 +197,14 @@ class TestApproveRuleRatesModel:
         resp = client.patch("/api/rules/10/category", json={"category_id": 2})
 
         assert resp.status_code == 200
-        assert calls == [("groq", "receipt_classification", 0.5)]
+        assert calls == [("call-groq", 0.5)]
 
     def test_rule_without_model_rates_nothing(self, client, db):  # noqa: ARG002
         calls: list[tuple] = []
 
         class _Broker:
-            async def record_quality(self, name, operation, score):
-                calls.append((name, operation, score))
+            async def record_quality(self, score, *, call_id=None, trace_id=None):  # noqa: ARG002
+                calls.append((call_id, score))
 
         con = storage.get_connection()
         try:
@@ -220,7 +220,7 @@ class TestApproveRuleRatesModel:
 
     def test_broker_failure_does_not_fail_the_correction(self, client, db):  # noqa: ARG002
         class _Broker:
-            async def record_quality(self, name, operation, score):
+            async def record_quality(self, score, *, call_id=None, trace_id=None):
                 raise RuntimeError("telemetry down")
 
         con = storage.get_connection()

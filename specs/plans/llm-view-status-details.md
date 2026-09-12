@@ -18,13 +18,11 @@ plan is no longer frontend-only — it touches the controller and needs Python t
 Independent of the two `pwa-analytics-*` plans — no shared files (they touch
 `src/dinary/api/analytics.py`, this one `src/dinary/api/controllers/llm.py`).
 
-**Blocked by an llmbroker release.** §2 consumes a windowed journal aggregate that llmbroker does
-not expose yet — planned there as `specs/plans/journal-stats-window.md`, shipping together with
+**Unblocked.** §2 consumes a windowed journal aggregate, and llmbroker 1.9.0 — the version dinary
+now pins — exposes it as `broker.stats(since=…)`, returning `LLMStats` per model, together with
 the typed exceptions of `andgineer/llmbroker#11`. The alternative (reading the raw journal tail
-with `broker.calls(limit=…)` and folding it here) means reimplementing llmbroker's record model
-inside dinary: dropping `kind == "quality"` rows, knowing their `status` is `None`, and living
-with a window bounded by the row limit as well as by time. That is the host knowing too much about
-the library's journal, so this plan waits for the upstream API instead.
+with `broker.calls(limit=…)` and folding it here) would mean reimplementing llmbroker's record
+model inside dinary, so §2 uses the aggregate.
 
 ### Why the counter goes
 
@@ -46,18 +44,18 @@ What replaces it answers the one question the screen cannot answer today: a prov
 and its failures surface only in the moment it is cooling — i.e. while the user is already
 waiting on a receipt.
 
-## 1. Remove the preset-path hint from the pool header
+## 1. Remove the pool-source hint from the pool header
 
-- `webapp/src/views/LLMView.vue:42` — delete `<span class="pool-hint">from .deploy/llms.toml</span>`
+- `webapp/src/views/LLMView.vue:42` — delete `<span class="pool-hint">curated free-tier pool</span>`
   and the `.pool-hint` CSS rule (`LLMView.vue:95-101`) with it.
 - No other CSS change: `.pool-header` is `justify-content: space-between`, so the remaining two
   children (label, refresh `IconBtn`) still sit left/right. The `margin-right: auto` that did
   that job lived on `.pool-hint` and goes with it.
-- Keep the path in the empty state (`LLMView.vue:67`) — the one state where it is actionable: the
-  pool is empty and the operator has to fill the preset file.
+- Keep the empty state's wording (`LLMView.vue:67`) — the one state where the pool's
+  source is actionable.
 
-Rationale: `.deploy/` is gitignored and lives on the server, so the path is unreachable from the
-PWA, and the pool's read-only nature is already conveyed by the absence of an add button.
+Rationale: the header hint names a source the user cannot act on, and the pool's read-only nature
+is already conveyed by the absence of an add button.
 
 ## 2. Backend: failure ratio over a recent window
 
@@ -72,8 +70,9 @@ into each provider dict.
 - Window: 7 days, i.e. `since = now - 7d`. Journal retention is 90 days upstream, so the window is
   always fully covered. Which records count and how the window is bounded are llmbroker's
   concern — dinary passes `since` and reads the per-status counts.
-- Failure = any status other than `CallStatus.OK` (`RATE_LIMITED`, `UNAVAILABLE`, `ERROR`). The
-  library deliberately does not decide this; the sum is taken here.
+- Failure = `RATE_LIMITED`, `UNAVAILABLE` or `ERROR`. `SUPERSEDED` is neutral upstream — a
+  sibling answered first — so it counts as neither a call nor a failure. The library deliberately
+  does not decide this; the sum is taken here.
   **429 counts as a failure on purpose**: for the user the effect is identical — that call
   returned nothing and the request spilled to the next model. That quota exhaustion is "normal"
   for a free tier is exactly what the number should make visible, not hide.
@@ -148,7 +147,7 @@ takes their place, driven by the §2 fields:
 
 - **Which provider is next in the failover order** — the most valuable missing signal, but
   `llmbroker.Optimizer` exposes no routing-order accessor (`wilson_bound`, `is_demoted`,
-  `load_scores` only). Deriving it from preset order + status would duplicate broker logic and
+  `load_scores` only). Deriving it from registry order + status would duplicate broker logic and
   drift. Needs an upstream llmbroker addition.
 - **Median latency** (`latency_ms` is in the journal): it shapes expectations after a scan but
   changes no decision on this screen.
@@ -157,19 +156,19 @@ takes their place, driven by the §2 fields:
 - `base_url` stays unrendered.
 - `snapshot().metrics` keeps its documented cached-tail semantics upstream — dinary simply stops
   reading it. Nothing here asks llmbroker to change that field.
-- Narrowing `except RuntimeError` in `llm_status` / `set_provider_disabled` to
-  `EmptyRegistryError` (`andgineer/llmbroker#11`). It rides the same dependency bump and touches
-  the same file, so do it in this batch if the types are already released — but it is not part of
-  this plan's deliverable and needs no UI change.
+- The empty-pool catch in `llm_status` / `set_provider_disabled`. Settled with the 1.9.0 bump:
+  it stays a `RuntimeError` catch, because llmbroker raises a bare one for a closed broker and
+  derives every `LLMBrokerError` from it — with `SchemaVersionError` re-raised ahead of it.
 
 ## 6. Tests
 
 Python (`tests/api/test_admin_llm.py`) — the existing fixtures run the real broker against the
 test DB, so seed the journal through the public `llmbroker.sqlite.Store` (`record(Call(…))`),
 never with raw SQL against `llmbroker_*`. New class `TestProviderReliability`:
-- `recent_calls` / `recent_failures` count only `kind == "call"` rows — a `kind == "quality"`
-  record in the same window moves neither;
+- `recent_calls` / `recent_failures` come from `LLMStats.total` and `by_status`, so a rating
+  recorded in the same window moves neither;
 - rows older than the window are excluded, rows inside it are counted;
+- a `SUPERSEDED` row in the window is counted as neither;
 - every non-`OK` status counts as a failure, `RATE_LIMITED` included;
 - a provider with no rows returns `recent_calls == 0` and `recent_failures == 0`;
 - `recent_window_days` is present and matches the window used for filtering;
@@ -188,15 +187,15 @@ Frontend (`webapp/tests/`):
   `last_status` and the pinned `last_at` (`2026-05-10T11:30:00+00:00`) go, the three `recent_*`
   fields arrive.
 - **new `component-llm-view.test.js`** — `webapp/tests/` has no `LLMView` test today, so this is a
-  file from scratch (mount + stubbed `llm` store): the header no longer contains `.pool-hint` or
-  the text `.deploy/llms.toml` while the empty state still does; and, on fake timers, a provider
+  file from scratch (mount + stubbed `llm` store): the header no longer contains `.pool-hint`
+  while the empty state still names where the pool comes from; and, on fake timers, a provider
   whose `cooldown_until` has passed triggers a refetch on the next tick even with `dirtyFlag`
   clear (the §3 carve-out).
 
 ## 7. Specs
 
 - `specs/ui/screens.md`, `## LLM view`:
-  - drop `from llms.toml` from the mockup header (`:337`);
+  - drop `curated pool` from the mockup header (`:337`);
   - in `### ProviderCard rules`, state that a cooling provider shows how long the cooldown still
     has to run, and that the usage line reports how many of the provider's recent calls failed
     over a fixed window — with "no calls in the window" shown as its own state, distinct from
@@ -218,8 +217,6 @@ Frontend (`webapp/tests/`):
 
 ## Work order and done gate
 
-0. Bump the llmbroker dependency to the release carrying the windowed aggregate — §2 does not
-   exist without it.
 1. Backend window aggregate (§2) + Python tests — the frontend has nothing to render without it.
 2. Drop the pool hint (§1).
 3. `useNow.js`, `ProviderCard` cooldown + reliability line, `LLMView` tick fix (§3, §4).

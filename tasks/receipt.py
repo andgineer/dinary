@@ -1,7 +1,6 @@
 """Receipt tasks: classify-receipt experiment and reclassify-receipts operator tool."""
 
 import asyncio
-from pathlib import Path
 
 import llmbroker
 from invoke import task
@@ -14,16 +13,14 @@ from dinary.background.classification.receipt_classifier import (
 )
 from dinary.db.catalog import list_visible_categories
 from dinary.db.receipts import requeue_receipts
-from dinary.db.storage import get_connection
-
-_PROVIDERS_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llms.toml"
+from dinary.db.storage import DB_PATH, get_connection
 
 
 @task(name="classify-receipt", iterable=["url"])
 def classify_receipt(c, url):  # noqa: ARG001
     """Classify items from one or more Serbian fiscal receipt URLs using a real LLM.
 
-    Providers are read from .deploy/llms.toml.
+    Providers are the pool already synced into the server database.
 
     Example:
         inv classify-receipt --url https://suf.purs.gov.rs/v/?vl=...
@@ -33,7 +30,7 @@ def classify_receipt(c, url):  # noqa: ARG001
         print("Usage: inv classify-receipt --url URL [--url URL2 ...]")
         return
 
-    llms = llmbroker.AsyncBroker(registry=llmbroker.Registry(_PROVIDERS_TOML))
+    llms = llmbroker.AsyncBroker(f"sqlite://{DB_PATH}", sync_interval=None)
 
     con = get_connection()
     try:

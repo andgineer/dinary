@@ -33,6 +33,8 @@ from dinary.background.sheet_logging.task import sheet_logging_task, warm_sheet_
 from dinary.config import settings
 from dinary.db import category_seed, storage
 
+logger = logging.getLogger(__name__)
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _STATIC_DIR = _PROJECT_ROOT / "_static"
 
@@ -64,26 +66,48 @@ def _setup_logging() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+async def _sync_llm_pool(llms: llmbroker.AsyncBroker) -> None:
+    """Merge the curated model list into the DB registry and provision the pool.
+
+    Neither half may stop the server: a deployment with no keys, no network and an
+    empty registry still has to serve everything that is not classification.
+    """
+    # An explicit sync() is never gated by llmbroker's own refresh clock, so the
+    # interval has to gate it here — otherwise an installation configured to open
+    # no connection of its own still fetches on every restart.
+    follows_a_list = settings.llm_sync_source is not None
+    may_fetch = settings.llm_sync_interval_sec is not None
+    if follows_a_list and may_fetch:
+        try:
+            await llms.sync()
+        except Exception:
+            logger.exception("llm model-list sync failed — serving the stored registry")
+    try:
+        await llms.ensure_pool()
+    except Exception:
+        # Not just the empty registry llmbroker names: provisioning reads the
+        # secrets and registry tables, so a locked database reaches here too.
+        logger.exception("llm pool not provisioned — classification is disabled")
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     storage.init_db()
     with storage.connection() as con:
         category_seed.bootstrap_categories(con)
+    # Before the broker: the model-list merge seeds a key the database cannot yet
+    # resolve from its env var, and a key already stored stays authoritative.
     load_dotenv(_PROJECT_ROOT / ".deploy" / ".env", override=False)
     opt = llmbroker.Optimizer()
-    llms = llmbroker.AsyncBroker(f"sqlite://{storage.DB_PATH}", optimize=opt)
+    llms = llmbroker.AsyncBroker(
+        f"sqlite://{storage.DB_PATH}",
+        optimize=opt,
+        sync=settings.llm_sync_source,
+        sync_interval=settings.llm_sync_interval_sec,
+    )
     _app.state.llms = llms
     _app.state.llm_optimizer = opt
-    # Total mirror (add/update/delete) of the preset file into the DB-backed
-    # provider registry — the startup analogue of db_migrations.migrate_db().
-    # load_dotenv above must precede it so any secret not yet in the DB seeds
-    # from the env vars; a key already present in the DB stays authoritative.
-    await llms.sync(settings.llm_providers_file)
-    # Provisioning an empty registry raises; a deployment with no providers yet
-    # (or a fresh install before .deploy/llms.toml is filled) must still start.
-    preset = settings.llm_providers_file
-    if preset.exists() and await llmbroker.Registry(preset).load():
-        await llms.ensure_pool()
+    await _sync_llm_pool(llms)
     await warm_sheet_mapping()
     sheet_logging_bg = asyncio.create_task(sheet_logging_task(), name="sheet-logging-task")
     rate_prefetch_bg = asyncio.create_task(rate_prefetch_task(), name="rate-prefetch-task")

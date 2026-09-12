@@ -500,6 +500,25 @@ class TestDinaryServiceBindHost:
         assert "ExecStartPre=" in unit
         assert "tailscale ip -4" in unit
 
+    def test_llmbroker_home_is_writable_and_survives_a_restart(self):
+        """ProtectHome=read-only blocks llmbroker's default cache dir, so without an
+        explicit home the preset cache lands in the PrivateTmp dir systemd wipes on
+        every restart, leaving nothing to fall back on when a boot fetch fails."""
+        unit = tasks.devtools.constants.DINARY_SERVICE.format(
+            host=tasks.devtools.env.bind_host("tailscale")
+        )
+        home = next(
+            line.split("=", 2)[2]
+            for line in unit.splitlines()
+            if line.startswith("Environment=LLMBROKER_HOME=")
+        )
+        writable = next(
+            line.removeprefix("ReadWritePaths=")
+            for line in unit.splitlines()
+            if line.startswith("ReadWritePaths=")
+        )
+        assert home.startswith(writable + "/")
+
     def test_litestream_unit_has_no_tailscale_readiness_gate(self):
         """The app unit needs one, the replicator does not — it retries the replica
         connection itself. Copying the guard over costs up to 30s of boot delay and

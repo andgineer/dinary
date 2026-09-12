@@ -979,7 +979,7 @@ def _(
 def _(LEDGER_SCHEMA, category_order, mo, providers_available):
     if not providers_available():
         ai_status = mo.callout(
-            mo.md("**No LLM providers configured** in `.deploy/llm_providers.toml`."),
+            mo.md("**No LLM providers configured** — add a provider key to `.deploy/.env`."),
             kind="warn",
         )
     else:

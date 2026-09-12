@@ -1,13 +1,15 @@
 """Tests for the lifespan periodic drain loop in dinary.main."""
 
 import asyncio
+import sqlite3
 from unittest.mock import Mock, patch
 
 import allure
+import llmbroker
 import pytest
 
 from dinary.config import settings
-from dinary.main import _lifespan, create_app
+from dinary.main import _lifespan, _sync_llm_pool, create_app
 from dinary.db import category_seed, storage
 from dinary.background.sheet_logging import sheet_logging
 from dinary import __version__
@@ -247,3 +249,111 @@ def test_notify_new_work_without_registered_channel_is_noop():
     """Calling `notify_new_work` outside a lifespan must not raise."""
     sheet_logging.clear_wake_channel()
     sheet_logging.notify_new_work()
+
+
+class _FakeBroker:
+    """Records what the startup merge asked of the broker."""
+
+    def __init__(self, *, sync_error=None, pool_error=None) -> None:
+        self._sync_error = sync_error
+        self._pool_error = pool_error
+        self.synced = 0
+        self.provisioned = 0
+
+    async def sync(self, source=None):  # noqa: ARG002
+        self.synced += 1
+        if self._sync_error is not None:
+            raise self._sync_error
+
+    async def ensure_pool(self) -> None:
+        self.provisioned += 1
+        if self._pool_error is not None:
+            raise self._pool_error
+
+
+@allure.epic("Infrastructure")
+@allure.feature("App startup")
+@allure.story("LLM model-list merge")
+def test_sync_llm_pool_merges_then_provisions(monkeypatch):
+    monkeypatch.setattr(settings, "llm_sync_source", "freetier")
+    monkeypatch.setattr(settings, "llm_sync_interval_sec", 86400.0)
+    broker = _FakeBroker()
+
+    _run(_sync_llm_pool(broker))
+
+    assert (broker.synced, broker.provisioned) == (1, 1)
+
+
+@allure.epic("Infrastructure")
+@allure.feature("App startup")
+@allure.story("LLM model-list merge")
+def test_sync_llm_pool_skips_the_merge_when_following_nothing(monkeypatch):
+    # The interval stays on, or this would pass on the other gate alone.
+    monkeypatch.setattr(settings, "llm_sync_source", None)
+    monkeypatch.setattr(settings, "llm_sync_interval_sec", 86400.0)
+    broker = _FakeBroker()
+
+    _run(_sync_llm_pool(broker))
+
+    assert broker.synced == 0
+    assert broker.provisioned == 1
+
+
+@allure.epic("Infrastructure")
+@allure.feature("App startup")
+@allure.story("LLM model-list merge")
+def test_sync_llm_pool_opens_no_connection_when_the_interval_is_off(monkeypatch):
+    """llmbroker never gates an explicit sync() on its own refresh clock, so an
+    installation configured to fetch nothing would still fetch on every restart
+    unless the startup merge honours the interval too."""
+    monkeypatch.setattr(settings, "llm_sync_source", "freetier")
+    monkeypatch.setattr(settings, "llm_sync_interval_sec", None)
+    broker = _FakeBroker()
+
+    _run(_sync_llm_pool(broker))
+
+    assert broker.synced == 0
+    assert broker.provisioned == 1
+
+
+@allure.epic("Infrastructure")
+@allure.feature("App startup")
+@allure.story("LLM model-list merge")
+def test_sync_llm_pool_survives_an_unreachable_model_list(monkeypatch):
+    """A server with no network still has to serve everything but classification."""
+    monkeypatch.setattr(settings, "llm_sync_source", "freetier")
+    monkeypatch.setattr(settings, "llm_sync_interval_sec", 86400.0)
+    broker = _FakeBroker(sync_error=OSError("no route to host"))
+
+    _run(_sync_llm_pool(broker))
+
+    assert broker.provisioned == 1
+
+
+@allure.epic("Infrastructure")
+@allure.feature("App startup")
+@allure.story("LLM model-list merge")
+def test_sync_llm_pool_survives_a_locked_database(monkeypatch):
+    """Provisioning reads the broker's own registry and secrets tables, so a busy
+    database reaches here as a plain sqlite error rather than anything llmbroker
+    names. The server still has to come up."""
+    monkeypatch.setattr(settings, "llm_sync_source", None)
+    broker = _FakeBroker(pool_error=sqlite3.OperationalError("database is locked"))
+
+    _run(_sync_llm_pool(broker))
+
+    assert broker.provisioned == 1
+
+
+@allure.epic("Infrastructure")
+@allure.feature("App startup")
+@allure.story("LLM model-list merge")
+def test_sync_llm_pool_survives_an_empty_registry(monkeypatch):
+    """A deployment with no providers yet must still start."""
+    monkeypatch.setattr(settings, "llm_sync_source", "freetier")
+    monkeypatch.setattr(settings, "llm_sync_interval_sec", 86400.0)
+    broker = _FakeBroker(pool_error=llmbroker.EmptyRegistryError("nothing synced"))
+
+    _run(_sync_llm_pool(broker))
+
+    assert broker.provisioned == 1

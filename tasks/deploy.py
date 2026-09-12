@@ -17,24 +17,18 @@ from tasks.ssh_utils import (
     ssh_run,
     ssh_sudo,
     sync_remote_env,
-    sync_remote_file,
 )
-
-_DEPLOY_FILES = [
-    (".deploy/llms.toml", f"{REMOTE_DEPLOY_DIR}/llms.toml"),
-]
 
 _LEGACY_REMOTE_FILES = [
     f"{REMOTE_DEPLOY_DIR}/llm_providers.toml",
+    f"{REMOTE_DEPLOY_DIR}/llms.toml",
 ]
 
 
 def sync_remote_deploy_files(c) -> None:
-    """Sync .deploy/ config and secrets files to the server."""
+    """Drop deploy files the server no longer reads."""
     for path in _LEGACY_REMOTE_FILES:
         ssh_run(c, f"rm -f {path}")
-    for local, remote in _DEPLOY_FILES:
-        sync_remote_file(c, local, remote)
 
 
 @task
@@ -126,17 +120,18 @@ def deploy(c, ref="", no_start=False):
         return
 
     ssh_sudo(c, "systemctl restart dinary")
-    print("=== Restarted. Waiting for /api/health (up to 30s) ... ===")
-    # A fixed sleep raced cold-start costs (migrations, Drive prefetch) and
-    # falsely failed deploys that were about to come up cleanly.
+    print("=== Restarted. Waiting for /api/health (up to 60s) ... ===")
+    # A fixed sleep raced cold-start costs (migrations, Drive prefetch, and the
+    # LLM model-list merge, which can spend two 10s fetch timeouts on a bad
+    # network) and falsely failed deploys that were about to come up cleanly.
     health_check = (
-        "for i in $(seq 1 30); do "
+        "for i in $(seq 1 60); do "
         "  if out=$(curl -fsS http://localhost:8000/api/health 2>&1); then "
         '    echo "$out"; exit 0; '
         "  fi; "
         "  sleep 1; "
         "done; "
-        'echo "health-check failed after 30s; last error: $out" >&2; '
+        'echo "health-check failed after 60s; last error: $out" >&2; '
         "exit 1"
     )
     ssh_run(c, health_check)

@@ -2,36 +2,44 @@
 
 import allure
 import llmbroker
+import pytest
 
 import dinary_analytics.llm as llm_module
 from dinary_analytics.llm import (
     _tool_schema,
+    key_refs,
     run_chat_turn,
     tool_name,
 )
 
-_TOML = """
-[[llms]]
-name = "groq"
-base_url = "https://api.groq.com/openai/v1"
-model = "llama-3.3-70b-versatile"
-api_key_ref = "GROQ_API_KEY"
 
-[[llms]]
-name = "openrouter"
-base_url = "https://openrouter.ai/api/v1"
-model = "openai/gpt-oss-120b:free"
-api_key_ref = "OPENROUTER_API_KEY"
-"""
+class _Reply:
+    def __init__(self, text: str) -> None:
+        self.text = text
 
 
-def _write_providers(tmp_path, monkeypatch, body=_TOML):
-    path = tmp_path / "llms.toml"
-    path.write_text(body)
-    monkeypatch.setenv("DINARY_LLM_PROVIDERS_FILE", str(path))
-    monkeypatch.setenv("GROQ_API_KEY", "k1")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "k2")
-    return path
+class _StubBroker:
+    """A zero-config ``Broker`` fetches the curated model list over the network on
+    first use and caches it in llmbroker's own directory — the operator's real one.
+    These tests stub the tool loop, so the broker only has to be a context manager."""
+
+    def __enter__(self) -> "_StubBroker":
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _no_real_broker(monkeypatch):
+    monkeypatch.setattr(llm_module.llmbroker, "Broker", lambda *_a, **_k: _StubBroker())
+
+
+def _with_key(monkeypatch):
+    """One pool provider keyed; the rest stay keyless, as on a real machine."""
+    for ref in key_refs():
+        monkeypatch.delenv(ref, raising=False)
+    monkeypatch.setenv(key_refs()[0], "k1")
 
 
 @allure.epic("Analytics")
@@ -74,20 +82,51 @@ def test_tool_schema_types_and_required():
 @allure.epic("Analytics")
 @allure.feature("Chat")
 def test_run_chat_turn_no_providers(tmp_path, monkeypatch):
-    monkeypatch.setenv("DINARY_LLM_PROVIDERS_FILE", str(tmp_path / "nope.toml"))
+    for ref in key_refs():
+        monkeypatch.delenv(ref, raising=False)
+    monkeypatch.chdir(tmp_path)
     reply = run_chat_turn("system", [], [], "hi")
     assert "No LLM providers" in reply
 
 
 @allure.epic("Analytics")
 @allure.feature("Chat")
-def test_run_chat_turn_returns_reply(tmp_path, monkeypatch, real_ensure_pool):  # noqa: ARG001
-    _write_providers(tmp_path, monkeypatch)
+def test_providers_available_also_sees_a_dotenv_beside_the_cwd(tmp_path, monkeypatch):
+    """The gate refuses the call outright, so missing a source the broker does read
+    would disable a chat that works."""
+    for ref in key_refs():
+        monkeypatch.delenv(ref, raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert llm_module.providers_available() is False
+
+    (tmp_path / ".env").write_text(f"{key_refs()[0]}=from-file\n")
+    assert llm_module.providers_available() is True
+
+
+@allure.epic("Analytics")
+@allure.feature("Chat")
+def test_providers_available_ignores_a_blank_key(tmp_path, monkeypatch):
+    """`llmbroker env freetier` writes bare `KEY=` lines; an unfilled one is not a key."""
+    for ref in key_refs():
+        monkeypatch.delenv(ref, raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(f"{key_refs()[0]}=\n")
+    assert llm_module.providers_available() is False
+
+    # llmbroker strips before deciding, so whitespace is absent to it too.
+    (tmp_path / ".env").write_text(f'{key_refs()[0]}="   "\n')
+    assert llm_module.providers_available() is False
+
+
+@allure.epic("Analytics")
+@allure.feature("Chat")
+def test_run_chat_turn_returns_reply(monkeypatch):
+    _with_key(monkeypatch)
     captured = {}
 
     def _fake_loop(llms, messages, *, tools, dispatch, operation):
         captured["messages"] = messages
-        return "the answer"
+        return _Reply("the answer")
 
     monkeypatch.setattr(llm_module.llmbroker, "run_tool_loop", _fake_loop)
     reply = run_chat_turn("system", [], [{"role": "model", "content": "earlier"}], "now")
@@ -100,8 +139,8 @@ def test_run_chat_turn_returns_reply(tmp_path, monkeypatch, real_ensure_pool):  
 
 @allure.epic("Analytics")
 @allure.feature("Chat")
-def test_run_chat_turn_rate_limited(tmp_path, monkeypatch, real_ensure_pool):  # noqa: ARG001
-    _write_providers(tmp_path, monkeypatch)
+def test_run_chat_turn_rate_limited(monkeypatch):
+    _with_key(monkeypatch)
 
     def _raise(*_a, **_k):
         raise llmbroker.NoLLMAvailableError("no providers", reason="rate_limited")
@@ -113,8 +152,8 @@ def test_run_chat_turn_rate_limited(tmp_path, monkeypatch, real_ensure_pool):  #
 
 @allure.epic("Analytics")
 @allure.feature("Chat")
-def test_run_chat_turn_all_failed(tmp_path, monkeypatch, real_ensure_pool):  # noqa: ARG001
-    _write_providers(tmp_path, monkeypatch)
+def test_run_chat_turn_all_failed(monkeypatch):
+    _with_key(monkeypatch)
 
     def _raise(*_a, **_k):
         raise llmbroker.LLMRequestError("all providers failed")
@@ -126,8 +165,30 @@ def test_run_chat_turn_all_failed(tmp_path, monkeypatch, real_ensure_pool):  # n
 
 @allure.epic("Analytics")
 @allure.feature("Chat")
-def test_run_chat_turn_empty_reply_falls_back(tmp_path, monkeypatch, real_ensure_pool):  # noqa: ARG001
-    _write_providers(tmp_path, monkeypatch)
-    monkeypatch.setattr(llm_module.llmbroker, "run_tool_loop", lambda *_a, **_k: "")
+def test_run_chat_turn_empty_reply_falls_back(monkeypatch):
+    _with_key(monkeypatch)
+    monkeypatch.setattr(llm_module.llmbroker, "run_tool_loop", lambda *_a, **_k: _Reply(""))
     reply = run_chat_turn("system", [], [], "now")
     assert "view updated" in reply
+
+
+@allure.epic("Analytics")
+@allure.feature("Chat")
+def test_run_chat_turn_tool_loop_exhausted(monkeypatch):
+    _with_key(monkeypatch)
+
+    def _raise(*_a, **_k):
+        raise llmbroker.ToolLoopLimitError("8 steps")
+
+    monkeypatch.setattr(llm_module.llmbroker, "run_tool_loop", _raise)
+    reply = run_chat_turn("system", [], [], "now")
+    assert "without answering" in reply
+
+
+@allure.epic("Analytics")
+@allure.feature("Chat")
+def test_key_refs_come_from_the_curated_pool():
+    """The launcher exports keys by these exact names, so they have to be the ones
+    the broker will look for — read from the copy on this machine, never the network."""
+    assert key_refs() == list(llmbroker.curated_pool().keys)
+    assert key_refs()

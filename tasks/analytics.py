@@ -1,17 +1,14 @@
-import asyncio
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-import llmbroker
 from dotenv import dotenv_values
 from invoke import task
 
+from dinary_analytics.llm import key_refs
 from dinary_analytics.paths import MCP_PORT
 from tasks.devtools.constants import LOCAL_ENV_PATH
-
-_LLM_TOML = Path(__file__).resolve().parents[1] / ".deploy" / "llms.toml"
 
 _NOTEBOOKS_DIR = Path("src/dinary_analytics/notebooks")
 _DEFAULT_MARIMO_PORT = 2718
@@ -38,30 +35,23 @@ def _ensure_dinary_ai(c) -> None:
 
 
 def _llm_api_keys() -> dict[str, str]:
-    """Resolve every provider's ``api_key_ref`` from ``.deploy/.env``, keyed by ref.
+    """Resolve every pool provider's ``api_key_ref`` from ``.deploy/.env``, keyed by ref.
 
-    The analytics broker inside the marimo process resolves keys from its
-    environment by the exact ref name in ``llms.toml``, so the values must be
-    exported under those names unchanged. Providers whose ref is missing from
-    the env file are reported and skipped — the broker treats them as keyless.
+    The analytics broker inside the marimo process resolves keys from its own
+    environment by those exact ref names, so the values must be exported under them
+    unchanged. The values come from the env *file*, not the process environment.
+    Refs missing from the file are reported and skipped — the broker treats those
+    providers as keyless and routes over the rest.
     """
-    if not _LLM_TOML.exists():
-        raise SystemExit(f".deploy/llms.toml not found at {_LLM_TOML} — cannot resolve LLM keys")
-    configs = asyncio.run(llmbroker.Registry(_LLM_TOML).load())
     env = dotenv_values(LOCAL_ENV_PATH)
     keys: dict[str, str] = {}
     missing: list[str] = []
-    seen: set[str] = set()
-    for cfg in configs:
-        ref = cfg.api_key_ref
-        if ref in seen:
-            continue
-        seen.add(ref)
+    for ref in key_refs():
         value = env.get(ref)
         if value:
             keys[ref] = value
         else:
-            missing.append(f"{cfg.name} ({ref})")
+            missing.append(ref)
     if missing:
         print(f"Warning: no key in {LOCAL_ENV_PATH} for: {', '.join(missing)}")
     return keys

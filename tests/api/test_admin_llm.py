@@ -1,8 +1,8 @@
 """LLM admin API tests — read-only status plus the user disable/enable latch.
 
-Providers are owned by the preset file and mirrored into the broker on startup;
-there is no add/edit/delete path. Tests seed a temp preset via
-``settings.llm_providers_file`` and let the real lifespan ``sync`` mirror it.
+Providers are owned by llmbroker's curated model list, merged into the DB registry
+on startup; there is no add/edit/delete path. Tests write the registry directly and
+start the app with the model-list sync switched off, so nothing reaches the network.
 """
 
 import asyncio
@@ -13,31 +13,46 @@ import allure
 import llmbroker
 import pytest
 from fastapi.testclient import TestClient
+from llmbroker.sqlite import Registry, Secrets
 
 from dinary.adapters.rates import helpers
-from dinary.config import settings
 from dinary.db import category_seed, db_migrations, storage
 from dinary.main import create_app
 
 from _api_helpers import db  # noqa: F401
 
-_TWO_PROVIDERS = """
-[[llms]]
-name        = "groq-llama"
-base_url    = "https://api.groq.com/openai/v1"
-model       = "llama-3.3-70b"
-api_key_ref = "GROQ_API_KEY"
+_TWO_PROVIDERS = [
+    llmbroker.LLMConfig(
+        name="groq-llama",
+        base_url="https://api.groq.com/openai/v1",
+        model="llama-3.3-70b",
+        api_key_ref="GROQ_API_KEY",
+    ),
+    llmbroker.LLMConfig(
+        name="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        model="gpt-oss-120b",
+        api_key_ref="OPENROUTER_API_KEY",
+    ),
+]
 
-[[llms]]
-name        = "openrouter"
-base_url    = "https://openrouter.ai/api/v1"
-model       = "gpt-oss-120b"
-api_key_ref = "OPENROUTER_API_KEY"
 
-[keys]
-GROQ_API_KEY       = "Create a free key at console.groq.com/keys."
-OPENROUTER_API_KEY = "Create a free key at openrouter.ai/keys."
-"""
+def _seed_registry(configs, keys=()):
+    """Write the pool the app will serve. Outside a sync there is no key bootstrap,
+    so a provider that must resolve one gets it stored here."""
+
+    async def _run() -> None:
+        registry = Registry(storage.DB_PATH)
+        secrets = Secrets(storage.DB_PATH)
+        try:
+            await registry.mirror(configs)
+            for ref, value in keys:
+                await secrets.set(ref, value)
+        finally:
+            await registry.aclose()
+            await secrets.aclose()
+
+    asyncio.run(_run())
 
 
 @contextlib.contextmanager
@@ -55,31 +70,26 @@ def _build_client():
 
 
 @pytest.fixture
-def seed_providers(tmp_path, monkeypatch):
-    """Write a two-provider preset and point the app at it before it starts.
+def seed_providers(db, monkeypatch):  # noqa: ARG001
+    """Put two providers in the registry before the app starts.
 
-    Only GROQ_API_KEY is present in the environment, so ``groq-llama`` resolves a
-    key (status available) while ``openrouter`` does not (status no_key).
+    Only GROQ_API_KEY is stored, so ``groq-llama`` resolves a key (status
+    available) while ``openrouter`` does not (status no_key).
     """
-    path = tmp_path / "llms.toml"
-    path.write_text(_TWO_PROVIDERS)
-    monkeypatch.setattr(settings, "llm_providers_file", path)
-    monkeypatch.setenv("GROQ_API_KEY", "real-key")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    return path
+    _seed_registry(_TWO_PROVIDERS, keys=[("GROQ_API_KEY", "real-key")])
 
 
 @pytest.fixture
 def client(db):  # noqa: ARG001
-    """Empty pool: the default preset path does not exist, so ``sync`` mirrors nothing."""
+    """Empty pool: nothing was mirrored into the registry and no sync fills it."""
     with _build_client() as c:
         yield c
 
 
 @pytest.fixture
-def seeded_client(seed_providers, db):  # noqa: ARG001
-    """Two-provider pool: ``seed_providers`` sets the preset path before the app builds,
-    so the lifespan ``sync`` mirrors it into the broker."""
+def seeded_client(seed_providers):  # noqa: ARG001
+    """Two-provider pool, seeded into the registry before the app builds."""
     with _build_client() as c:
         yield c
 
@@ -100,6 +110,33 @@ class TestLLMStatus:
     def test_status_lists_synced_providers(self, seeded_client):
         providers = seeded_client.get("/api/llm/status").json()["providers"]
         assert {p["name"] for p in providers} == {"groq-llama", "openrouter"}
+
+    def test_schema_mismatch_is_not_reported_as_an_empty_pool(self, client):
+        """A database left at another release's store schema is a deployment fault.
+        Answering 200 with "no providers" would send the operator to the one screen
+        that cannot fix it."""
+
+        class _Mismatched:
+            async def snapshot(self):
+                raise llmbroker.SchemaVersionError("stale", found=5, expected=7)
+
+        client.app.state.llms = _Mismatched()
+
+        assert client.get("/api/llm/status").status_code == 500
+
+    def test_closed_broker_still_reports_an_empty_pool(self, client):
+        """A status read racing lifespan shutdown gets a bare RuntimeError from
+        llmbroker; the screen reports an empty pool rather than failing."""
+
+        class _Closed:
+            async def snapshot(self):
+                raise RuntimeError("the broker is closed")
+
+        client.app.state.llms = _Closed()
+
+        resp = client.get("/api/llm/status")
+        assert resp.status_code == 200
+        assert resp.json()["providers"] == []
 
     def test_no_provider_crud_routes(self, client):
         # The add/edit/delete surface is gone entirely.
@@ -139,7 +176,7 @@ class TestLLMStatus:
         assert p["status"] == "available"
         assert p["help"] is None
 
-    def test_no_key_status_and_onboarding_hint(self, seeded_client):
+    def test_no_key_status_without_an_onboarding_hint(self, seeded_client):
         p = next(
             x
             for x in seeded_client.get("/api/llm/status").json()["providers"]
@@ -147,7 +184,10 @@ class TestLLMStatus:
         )
         assert p["has_key"] is False
         assert p["status"] == "no_key"
-        assert "openrouter" in p["help"].lower()
+        # The hint is whatever llmbroker reports for that ref and nothing else.
+        # A database-backed registry carries no key metadata, so it is absent —
+        # never an empty string, which the UI would render as a blank hint.
+        assert p["help"] is None
 
     def test_disabled_status_precedes_no_key(self, seeded_client):
         seeded_client.post("/api/llm/providers/openrouter/disable")
@@ -206,19 +246,25 @@ class TestLLMDisableEnable:
 @allure.epic("Receipts")
 @allure.feature("Admin")
 class TestDisableSurvivesRebuild:
-    def test_latch_persists_across_broker_rebuild(self, db, tmp_path):  # noqa: ARG002
+    def test_latch_persists_across_broker_rebuild(self, db):  # noqa: ARG002
         """The user disable is stored by llmbroker and survives a fresh broker."""
-        preset = tmp_path / "llms.toml"
-        preset.write_text(_TWO_PROVIDERS)
+        _seed_registry(_TWO_PROVIDERS)
         source = f"sqlite://{storage.DB_PATH}"
 
+        def _broker() -> llmbroker.AsyncBroker:
+            return llmbroker.AsyncBroker(
+                source,
+                optimize=llmbroker.Optimizer(),
+                sync=None,
+                sync_interval=None,
+            )
+
         async def _run() -> None:
-            broker = llmbroker.AsyncBroker(source, optimize=llmbroker.Optimizer())
-            await broker.sync(preset)
+            broker = _broker()
             await broker.disable_llm("groq-llama")
             await broker.aclose()
 
-            rebuilt = llmbroker.AsyncBroker(source, optimize=llmbroker.Optimizer())
+            rebuilt = _broker()
             snap = await rebuilt.snapshot()
             assert snap["groq-llama"].disabled is True
             assert snap["openrouter"].disabled is False

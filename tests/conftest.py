@@ -63,12 +63,21 @@ def _reset_db_connection():
 
 
 @pytest.fixture(autouse=True)
-def _empty_llm_provider_preset(monkeypatch, tmp_path):
-    """Tests assert on broker state starting from an empty pool; point the preset
-    at a non-existent file so the lifespan ``sync`` mirrors nothing and the
-    operator's real ``.deploy/llms.toml`` never interferes. Tests that need a
-    populated pool override ``settings.llm_providers_file`` themselves."""
-    monkeypatch.setattr(settings, "llm_providers_file", tmp_path / "no-llms.toml")
+def _isolated_llmbroker_home(monkeypatch, tmp_path):
+    """llmbroker keeps its preset cache and sync stamps in a per-user directory.
+    Reading the curated list creates it and prefers whatever is cached there, so
+    without this the operator's own cache decides what the tests see."""
+    monkeypatch.setenv("LLMBROKER_HOME", str(tmp_path / "llmbroker-home"))
+
+
+@pytest.fixture(autouse=True)
+def _no_llm_model_list_sync(monkeypatch):
+    """Tests assert on broker state starting from an empty pool, and no test may
+    reach the network. Following no curated list and stopping every llmbroker clock
+    leaves the pool exactly as the test seeded the registry. Tests that need a
+    populated pool mirror configs into the DB registry themselves."""
+    monkeypatch.setattr(settings, "llm_sync_source", None)
+    monkeypatch.setattr(settings, "llm_sync_interval_sec", None)
 
 
 @pytest.fixture(autouse=True)
@@ -101,16 +110,6 @@ def _stub_sheet_mapping_ensure_fresh(monkeypatch):
     the ~0.3-0.7s round-trip is swallowed by a broad except, invisible without
     ``--durations``. Tests exercising it directly patch ``drive_get_modified_time``."""
     monkeypatch.setattr(sheet_mapping, "ensure_fresh", lambda: None)
-
-
-@pytest.fixture
-def real_ensure_pool():
-    """No-op retained for tests that provision a real pool from their own preset.
-
-    ``ensure_pool`` is no longer stubbed globally (the empty pool now comes from an
-    absent preset file), so nothing needs to be restored — the fixture only marks
-    intent at the call site."""
-    return
 
 
 @pytest.fixture
