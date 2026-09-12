@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_3e0ff682768d668c_currencies_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-09 09:58 +0000
+            created at 2026-09-12 17:10 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -114,7 +114,7 @@
     <p class="pln"><span class="n"><a id="t32" href="#t32">32</a></span><span class="t">    <span class="nam">source</span><span class="op">:</span> <span class="nam">str</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t33" href="#t33">33</a></span><span class="t">    <span class="nam">alternative_category_ids</span><span class="op">:</span> <span class="nam">tuple</span><span class="op">[</span><span class="nam">int</span><span class="op">,</span> <span class="op">...</span><span class="op">]</span> <span class="op">=</span> <span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t34" href="#t34">34</a></span><span class="t">    <span class="nam">tag_ids</span><span class="op">:</span> <span class="nam">tuple</span><span class="op">[</span><span class="nam">int</span><span class="op">,</span> <span class="op">...</span><span class="op">]</span> <span class="op">=</span> <span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">    <span class="nam">llm_name</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t35" href="#t35">35</a></span><span class="t">    <span class="nam">llm_call_id</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t36" href="#t36">36</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t"><span class="key">def</span> <span class="nam">classify_by_rules</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -190,7 +190,7 @@
     <p class="run run2"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">            <span class="str">&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t"><span class="str">            UPDATE classification_rules</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t"><span class="str">               SET category_id = ?, confidence_level = ?, source = ?,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t"><span class="str">                   alternative_category_ids = ?, tag_ids = ?, llm_name = ?, updated_at = ?</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t"><span class="str">                   alternative_category_ids = ?, tag_ids = ?, llm_call_id = ?, updated_at = ?</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t112" href="#t112">112</a></span><span class="t"><span class="str">             WHERE id = ?</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t113" href="#t113">113</a></span><span class="t"><span class="str">            &quot;&quot;&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t">            <span class="op">[</span>&nbsp;</span><span class="r"></span></p>
@@ -199,7 +199,7 @@
     <p class="run run2"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">                <span class="nam">source</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">                <span class="nam">json</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="nam">list</span><span class="op">(</span><span class="nam">spec</span><span class="op">.</span><span class="nam">alternative_category_ids</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">                <span class="nam">json</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="nam">list</span><span class="op">(</span><span class="nam">spec</span><span class="op">.</span><span class="nam">tag_ids</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t">                <span class="nam">spec</span><span class="op">.</span><span class="nam">llm_name</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t">                <span class="nam">spec</span><span class="op">.</span><span class="nam">llm_call_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t121" href="#t121">121</a></span><span class="t">                <span class="nam">now</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t122" href="#t122">122</a></span><span class="t">                <span class="nam">existing</span><span class="op">[</span><span class="str">&quot;id&quot;</span><span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t123" href="#t123">123</a></span><span class="t">            <span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -210,7 +210,7 @@
     <p class="run run2"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t"><span class="str">            INSERT INTO classification_rules</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t"><span class="str">                   (chain_id, item_name_normalized, category_id,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t"><span class="str">                    confidence_level, source, alternative_category_ids, tag_ids,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t"><span class="str">                    llm_name, created_at, updated_at)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t"><span class="str">                    llm_call_id, created_at, updated_at)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t"><span class="str">            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t"><span class="str">            &quot;&quot;&quot;</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t">        <span class="op">[</span>&nbsp;</span><span class="r"></span></p>
@@ -221,7 +221,7 @@
     <p class="run run2"><span class="n"><a id="t139" href="#t139">139</a></span><span class="t">            <span class="nam">source</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t140" href="#t140">140</a></span><span class="t">            <span class="nam">json</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="nam">list</span><span class="op">(</span><span class="nam">spec</span><span class="op">.</span><span class="nam">alternative_category_ids</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">            <span class="nam">json</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="nam">list</span><span class="op">(</span><span class="nam">spec</span><span class="op">.</span><span class="nam">tag_ids</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">            <span class="nam">spec</span><span class="op">.</span><span class="nam">llm_name</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">            <span class="nam">spec</span><span class="op">.</span><span class="nam">llm_call_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t">            <span class="nam">now</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">            <span class="nam">now</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t">        <span class="op">]</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -236,7 +236,7 @@
             <a class="nav" href="z_3e0ff682768d668c_currencies_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.4">coverage.py v7.15.4</a>,
-            created at 2026-09-09 09:58 +0000
+            created at 2026-09-12 17:10 +0000
         </p>
     </div>
 </footer>
