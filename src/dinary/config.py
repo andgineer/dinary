@@ -147,6 +147,10 @@ class Settings(BaseSettings):
 
     receipt_classification_enabled: bool = True
 
+    # How long one classification call may wait for a provider. Covers a provider's
+    # first cooldown; a longer outage releases the job to its retry schedule.
+    receipt_classification_llm_wait_sec: float = 120.0
+
     # Curated llmbroker model list this installation follows, or None to follow
     # none and serve whatever the registry already holds.
     llm_sync_source: str | None = "freetier"

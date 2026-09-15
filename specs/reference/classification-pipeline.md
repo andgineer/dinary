@@ -80,6 +80,13 @@ positively (see [llmbroker-integration.md](llmbroker-integration.md)).
 If all attempts fail, the job enters the frequency-based exhaustion fallback
 rather than being poisoned.
 
+One classification call waits at most two minutes for a provider that can answer. That
+outlasts a provider's first cooldown after a rate limit, so ordinary free-tier limits are
+waited out inside the call. When no provider can answer in that time, the job is released
+as "AI classification service unavailable" and retried under the job retry policy: an
+outage of every provider never holds a receipt in processing, and never stops newer
+receipts from being picked up.
+
 ## Frequency-based exhaustion fallback
 
 After all provider attempts are exhausted, every unclassified item receives a

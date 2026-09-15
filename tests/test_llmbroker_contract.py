@@ -4,6 +4,7 @@ downloads answered locally — the other suites stub the broker at exactly these
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 
 import allure
@@ -153,24 +154,37 @@ class TestClassification:
         assert providers.bodies[0]["model"] == _GROQ.model
         assert providers.bodies[0]["messages"][0]["role"] == "system"
 
-    def test_a_pool_with_no_usable_key_is_reported_as_broker_unavailable(
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            httpx.Response(401, text="invalid api key"),
+            httpx.Response(500, text="upstream down"),
+            httpx.Response(429, text="slow down", headers={"retry-after": "60"}),
+        ],
+    )
+    def test_a_pool_that_cannot_answer_within_the_wait_is_broker_unavailable(
         self,
         one_keyed_provider,  # noqa: ARG002
         providers,
+        monkeypatch,
+        failure,
     ):
-        # A rejected key ends the call at once; a 5xx would have it wait out the cooldown.
-        providers.reply = lambda _body: httpx.Response(401, text="invalid api key")
+        monkeypatch.setattr(settings, "receipt_classification_llm_wait_sec", 0.5)
+        providers.reply = lambda _body: failure
 
         async def run():
             broker = _broker()
             try:
-                return await classify_receipt(broker, ["mleko"], "Maxi", _CATEGORIES)
+                started = time.monotonic()
+                outcome = await classify_receipt(broker, ["mleko"], "Maxi", _CATEGORIES)
+                return outcome, time.monotonic() - started
             finally:
                 await broker.aclose()
 
-        outcome = asyncio.run(run())
+        outcome, elapsed = asyncio.run(run())
         assert outcome.broker_unavailable is True
         assert outcome.execution is None
+        assert elapsed < 5
 
 
 @allure.epic("Receipts")

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from llmbroker import AsyncBroker, AsyncResult, LLMRequestError
 
+from dinary.config import settings
 from dinary.db.catalog import list_visible_categories
 
 logger = logging.getLogger(__name__)
@@ -128,6 +129,7 @@ async def classify_receipt(
             messages,
             operation=CLASSIFICATION_OPERATION,
             trace_id=str(execution_id) if execution_id is not None else None,
+            wait=settings.receipt_classification_llm_wait_sec,
         )
     except LLMRequestError:
         return ClassifyOutcome(
