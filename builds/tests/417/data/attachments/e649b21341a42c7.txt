@@ -1,0 +1,2 @@
+OK: journal validation failures, all time: 1
+OK: last journal validation failure older than alert window — 2026-09-13T12:13:37.420029+00:00 | invoice: XYZ | reason: item total mismatch

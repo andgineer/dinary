@@ -1,1 +1,0 @@
-INFO     dinary.background.sheet_logging.income_sheet_logging:income_sheet_logging.py:263 Income (2026, 5) already logged; skipping
