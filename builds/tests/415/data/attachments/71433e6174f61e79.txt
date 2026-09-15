@@ -1,0 +1,1 @@
+2026-09-15 09:46:52,418 INFO     dinary.background.sheet_logging.income_sheet_logging — Income (2026, 5) already logged; skipping

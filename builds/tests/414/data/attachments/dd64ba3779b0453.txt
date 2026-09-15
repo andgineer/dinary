@@ -1,0 +1,5 @@
+2026-09-15 06:11:55,183 WARNING  llmbroker.broker — preset freetier: nothing cached and nothing is fetched automatically — falling back to the bundled copy, frozen at this llmbroker release
+2026-09-15 06:11:55,201 ERROR    llmbroker.broker — pool degraded, no failover left: 1 of 1 providers usable
+2026-09-15 06:11:55,212 ERROR    llmbroker.broker — groq-llama: API key appears dead (HTTP 401) — check api_key_ref 'GROQ_API_KEY'
+2026-09-15 06:11:55,217 ERROR    llmbroker.broker — pool cannot serve any request: no provider has a key — no key for GROQ_API_KEY
+2026-09-15 06:11:55,217 INFO     llmbroker.broker — api_key_ref 'GROQ_API_KEY' not resolved — groq-llama inactive until the env var / secret is set; this is normal, the pool routes over whatever keys are present

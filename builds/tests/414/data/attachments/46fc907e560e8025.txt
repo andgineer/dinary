@@ -1,0 +1,7 @@
+ERROR    dinary.api.controllers.correction_ratings:correction_ratings.py:102 record_quality failed for call_id=call-groq score=0.0 — continuing
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/api/controllers/correction_ratings.py", line 96, in record_correction_ratings
+    await broker.record_quality(score, call_id=call_id)
+  File "/home/runner/work/dinary/dinary/tests/api/test_expense_correction_rating.py", line 338, in record_quality
+    raise RuntimeError("telemetry down")
+RuntimeError: telemetry down
