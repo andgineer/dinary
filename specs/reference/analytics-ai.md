@@ -72,13 +72,13 @@ DuckDB-WASM without rewrite.
 
 ## LLM strategy
 
-**Default — the curated free pool, kept separate from the server's.** The Marimo
-dashboard chat runs its own zero-config broker: llmbroker keeps the model list and
-call journal in its own directory and resolves provider keys from the dashboard
-process's environment, which the launcher fills from the deploy env file. So
-analytics reads neither the server nor its database, and its broker state —
-cooldowns, quality, the user disable — is separate from the server's. Providers are
-tried by pool order; a rate-limited (429/503) one is skipped for the next. The
+**Default — one paid model, called directly.** The Marimo dashboard chat does not use
+the free provider pool the receipt pipeline runs on. It calls one model from
+llmbroker's curated paid catalog by the `"gpt-fast"` alias, so a new model version
+reaches the chat without a dinary change. There is no failover: a rate limit or an
+outage of that model is reported in the chat and the user retries. The model's key
+resolves from the dashboard process's environment, which the launcher fills from the
+deploy env file, so analytics reads neither the server nor its database. The
 request/response transport and tool-calling loop are shared with the server's LLM
 broker. The model receives the ledger schema and executes DuckDB queries via tool
 calls.

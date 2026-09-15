@@ -51,8 +51,8 @@ def _snapshot_to_dict(
         "last_at": metrics.last_at.isoformat() if metrics and metrics.last_at else None,
         "demoted": CLASSIFICATION_OPERATION in snap.demoted_operations,
         "quality_bound": optimizer.wilson_bound(name, CLASSIFICATION_OPERATION),
-        # llmbroker leaves the hint empty where its registry carries no key
-        # metadata; the field stays "a hint or nothing" rather than an empty string.
+        # llmbroker reports "" when the installation follows no curated list; the
+        # field stays "a hint or nothing" rather than an empty string.
         "help": None if snap.has_key else (key_help.get(snap.config.api_key_ref) or None),
     }
 

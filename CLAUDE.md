@@ -87,3 +87,7 @@ Fix `inv pre` errors in the same change even when they look pre-existing or unre
 
 ### Linting
 - `inv pre` is the only gate. Never run ruff (or `uvx ruff` / `uv run ruff`) directly; never bypass hooks with `--no-verify`.
+
+### llmbroker
+- **Never work around an llmbroker problem in dinary.** When llmbroker is missing something dinary needs, or behaves wrongly, stop and discuss the llmbroker change with the user. The fix goes into llmbroker (a plan in its `specs/plans/`, implemented and released there); dinary adopts it by bumping the pin.
+- No host-side patches in the meantime: no extra request parameters, bypassed context managers, re-implemented llmbroker logic, or suppressed llmbroker errors "until upstream is fixed".

@@ -374,9 +374,9 @@ Each chip is a thin outlined pill. The strip is informational — no actions.
 - **Usage line** — call count plus the last call status.
 - **Quality line** — a demoted pill when the model is demoted for receipt classification,
   and a numeric quality indicator when ratings exist (otherwise "no ratings yet").
-- **Key hint** — no-key providers show the onboarding hint for that key when
-  llmbroker supplies one. It supplies none for a database-backed registry, so
-  the server's screen currently renders the no-key state without a hint.
+- **Key hint** — no-key providers show the onboarding hint for that key from the
+  curated model list; an installation that follows no list renders the no-key state
+  without a hint.
 - **Toggle** — a single disable/enable button in the action row. There is no add, edit,
   delete, reorder, or test control.
 

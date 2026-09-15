@@ -2,8 +2,8 @@
 
 dinary uses `llmbroker` as an external PyPI dependency for all LLM access. One
 `AsyncBroker` instance lives for the full FastAPI application lifetime; a short-lived
-synchronous `Broker` serves the analytics chat, which keeps its own model list and
-keys and never touches the server's database.
+synchronous `Broker` serves the analytics chat, which calls one paid model directly
+and never touches the server's database.
 
 ## Broker design
 
@@ -43,17 +43,18 @@ env var, and from then on the database copy is authoritative — later env chang
 overwrite it. Changing an already-seeded key is a manual database operation. Generate
 the env-var stubs the curated list needs with `llmbroker env freetier`.
 
-The analytics chat is the exception: it never touches the server's database, so its
-broker resolves keys from its own process environment, and the dashboard launcher
-exports every value it can resolve from `.deploy/.env` under the ref names the
-curated list declares. A key changed only in the server's database therefore does not
-reach analytics; its broker state (cooldowns, quality, the user disable) is likewise
-separate, so a provider disabled on the LLM screen stays available to the chat.
+The analytics chat is the exception: it never touches the server's database and does
+not use the free pool. It calls one paid model directly — the curated paid catalog's
+`"gpt-fast"` alias, so a new model version reaches the chat without a dinary change —
+and resolves that model's key from its own process environment, which the dashboard
+launcher fills from `.deploy/.env`. A key changed only in the server's database
+therefore does not reach analytics, and nothing on the LLM screen (cooldowns, quality,
+the user disable) applies to the chat. A direct call has no failover: a rate limit or
+an outage of that model is reported in the chat, and the user retries.
 
 A provider whose key cannot be resolved is reported on the LLM screen as such, with
-whatever onboarding hint llmbroker supplies for that key. llmbroker supplies one only
-where its registry carries key metadata, which a database-backed registry does not,
-so the server's screen currently shows the state without the hint.
+the onboarding hint for that key from the curated model list the installation follows.
+An installation that follows no list has no hint to show.
 
 ## Admin screen: read-only status plus a user disable
 

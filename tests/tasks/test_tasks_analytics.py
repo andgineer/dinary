@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import allure
 import pytest
 
-from dinary_analytics.llm import key_refs
+from dinary_analytics.llm import key_ref
 from dinary_analytics.paths import MCP_PORT
 from tasks.analytics import _ensure_dinary_ai, _llm_api_keys
 
@@ -84,22 +84,20 @@ def _write_env(tmp_path, monkeypatch, env_text: str):
 
 @allure.epic("Analytics")
 @allure.feature("Analytics dashboard")
-def test_llm_api_keys_exports_every_ref_under_its_own_name(tmp_path, monkeypatch):
-    refs = key_refs()
-    _write_env(tmp_path, monkeypatch, "".join(f"{ref}=v-{i}\n" for i, ref in enumerate(refs)))
+def test_llm_api_keys_exports_the_key_under_its_own_name(tmp_path, monkeypatch):
+    ref = key_ref()
+    _write_env(tmp_path, monkeypatch, f"GROQ_API_KEY=free\n{ref}=paid\n")
 
-    assert _llm_api_keys() == {ref: f"v-{i}" for i, ref in enumerate(refs)}
+    assert _llm_api_keys() == {ref: "paid"}
 
 
 @allure.epic("Analytics")
 @allure.feature("Analytics dashboard")
-def test_llm_api_keys_skips_missing_refs_with_warning(tmp_path, monkeypatch, capsys):
-    first, *rest = key_refs()
-    _write_env(tmp_path, monkeypatch, f"{first}=v-0\n")
+def test_llm_api_keys_warns_when_the_key_is_missing(tmp_path, monkeypatch, capsys):
+    _write_env(tmp_path, monkeypatch, "GROQ_API_KEY=free\n")
 
-    assert _llm_api_keys() == {first: "v-0"}
-    out = capsys.readouterr().out
-    assert all(ref in out for ref in rest)
+    assert _llm_api_keys() == {}
+    assert key_ref() in capsys.readouterr().out
 
 
 @allure.epic("Analytics")
@@ -107,7 +105,7 @@ def test_llm_api_keys_skips_missing_refs_with_warning(tmp_path, monkeypatch, cap
 def test_llm_api_keys_reads_the_env_file_not_the_process(tmp_path, monkeypatch):
     """The dashboard runs on another machine's env as often as this one's, so the
     value has to come from the deploy file rather than whatever is exported here."""
-    ref = key_refs()[0]
+    ref = key_ref()
     monkeypatch.setenv(ref, "from-process")
     _write_env(tmp_path, monkeypatch, f"{ref}=from-file\n")
 

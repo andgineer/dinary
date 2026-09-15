@@ -18,9 +18,9 @@ plan is no longer frontend-only — it touches the controller and needs Python t
 Independent of the two `pwa-analytics-*` plans — no shared files (they touch
 `src/dinary/api/analytics.py`, this one `src/dinary/api/controllers/llm.py`).
 
-**Unblocked.** §2 consumes a windowed journal aggregate, and llmbroker 1.9.0 — the version dinary
-now pins — exposes it as `broker.stats(since=…)`, returning `LLMStats` per model, together with
-the typed exceptions of `andgineer/llmbroker#11`. The alternative (reading the raw journal tail
+**Unblocked.** §2 consumes a windowed journal aggregate, and llmbroker (since 1.9.0) exposes it
+as `broker.stats(since=…)`, returning `LLMStats` per model, together with the typed exceptions of
+`andgineer/llmbroker#11`. The alternative (reading the raw journal tail
 with `broker.calls(limit=…)` and folding it here) would mean reimplementing llmbroker's record
 model inside dinary, so §2 uses the aggregate.
 

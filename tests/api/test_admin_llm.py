@@ -6,20 +6,16 @@ start the app with the model-list sync switched off, so nothing reaches the netw
 """
 
 import asyncio
-import contextlib
-import unittest.mock
 
 import allure
 import llmbroker
 import pytest
-from fastapi.testclient import TestClient
-from llmbroker.sqlite import Registry, Secrets
 
-from dinary.adapters.rates import helpers
-from dinary.db import category_seed, db_migrations, storage
-from dinary.main import create_app
+from dinary.config import settings
+from dinary.db import storage
 
 from _api_helpers import db  # noqa: F401
+from _llmbroker_support import build_app_client, seed_registry
 
 _TWO_PROVIDERS = [
     llmbroker.LLMConfig(
@@ -37,38 +33,6 @@ _TWO_PROVIDERS = [
 ]
 
 
-def _seed_registry(configs, keys=()):
-    """Write the pool the app will serve. Outside a sync there is no key bootstrap,
-    so a provider that must resolve one gets it stored here."""
-
-    async def _run() -> None:
-        registry = Registry(storage.DB_PATH)
-        secrets = Secrets(storage.DB_PATH)
-        try:
-            await registry.mirror(configs)
-            for ref, value in keys:
-                await secrets.set(ref, value)
-        finally:
-            await registry.aclose()
-            await secrets.aclose()
-
-    asyncio.run(_run())
-
-
-@contextlib.contextmanager
-def _build_client():
-    """Mirrors the shared ``client`` fixture but keeps the network stubs active for
-    the whole lifespan (startup, requests, and shutdown)."""
-    with (
-        unittest.mock.patch.object(helpers, "_get_json_or_none", return_value=None),
-        unittest.mock.patch.object(db_migrations, "migrate_db"),
-        unittest.mock.patch.object(category_seed, "bootstrap_categories"),
-    ):
-        app = create_app()
-        with TestClient(app, raise_server_exceptions=False) as c:
-            yield c
-
-
 @pytest.fixture
 def seed_providers(db, monkeypatch):  # noqa: ARG001
     """Put two providers in the registry before the app starts.
@@ -77,20 +41,20 @@ def seed_providers(db, monkeypatch):  # noqa: ARG001
     available) while ``openrouter`` does not (status no_key).
     """
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    _seed_registry(_TWO_PROVIDERS, keys=[("GROQ_API_KEY", "real-key")])
+    seed_registry(_TWO_PROVIDERS, keys=[("GROQ_API_KEY", "real-key")])
 
 
 @pytest.fixture
 def client(db):  # noqa: ARG001
     """Empty pool: nothing was mirrored into the registry and no sync fills it."""
-    with _build_client() as c:
+    with build_app_client() as c:
         yield c
 
 
 @pytest.fixture
 def seeded_client(seed_providers):  # noqa: ARG001
     """Two-provider pool, seeded into the registry before the app builds."""
-    with _build_client() as c:
+    with build_app_client() as c:
         yield c
 
 
@@ -184,10 +148,21 @@ class TestLLMStatus:
         )
         assert p["has_key"] is False
         assert p["status"] == "no_key"
-        # The hint is whatever llmbroker reports for that ref and nothing else.
-        # A database-backed registry carries no key metadata, so it is absent —
-        # never an empty string, which the UI would render as a blank hint.
+        # The test app follows no curated list, so llmbroker has no hint for the ref —
+        # absent, never an empty string, which the UI would render as a blank hint.
         assert p["help"] is None
+
+    def test_no_key_status_carries_the_curated_hint(self, seed_providers, monkeypatch):  # noqa: ARG002
+        """The server's registry lives in the database; the hint still comes from the
+        curated list it follows. The sync interval stays None, so nothing is fetched."""
+        monkeypatch.setattr(settings, "llm_sync_source", "freetier")
+        with build_app_client() as c:
+            p = next(
+                x for x in c.get("/api/llm/status").json()["providers"] if x["name"] == "openrouter"
+            )
+        assert p["status"] == "no_key"
+        assert p["help"] == llmbroker.curated_pool().keys["OPENROUTER_API_KEY"].help
+        assert p["help"]
 
     def test_disabled_status_precedes_no_key(self, seeded_client):
         seeded_client.post("/api/llm/providers/openrouter/disable")
@@ -248,7 +223,7 @@ class TestLLMDisableEnable:
 class TestDisableSurvivesRebuild:
     def test_latch_persists_across_broker_rebuild(self, db):  # noqa: ARG002
         """The user disable is stored by llmbroker and survives a fresh broker."""
-        _seed_registry(_TWO_PROVIDERS)
+        seed_registry(_TWO_PROVIDERS)
         source = f"sqlite://{storage.DB_PATH}"
 
         def _broker() -> llmbroker.AsyncBroker:

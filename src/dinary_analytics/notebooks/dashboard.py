@@ -18,7 +18,7 @@ def _():
 
     from dinary_analytics.charts import make_basket_chart, make_chart_pair, make_event_chart
     from dinary_analytics.connection import LEDGER_SCHEMA, load_query, open_ledger
-    from dinary_analytics.llm import providers_available, run_chat_turn
+    from dinary_analytics.llm import chat_key_available, key_ref, run_chat_turn
     from dinary_analytics.paths import MCP_PORT
     from dinary_analytics.refresh import get_app_url, save_server_address
     from dinary_analytics.settings import (
@@ -33,6 +33,7 @@ def _():
         LEDGER_SCHEMA,
         MCP_PORT,
         alt,
+        chat_key_available,
         contextlib,
         date,
         datetime,
@@ -41,6 +42,7 @@ def _():
         get_app_url,
         get_config_json,
         json,
+        key_ref,
         load_pinned_view_frames,
         load_query,
         load_view_frame,
@@ -50,7 +52,6 @@ def _():
         mo,
         open_ledger,
         pl,
-        providers_available,
         run_chat_turn,
         save_server_address,
         save_view,
@@ -976,10 +977,10 @@ def _(
 
 
 @app.cell
-def _(LEDGER_SCHEMA, category_order, mo, providers_available):
-    if not providers_available():
+def _(LEDGER_SCHEMA, category_order, chat_key_available, key_ref, mo):
+    if not chat_key_available():
         ai_status = mo.callout(
-            mo.md("**No LLM providers configured** — add a provider key to `.deploy/.env`."),
+            mo.md(f"**No key for the AI chat** — add `{key_ref()}` to `.deploy/.env`."),
             kind="warn",
         )
     else:

@@ -1,9 +1,8 @@
 """LLM chat turn for the analytics dashboard.
 
-Uses the standalone ``llmbroker`` package in its zero-config form: llmbroker keeps
-the model list and journal in its own directory and resolves provider keys from
-this process's environment, so analytics touches neither the server nor its
-database.
+Calls one paid model directly through the standalone ``llmbroker`` package: the
+model comes from llmbroker's curated paid catalog by alias and its key from this
+process's environment, so analytics touches neither the server nor its database.
 Tool calling drives the draft view (propose_view, query_ledger, …).
 """
 
@@ -18,9 +17,28 @@ from pathlib import Path
 import llmbroker
 from llmbroker.standalone.secrets import parse_env_file
 
-_NO_PROVIDERS_MESSAGE = (
-    "**No LLM providers configured.** Add a provider key to `.deploy/.env`"
-    " — `llmbroker env freetier` prints the ones the pool uses."
+CHAT_ALIAS = "gpt-fast"
+
+# OpenAI answers 400 to function tools on chat completions for gpt-5.6 models
+# unless reasoning is switched off.
+_CHAT_PARAMS = {"reasoning_effort": "none"}
+
+_NO_KEY = "**No key for the AI chat.** Add `{ref}` to `.deploy/.env`."
+
+# First match wins, so a subclass has to precede its base.
+_ERROR_REPLIES: tuple[tuple[type[Exception], str], ...] = (
+    (
+        llmbroker.ToolLoopLimitError,
+        "**The model kept calling tools without answering.** Rephrase and retry.",
+    ),
+    (
+        llmbroker.RateLimitError,
+        "**The AI model is rate-limited right now.** Press 🔁 Retry in a moment.",
+    ),
+    (llmbroker.LLMTimeoutError, "**The AI model did not answer in time.** Press 🔁 Retry."),
+    (llmbroker.MissingKeyError, _NO_KEY),
+    (llmbroker.AuthError, "**The AI model rejected the key.** Check `{ref}` in `.deploy/.env`."),
+    (llmbroker.LLMRequestError, "**AI model unavailable:** {detail}"),
 )
 
 _JSON_TYPES: dict[type, str] = {
@@ -31,10 +49,11 @@ _JSON_TYPES: dict[type, str] = {
 }
 
 
-def key_refs() -> list[str]:
-    """The env-var names the curated pool wants, in declaration order. Read from the
-    copy of the list already on this machine, never the network."""
-    return list(llmbroker.curated_pool().keys)
+def key_ref() -> str:
+    """The env-var name the chat model's key is read from. Read from the copy of the
+    catalog already on this machine, never the network."""
+    row = next(row for row in llmbroker.curated_paid() if row.alias == CHAT_ALIAS)
+    return row.provider.api_key_ref
 
 
 def _filled(value: str | None) -> bool:
@@ -43,21 +62,21 @@ def _filled(value: str | None) -> bool:
     return bool(value and value.strip())
 
 
-def providers_available() -> bool:
-    """Return True if at least one pool provider's key is resolvable here.
+def chat_key_available() -> bool:
+    """Return True if the chat model's key is resolvable here.
 
     Both sources a zero-config ``Broker`` reads, in its order: the environment,
     then a ``.env`` beside the working directory. This gate does not merely warn —
     ``run_chat_turn`` refuses to call on a False — so missing the second source
     would disable a chat that would have worked.
     """
-    refs = key_refs()
-    if any(_filled(os.getenv(ref)) for ref in refs):
+    ref = key_ref()
+    if _filled(os.getenv(ref)):
         return True
     values: dict[str, str] = {}
     with contextlib.suppress(OSError):
         values = parse_env_file(Path(".env").read_text(encoding="utf-8"))
-    return any(_filled(values.get(ref)) for ref in refs)
+    return _filled(values.get(ref))
 
 
 # Functions defined inside Marimo cells get a `_cell_<id>_` prefix on __name__.
@@ -112,39 +131,47 @@ def run_chat_turn(
     history: Sequence[dict[str, str]],
     user_text: str,
 ) -> str:
-    """Send history + user_text to an available provider and return the reply.
+    """Send history + user_text to the chat model and return the reply.
 
     history items are {"role": "user"|"model", "content": str}. Provider/network
     errors (including rate limits) are returned as user-facing text, not raised.
     """
-    if not providers_available():
-        return _NO_PROVIDERS_MESSAGE
-    with llmbroker.Broker() as llms:
-        schemas = [_tool_schema(fn) for fn in tools]
-        dispatch = {tool_name(fn): fn for fn in tools}
+    ref = key_ref()
+    if not chat_key_available():
+        return _NO_KEY.format(ref=ref)
+    schemas = [_tool_schema(fn) for fn in tools]
+    dispatch = {tool_name(fn): fn for fn in tools}
 
-        messages: list[dict] = [{"role": "system", "content": system_prompt}]
-        messages.extend(
-            {"role": "assistant" if m["role"] == "model" else "user", "content": m["content"]}
-            for m in history
-        )
-        messages.append({"role": "user", "content": user_text})
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    messages.extend(
+        {"role": "assistant" if m["role"] == "model" else "user", "content": m["content"]}
+        for m in history
+    )
+    messages.append({"role": "user", "content": user_text})
 
-        try:
+    try:
+        # Not ``with Broker(...)``: entering it provisions the free pool, which this
+        # process has no keys for, and logs an error on every turn.
+        with (
+            contextlib.closing(llmbroker.Broker(direct=[CHAT_ALIAS])) as llms,
+            llms.direct(CHAT_ALIAS) as model,
+        ):
             result = llmbroker.run_tool_loop(
-                llms,
+                model,
                 messages,
                 tools=schemas,
                 dispatch=dispatch,
-                operation="analytics_chat",
+                params=_CHAT_PARAMS,
             )
-        except llmbroker.ToolLoopLimitError:
-            return "**The model kept calling tools without answering.** Rephrase and retry."
-        except llmbroker.NoLLMAvailableError:
-            return "**All providers are busy right now.** Press 🔁 Retry in a moment."
-        except llmbroker.LLMRequestError:
-            return "**AI providers unavailable.** Check the provider keys in `.deploy/.env`."
-        except Exception as exc:  # noqa: BLE001 - surfaced to the user, not swallowed
-            return f"**AI error:** {str(exc)[:300]}"
+    except Exception as exc:  # noqa: BLE001 - surfaced to the user, not swallowed
+        return _error_reply(exc, ref)
 
-        return result.text or "*(view updated — see the draft below)*"
+    return result.text or "*(view updated — see the draft below)*"
+
+
+def _error_reply(exc: Exception, ref: str) -> str:
+    template = next(
+        (text for kind, text in _ERROR_REPLIES if isinstance(exc, kind)),
+        "**AI error:** {detail}",
+    )
+    return template.format(ref=ref, detail=str(exc)[:300])
