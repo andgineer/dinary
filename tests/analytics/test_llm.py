@@ -49,7 +49,10 @@ class _StubBroker:
         self.requested.append(alias)
         return self.client
 
-    def close(self) -> None:
+    def __enter__(self) -> "_StubBroker":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
         self.closed = True
 
 
@@ -150,10 +153,9 @@ def test_run_chat_turn_drives_the_direct_client(monkeypatch, broker):
     _with_key(monkeypatch)
     captured = {}
 
-    def _fake_loop(llms, messages, *, tools, dispatch, params):
+    def _fake_loop(llms, messages, *, tools, dispatch):
         captured["llms"] = llms
         captured["messages"] = messages
-        captured["params"] = params
         return _Reply("the answer")
 
     monkeypatch.setattr(llm_module.llmbroker, "run_tool_loop", _fake_loop)
@@ -163,7 +165,6 @@ def test_run_chat_turn_drives_the_direct_client(monkeypatch, broker):
     assert broker.declared == [CHAT_ALIAS]
     assert broker.requested == [CHAT_ALIAS]
     assert captured["llms"] is broker.client
-    assert captured["params"] == {"reasoning_effort": "none"}
     assert captured["messages"][0] == {"role": "system", "content": "system"}
     assert captured["messages"][1] == {"role": "assistant", "content": "earlier"}
     assert captured["messages"][-1] == {"role": "user", "content": "now"}
@@ -211,7 +212,6 @@ def test_run_chat_turn_round_trips_tool_calls(monkeypatch, broker):
     assert reply == "sum is 5"
     assert len(bodies) == 2
     assert bodies[0]["tools"][0]["function"]["name"] == "add"
-    assert all(body["reasoning_effort"] == "none" for body in bodies)
     assert bodies[1]["messages"][-1] == {"role": "tool", "tool_call_id": "c1", "content": "5"}
 
 

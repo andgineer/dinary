@@ -19,10 +19,6 @@ from llmbroker.standalone.secrets import parse_env_file
 
 CHAT_ALIAS = "gpt-fast"
 
-# OpenAI answers 400 to function tools on chat completions for gpt-5.6 models
-# unless reasoning is switched off.
-_CHAT_PARAMS = {"reasoning_effort": "none"}
-
 _NO_KEY = "**No key for the AI chat.** Add `{ref}` to `.deploy/.env`."
 
 # First match wins, so a subclass has to precede its base.
@@ -150,19 +146,11 @@ def run_chat_turn(
     messages.append({"role": "user", "content": user_text})
 
     try:
-        # Not ``with Broker(...)``: entering it provisions the free pool, which this
-        # process has no keys for, and logs an error on every turn.
         with (
-            contextlib.closing(llmbroker.Broker(direct=[CHAT_ALIAS])) as llms,
+            llmbroker.Broker(direct=[CHAT_ALIAS]) as llms,
             llms.direct(CHAT_ALIAS) as model,
         ):
-            result = llmbroker.run_tool_loop(
-                model,
-                messages,
-                tools=schemas,
-                dispatch=dispatch,
-                params=_CHAT_PARAMS,
-            )
+            result = llmbroker.run_tool_loop(model, messages, tools=schemas, dispatch=dispatch)
     except Exception as exc:  # noqa: BLE001 - surfaced to the user, not swallowed
         return _error_reply(exc, ref)
 
