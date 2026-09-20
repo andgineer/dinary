@@ -4,6 +4,7 @@ import { Clock } from "lucide-vue-next";
 import QueueModal from "./components/QueueModal.vue";
 import TemplateSwitchSheet from "./components/TemplateSwitchSheet.vue";
 import HeaderSegmented from "./components/HeaderSegmented.vue";
+import KeyboardDebug from "./components/KeyboardDebug.vue";
 import AddView from "./views/AddView.vue";
 import IncomeView from "./views/IncomeView.vue";
 import ReviewView from "./views/ReviewView.vue";
@@ -18,6 +19,7 @@ import { useCatalogStore } from "./stores/catalog.js";
 import { flushQueue } from "./composables/flushQueue.js";
 import { flushReceiptQueue } from "./composables/flushReceiptQueue.js";
 import { useOnline } from "./composables/useOnline.js";
+import { useKeyboardVisible } from "./composables/useKeyboardVisible.js";
 import { RECONNECT_DELAY_MS } from "./composables/reconnect.js";
 
 const APP_VERSION =
@@ -32,6 +34,7 @@ const reviewStore = useReviewStore();
 const catalogStore = useCatalogStore();
 
 const { isOnline } = useOnline();
+const { keyboardBottom } = useKeyboardVisible();
 const tab = ref("add"); // 'add' | 'review' | 'analytics' | 'income' | 'llm'
 
 const offlineMessage = computed(() => {
@@ -129,6 +132,7 @@ onBeforeUnmount(() => {
   <OnboardingTemplate v-if="showOnboarding" />
   <template v-else-if="showApp">
     <div v-if="isDev" class="dev-banner">DEV MODE</div>
+    <KeyboardDebug v-if="isDev" />
     <header class="app-header" :class="{ 'below-banner': isDev }">
       <div class="header-row">
         <h1>
@@ -175,7 +179,7 @@ onBeforeUnmount(() => {
       <div v-if="!isOnline" class="offline-notice" role="status">{{ offlineMessage }}</div>
     </header>
 
-    <main class="app-main">
+    <main class="app-main" :style="{ '--kb-inset': keyboardBottom + 'px' }">
       <AddView v-if="tab === 'add'" />
       <ReviewView v-else-if="tab === 'review'" />
       <AnalyticsView v-else-if="tab === 'analytics'" />
@@ -339,8 +343,12 @@ onBeforeUnmount(() => {
 
 .app-main {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 1.25rem;
-  padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px) + var(--kb-inset, 0px));
   max-width: 480px;
   width: 100%;
   margin: 0 auto;
@@ -349,7 +357,7 @@ onBeforeUnmount(() => {
 @media (min-width: 600px) {
   .app-main {
     padding: 2rem;
-    padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px) + var(--kb-inset, 0px));
   }
 }
 </style>

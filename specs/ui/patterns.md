@@ -266,7 +266,13 @@ References: `StatusDot.vue`.
 
 ## Keyboard handling
 
-The PWA runs full-screen on phones; the soft keyboard occludes the bottom action bar. Two complementary mitigations:
+The PWA runs full-screen on phones; the soft keyboard occludes the bottom action bar. Three complementary mitigations:
+
+### Single scroll area
+
+The document itself never scrolls. `html` and `body` are exactly the layout viewport, and the app's content area is the only scroll container. A scrolled document moves the visible area out from under the keyboard-anchored Save bar, and on iOS it leaves the fixed bottom bar stranded below the screen after the keyboard closes.
+
+While the keyboard is up the content area carries extra bottom padding the height of the keyboard, so every field can still be scrolled above it.
 
 ### `useKeyboardVisible` composable
 

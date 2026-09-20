@@ -73,6 +73,9 @@ onMounted(init);
 
 <style scoped>
 .onboarding {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   max-width: 480px;
   width: 100%;
   margin: 0 auto;
