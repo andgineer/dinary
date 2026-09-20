@@ -313,6 +313,16 @@ describe("review store: loadIfNeeded()", () => {
 
   it("skips fetch when clean and data is recent", async () => {
     localStorage.setItem("dinary:review:fetchedAt", String(Date.now() - 60_000));
+    localStorage.setItem(
+      "dinary:review:v1",
+      JSON.stringify({
+        items: [{ id: 1, category_name: "food" }],
+        doubtfulCount: 0,
+        receiptsQueue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
+        hasMore: false,
+        page: 1,
+      }),
+    );
     vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
       items: [],
       doubtful_count: 0,
@@ -956,6 +966,16 @@ describe("review store: expenses localStorage cache", () => {
 
   it("loadExpensesIfNeeded skips fetch when not stale and cache is loaded (page > 0)", async () => {
     localStorage.setItem("dinary:review:fetchedAt", String(Date.now() - 60_000));
+    localStorage.setItem(
+      "dinary:review:v1",
+      JSON.stringify({
+        items: [{ id: 1, category_name: "food" }],
+        doubtfulCount: 0,
+        receiptsQueue: { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 },
+        hasMore: false,
+        page: 1,
+      }),
+    );
     localStorage.setItem("dinary:review:expenses:v1", JSON.stringify({
       items: [{ id: 5, category_name: "food" }],
       page: 1,

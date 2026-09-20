@@ -126,6 +126,76 @@ describe("useStaleCache: isStale()", () => {
     });
     expect(isStale()).toBe(true);
   });
+
+  it("returns true when the timestamp is recent but the cached data is gone", () => {
+    localStorage.setItem(FETCHED_KEY, String(Date.now()));
+    const { isStale } = useStaleCache({
+      dirtyKey: DIRTY_KEY,
+      fetchedKey: FETCHED_KEY,
+      dataKey: DATA_KEY,
+      ttlMs: TTL_MS,
+    });
+    expect(isStale()).toBe(true);
+  });
+
+  it("returns false when the timestamp is recent and the cached data is there", () => {
+    localStorage.setItem(FETCHED_KEY, String(Date.now()));
+    localStorage.setItem(DATA_KEY, JSON.stringify({ items: [1] }));
+    const { isStale } = useStaleCache({
+      dirtyKey: DIRTY_KEY,
+      fetchedKey: FETCHED_KEY,
+      dataKey: DATA_KEY,
+      ttlMs: TTL_MS,
+    });
+    expect(isStale()).toBe(false);
+  });
+
+  it("returns true when the cached data is present but unparseable", () => {
+    localStorage.setItem(FETCHED_KEY, String(Date.now()));
+    localStorage.setItem(DATA_KEY, "not json");
+    const { isStale } = useStaleCache({
+      dirtyKey: DIRTY_KEY,
+      fetchedKey: FETCHED_KEY,
+      dataKey: DATA_KEY,
+      ttlMs: TTL_MS,
+    });
+    expect(isStale()).toBe(true);
+  });
+
+  it("returns true when a data key is configured and nothing was ever fetched", () => {
+    const { isStale } = useStaleCache({
+      dirtyKey: DIRTY_KEY,
+      fetchedKey: FETCHED_KEY,
+      dataKey: DATA_KEY,
+      ttlMs: TTL_MS,
+    });
+    expect(isStale()).toBe(true);
+  });
+
+  it("ignores cached data when no data key is configured", () => {
+    localStorage.setItem(FETCHED_KEY, String(Date.now()));
+    const { isStale } = useStaleCache({
+      dirtyKey: DIRTY_KEY,
+      fetchedKey: FETCHED_KEY,
+      ttlMs: TTL_MS,
+    });
+    expect(isStale()).toBe(false);
+  });
+
+  it("returns true when reading the data key throws", () => {
+    localStorage.setItem(FETCHED_KEY, String(Date.now()));
+    localStorage.setItem(DATA_KEY, JSON.stringify({ items: [1] }));
+    const { isStale } = useStaleCache({
+      dirtyKey: DIRTY_KEY,
+      fetchedKey: FETCHED_KEY,
+      dataKey: DATA_KEY,
+      ttlMs: TTL_MS,
+    });
+    vi.spyOn(localStorage, "getItem").mockImplementation(() => {
+      throw new Error("storage denied");
+    });
+    expect(isStale()).toBe(true);
+  });
 });
 
 describe("useStaleCache: readCache / writeCache / clearCache", () => {

@@ -6,11 +6,14 @@ start the app with the model-list sync switched off, so nothing reaches the netw
 """
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import allure
 import llmbroker
 import pytest
+from llmbroker.sqlite import Store
 
+from dinary.api.controllers.llm import RECENT_WINDOW_DAYS
 from dinary.config import settings
 from dinary.db import storage
 
@@ -31,6 +34,48 @@ _TWO_PROVIDERS = [
         api_key_ref="OPENROUTER_API_KEY",
     ),
 ]
+
+
+def _ago(days: float) -> datetime:
+    return datetime.now(UTC) - timedelta(days=days)
+
+
+def _call(
+    call_id: str,
+    *,
+    status: llmbroker.CallStatus,
+    ts: datetime,
+    name: str = "groq-llama",
+) -> llmbroker.Call:
+    return llmbroker.Call(
+        id=call_id,
+        llm_name=name,
+        operation=None,
+        trace_id=None,
+        status=status,
+        ts=ts,
+    )
+
+
+def _journal(*calls: llmbroker.Call, ratings: tuple[tuple[str, float], ...] = ()) -> None:
+    """Seed the call journal through llmbroker's own store — the table schema is not
+    a public contract, so no test writes ``llmbroker_*`` directly."""
+
+    async def _run() -> None:
+        store = Store(storage.DB_PATH)
+        try:
+            for call in calls:
+                await store.record(call)
+            for call_id, score in ratings:
+                await store.record_quality(call_id, score)
+        finally:
+            await store.aclose()
+
+    asyncio.run(_run())
+
+
+def _provider(client, name: str) -> dict:
+    return next(x for x in client.get("/api/llm/status").json()["providers"] if x["name"] == name)
 
 
 @pytest.fixture
@@ -119,14 +164,16 @@ class TestLLMStatus:
             "has_key",
             "cooldown_until",
             "status",
-            "call_count",
-            "last_status",
-            "last_at",
+            "recent_calls",
+            "recent_failures",
+            "recent_window_days",
             "demoted",
             "quality_bound",
             "help",
         ):
             assert field in p
+        for field in ("call_count", "last_status", "last_at"):
+            assert field not in p
         assert "api_key" not in p
         assert "api_key_ref" not in p
 
@@ -188,6 +235,74 @@ class TestLLMStatus:
         )
         assert p["quality_bound"] is None
         assert p["demoted"] is False
+
+
+@allure.epic("Receipts")
+@allure.feature("Admin")
+class TestProviderReliability:
+    def test_counts_calls_and_failures_in_the_window(self, seeded_client):
+        _journal(
+            _call("ok-1", status=llmbroker.CallStatus.OK, ts=_ago(1)),
+            _call("ok-2", status=llmbroker.CallStatus.OK, ts=_ago(2)),
+            _call("err-1", status=llmbroker.CallStatus.ERROR, ts=_ago(3)),
+        )
+        p = _provider(seeded_client, "groq-llama")
+        assert p["recent_calls"] == 3
+        assert p["recent_failures"] == 1
+
+    def test_a_rating_moves_neither_count(self, seeded_client):
+        """A rating is its own appended row; the aggregate counts call attempts."""
+        _journal(
+            _call("ok-1", status=llmbroker.CallStatus.OK, ts=_ago(1)),
+            ratings=(("ok-1", 1.0),),
+        )
+        p = _provider(seeded_client, "groq-llama")
+        assert p["recent_calls"] == 1
+        assert p["recent_failures"] == 0
+
+    def test_rows_older_than_the_window_are_excluded(self, seeded_client):
+        _journal(
+            _call("inside", status=llmbroker.CallStatus.ERROR, ts=_ago(RECENT_WINDOW_DAYS - 1)),
+            _call("outside", status=llmbroker.CallStatus.ERROR, ts=_ago(RECENT_WINDOW_DAYS + 1)),
+        )
+        p = _provider(seeded_client, "groq-llama")
+        assert p["recent_calls"] == 1
+        assert p["recent_failures"] == 1
+
+    def test_superseded_counts_as_neither_a_call_nor_a_failure(self, seeded_client):
+        _journal(
+            _call("ok-1", status=llmbroker.CallStatus.OK, ts=_ago(1)),
+            _call("sup-1", status=llmbroker.CallStatus.SUPERSEDED, ts=_ago(1)),
+        )
+        p = _provider(seeded_client, "groq-llama")
+        assert p["recent_calls"] == 1
+        assert p["recent_failures"] == 0
+
+    def test_every_non_ok_status_is_a_failure(self, seeded_client):
+        _journal(
+            _call("ok-1", status=llmbroker.CallStatus.OK, ts=_ago(1)),
+            _call("rate-1", status=llmbroker.CallStatus.RATE_LIMITED, ts=_ago(1)),
+            _call("unavail-1", status=llmbroker.CallStatus.UNAVAILABLE, ts=_ago(1)),
+            _call("err-1", status=llmbroker.CallStatus.ERROR, ts=_ago(1)),
+        )
+        p = _provider(seeded_client, "groq-llama")
+        assert p["recent_calls"] == 4
+        assert p["recent_failures"] == 3
+
+    def test_provider_without_rows_reports_zero_calls(self, seeded_client):
+        _journal(_call("ok-1", status=llmbroker.CallStatus.OK, ts=_ago(1)))
+        p = _provider(seeded_client, "openrouter")
+        assert p["recent_calls"] == 0
+        assert p["recent_failures"] == 0
+
+    def test_window_days_matches_the_window_used_for_filtering(self, seeded_client):
+        _journal(
+            _call("inside", status=llmbroker.CallStatus.OK, ts=_ago(RECENT_WINDOW_DAYS - 1)),
+            _call("outside", status=llmbroker.CallStatus.OK, ts=_ago(RECENT_WINDOW_DAYS + 1)),
+        )
+        p = _provider(seeded_client, "groq-llama")
+        assert p["recent_window_days"] == RECENT_WINDOW_DAYS
+        assert p["recent_calls"] == 1
 
 
 @allure.epic("Receipts")

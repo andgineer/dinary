@@ -4,7 +4,7 @@ import * as llmApi from "../api/adminLlm.js";
 import { useStaleCache } from "../composables/useStaleCache.js";
 import { useToastStore } from "./toast.js";
 
-const CACHE_KEY = "dinary:llm:v1";
+const CACHE_KEY = "dinary:llm:v2";
 const DIRTY_KEY = "dinary:llm:dirty";
 const FETCHED_KEY = "dinary:llm:fetchedAt";
 

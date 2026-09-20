@@ -23,9 +23,15 @@ export function useStaleCache({ dirtyKey, fetchedKey, dataKey, ttlMs = MS_PER_DA
     localStorage.setItem(fetchedKey, String(lastFetchedAt.value));
   }
 
+  // A stamp can outlive the data it vouches for: a cache-key version bump or a reset that
+  // only clears the data leaves a recent timestamp pointing at nothing.
+  function hasCachedData() {
+    return !dataKey || readCache() !== null;
+  }
+
   function isStale() {
     const age = lastFetchedAt.value ? Date.now() - lastFetchedAt.value : Infinity;
-    return dirtyFlag.value || !lastFetchedAt.value || age > ttlMs;
+    return dirtyFlag.value || !lastFetchedAt.value || age > ttlMs || !hasCachedData();
   }
 
   function readCache() {

@@ -212,6 +212,10 @@ Two ordered sections in a single scroll container: **NEEDS REVIEW** (one row per
 
 ```
 ┌──────────────────────────────────────┐
+│  RECEIPT QUEUE                       │ optional, only if classification job present
+│ [12 queued][3 processing][1 sleeping]│
+│  [2 failed]                          │
+│                                      │
 │  NEEDS REVIEW  [5]   by impact    ⟳  │ only shown when doubtfulCount > 0
 │                                      │
 │  ⚠ ┃ Karamel čoko prot.čok.          │ doubtful — c2 (warning) left-border
@@ -236,6 +240,19 @@ Two ordered sections in a single scroll container: **NEEDS REVIEW** (one row per
 ```
 
 Owned by `views/ReviewView.vue`. Rows by `components/RuleRow.vue` and `components/ExpenseRow.vue`.
+
+### Receipt queue strip
+
+At the top of the view, when any of `pending`, `in_progress`, `sleeping`, `poisoned` is > 0, a `RECEIPT QUEUE` label sits above a row of chips:
+
+| Chip | Color |
+|---|---|
+| `N queued` | `--accent` text on transparent, accent border |
+| `N processing` | `--text` |
+| `N sleeping` | `--muted` |
+| `N failed` | `--error` |
+
+Each chip is a thin outlined pill. The strip is informational — no actions.
 
 ### Section headers
 
@@ -330,15 +347,11 @@ deleted from the UI. Backend API: `/api/llm/status` for the dashboard;
 ┌──────────────────────────────────────┐
 │  ●  1 / 2 healthy                    │ HealthSummaryCard (no add button)
 │                                      │
-│  RECEIPT QUEUE                       │ optional, only if classification job present
-│  [12 ready][3 processing][1 sleeping]│
-│  [2 failed]                          │
-│                                      │
-│  PROVIDER POOL   curated pool     ⟳  │
+│  PROVIDER POOL                    ⟳  │
 │  ┌────────────────────────────────┐  │
 │  │ ● groq-llama        available  │  │ ProviderCard: status badge
 │  │   llama-3.3-70b-versatile      │  │
-│  │   412 calls · last: ok         │  │ usage + last call status
+│  │   2 failures / 41 · 30 d       │  │ failed share over a recent window
 │  │   quality 83%                  │  │ demoted pill / numeric bound
 │  │ ──────────────────  [⏻ Disable]│  │ disable/enable toggle
 │  └────────────────────────────────┘  │
@@ -346,32 +359,25 @@ deleted from the UI. Backend API: `/api/llm/status` for the dashboard;
 │  │ ● openrouter          no key   │  │
 │  │   gpt-oss-120b                 │  │
 │  │   Create a free key at …       │  │ onboarding hint for no-key providers
-│  │   0 calls · no ratings yet     │  │
+│  │   no calls · 30 d              │  │ no calls is its own state
+│  │   no ratings yet               │  │
 │  │ ──────────────────  [⏻ Disable]│  │
 │  └────────────────────────────────┘  │
 └──────────────────────────────────────┘
 ```
 
-Owned by `views/LLMView.vue`. Refresh polled every 30 s when online.
-
-### Receipt queue strip
-
-Above the provider pool, when any of `pending`, `in_progress`, `sleeping`, `poisoned` is > 0, a `RECEIPT QUEUE` label sits above a row of chips:
-
-| Chip | Color |
-|---|---|
-| `N ready` | `--accent` text on transparent, accent border |
-| `N processing` | `--text` |
-| `N sleeping` | `--muted` |
-| `N failed` | `--error` |
-
-Each chip is a thin outlined pill. The strip is informational — no actions.
+Owned by `views/LLMView.vue`. On open the status is refetched when the cached copy is more
+than a day old or was invalidated by a receipt submission, and again once a cooling
+provider's deadline has passed.
 
 ### `ProviderCard` rules
 
 - **Status badge** — one of available / cooling down / no key / disabled, derived from the
-  provider's resolved key, cooldown, and user-disable state. Status dot kinds: see `patterns.md`.
-- **Usage line** — call count plus the last call status.
+  provider's resolved key, cooldown, and user-disable state. A cooling provider also shows how
+  long its cooldown still has to run. Status dot kinds: see `patterns.md`.
+- **Reliability line** — how many of the provider's recent calls failed, over a fixed window
+  whose length the screen reports alongside the count. A provider with no calls in the window
+  says exactly that: "no calls" is its own state, never folded into "no failures".
 - **Quality line** — a demoted pill when the model is demoted for receipt classification,
   and a numeric quality indicator when ratings exist (otherwise "no ratings yet").
 - **Key hint** — no-key providers show the onboarding hint for that key from the

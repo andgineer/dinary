@@ -1,6 +1,7 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted } from "vue";
 import { useLlmStore } from "../stores/llm.js";
+import { useNow } from "../composables/useNow.js";
 import { useOnline } from "../composables/useOnline.js";
 import { useToastStore } from "../stores/toast.js";
 import HealthSummaryCard from "../components/HealthSummaryCard.vue";
@@ -9,6 +10,7 @@ import IconBtn from "../components/IconBtn.vue";
 
 const llmStore = useLlmStore();
 const { isOnline } = useOnline();
+const now = useNow();
 const toast = useToastStore();
 
 let refreshTimer = null;
@@ -21,10 +23,22 @@ function requireOnline() {
   return true;
 }
 
+// `status` is derived server-side at fetch time, so a badge left saying "cooling down"
+// outlives its deadline unless the expired cooldown itself asks for a refetch.
+function hasExpiredCooldown() {
+  return llmStore.providers.some(
+    (p) =>
+      p.status === "cooling" &&
+      p.cooldown_until &&
+      new Date(p.cooldown_until).getTime() <= Date.now(),
+  );
+}
+
 onMounted(async () => {
   if (isOnline.value) await llmStore.loadIfNeeded();
   refreshTimer = setInterval(() => {
-    if (isOnline.value && llmStore.dirtyFlag) llmStore.refresh();
+    if (!isOnline.value) return;
+    if (llmStore.dirtyFlag || hasExpiredCooldown()) llmStore.refresh();
   }, 30_000);
 });
 
@@ -39,7 +53,6 @@ onBeforeUnmount(() => {
 
     <div class="pool-header">
       <span class="pool-label">PROVIDER POOL</span>
-      <span class="pool-hint">curated free-tier pool</span>
       <IconBtn
         icon="refresh"
         tone="muted"
@@ -57,6 +70,7 @@ onBeforeUnmount(() => {
       v-for="provider in llmStore.providers"
       :key="provider.name"
       :provider="provider"
+      :now="now"
       @toggle="isOnline ? llmStore.toggleDisabled(provider.name) : requireOnline()"
     />
 
@@ -90,14 +104,6 @@ onBeforeUnmount(() => {
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--muted);
-}
-
-.pool-hint {
-  font-size: 0.7rem;
-  color: var(--muted-2);
-  margin-right: auto;
-  margin-left: 0.5rem;
-  font-family: var(--font-num);
 }
 
 .loading-hint,

@@ -32,9 +32,9 @@ const SAMPLE_STATUS = {
       has_key: true,
       cooldown_until: null,
       status: "available",
-      call_count: 7,
-      last_status: "ok",
-      last_at: "2026-05-10T11:30:00+00:00",
+      recent_calls: 7,
+      recent_failures: 1,
+      recent_window_days: 30,
       demoted: false,
       quality_bound: null,
       help: null,
@@ -47,9 +47,9 @@ const SAMPLE_STATUS = {
       has_key: false,
       cooldown_until: null,
       status: "no_key",
-      call_count: 0,
-      last_status: null,
-      last_at: null,
+      recent_calls: 0,
+      recent_failures: 0,
+      recent_window_days: 30,
       demoted: false,
       quality_bound: null,
       help: "Create a key at openrouter.ai/keys.",
@@ -189,11 +189,23 @@ describe("llm store: loadIfNeeded()", () => {
 
   it("skips fetch when clean and data is recent", async () => {
     localStorage.setItem("dinary:llm:fetchedAt", String(Date.now() - 60_000));
+    localStorage.setItem("dinary:llm:v2", JSON.stringify(SAMPLE_STATUS));
     const spy = vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
     setActivePinia(createPinia());
     const store = useLlmStore();
     expect(store.dirtyFlag).toBe(false);
     await store.loadIfNeeded();
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("fetches when the timestamp is recent but nothing is cached", async () => {
+    localStorage.setItem("dinary:llm:fetchedAt", String(Date.now() - 60_000));
+    const spy = vi.spyOn(llmApi, "getStatus").mockResolvedValue(SAMPLE_STATUS);
+    setActivePinia(createPinia());
+    const store = useLlmStore();
+    expect(store.providers).toEqual([]);
+    expect(store.dirtyFlag).toBe(false);
+    await store.loadIfNeeded();
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });

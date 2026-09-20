@@ -17,9 +17,9 @@ const BASE_PROVIDER = {
   has_key: true,
   cooldown_until: null,
   status: "available",
-  call_count: 412,
-  last_status: "ok",
-  last_at: "2026-05-10T11:30:00+00:00",
+  recent_calls: 41,
+  recent_failures: 0,
+  recent_window_days: 30,
   demoted: false,
   quality_bound: null,
   help: null,
@@ -34,11 +34,6 @@ describe("ProviderCard", () => {
     const wrapper = mount(ProviderCard, { props: { provider: BASE_PROVIDER } });
     expect(wrapper.text()).toContain("groq-llama");
     expect(wrapper.text()).toContain("llama-3.3-70b-versatile");
-  });
-
-  it("shows call count", () => {
-    const wrapper = mount(ProviderCard, { props: { provider: BASE_PROVIDER } });
-    expect(wrapper.text()).toContain("412 calls");
   });
 
   it("shows the available status badge", () => {
@@ -111,5 +106,105 @@ describe("ProviderCard", () => {
     const wrapper = mount(ProviderCard, { props: { provider: BASE_PROVIDER } });
     await wrapper.find(".toggle-btn").trigger("click");
     expect(wrapper.emitted("toggle")).toBeTruthy();
+  });
+});
+
+describe("ProviderCard — reliability line", () => {
+  it("reports no calls in the window, never 'no failures'", () => {
+    const wrapper = mount(ProviderCard, {
+      props: { provider: { ...BASE_PROVIDER, recent_calls: 0, recent_failures: 0 } },
+    });
+    const line = wrapper.find(".reliability");
+    expect(line.text()).toBe("no calls · 30 d");
+    expect(line.text()).not.toContain("no failures");
+    expect(line.classes()).not.toContain("is-danger");
+  });
+
+  it("reports no failures when every call in the window succeeded", () => {
+    const wrapper = mount(ProviderCard, { props: { provider: BASE_PROVIDER } });
+    const line = wrapper.find(".reliability");
+    expect(line.text()).toBe("no failures · 30 d");
+    expect(line.classes()).not.toContain("is-danger");
+  });
+
+  it("reports the failure share in danger tone", () => {
+    const wrapper = mount(ProviderCard, {
+      props: { provider: { ...BASE_PROVIDER, recent_calls: 41, recent_failures: 2 } },
+    });
+    const line = wrapper.find(".reliability");
+    expect(line.text()).toBe("2 failures / 41 · 30 d");
+    expect(line.classes()).toContain("is-danger");
+  });
+
+  it("takes the window length from the response, not a literal", () => {
+    const wrapper = mount(ProviderCard, {
+      props: {
+        provider: { ...BASE_PROVIDER, recent_window_days: 7, recent_calls: 5, recent_failures: 1 },
+      },
+    });
+    expect(wrapper.find(".reliability").text()).toBe("1 failure / 5 · 7 d");
+  });
+
+  it("no longer renders a call count or a last-call status", () => {
+    const wrapper = mount(ProviderCard, {
+      props: { provider: { ...BASE_PROVIDER, call_count: 41, last_status: "error" } },
+    });
+    expect(wrapper.text()).not.toContain("41 calls");
+    expect(wrapper.text()).not.toContain("last:");
+  });
+});
+
+describe("ProviderCard — cooldown remainder", () => {
+  const NOW = Date.parse("2026-09-20T10:00:00Z");
+
+  function mountCooling(cooldownUntil, now = NOW) {
+    return mount(ProviderCard, {
+      props: {
+        provider: { ...BASE_PROVIDER, status: "cooling", cooldown_until: cooldownUntil },
+        now,
+      },
+    });
+  }
+
+  it("shows the minutes left next to the badge", () => {
+    const wrapper = mountCooling("2026-09-20T10:05:00+00:00");
+    expect(wrapper.find(".status-badge").text()).toBe("cooling down");
+    expect(wrapper.find(".cooldown-left").text()).toBe("5m");
+  });
+
+  it("shows whole hours on a long cooldown", () => {
+    const wrapper = mountCooling("2026-09-20T12:30:00+00:00");
+    expect(wrapper.find(".cooldown-left").text()).toBe("2h");
+  });
+
+  it("shows '<1 min' on the last stretch", () => {
+    const wrapper = mountCooling("2026-09-20T10:00:30+00:00");
+    expect(wrapper.find(".cooldown-left").text()).toBe("<1 min");
+  });
+
+  it("renders no extra span once the deadline has passed", () => {
+    const wrapper = mountCooling("2026-09-20T09:55:00+00:00");
+    expect(wrapper.find(".status-badge").text()).toBe("cooling down");
+    expect(wrapper.find(".cooldown-left").exists()).toBe(false);
+  });
+
+  it("renders no extra span without a deadline", () => {
+    const wrapper = mountCooling(null);
+    expect(wrapper.find(".cooldown-left").exists()).toBe(false);
+  });
+
+  it("renders no remainder for a provider that is not cooling", () => {
+    const wrapper = mount(ProviderCard, {
+      props: {
+        provider: { ...BASE_PROVIDER, cooldown_until: "2026-09-20T10:05:00+00:00" },
+        now: NOW,
+      },
+    });
+    expect(wrapper.find(".cooldown-left").exists()).toBe(false);
+  });
+
+  it("tolerates a space-separated timestamp", () => {
+    const wrapper = mountCooling("2026-09-20 10:05:00");
+    expect(wrapper.find(".cooldown-left").text()).toBe("5m");
   });
 });

@@ -9,7 +9,6 @@ deleted (anything spec-worthy moves into `specs/` first) and its row here goes w
 |---|---|---|---|
 | 1 | `pwa-analytics-refresh.md` | — | The actual defect: the stats page shows pre-receipt numbers. Unblocks #2 |
 | 2 | `pwa-analytics-event-detail.md` | #1 | Shares five files with #1; back-to-back is one context load |
-| 3 | `llm-view-status-details.md` | — | Shares no files with #1 or #2; unblocked by the llmbroker 1.9.0 bump |
 | — | `analytics-llm-secrets.md` | — | Problem statement only, no solution chosen. Not scheduled |
 
 ## Why this order
@@ -21,12 +20,6 @@ renames `fetchAll` → `loadIfNeeded`, so building #2's detail map against the c
 means writing it twice. #1 also supplies the dirty flag that #2's cache-clearing rule leans on —
 shipped alone, the drill-down follows the 24 h TTL and can display exactly the stale numbers #1
 exists to fix.
-
-**#3 is independent.** It touches `src/dinary/api/controllers/llm.py`, `views/LLMView.vue`,
-`components/ProviderCard.vue` and one new composable — no overlap with #1 or #2 in code, tests or
-specs (they change `src/dinary/api/analytics.py`, it changes the LLM controller). The windowed
-journal aggregate it consumes arrived with llmbroker 1.9.0, so it can run in parallel with #1/#2
-in either order.
 
 One shared file to watch: `specs/reference/pwa-analytics.md` is edited by both #1 (the
 "Client cache" section) and #2 (the event-detail endpoint). Different sections, but separate

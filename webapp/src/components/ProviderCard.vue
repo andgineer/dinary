@@ -5,6 +5,7 @@ import StatusDot from "./StatusDot.vue";
 
 const props = defineProps({
   provider: { type: Object, required: true },
+  now: { type: Number, default: () => Date.now() },
 });
 const emit = defineEmits(["toggle"]);
 
@@ -25,6 +26,33 @@ const STATUS_DOTS = {
 const statusLabel = computed(() => STATUS_LABELS[props.provider.status] ?? props.provider.status);
 const statusDot = computed(() => STATUS_DOTS[props.provider.status] ?? "off");
 
+function formatRemaining(iso, now) {
+  if (!iso) return null;
+  const deadline = new Date(iso.includes("T") ? iso : `${iso.replace(" ", "T")}Z`);
+  const ms = deadline.getTime() - now;
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return "<1 min";
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h`;
+}
+
+const cooldownLeft = computed(() =>
+  props.provider.status === "cooling"
+    ? formatRemaining(props.provider.cooldown_until, props.now)
+    : null,
+);
+
+const reliability = computed(() => {
+  const days = props.provider.recent_window_days;
+  const calls = props.provider.recent_calls ?? 0;
+  const failures = props.provider.recent_failures ?? 0;
+  if (calls === 0) return { text: `no calls · ${days} d`, danger: false };
+  if (failures === 0) return { text: `no failures · ${days} d`, danger: false };
+  const noun = failures === 1 ? "failure" : "failures";
+  return { text: `${failures} ${noun} / ${calls} · ${days} d`, danger: true };
+});
+
 const qualityPercent = computed(() => {
   const q = props.provider.quality_bound;
   if (q == null) return null;
@@ -42,6 +70,7 @@ const qualityPercent = computed(() => {
       <StatusDot :kind="statusDot" />
       <span class="provider-label">{{ provider.name }}</span>
       <span class="status-badge" :data-status="provider.status">{{ statusLabel }}</span>
+      <span v-if="cooldownLeft" class="cooldown-left">{{ cooldownLeft }}</span>
     </div>
 
     <div class="card-model">{{ provider.model }}</div>
@@ -51,9 +80,8 @@ const qualityPercent = computed(() => {
     </div>
 
     <div class="meta-row">
-      <span class="usage">{{ provider.call_count ?? 0 }} calls</span>
-      <span v-if="provider.last_status" class="last-status" :data-status="provider.last_status">
-        last: {{ provider.last_status }}
+      <span class="reliability" :class="{ 'is-danger': reliability.danger }">
+        {{ reliability.text }}
       </span>
     </div>
 
@@ -127,6 +155,12 @@ const qualityPercent = computed(() => {
   color: var(--warning);
 }
 
+.cooldown-left {
+  font-family: var(--font-num);
+  font-size: 0.68rem;
+  color: var(--warning);
+}
+
 .card-model {
   font-family: var(--font-num);
   font-size: 0.78rem;
@@ -157,12 +191,11 @@ const qualityPercent = computed(() => {
   margin-bottom: 0.3rem;
 }
 
-.usage {
+.reliability {
   font-family: var(--font-num);
 }
 
-.last-status[data-status="error"],
-.last-status[data-status="unavailable"] {
+.reliability.is-danger {
   color: var(--danger, #ef4444);
 }
 

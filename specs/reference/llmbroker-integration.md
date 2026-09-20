@@ -59,9 +59,21 @@ An installation that follows no list has no hint to show.
 ## Admin screen: read-only status plus a user disable
 
 The LLM screen is read-only except for one control. For every provider it shows
-availability (available, cooling down, no key, or disabled by the user), usage counters
-and the last call status, and the model's quality of work — whether it is demoted for
-receipt classification, plus a numeric quality indicator once ratings exist.
+availability (available, cooling down, no key, or disabled by the user) together with
+how long a running cooldown still has left, the share of its recent calls that failed,
+and the model's quality of work — whether it is demoted for receipt classification, plus
+a numeric quality indicator once ratings exist.
+
+**Reliability over a recent window, not lifetime usage.** An absolute call count has no
+baseline to compare against and, under failover, is predetermined — the top healthy
+provider takes essentially all the traffic. What the screen reports instead is how many of
+a provider's calls over a fixed recent window returned nothing, so a provider that fails a
+third of its calls is visible before a receipt is waiting on it. A call that returned
+nothing is a failure whatever the reason, an exhausted free-tier quota included; a call a
+sibling answered first is neither a call nor a failure. A provider with no calls in the
+window reports that as its own state — no data is not the same as no failures. The
+aggregate comes from the broker's journal accessor over that window; the cached snapshot
+metrics are not read.
 
 The one mutation is a persistent disable: the user can disable a provider and re-enable
 it later. The verdict is stored by llmbroker, survives restarts and model-list merges, and
