@@ -9,13 +9,9 @@ beforeEach(async () => {
   await allure.story("useKeyboardVisible");
 });
 
-function makeViewport(height, innerHeight = 800, layoutHeight = innerHeight) {
+function makeViewport(height, innerHeight = 800) {
   const listeners = {};
   Object.defineProperty(window, "innerHeight", { value: innerHeight, configurable: true });
-  Object.defineProperty(document.documentElement, "clientHeight", {
-    value: layoutHeight,
-    configurable: true,
-  });
   window.visualViewport = {
     height,
     offsetTop: 0,
@@ -39,10 +35,6 @@ function wrapComposable() {
 beforeEach(() => {
   delete window.visualViewport;
   Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
-  Object.defineProperty(document.documentElement, "clientHeight", {
-    value: 800,
-    configurable: true,
-  });
 });
 
 afterEach(() => {
@@ -101,36 +93,6 @@ describe("useKeyboardVisible", () => {
     vv.offsetTop = 500;
     vv._fire("resize");
     expect(get().keyboardBottom.value).toBe(0);
-  });
-
-  it("measures against the layout viewport, not the window", () => {
-    // An iOS home-screen app draws under the status bar: the window is taller
-    // than the box `position: fixed` is placed in.
-    const vv = makeViewport(800, 900, 800);
-    const { get } = wrapComposable();
-    vv.height = 400;
-    vv._fire("resize");
-    expect(get().keyboardBottom.value).toBe(400);
-  });
-
-  it("keeps the gap right when the document is scrolled", () => {
-    const vv = makeViewport(800);
-    Object.defineProperty(window, "scrollY", { value: 200, configurable: true });
-    const { get } = wrapComposable();
-    vv.height = 400;
-    vv.pageTop = 200;
-    vv._fire("resize");
-    expect(get().keyboardBottom.value).toBe(400);
-  });
-
-  it("falls back to the viewport offset when pageTop is unavailable", () => {
-    const vv = makeViewport(800);
-    Object.defineProperty(window, "scrollY", { value: 150, configurable: true });
-    const { get } = wrapComposable();
-    vv.height = 400;
-    vv.offsetTop = 50;
-    vv._fire("resize");
-    expect(get().keyboardBottom.value).toBe(350);
   });
 
   it("rounds the gap to whole pixels", () => {

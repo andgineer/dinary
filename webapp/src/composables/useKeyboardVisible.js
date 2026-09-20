@@ -2,7 +2,7 @@ import { ref, onMounted, onBeforeUnmount } from "vue";
 
 const KEYBOARD_THRESHOLD = 0.75;
 // iOS keeps animating the keyboard after its last visualViewport event, so a
-// single reading taken on the event is often stale.
+// single reading taken on that event is often stale.
 const REMEASURE_DELAYS_MS = [50, 250, 600];
 
 export function useKeyboardVisible() {
@@ -18,23 +18,14 @@ export function useKeyboardVisible() {
   function update() {
     const vv = window.visualViewport;
     if (!vv) return;
-    // `position: fixed` resolves against the layout viewport, whose height is
-    // documentElement.clientHeight — window.innerHeight can be larger, e.g. an
-    // iOS home-screen app drawing under the status bar.
-    const layoutHeight = document.documentElement.clientHeight || window.innerHeight;
-    const scrollTop = window.scrollY || 0;
-    const visibleTop = Number.isFinite(vv.pageTop)
-      ? vv.pageTop
-      : (vv.offsetTop || 0) + scrollTop;
-
-    keyboardVisible.value = vv.height / layoutHeight < KEYBOARD_THRESHOLD;
-    // Both edges in document coordinates: what the fixed layer extends past
-    // the visible area is exactly what the keyboard covers.
-    const covered = scrollTop + layoutHeight - (visibleTop + vv.height);
-    keyboardBottom.value = keyboardVisible.value ? Math.max(0, Math.round(covered)) : 0;
+    const ratio = vv.height / window.innerHeight;
+    keyboardVisible.value = ratio < KEYBOARD_THRESHOLD;
+    keyboardBottom.value = keyboardVisible.value
+      ? Math.max(0, Math.round(window.innerHeight - vv.offsetTop - vv.height))
+      : 0;
     // iOS can leave the document scrolled once the keyboard closes, which
     // parks fixed bottom bars below the screen until the next scroll.
-    if (!keyboardVisible.value && scrollTop) window.scrollTo(0, 0);
+    if (!keyboardVisible.value && window.scrollY) window.scrollTo(0, 0);
   }
 
   function remeasure() {

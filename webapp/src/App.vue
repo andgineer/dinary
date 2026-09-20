@@ -4,7 +4,6 @@ import { Clock } from "lucide-vue-next";
 import QueueModal from "./components/QueueModal.vue";
 import TemplateSwitchSheet from "./components/TemplateSwitchSheet.vue";
 import HeaderSegmented from "./components/HeaderSegmented.vue";
-import KeyboardDebug from "./components/KeyboardDebug.vue";
 import AddView from "./views/AddView.vue";
 import IncomeView from "./views/IncomeView.vue";
 import ReviewView from "./views/ReviewView.vue";
@@ -132,8 +131,7 @@ onBeforeUnmount(() => {
   <OnboardingTemplate v-if="showOnboarding" />
   <template v-else-if="showApp">
     <div v-if="isDev" class="dev-banner">DEV MODE</div>
-    <KeyboardDebug v-if="isDev" />
-    <header class="app-header" :class="{ 'below-banner': isDev }">
+    <header class="app-header">
       <div class="header-row">
         <h1>
           Dinary
@@ -217,11 +215,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .dev-banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 20;
+  flex: none;
   background: #f59e0b;
   color: #000;
   text-align: center;
@@ -229,10 +223,6 @@ onBeforeUnmount(() => {
   font-weight: 700;
   padding: 6px 0;
   line-height: 1.4;
-}
-
-.app-header.below-banner {
-  top: 36px;
 }
 
 .app-header {
