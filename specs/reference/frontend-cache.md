@@ -68,9 +68,9 @@ The stats page is marked dirty by every action that can change a figure it shows
 4. An income added, edited or deleted.
 5. Any catalog change that can alter a name or an entry the page shows: adding,
    editing, deactivating or deleting an event, a category group or a tag;
-   switching the category template; moving a category to another group; and
-   activating a category, which can place it in a group. Category names never
-   appear on the page, so renaming, hiding or unhiding a category does not mark it.
+   switching the category template; renaming a category or moving it to another
+   group; and activating a category, which can place it in a group. Hiding or
+   unhiding a category changes nothing the page shows, so it does not mark it.
 6. The review feed reporting receipts still being processed.
 
 Bulk rule confirmation does not mark it: it changes only confidence, never an
@@ -78,6 +78,10 @@ amount, category, event or date.
 
 The page has no badge and no background probe; it refetches only when opened
 while stale.
+
+Per-event breakdowns are held in memory only and are dropped whenever the summary
+is refetched, so they follow the same dirty flag. A breakdown requested before
+that refetch landed is requested again rather than kept.
 
 ## Analytics store re-mark-dirty rule
 

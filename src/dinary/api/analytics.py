@@ -1,11 +1,11 @@
-"""Analytics API: GET /api/analytics/summary, GET /api/analytics/db-snapshot"""
+"""Analytics API: summary, per-event detail and DB snapshot endpoints."""
 
 import sqlite3
 import tempfile
 from datetime import date
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
@@ -16,6 +16,7 @@ from dinary.db.storage import get_connection, get_db
 router = APIRouter()
 
 _SQL_DIR = Path(__file__).resolve().parent.parent / "db" / "sql"
+_EVENT_DAYS_LIMIT = 7
 _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
@@ -35,6 +36,40 @@ def _fmt_date_range(date_from: str | date, date_to: str | date) -> str:
     if df.year == dt.year:
         return f"{df.day} {_MONTHS[df.month - 1]}–{dt.day} {_MONTHS[dt.month - 1]} {df.year}"
     return f"{df.day} {_MONTHS[df.month - 1]} {df.year}–{dt.day} {_MONTHS[dt.month - 1]} {dt.year}"
+
+
+def _fmt_day(day: str) -> str:
+    d = date.fromisoformat(day)
+    return f"{d.day} {_MONTHS[d.month - 1]}"
+
+
+def _event_categories(
+    cur: sqlite3.Cursor,
+    event_id: int,
+    total: float,
+    currency: str,
+) -> list[dict]:
+    return [
+        {
+            "category_id": r[0],
+            "category_name": r[1],
+            "group_name": r[2],
+            "total": _fmt(r[3]),
+            "share": r[3] / total if total else 0.0,
+            "currency": currency,
+        }
+        for r in cur.execute(_sql("analytics_event_categories.sql"), (event_id,)).fetchall()
+    ]
+
+
+def _event_days(cur: sqlite3.Cursor, event_id: int, currency: str) -> list[dict]:
+    return [
+        {"date": r[0], "date_label": _fmt_day(r[0]), "total": _fmt(r[1]), "currency": currency}
+        for r in cur.execute(
+            _sql("analytics_event_days.sql"),
+            (event_id, _EVENT_DAYS_LIMIT),
+        ).fetchall()
+    ]
 
 
 @router.get("/api/analytics/summary")
@@ -85,6 +120,26 @@ def get_analytics_summary(con: sqlite3.Connection = Depends(get_db)) -> dict:  #
         "events": events,
         "trends": trends,
         "receipts_queue": receipts_queue,
+    }
+
+
+@router.get("/api/analytics/events/{event_id}")
+def get_analytics_event(event_id: int, con: sqlite3.Connection = Depends(get_db)) -> dict:  # noqa: B008
+    cur = con.cursor()
+    currency = settings.accounting_currency
+    row = cur.execute(_sql("analytics_event.sql"), (event_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    total = row[4]
+    return {
+        "id": row[0],
+        "name": row[1],
+        "date_range": _fmt_date_range(row[2], row[3]),
+        "total": _fmt(total),
+        "currency": currency,
+        "open": bool(row[5]),
+        "categories": _event_categories(cur, event_id, total, currency),
+        "days": _event_days(cur, event_id, currency),
     }
 
 

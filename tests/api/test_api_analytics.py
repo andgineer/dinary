@@ -1,7 +1,8 @@
-"""API tests for GET /api/analytics/summary and GET /api/analytics/db-snapshot."""
+"""API tests for the /api/analytics endpoints."""
 
 import sqlite3
 import tempfile
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
@@ -234,6 +235,147 @@ class TestAnalyticsEvents:
         db_con.close()
         data = client.get("/api/analytics/summary").json()
         assert not any(e["name"] == "OldTrip" for e in data["events"])
+
+
+_DETAIL_EVENT_ID = 50
+
+
+def _seed_detail_event(expenses: list[tuple[str, float, int]]) -> None:
+    """Seed one event plus its expenses as ``(datetime, amount, category_id)``."""
+    today = date.today()
+    con = storage.get_connection()
+    try:
+        con.execute(
+            "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled, is_active)"
+            " VALUES (?, 'DetailTrip', ?, ?, 0, 1)",
+            (
+                _DETAIL_EVENT_ID,
+                (today - timedelta(days=20)).isoformat(),
+                (today - timedelta(days=5)).isoformat(),
+            ),
+        )
+        for dt, amount, category_id in expenses:
+            con.execute(
+                "INSERT INTO expenses"
+                " (datetime, amount, amount_original, currency_original, category_id, event_id)"
+                " VALUES (?, ?, ?, 'EUR', ?, ?)",
+                (dt, amount, amount, category_id, _DETAIL_EVENT_ID),
+            )
+    finally:
+        con.close()
+
+
+def _day(days_ago: int) -> str:
+    return (date.today() - timedelta(days=days_ago)).isoformat()
+
+
+def _event_detail(client) -> dict:
+    resp = client.get(f"/api/analytics/events/{_DETAIL_EVENT_ID}")
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+@allure.epic("Analytics")
+@allure.feature("API")
+class TestAnalyticsEventDetail:
+    def test_header_matches_event(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        _seed_detail_event([(f"{_day(10)} 12:00:00+02:00", 300, 1)])
+        data = _event_detail(client)
+        assert data["id"] == _DETAIL_EVENT_ID
+        assert data["name"] == "DetailTrip"
+        assert data["total"] == "300"
+        assert data["currency"] == "EUR"
+        assert data["open"] is False
+
+    def test_categories_sorted_descending(self, client):
+        _seed_detail_event(
+            [
+                (f"{_day(10)} 12:00:00+02:00", 100, 1),
+                (f"{_day(9)} 12:00:00+02:00", 150, 1),
+                (f"{_day(9)} 13:00:00+02:00", 400, 2),
+            ]
+        )
+        cats = _event_detail(client)["categories"]
+        assert [(c["category_name"], c["group_name"], c["total"]) for c in cats] == [
+            ("transit", "Transport", "400"),
+            ("food", "Food", "250"),
+        ]
+
+    def test_category_without_group_still_counted(self, client):
+        con = storage.get_connection()
+        try:
+            con.execute(
+                "INSERT INTO categories (id, name, group_id, is_active, is_retired)"
+                " VALUES (9, 'retired-orphan', NULL, FALSE, TRUE)",
+            )
+        finally:
+            con.close()
+        _seed_detail_event(
+            [
+                (f"{_day(10)} 12:00:00+02:00", 100, 1),
+                (f"{_day(10)} 13:00:00+02:00", 70, 9),
+            ]
+        )
+        data = _event_detail(client)
+        orphan = next(c for c in data["categories"] if c["category_id"] == 9)
+        assert orphan["group_name"] is None
+        assert sum(int(c["total"].replace(" ", "")) for c in data["categories"]) == int(
+            data["total"].replace(" ", ""),
+        )
+
+    def test_share_is_fraction_of_event_total(self, client):
+        _seed_detail_event(
+            [
+                (f"{_day(10)} 12:00:00+02:00", 300, 1),
+                (f"{_day(10)} 13:00:00+02:00", 100, 2),
+            ]
+        )
+        cats = _event_detail(client)["categories"]
+        assert [c["share"] for c in cats] == [0.75, 0.25]
+        assert sum(c["share"] for c in cats) == 1.0
+
+    def test_days_sum_per_day_and_are_capped(self, client):
+        expenses = [(f"{_day(20 - i)} 12:00:00+02:00", 10 * (i + 1), 1) for i in range(9)]
+        expenses.append((f"{_day(12)} 18:00:00+02:00", 5, 2))
+        _seed_detail_event(expenses)
+        days = _event_detail(client)["days"]
+        assert len(days) == 7
+        assert [d["date"] for d in days] == [_day(n) for n in range(12, 19)]
+        assert days[0]["total"] == "95"
+        assert days[1]["total"] == "80"
+        assert days[-1]["total"] == "30"
+
+    def test_day_label_is_short(self, client):
+        day = date.today() - timedelta(days=10)
+        _seed_detail_event([(f"{day.isoformat()} 12:00:00+02:00", 1, 1)])
+        label = _event_detail(client)["days"][0]["date_label"]
+        assert label == f"{day.day} {day.strftime('%b')}"
+
+    def test_spend_after_local_midnight_keeps_local_date(self, client):
+        _seed_detail_event([(f"{_day(10)} 00:30:00+02:00", 50, 1)])
+        days = _event_detail(client)["days"]
+        assert [d["date"] for d in days] == [_day(10)]
+
+    def test_event_without_expenses_is_empty(self, client):
+        _seed_detail_event([])
+        data = _event_detail(client)
+        assert data["total"] == "0"
+        assert data["categories"] == []
+        assert data["days"] == []
+
+    def test_unknown_event_is_404(self, client):
+        assert client.get("/api/analytics/events/9999").status_code == 404
+
+    def test_amounts_formatted_with_spaces(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "accounting_currency", "RSD")
+        _seed_detail_event([(f"{_day(10)} 12:00:00+02:00", 1234567, 1)])
+        data = _event_detail(client)
+        assert data["total"] == "1 234 567"
+        assert data["categories"][0]["total"] == "1 234 567"
+        assert data["categories"][0]["currency"] == "RSD"
+        assert data["days"][0]["total"] == "1 234 567"
+        assert data["days"][0]["currency"] == "RSD"
 
 
 def _seed_classification_jobs(statuses: list[tuple[str, str | None]]) -> None:

@@ -325,8 +325,15 @@ describe("catalog store: catalog mutations mark analytics dirty", () => {
     expect(useAnalyticsStore().dirtyFlag).toBe(true);
   });
 
+  it("renameCategory marks analytics dirty", async () => {
+    vi.spyOn(catalogApi, "renameCategory").mockResolvedValue({ catalog_version: 6 });
+    const store = useCatalogStore();
+    store.replaceSnapshot(SAMPLE);
+    await store.renameCategory("cafe", "coffee");
+    expect(useAnalyticsStore().dirtyFlag).toBe(true);
+  });
+
   it.each([
-    ["renameCategory", "renameCategory", (store) => store.renameCategory("cafe", "coffee")],
     ["hideCategory", "hideCategory", (store) => store.hideCategory("cafe")],
     ["unhideCategory", "unhideCategory", (store) => store.unhideCategory("cafe")],
   ])("%s leaves analytics clean", async (_name, apiFn, action) => {
@@ -341,6 +348,7 @@ describe("catalog store: catalog mutations mark analytics dirty", () => {
     ["patch tag", "adminPatchTag", (store) => store.patch("tag", 200, { name: "renamed" })],
     ["applyTemplate", "applyTemplate", (store) => store.applyTemplate("family", "ru")],
     ["moveCategory", "moveCategory", (store) => store.moveCategory("cafe", "trips")],
+    ["renameCategory", "renameCategory", (store) => store.renameCategory("cafe", "coffee")],
   ])("a failed %s leaves analytics clean", async (_name, apiFn, action) => {
     vi.spyOn(catalogApi, apiFn).mockRejectedValue(new Error("offline"));
     const store = useCatalogStore();

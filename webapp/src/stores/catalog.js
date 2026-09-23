@@ -303,6 +303,7 @@ export const useCatalogStore = defineStore("catalog", () => {
     const resp = await catalogApi.renameCategory(code, name);
     _patchCategory(code, { name });
     _setCatalogVersion(resp.catalog_version);
+    useAnalyticsStore().markDirty();
     return resp;
   }
 

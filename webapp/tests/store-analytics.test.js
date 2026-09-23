@@ -155,3 +155,88 @@ describe("analytics store: receipts queue decides freshness", () => {
     expect(store.isStale()).toBe(true);
   });
 });
+
+const DETAIL = {
+  id: 1,
+  name: "trip",
+  date_range: "1–3 May 2026",
+  total: "50",
+  currency: "RSD",
+  open: false,
+  categories: [{ category_id: 1, category_name: "food", group_name: "Food", total: "50", share: 1, currency: "RSD" }],
+  days: [{ date: "2026-05-01", date_label: "1 May", total: "50", currency: "RSD" }],
+};
+
+describe("analytics store: event detail", () => {
+  it("fetches a detail once and serves it from memory afterwards", async () => {
+    const spy = vi.spyOn(analyticsApi, "fetchEventDetail").mockResolvedValue(DETAIL);
+    const store = useAnalyticsStore();
+    expect(await store.loadEventDetail(1)).toEqual(DETAIL);
+    expect(await store.loadEventDetail(1)).toEqual(DETAIL);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith(1);
+    expect(store.eventDetails[1]).toEqual(DETAIL);
+  });
+
+  it("shares one request between concurrent callers", async () => {
+    const spy = vi.spyOn(analyticsApi, "fetchEventDetail").mockResolvedValue(DETAIL);
+    const store = useAnalyticsStore();
+    await Promise.all([store.loadEventDetail(1), store.loadEventDetail(1)]);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not persist details to localStorage", async () => {
+    vi.spyOn(analyticsApi, "fetchEventDetail").mockResolvedValue(DETAIL);
+    const store = useAnalyticsStore();
+    await store.loadEventDetail(1);
+    setActivePinia(createPinia());
+    expect(useAnalyticsStore().eventDetails).toEqual({});
+  });
+
+  it("clears cached details after a successful summary refetch", async () => {
+    vi.spyOn(analyticsApi, "fetchEventDetail").mockResolvedValue(DETAIL);
+    vi.spyOn(analyticsApi, "fetchAnalyticsSummary").mockResolvedValue(response());
+    const store = useAnalyticsStore();
+    await store.loadEventDetail(1);
+    await store.loadIfNeeded();
+    expect(store.eventDetails).toEqual({});
+  });
+
+  it("keeps cached details when the summary refetch fails", async () => {
+    vi.spyOn(analyticsApi, "fetchEventDetail").mockResolvedValue(DETAIL);
+    vi.spyOn(analyticsApi, "fetchAnalyticsSummary").mockRejectedValue(new Error("boom"));
+    const store = useAnalyticsStore();
+    await store.loadEventDetail(1);
+    await expect(store.loadIfNeeded()).rejects.toThrow("boom");
+    expect(store.eventDetails[1]).toEqual(DETAIL);
+  });
+
+  it("refetches instead of storing a detail that was in flight when the summary refetch landed", async () => {
+    const stale = { ...DETAIL, total: "10" };
+    let resolveStale;
+    const spy = vi
+      .spyOn(analyticsApi, "fetchEventDetail")
+      .mockReturnValueOnce(new Promise((resolve) => { resolveStale = resolve; }))
+      .mockResolvedValueOnce(DETAIL);
+    vi.spyOn(analyticsApi, "fetchAnalyticsSummary").mockResolvedValue(response());
+    const store = useAnalyticsStore();
+    const pending = store.loadEventDetail(1);
+    await store.loadIfNeeded();
+    resolveStale(stale);
+    expect(await pending).toEqual(DETAIL);
+    expect(store.eventDetails[1]).toEqual(DETAIL);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache a failed detail request", async () => {
+    const spy = vi
+      .spyOn(analyticsApi, "fetchEventDetail")
+      .mockRejectedValueOnce(new Error("down"))
+      .mockResolvedValueOnce(DETAIL);
+    const store = useAnalyticsStore();
+    await expect(store.loadEventDetail(1)).rejects.toThrow("down");
+    expect(store.eventDetails[1]).toBeUndefined();
+    expect(await store.loadEventDetail(1)).toEqual(DETAIL);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
