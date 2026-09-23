@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useReviewStore } from "../src/stores/review.js";
 import { useLlmStore } from "../src/stores/llm.js";
+import { useAnalyticsStore } from "../src/stores/analytics.js";
 import * as expenseCorrections from "../src/api/expenseCorrections.js";
 import * as reviewApi from "../src/api/review.js";
 import * as expensesApi from "../src/api/expenses.js";
@@ -1198,5 +1199,97 @@ describe("review store: resolveStuckReceipt()", () => {
 
     await expect(store.resolveStuckReceipt(1, { categoryId: 3 })).rejects.toMatchObject({ status: 409 });
     expect(store.stuckReceipts).toHaveLength(1);
+  });
+});
+
+describe("review store: analytics dirty flag", () => {
+  const emptyQueue = { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 };
+
+  function mockFeed(queue) {
+    return vi.spyOn(reviewApi, "getReviewFeed").mockResolvedValue({
+      items: [],
+      doubtful_count: 0,
+      has_more: false,
+      receipts_queue: queue,
+    });
+  }
+
+  it.each([
+    ["pending", { ...emptyQueue, pending: 1 }],
+    ["in_progress", { ...emptyQueue, in_progress: 1 }],
+    ["sleeping", { ...emptyQueue, sleeping: 1 }],
+  ])("marks analytics dirty while the receipt queue has %s jobs", async (_name, queue) => {
+    mockFeed(queue);
+    await useReviewStore().loadNextPage();
+    expect(useAnalyticsStore().dirtyFlag).toBe(true);
+    expect(localStorage.getItem("dinary:analytics:dirty")).toBe("1");
+  });
+
+  it("does not mark analytics dirty for poisoned-only or empty queues", async () => {
+    mockFeed({ ...emptyQueue, poisoned: 2 });
+    await useReviewStore().loadNextPage();
+    expect(useAnalyticsStore().dirtyFlag).toBe(false);
+
+    localStorage.clear();
+    setActivePinia(createPinia());
+    const spy = mockFeed(emptyQueue);
+    spy.mockClear();
+    await useReviewStore().loadNextPage();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(useAnalyticsStore().dirtyFlag).toBe(false);
+  });
+
+  it("marks analytics dirty after correct()", async () => {
+    vi.spyOn(expenseCorrections, "correctCategory").mockResolvedValueOnce({ count: 1 });
+    seedCatalog();
+    const store = useReviewStore();
+    store.items = [{ id: 100, expense_id: 101, is_doubtful: false }];
+    await store.correct(store.items[0], 2, "all");
+    expect(useAnalyticsStore().dirtyFlag).toBe(true);
+  });
+
+  it("marks analytics dirty after updateExpense()", async () => {
+    vi.spyOn(expenseCorrections, "editExpense").mockResolvedValueOnce({ id: 10 });
+    await useReviewStore().updateExpense(10, { category_id: 2 });
+    expect(useAnalyticsStore().dirtyFlag).toBe(true);
+  });
+
+  it("does not mark analytics dirty when updateExpense() fails", async () => {
+    vi.spyOn(expenseCorrections, "editExpense").mockRejectedValueOnce(new Error("boom"));
+    await expect(useReviewStore().updateExpense(10, {})).rejects.toThrow("boom");
+    expect(useAnalyticsStore().dirtyFlag).toBe(false);
+  });
+
+  it("marks analytics dirty after deleteExpense()", async () => {
+    vi.spyOn(expensesApi, "deleteExpense").mockResolvedValueOnce(null);
+    await useReviewStore().deleteExpense(5);
+    expect(useAnalyticsStore().dirtyFlag).toBe(true);
+  });
+
+  it("marks analytics dirty after resolveStuckReceipt()", async () => {
+    vi.spyOn(receiptsApi, "resolveReceipt").mockResolvedValueOnce(null);
+    mockFeed(emptyQueue);
+    vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValue({ items: [], has_more: false });
+    await useReviewStore().resolveStuckReceipt(3, { category_id: 2 });
+    expect(useAnalyticsStore().dirtyFlag).toBe(true);
+  });
+
+  it("marks analytics dirty after deleteReceipt()", async () => {
+    vi.spyOn(receiptsApi, "deleteReceipt").mockResolvedValueOnce(null);
+    mockFeed(emptyQueue);
+    vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValue({ items: [], has_more: false });
+    await useReviewStore().deleteReceipt(3);
+    expect(useAnalyticsStore().dirtyFlag).toBe(true);
+  });
+
+  it("does not mark analytics dirty after confirmAll()", async () => {
+    vi.spyOn(reviewApi, "confirmAllRules").mockResolvedValueOnce({ confirmed: 1 });
+    vi.spyOn(reviewApi, "getExpensesFeed").mockResolvedValue({ items: [], has_more: false });
+    const store = useReviewStore();
+    store.items = [{ id: 1, is_doubtful: true }];
+    store.doubtfulCount = 1;
+    await store.confirmAll([1]);
+    expect(useAnalyticsStore().dirtyFlag).toBe(false);
+    expect(localStorage.getItem("dinary:analytics:dirty")).toBeNull();
   });
 });

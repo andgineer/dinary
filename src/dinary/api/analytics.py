@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 from dinary.config import settings
+from dinary.db.receipts import classification_job_counts
 from dinary.db.storage import get_connection, get_db
 
 router = APIRouter()
@@ -40,6 +41,9 @@ def _fmt_date_range(date_from: str | date, date_to: str | date) -> str:
 def get_analytics_summary(con: sqlite3.Connection = Depends(get_db)) -> dict:  # noqa: B008
     cur = con.cursor()
     currency = settings.accounting_currency
+    # Read before the aggregates: a job committing mid-handler must not yield stale totals
+    # alongside an empty queue, which would let the client treat them as fresh.
+    receipts_queue = classification_job_counts(con)
 
     this_month, last_month, ytd_expenses = cur.execute(_sql("analytics_summary.sql")).fetchone()
     ytd_income = cur.execute(_sql("analytics_ytd_income.sql")).fetchone()[0]
@@ -80,6 +84,7 @@ def get_analytics_summary(con: sqlite3.Connection = Depends(get_db)) -> dict:  #
         },
         "events": events,
         "trends": trends,
+        "receipts_queue": receipts_queue,
     }
 
 

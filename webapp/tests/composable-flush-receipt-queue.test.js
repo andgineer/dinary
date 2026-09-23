@@ -12,6 +12,7 @@ import * as swHealth from "../src/composables/swHealth.js";
 import { useToastStore } from "../src/stores/toast.js";
 import { useLlmStore } from "../src/stores/llm.js";
 import { useReviewStore } from "../src/stores/review.js";
+import { useAnalyticsStore } from "../src/stores/analytics.js";
 import * as receiptsApi from "../src/api/receipts.js";
 
 beforeEach(async () => {
@@ -182,7 +183,7 @@ describe("flushReceiptQueue", () => {
     expect(queue.lastFlushError).toBeNull();
   });
 
-  it("calls markDirty on llm and review stores after successful receipt flush", async () => {
+  it("calls markDirty on llm, review and analytics stores after successful receipt flush", async () => {
     const queue = useReceiptQueueStore();
     await queue.enqueue("https://example.com/r");
 
@@ -192,11 +193,13 @@ describe("flushReceiptQueue", () => {
     const reviewStore = useReviewStore();
     const llmSpy = vi.spyOn(llmStore, "markDirty");
     const reviewSpy = vi.spyOn(reviewStore, "markDirty");
+    const analyticsSpy = vi.spyOn(useAnalyticsStore(), "markDirty");
 
     await flushReceiptQueue();
 
     expect(llmSpy).toHaveBeenCalledTimes(1);
     expect(reviewSpy).toHaveBeenCalledTimes(1);
+    expect(analyticsSpy).toHaveBeenCalledTimes(1);
   });
 
   it("does not call markDirty when all flushes fail", async () => {
@@ -209,11 +212,13 @@ describe("flushReceiptQueue", () => {
     const reviewStore = useReviewStore();
     const llmSpy = vi.spyOn(llmStore, "markDirty");
     const reviewSpy = vi.spyOn(reviewStore, "markDirty");
+    const analyticsSpy = vi.spyOn(useAnalyticsStore(), "markDirty");
 
     await flushReceiptQueue();
 
     expect(llmSpy).not.toHaveBeenCalled();
     expect(reviewSpy).not.toHaveBeenCalled();
+    expect(analyticsSpy).not.toHaveBeenCalled();
   });
 
   it("calls reportNetworkSuccess after a successful send", async () => {

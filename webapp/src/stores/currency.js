@@ -48,7 +48,7 @@ export const useCurrencyStore = defineStore("currency", () => {
   const defaultCode = ref("RSD");
   const lastUsed = ref(readLastUsed());
   const lastListError = ref(null);
-  const { dirtyFlag, lastFetchedAt, markDirty, stampFresh: _stampFresh, isStale } = useStaleCache({
+  const { dirtyFlag, lastFetchedAt, markDirty, beginFetch, stampFresh, isStale } = useStaleCache({
     dirtyKey: DIRTY_KEY,
     fetchedKey: FETCHED_KEY,
   });
@@ -69,11 +69,12 @@ export const useCurrencyStore = defineStore("currency", () => {
   async function loadIfNeeded() {
     if (codes.value.length > 0 && !isStale()) return;
     try {
+      const fetchToken = beginFetch();
       const snap = await currenciesApi.fetchCurrencies();
       codes.value = Array.isArray(snap?.codes) ? snap.codes.slice() : [];
       defaultCode.value = snap?.default_code || "RSD";
       lastListError.value = null;
-      _stampFresh();
+      stampFresh(fetchToken);
     } catch (err) {
       lastListError.value = err;
       throw err;
@@ -81,18 +82,20 @@ export const useCurrencyStore = defineStore("currency", () => {
   }
 
   async function addCurrency(code) {
+    const fetchToken = beginFetch();
     const snap = await currenciesApi.addCurrency(code);
     codes.value = Array.isArray(snap?.codes) ? snap.codes.slice() : [];
     defaultCode.value = snap?.default_code || defaultCode.value;
-    _stampFresh();
+    stampFresh(fetchToken);
     return snap;
   }
 
   async function removeCurrency(code) {
+    const fetchToken = beginFetch();
     const snap = await currenciesApi.deleteCurrency(code);
     codes.value = Array.isArray(snap?.codes) ? snap.codes.slice() : [];
     defaultCode.value = snap?.default_code || defaultCode.value;
-    _stampFresh();
+    stampFresh(fetchToken);
     if (lastUsed.value && !codes.value.includes(lastUsed.value)) {
       setLastUsed(defaultCode.value);
     }

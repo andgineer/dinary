@@ -4,6 +4,7 @@
 // are treated as success and removed from the local queue.
 
 import { postReceipt } from "../api/receipts.js";
+import { useAnalyticsStore } from "../stores/analytics.js";
 import { useReceiptQueueStore } from "../stores/receiptQueue.js";
 import { useToastStore } from "../stores/toast.js";
 import { useLlmStore } from "../stores/llm.js";
@@ -36,6 +37,7 @@ export async function flushReceiptQueue() {
         } else {
           useLlmStore().markDirty();
           useReviewStore().markDirty();
+          useAnalyticsStore().markDirty();
           toast.show(`Receipt saved${amountLabel}`, "success");
         }
       } catch (err) {

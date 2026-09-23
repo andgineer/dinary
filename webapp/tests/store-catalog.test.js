@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useCatalogStore } from "../src/stores/catalog.js";
 import * as catalogApi from "../src/api/catalog.js";
+import { useAnalyticsStore } from "../src/stores/analytics.js";
 
 beforeEach(async () => {
   await allure.epic("Catalog");
@@ -250,6 +251,102 @@ describe("catalog store: admin actions", () => {
   it("rejects unknown kinds", async () => {
     const store = useCatalogStore();
     await expect(store.add("nope", {})).rejects.toThrow(/Unknown kind/);
+  });
+});
+
+describe("catalog store: catalog mutations mark analytics dirty", () => {
+  const NEW_EVENT = { id: 150, name: "new-trip", date_from: "2026-06-01", date_to: "2026-06-05", auto_attach_enabled: true, is_active: true };
+  const NEW_TAG = { id: 250, name: "new-tag", is_active: true };
+  const NEW_GROUP = { id: 3, name: "new-group", is_active: true };
+
+  function mockAdminApi() {
+    vi.spyOn(catalogApi, "adminAddEvent").mockResolvedValue({ catalog_version: 2, event: NEW_EVENT });
+    vi.spyOn(catalogApi, "adminPatchEvent").mockResolvedValue({ catalog_version: 3 });
+    vi.spyOn(catalogApi, "adminDeleteEvent").mockResolvedValue({ catalog_version: 4, delete_status: "hard" });
+    vi.spyOn(catalogApi, "adminAddTag").mockResolvedValue({ catalog_version: 2, tag: NEW_TAG });
+    vi.spyOn(catalogApi, "adminPatchTag").mockResolvedValue({ catalog_version: 3 });
+    vi.spyOn(catalogApi, "adminDeleteTag").mockResolvedValue({ catalog_version: 4, delete_status: "hard" });
+    vi.spyOn(catalogApi, "adminAddGroup").mockResolvedValue({ catalog_version: 2, group: NEW_GROUP });
+    vi.spyOn(catalogApi, "adminPatchGroup").mockResolvedValue({ catalog_version: 3 });
+    vi.spyOn(catalogApi, "adminDeleteGroup").mockResolvedValue({ catalog_version: 4, delete_status: "soft" });
+  }
+
+  it.each([
+    ["add event", (store) => store.add("event", { name: "new-trip" })],
+    ["patch event", (store) => store.patch("event", 100, { name: "renamed" })],
+    ["remove event", (store) => store.remove("event", 100)],
+    ["add tag", (store) => store.add("tag", { name: "new-tag" })],
+    ["patch tag", (store) => store.patch("tag", 200, { name: "renamed" })],
+    ["deactivate tag", (store) => store.deactivate("tag", 200)],
+    ["remove tag", (store) => store.remove("tag", 200)],
+    ["add group", (store) => store.add("group", { name: "new-group" })],
+    ["patch group", (store) => store.patch("group", 1, { name: "renamed" })],
+    ["remove group", (store) => store.remove("group", 1)],
+  ])("%s marks analytics dirty", async (_name, action) => {
+    mockAdminApi();
+    const store = useCatalogStore();
+    store.replaceSnapshot(SAMPLE);
+    await action(store);
+    expect(useAnalyticsStore().dirtyFlag).toBe(true);
+  });
+
+  it("applyTemplate marks analytics dirty", async () => {
+    vi.spyOn(catalogApi, "applyTemplate").mockResolvedValue({
+      active_template: "family",
+      catalog_version: 5,
+      category_groups: [],
+      categories: [],
+      events: [],
+      tags: [],
+      frequent_categories: [],
+    });
+    const store = useCatalogStore();
+    store.replaceSnapshot(SAMPLE);
+    await store.applyTemplate("family", "ru");
+    expect(useAnalyticsStore().dirtyFlag).toBe(true);
+  });
+
+  it("moveCategory marks analytics dirty", async () => {
+    vi.spyOn(catalogApi, "moveCategory").mockResolvedValue({ catalog_version: 6 });
+    const store = useCatalogStore();
+    store.replaceSnapshot(SAMPLE);
+    await store.moveCategory("cafe", "trips");
+    expect(useAnalyticsStore().dirtyFlag).toBe(true);
+  });
+
+  it("activateCategory marks analytics dirty", async () => {
+    vi.spyOn(catalogApi, "activateCategory").mockResolvedValue({
+      catalog_version: 6,
+      category: { id: 11, group_id: 1, name: "snack", is_active: true },
+    });
+    const store = useCatalogStore();
+    store.replaceSnapshot(SAMPLE);
+    await store.activateCategory("snack");
+    expect(useAnalyticsStore().dirtyFlag).toBe(true);
+  });
+
+  it.each([
+    ["renameCategory", "renameCategory", (store) => store.renameCategory("cafe", "coffee")],
+    ["hideCategory", "hideCategory", (store) => store.hideCategory("cafe")],
+    ["unhideCategory", "unhideCategory", (store) => store.unhideCategory("cafe")],
+  ])("%s leaves analytics clean", async (_name, apiFn, action) => {
+    vi.spyOn(catalogApi, apiFn).mockResolvedValue({ catalog_version: 6 });
+    const store = useCatalogStore();
+    store.replaceSnapshot(SAMPLE);
+    await action(store);
+    expect(useAnalyticsStore().dirtyFlag).toBe(false);
+  });
+
+  it.each([
+    ["patch tag", "adminPatchTag", (store) => store.patch("tag", 200, { name: "renamed" })],
+    ["applyTemplate", "applyTemplate", (store) => store.applyTemplate("family", "ru")],
+    ["moveCategory", "moveCategory", (store) => store.moveCategory("cafe", "trips")],
+  ])("a failed %s leaves analytics clean", async (_name, apiFn, action) => {
+    vi.spyOn(catalogApi, apiFn).mockRejectedValue(new Error("offline"));
+    const store = useCatalogStore();
+    store.replaceSnapshot(SAMPLE);
+    await expect(action(store)).rejects.toThrow("offline");
+    expect(useAnalyticsStore().dirtyFlag).toBe(false);
   });
 });
 

@@ -10,7 +10,7 @@ const DIRTY_KEY = "dinary:income:dirty";
 const FETCHED_KEY = "dinary:income:fetchedAt";
 
 export const useIncomeStore = defineStore("income", () => {
-  const { dirtyFlag, lastFetchedAt, stampFresh, isStale, readCache, writeCache, clearCache } =
+  const { dirtyFlag, lastFetchedAt, beginFetch, stampFresh, isStale, readCache, writeCache, clearCache } =
     useStaleCache({ dirtyKey: DIRTY_KEY, fetchedKey: FETCHED_KEY, dataKey: CACHE_KEY });
 
   const cached = readCache() || {};
@@ -38,13 +38,14 @@ export const useIncomeStore = defineStore("income", () => {
     loading.value = true;
     try {
       const nextPage = page.value + 1;
+      const fetchToken = beginFetch();
       const data = await listIncomes({ page: nextPage, pageSize: 20 });
       const existingIds = new Set(items.value.map((i) => i.id));
       const incoming = (data.items ?? []).filter((i) => !existingIds.has(i.id));
       items.value = [...items.value, ...incoming];
       hasMore.value = data.has_more ?? false;
       page.value = nextPage;
-      stampFresh();
+      stampFresh(fetchToken);
       _persist();
     } catch (err) {
       if (navigator.onLine) {
@@ -60,7 +61,7 @@ export const useIncomeStore = defineStore("income", () => {
     const toast = useToastStore();
     try {
       await createIncome(payload);
-      useAnalyticsStore().invalidate();
+      useAnalyticsStore().markDirty();
       reset();
       await loadNextPage();
     } catch (err) {
@@ -73,7 +74,7 @@ export const useIncomeStore = defineStore("income", () => {
     const toast = useToastStore();
     try {
       await updateIncome(id, payload);
-      useAnalyticsStore().invalidate();
+      useAnalyticsStore().markDirty();
       reset();
       await loadNextPage();
     } catch (err) {
@@ -86,7 +87,7 @@ export const useIncomeStore = defineStore("income", () => {
     const toast = useToastStore();
     try {
       await deleteIncome(id);
-      useAnalyticsStore().invalidate();
+      useAnalyticsStore().markDirty();
       reset();
       await loadNextPage();
     } catch (err) {

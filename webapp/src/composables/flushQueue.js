@@ -5,6 +5,7 @@
 // server hands back a newer catalog_version.
 
 import { postExpense } from "../api/expenses.js";
+import { useAnalyticsStore } from "../stores/analytics.js";
 import { useCatalogStore } from "../stores/catalog.js";
 import { useQueueStore } from "../stores/queue.js";
 import { useReviewStore } from "../stores/review.js";
@@ -78,6 +79,7 @@ export async function flushQueue() {
   }
   if (anyFlushed) {
     review.resetExpenses();
+    useAnalyticsStore().markDirty();
   }
 }
 

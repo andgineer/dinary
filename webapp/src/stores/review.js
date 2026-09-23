@@ -12,6 +12,7 @@ import { useStaleCache } from "../composables/useStaleCache.js";
 import { useToastStore } from "./toast.js";
 import { useCatalogStore } from "./catalog.js";
 import { useLlmStore } from "./llm.js";
+import { useAnalyticsStore } from "./analytics.js";
 
 const CACHE_KEY = "dinary:review:v1";
 const DIRTY_KEY = "dinary:review:dirty";
@@ -19,7 +20,7 @@ const FETCHED_KEY = "dinary:review:fetchedAt";
 const EXPENSES_CACHE_KEY = "dinary:review:expenses:v1";
 
 export const useReviewStore = defineStore("review", () => {
-  const { dirtyFlag, lastFetchedAt, markDirty, stampFresh, isStale, readCache, writeCache, clearCache } = useStaleCache({
+  const { dirtyFlag, lastFetchedAt, markDirty, beginFetch, stampFresh, isStale, readCache, writeCache, clearCache } = useStaleCache({
     dirtyKey: DIRTY_KEY,
     fetchedKey: FETCHED_KEY,
     dataKey: CACHE_KEY,
@@ -86,6 +87,7 @@ export const useReviewStore = defineStore("review", () => {
     loading.value = true;
     try {
       const nextPage = page.value + 1;
+      const fetchToken = beginFetch();
       const data = await getReviewFeed({ page: nextPage, pageSize: 20 });
       const existingIds = new Set(
         items.value.map((i) => `${i.review_kind ?? "rule"}:${i.id}`),
@@ -99,11 +101,14 @@ export const useReviewStore = defineStore("review", () => {
       receiptsQueue.value = q;
       hasMore.value = data.has_more ?? false;
       page.value = nextPage;
-      stampFresh();
+      stampFresh(fetchToken);
       _persistState();
       if (q.pending > 0 || q.in_progress > 0 || q.sleeping > 0 || q.poisoned > 0) {
         markDirty();
         useLlmStore().markDirty();
+      }
+      if (q.pending > 0 || q.in_progress > 0 || q.sleeping > 0) {
+        useAnalyticsStore().markDirty();
       }
       if (nextPage === 1) await loadStuckReceipts();
     } catch (err) {
@@ -166,6 +171,7 @@ export const useReviewStore = defineStore("review", () => {
       }
       _persistExpenses();
       _persistState();
+      useAnalyticsStore().markDirty();
       const suffix = isExpenseCorrection ? "" : " · rule saved";
       toast.show(`Updated ${count} expenses → ${catName}${suffix}`, "success");
     } catch (err) {
@@ -239,6 +245,7 @@ export const useReviewStore = defineStore("review", () => {
     const toast = useToastStore();
     try {
       await editExpense(id, payload);
+      useAnalyticsStore().markDirty();
       const confirmsCorrection =
         payload.category_id != null &&
         items.value.some(
@@ -299,6 +306,7 @@ export const useReviewStore = defineStore("review", () => {
 
   async function deleteExpense(id) {
     await apiDeleteExpense(id);
+    useAnalyticsStore().markDirty();
     expenses.value = expenses.value.filter((e) => e.id !== id);
     _persistExpenses();
     markDirty();
@@ -322,6 +330,7 @@ export const useReviewStore = defineStore("review", () => {
   async function resolveStuckReceipt(receiptId, payload) {
     const toast = useToastStore();
     await apiResolveReceipt(receiptId, payload);
+    useAnalyticsStore().markDirty();
     stuckReceipts.value = stuckReceipts.value.filter((i) => i.receipt_id !== receiptId);
     reset();
     await Promise.all([loadNextPage(), loadExpensesNextPage(), loadStuckReceipts()]);
@@ -330,6 +339,7 @@ export const useReviewStore = defineStore("review", () => {
 
   async function deleteReceipt(receiptId) {
     await apiDeleteReceipt(receiptId);
+    useAnalyticsStore().markDirty();
     reset();
     await loadNextPage();
     await loadExpensesNextPage();

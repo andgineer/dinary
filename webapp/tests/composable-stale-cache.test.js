@@ -38,35 +38,69 @@ describe("useStaleCache: markDirty()", () => {
 
 describe("useStaleCache: stampFresh()", () => {
   it("clears dirtyFlag", () => {
-    const { dirtyFlag, markDirty, stampFresh } = useStaleCache({
+    const { dirtyFlag, markDirty, beginFetch, stampFresh } = useStaleCache({
       dirtyKey: DIRTY_KEY,
       fetchedKey: FETCHED_KEY,
     });
     markDirty();
-    stampFresh();
+    stampFresh(beginFetch());
     expect(dirtyFlag.value).toBe(false);
   });
 
   it("removes dirty key from localStorage", () => {
-    const { markDirty, stampFresh } = useStaleCache({ dirtyKey: DIRTY_KEY, fetchedKey: FETCHED_KEY });
+    const { markDirty, beginFetch, stampFresh } = useStaleCache({ dirtyKey: DIRTY_KEY, fetchedKey: FETCHED_KEY });
     markDirty();
-    stampFresh();
+    stampFresh(beginFetch());
     expect(localStorage.getItem(DIRTY_KEY)).toBeNull();
   });
 
+  it("clears a dirty flag restored from localStorage", () => {
+    localStorage.setItem(DIRTY_KEY, "1");
+    const { dirtyFlag, beginFetch, stampFresh } = useStaleCache({ dirtyKey: DIRTY_KEY, fetchedKey: FETCHED_KEY });
+    stampFresh(beginFetch());
+    expect(dirtyFlag.value).toBe(false);
+  });
+
+  it("keeps a dirty mark made while the fetch was in flight", () => {
+    const { dirtyFlag, lastFetchedAt, markDirty, beginFetch, stampFresh, isStale } = useStaleCache({
+      dirtyKey: DIRTY_KEY,
+      fetchedKey: FETCHED_KEY,
+    });
+    const fetchToken = beginFetch();
+    markDirty();
+    const before = Date.now();
+    stampFresh(fetchToken);
+    expect(dirtyFlag.value).toBe(true);
+    expect(localStorage.getItem(DIRTY_KEY)).toBe("1");
+    expect(lastFetchedAt.value).toBeGreaterThanOrEqual(before);
+    expect(isStale()).toBe(true);
+  });
+
+  it("lets the next fetch clear a mark that survived an earlier one", () => {
+    const { dirtyFlag, markDirty, beginFetch, stampFresh } = useStaleCache({
+      dirtyKey: DIRTY_KEY,
+      fetchedKey: FETCHED_KEY,
+    });
+    const staleToken = beginFetch();
+    markDirty();
+    stampFresh(staleToken);
+    stampFresh(beginFetch());
+    expect(dirtyFlag.value).toBe(false);
+  });
+
   it("sets lastFetchedAt to a recent timestamp", () => {
-    const { lastFetchedAt, stampFresh } = useStaleCache({
+    const { lastFetchedAt, beginFetch, stampFresh } = useStaleCache({
       dirtyKey: DIRTY_KEY,
       fetchedKey: FETCHED_KEY,
     });
     const before = Date.now();
-    stampFresh();
+    stampFresh(beginFetch());
     expect(lastFetchedAt.value).toBeGreaterThanOrEqual(before);
   });
 
   it("persists timestamp to localStorage", () => {
-    const { stampFresh } = useStaleCache({ dirtyKey: DIRTY_KEY, fetchedKey: FETCHED_KEY });
-    stampFresh();
+    const { beginFetch, stampFresh } = useStaleCache({ dirtyKey: DIRTY_KEY, fetchedKey: FETCHED_KEY });
+    stampFresh(beginFetch());
     expect(Number(localStorage.getItem(FETCHED_KEY))).toBeGreaterThan(0);
   });
 });

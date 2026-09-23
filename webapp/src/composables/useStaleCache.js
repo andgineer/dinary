@@ -5,15 +5,24 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 export function useStaleCache({ dirtyKey, fetchedKey, dataKey, ttlMs = MS_PER_DAY } = {}) {
   const dirtyFlag = ref(localStorage.getItem(dirtyKey) === "1");
   const lastFetchedAt = ref(Number(localStorage.getItem(fetchedKey)) || null);
+  let dirtyGeneration = 0;
 
   function markDirty() {
+    dirtyGeneration += 1;
     dirtyFlag.value = true;
     localStorage.setItem(dirtyKey, "1");
   }
 
-  function stampFresh() {
+  function beginFetch() {
+    return dirtyGeneration;
+  }
+
+  // The server may have built the response before a mark made mid-flight, so only a
+  // fetch started after the latest markDirty() may clear the flag.
+  function stampFresh(fetchToken) {
     lastFetchedAt.value = Date.now();
     localStorage.setItem(fetchedKey, String(lastFetchedAt.value));
+    if (fetchToken !== dirtyGeneration) return;
     dirtyFlag.value = false;
     localStorage.removeItem(dirtyKey);
   }
@@ -58,5 +67,5 @@ export function useStaleCache({ dirtyKey, fetchedKey, dataKey, ttlMs = MS_PER_DA
     } catch {}
   }
 
-  return { dirtyFlag, lastFetchedAt, markDirty, stampFresh, bumpFetchTime, isStale, readCache, writeCache, clearCache };
+  return { dirtyFlag, lastFetchedAt, markDirty, beginFetch, stampFresh, bumpFetchTime, isStale, readCache, writeCache, clearCache };
 }

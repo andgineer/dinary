@@ -236,6 +236,44 @@ class TestAnalyticsEvents:
         assert not any(e["name"] == "OldTrip" for e in data["events"])
 
 
+def _seed_classification_jobs(statuses: list[tuple[str, str | None]]) -> None:
+    conn = storage.get_connection()
+    try:
+        for i, (status, retry_after) in enumerate(statuses, start=1):
+            conn.execute(
+                "INSERT INTO receipts (id, client_receipt_id, url) VALUES (?, ?, 'https://x')",
+                [i, f"r{i}"],
+            )
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, status, retry_after)"
+                " VALUES (?, ?, ?)",
+                [i, status, retry_after],
+            )
+    finally:
+        conn.close()
+
+
+@allure.epic("Analytics")
+@allure.feature("API")
+class TestAnalyticsReceiptsQueue:
+    def test_zeroed_when_no_jobs(self, client):
+        q = client.get("/api/analytics/summary").json()["receipts_queue"]
+        assert q == {"pending": 0, "in_progress": 0, "sleeping": 0, "poisoned": 0}
+
+    def test_reflects_queued_jobs(self, client):
+        _seed_classification_jobs(
+            [
+                ("pending", None),
+                ("pending", None),
+                ("pending", "2999-01-01 00:00:00"),
+                ("in_progress", None),
+                ("poisoned", None),
+            ]
+        )
+        q = client.get("/api/analytics/summary").json()["receipts_queue"]
+        assert q == {"pending": 2, "in_progress": 1, "sleeping": 1, "poisoned": 1}
+
+
 def _spy_named_temporary_file(monkeypatch, created: list[Path]):
     original = tempfile.NamedTemporaryFile
 

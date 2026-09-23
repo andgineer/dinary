@@ -16,6 +16,10 @@ causes `loadIfNeeded()` to reset the cache and fetch page 1.
 
 `stampFresh()` clears `dirtyFlag` **and** writes `lastFetchedAt`.  It must be
 called after every successful full-refresh so the 24-hour clock starts.
+A dirty mark made while a fetch is in flight survives that fetch: the server
+may have built its response before the change behind the mark, so the fetch
+still records its time, but the store stays dirty until a fetch that started
+after the mark completes.
 `bumpFetchTime()` only writes `lastFetchedAt` without clearing `dirtyFlag`; it
 is not used by any store — prefer `stampFresh()` always.
 
@@ -52,6 +56,45 @@ from the last fetch starts the 24-hour clock, and subsequent opens skip the requ
 After each `refresh()` the LLM store always calls `stampFresh()`, regardless of
 provider rate-limit state.  Rate-limit display is informational; it does not
 justify re-fetching on every page open.
+
+## Analytics store dirty-flag sources
+
+The stats page is marked dirty by every action that can change a figure it shows:
+
+1. An expense reaching the server from the offline queue.
+2. A receipt URL successfully POSTed (not a duplicate).
+3. An expense correction, edit or delete, a stuck-receipt resolution, or a receipt
+   delete on the review page.
+4. An income added, edited or deleted.
+5. Any catalog change that can alter a name or an entry the page shows: adding,
+   editing, deactivating or deleting an event, a category group or a tag;
+   switching the category template; moving a category to another group; and
+   activating a category, which can place it in a group. Category names never
+   appear on the page, so renaming, hiding or unhiding a category does not mark it.
+6. The review feed reporting receipts still being processed.
+
+Bulk rule confirmation does not mark it: it changes only confidence, never an
+amount, category, event or date.
+
+The page has no badge and no background probe; it refetches only when opened
+while stale.
+
+## Analytics store re-mark-dirty rule
+
+The summary response carries the same receipt-queue counters as the review feed,
+read before the aggregates so a job finishing mid-request can cost at most one
+extra refetch, never a fresh stamp on stale totals. After every successful fetch
+the store stamps itself fresh and immediately re-marks itself dirty while any
+receipt is still processing — pending, in progress or sleeping until its next
+retry. This applies on a cold start too, when nothing marked the store dirty
+beforehand.
+
+A poisoned job is terminal, not "still processing", and does not re-mark the
+store: only a re-submission of the receipt can revive it, and that already marks
+the store dirty. Counting it would force a refetch on every open for as long as
+one failed receipt exists. A sleeping job does count, even one that keeps
+failing, because it may still complete on its own; the cost is one request per
+page open while it stays asleep.
 
 ## Catalog store
 

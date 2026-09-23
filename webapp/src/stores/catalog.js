@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import * as catalogApi from "../api/catalog.js";
 import { useToastStore } from "./toast.js";
+import { useAnalyticsStore } from "./analytics.js";
 import { resolveUiLang } from "../composables/uiLang.js";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -153,6 +154,7 @@ export const useCatalogStore = defineStore("catalog", () => {
     activeTemplate.value = resp.active_template;
     writeStoredActiveTemplate(resp.active_template);
     applySnapshot(resp);
+    useAnalyticsStore().markDirty();
     return resp;
   }
 
@@ -278,6 +280,8 @@ export const useCatalogStore = defineStore("catalog", () => {
     const resp = await catalogApi.activateCategory(code);
     _upsertCategory(resp.category);
     _setCatalogVersion(resp.catalog_version);
+    // Activation can assign a group to a category, moving its expenses into that group's trend.
+    useAnalyticsStore().markDirty();
     return resp;
   }
 
@@ -307,6 +311,7 @@ export const useCatalogStore = defineStore("catalog", () => {
     const group = snapshot.value?.category_groups.find((g) => g.code === groupCode);
     if (group) _patchCategory(code, { group_id: group.id, group: group.name });
     _setCatalogVersion(resp.catalog_version);
+    useAnalyticsStore().markDirty();
     return resp;
   }
 
@@ -572,6 +577,7 @@ export const useCatalogStore = defineStore("catalog", () => {
       _patchEntry(kind, id, { is_active: false });
     }
     _setCatalogVersion(resp.catalog_version);
+    useAnalyticsStore().markDirty();
     return resp;
   }
 
@@ -585,6 +591,7 @@ export const useCatalogStore = defineStore("catalog", () => {
     const resp = await fn(body);
     _upsertEntry(kind, resp[kind]);
     _setCatalogVersion(resp.catalog_version);
+    useAnalyticsStore().markDirty();
     return resp;
   }
 
@@ -598,6 +605,7 @@ export const useCatalogStore = defineStore("catalog", () => {
     const resp = await fn(id, body);
     _patchEntry(kind, id, body);
     _setCatalogVersion(resp.catalog_version);
+    useAnalyticsStore().markDirty();
     return resp;
   }
 

@@ -3,6 +3,7 @@ import { setActivePinia, createPinia } from "pinia";
 import { useIncomeStore } from "../src/stores/income.js";
 import * as incomeApi from "../src/api/income.js";
 import { useToastStore } from "../src/stores/toast.js";
+import { useAnalyticsStore } from "../src/stores/analytics.js";
 
 beforeEach(async () => {
   await allure.epic("Income");
@@ -89,6 +90,25 @@ describe("income store: remove()", () => {
     store.items = [ITEM_A];
     await store.remove(1);
     expect(store.items).toEqual([]);
+  });
+});
+
+describe("income store: analytics dirty flag", () => {
+  it.each([
+    ["add", "createIncome", (store) => store.add({ income_date: "2026-05-15", amount_original: 540, currency_original: "EUR" })],
+    ["patch", "updateIncome", (store) => store.patch(1, { amount_original: 600, currency_original: "EUR" })],
+    ["remove", "deleteIncome", (store) => store.remove(1)],
+  ])("%s marks analytics dirty on success", async (_name, apiFn, action) => {
+    vi.spyOn(incomeApi, apiFn).mockResolvedValueOnce(ITEM_A);
+    vi.spyOn(incomeApi, "listIncomes").mockResolvedValueOnce({ items: [], has_more: false });
+    await action(useIncomeStore());
+    expect(useAnalyticsStore().dirtyFlag).toBe(true);
+  });
+
+  it("leaves analytics clean when the save fails", async () => {
+    vi.spyOn(incomeApi, "createIncome").mockRejectedValueOnce(new Error("network error"));
+    await expect(useIncomeStore().add({})).rejects.toThrow();
+    expect(useAnalyticsStore().dirtyFlag).toBe(false);
   });
 });
 

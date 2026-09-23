@@ -8,7 +8,7 @@ const store = useAnalyticsStore();
 const { isOnline } = useOnline();
 
 onMounted(() => {
-  if (isOnline.value) store.fetchAll();
+  if (isOnline.value) store.loadIfNeeded();
 });
 </script>
 

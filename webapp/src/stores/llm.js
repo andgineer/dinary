@@ -9,7 +9,7 @@ const DIRTY_KEY = "dinary:llm:dirty";
 const FETCHED_KEY = "dinary:llm:fetchedAt";
 
 export const useLlmStore = defineStore("llm", () => {
-  const { dirtyFlag, lastFetchedAt, markDirty, stampFresh, isStale, readCache, writeCache } = useStaleCache({
+  const { dirtyFlag, lastFetchedAt, markDirty, beginFetch, stampFresh, isStale, readCache, writeCache } = useStaleCache({
     dirtyKey: DIRTY_KEY,
     fetchedKey: FETCHED_KEY,
     dataKey: CACHE_KEY,
@@ -26,12 +26,13 @@ export const useLlmStore = defineStore("llm", () => {
   async function refresh() {
     loading.value = true;
     try {
+      const fetchToken = beginFetch();
       const status = await llmApi.getStatus();
       // Copy so the optimistic disable/enable flip never mutates the caller's array.
       providers.value = [...(status.providers ?? [])];
       health.value = status.health ?? null;
       writeCache({ providers: providers.value, health: health.value });
-      stampFresh();
+      stampFresh(fetchToken);
     } catch (err) {
       if (navigator.onLine) {
         useToastStore().show(err?.message || "Failed to load LLM providers", "error");

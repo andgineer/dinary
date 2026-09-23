@@ -1,56 +1,38 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { fetchAnalyticsSummary } from "../api/analytics.js";
-
-const CACHE_KEY = "dinary:analytics:v1";
+import { useStaleCache } from "../composables/useStaleCache.js";
 
 export const useAnalyticsStore = defineStore("analytics", () => {
-  const summary = ref(null);
-  const events = ref([]);
-  const trends = ref(null);
+  const { dirtyFlag, lastFetchedAt, markDirty, beginFetch, stampFresh, isStale, readCache, writeCache } = useStaleCache({
+    dirtyKey: "dinary:analytics:dirty",
+    fetchedKey: "dinary:analytics:fetchedAt",
+    dataKey: "dinary:analytics:v1",
+  });
+  const cached = readCache();
+  const summary = ref(cached?.summary ?? null);
+  const events = ref(cached?.events ?? []);
+  const trends = ref(cached?.trends ?? null);
   const loading = ref(false);
-  const lastFetched = ref(null);
 
-  try {
-    const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
-    if (cached) {
-      summary.value = cached.summary;
-      events.value = cached.events ?? [];
-      trends.value = cached.trends;
-      lastFetched.value = cached.lastFetched;
-    }
-  } catch {}
-
-  const TTL_MS = 24 * 60 * 60 * 1000;
-
-  async function fetchAll() {
-    if (lastFetched.value && Date.now() - lastFetched.value < TTL_MS) return;
+  async function loadIfNeeded() {
+    if (loading.value || !isStale()) return;
     loading.value = true;
     try {
+      const fetchToken = beginFetch();
       const data = await fetchAnalyticsSummary();
       summary.value = data.summary;
       events.value = data.events ?? [];
       trends.value = data.trends;
-      lastFetched.value = Date.now();
-      try {
-        localStorage.setItem(CACHE_KEY, JSON.stringify({
-          summary: summary.value,
-          events: events.value,
-          trends: trends.value,
-          lastFetched: lastFetched.value,
-        }));
-      } catch {}
+      writeCache({ summary: summary.value, events: events.value, trends: trends.value });
+      stampFresh(fetchToken);
+      // A poisoned job is terminal, so it must not keep the cache dirty forever.
+      const q = data.receipts_queue ?? {};
+      if (q.pending > 0 || q.in_progress > 0 || q.sleeping > 0) markDirty();
     } finally {
       loading.value = false;
     }
   }
 
-  function invalidate() {
-    lastFetched.value = null;
-    try {
-      localStorage.removeItem(CACHE_KEY);
-    } catch {}
-  }
-
-  return { summary, events, trends, loading, lastFetched, fetchAll, invalidate };
+  return { summary, events, trends, loading, dirtyFlag, lastFetchedAt, isStale, markDirty, loadIfNeeded };
 });
