@@ -1,0 +1,71 @@
+2026-09-12 17:08:02,253 INFO     yoyo.migrations — Applying 0001_initial_schema
+2026-09-12 17:08:02,254 INFO     yoyo.migrations —  - applying step 0
+2026-09-12 17:08:02,254 INFO     yoyo.migrations —  - applying step 1
+2026-09-12 17:08:02,254 INFO     yoyo.migrations —  - applying step 2
+2026-09-12 17:08:02,255 INFO     yoyo.migrations —  - applying step 3
+2026-09-12 17:08:02,255 INFO     yoyo.migrations —  - applying step 4
+2026-09-12 17:08:02,255 INFO     yoyo.migrations —  - applying step 5
+2026-09-12 17:08:02,255 INFO     yoyo.migrations —  - applying step 6
+2026-09-12 17:08:02,255 INFO     yoyo.migrations —  - applying step 7
+2026-09-12 17:08:02,255 INFO     yoyo.migrations —  - applying step 8
+2026-09-12 17:08:02,255 INFO     yoyo.migrations —  - applying step 9
+2026-09-12 17:08:02,256 INFO     yoyo.migrations —  - applying step 10
+2026-09-12 17:08:02,256 INFO     yoyo.migrations —  - applying step 11
+2026-09-12 17:08:02,256 INFO     yoyo.migrations —  - applying step 12
+2026-09-12 17:08:02,256 INFO     yoyo.migrations —  - applying step 13
+2026-09-12 17:08:02,256 INFO     yoyo.migrations —  - applying step 14
+2026-09-12 17:08:02,257 INFO     yoyo.migrations —  - applying step 15
+2026-09-12 17:08:02,257 INFO     yoyo.migrations —  - applying step 16
+2026-09-12 17:08:02,257 INFO     yoyo.migrations —  - applying step 17
+2026-09-12 17:08:02,257 INFO     yoyo.migrations —  - applying step 18
+2026-09-12 17:08:02,257 INFO     yoyo.migrations —  - applying step 19
+2026-09-12 17:08:02,257 INFO     yoyo.migrations —  - applying step 20
+2026-09-12 17:08:02,258 INFO     yoyo.migrations —  - applying step 21
+2026-09-12 17:08:02,258 INFO     yoyo.migrations —  - applying step 22
+2026-09-12 17:08:02,258 INFO     yoyo.migrations —  - applying step 23
+2026-09-12 17:08:02,258 INFO     yoyo.migrations —  - applying step 24
+2026-09-12 17:08:02,258 INFO     yoyo.migrations —  - applying step 25
+2026-09-12 17:08:02,258 INFO     yoyo.migrations —  - applying step 26
+2026-09-12 17:08:02,258 INFO     yoyo.migrations —  - applying step 27
+2026-09-12 17:08:02,259 INFO     yoyo.migrations —  - applying step 28
+2026-09-12 17:08:02,259 INFO     yoyo.migrations —  - applying step 29
+2026-09-12 17:08:02,259 INFO     yoyo.migrations —  - applying step 30
+2026-09-12 17:08:02,259 INFO     yoyo.migrations —  - applying step 31
+2026-09-12 17:08:02,259 INFO     yoyo.migrations —  - applying step 32
+2026-09-12 17:08:02,259 INFO     yoyo.migrations —  - applying step 33
+2026-09-12 17:08:02,260 INFO     yoyo.migrations —  - applying step 34
+2026-09-12 17:08:02,260 INFO     yoyo.migrations —  - applying step 35
+2026-09-12 17:08:02,313 INFO     yoyo.migrations — Marking 0001_initial_schema applied
+2026-09-12 17:08:02,313 INFO     yoyo.migrations — Applying 0002_llmbroker_1_3_0_upgrade
+2026-09-12 17:08:02,314 INFO     yoyo.migrations —  - applying step 0
+2026-09-12 17:08:02,314 INFO     yoyo.migrations —  - applying step 1
+2026-09-12 17:08:02,314 INFO     yoyo.migrations —  - applying step 2
+2026-09-12 17:08:02,314 INFO     yoyo.migrations —  - applying step 3
+2026-09-12 17:08:02,315 INFO     yoyo.migrations —  - applying step 4
+2026-09-12 17:08:02,315 INFO     yoyo.migrations —  - applying step 5
+2026-09-12 17:08:02,315 INFO     yoyo.migrations —  - applying step 6
+2026-09-12 17:08:02,315 INFO     yoyo.migrations —  - applying step 7
+2026-09-12 17:08:02,316 INFO     yoyo.migrations — Marking 0002_llmbroker_1_3_0_upgrade applied
+2026-09-12 17:08:02,316 INFO     yoyo.migrations — Applying 0003_llmbroker_1_9_0_upgrade
+2026-09-12 17:08:02,317 INFO     yoyo.migrations —  - applying step 0
+2026-09-12 17:08:02,317 INFO     yoyo.migrations —  - applying step 1
+2026-09-12 17:08:02,317 INFO     yoyo.migrations —  - applying step 2
+2026-09-12 17:08:02,317 INFO     yoyo.migrations —  - applying step 3
+2026-09-12 17:08:02,317 INFO     yoyo.migrations —  - applying step 4
+2026-09-12 17:08:02,318 INFO     yoyo.migrations —  - applying step 5
+2026-09-12 17:08:02,318 INFO     yoyo.migrations —  - applying step 6
+2026-09-12 17:08:02,319 INFO     yoyo.migrations — Marking 0003_llmbroker_1_9_0_upgrade applied
+2026-09-12 17:08:02,445 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-09-12 17:08:02,559 ERROR    dinary.main — llm pool not provisioned — classification is disabled
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/main.py", line 86, in _sync_llm_pool
+    await llms.ensure_pool()
+  File "/home/runner/work/dinary/dinary/.venv/lib/python3.13/site-packages/llmbroker/broker/broker.py", line 323, in ensure_pool
+    self._catalog.check_not_empty()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/runner/work/dinary/dinary/.venv/lib/python3.13/site-packages/llmbroker/broker/catalog.py", line 240, in check_not_empty
+    raise EmptyRegistryError(_EMPTY_NOT_FILLED if self._autofill else _EMPTY_NO_AUTOFILL)
+llmbroker.exceptions.EmptyRegistryError: registry is empty and this installation fetches nothing on its own (sync_interval=None) — fill it from the deploy job that runs your migrations, with `await broker.sync()`
+2026-09-12 17:08:02,561 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-09-12 17:08:02,628 INFO     dinary.api.controllers.catalog_writer — catalog_writer add_tag(name='t1'): bumped catalog_version
+2026-09-12 17:08:03,144 INFO     dinary.adapters.rates.nbs — Got rate from NBS

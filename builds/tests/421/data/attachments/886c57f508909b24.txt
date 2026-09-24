@@ -1,0 +1,18 @@
+2026-09-20 14:17:28,385 WARNING  llmbroker.broker — preset freetier: nothing cached and nothing is fetched automatically — falling back to the bundled copy, frozen at this llmbroker release
+2026-09-20 14:17:28,393 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-09-20 14:17:28,453 INFO     llmbroker.broker — sync freetier: applied — 0 -> 0 entries with a key
+  added: groq-gpt-oss-120b, openrouter-nemotron-3-ultra, openrouter-laguna-s-2.1, google-gemini-3.5-flash-lite, zai-glm-4.7-flash
+  pending key GROQ_API_KEY — holds back groq-gpt-oss-120b
+      Create a free API key at [groq](https://console.groq.com/keys) (sign in, then New API Key).
+  pending key OPENROUTER_API_KEY — holds back openrouter-nemotron-3-ultra, openrouter-laguna-s-2.1
+      Create a free API key at [openrouter](https://openrouter.ai/keys).
+  pending key GEMINI_API_KEY — holds back google-gemini-3.5-flash-lite
+      Create a free API key at [aistudio](https://aistudio.google.com/apikey) (Google AI Studio).
+  pending key ZAI_API_KEY — holds back zai-glm-4.7-flash
+      Create a free API key at [z.ai](https://z.ai/manage-apikey/apikey-list) (register with an email, no card).
+2026-09-20 14:17:28,462 ERROR    llmbroker.broker — pool degraded, no failover left: 1 of 4 providers usable — no key for GEMINI_API_KEY, OPENROUTER_API_KEY, ZAI_API_KEY
+2026-09-20 14:17:28,462 INFO     llmbroker.broker — api_key_ref 'GEMINI_API_KEY' not resolved — google-gemini-3.5-flash-lite inactive until the env var / secret is set; this is normal, the pool routes over whatever keys are present — Create a free API key at [aistudio](https://aistudio.google.com/apikey) (Google AI Studio).
+2026-09-20 14:17:28,462 INFO     llmbroker.broker — api_key_ref 'OPENROUTER_API_KEY' not resolved — openrouter-laguna-s-2.1, openrouter-nemotron-3-ultra inactive until the env var / secret is set; this is normal, the pool routes over whatever keys are present — Create a free API key at [openrouter](https://openrouter.ai/keys).
+2026-09-20 14:17:28,462 INFO     llmbroker.broker — api_key_ref 'ZAI_API_KEY' not resolved — zai-glm-4.7-flash inactive until the env var / secret is set; this is normal, the pool routes over whatever keys are present — Create a free API key at [z.ai](https://z.ai/manage-apikey/apikey-list) (register with an email, no card).
+2026-09-20 14:17:28,467 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-09-20 14:17:28,809 INFO     dinary.adapters.rates.nbs — Got rate from NBS

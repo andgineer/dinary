@@ -1,0 +1,2 @@
+2026-09-24 07:09:34,586 WARNING  llmbroker.broker — preset freetier: nothing cached and nothing is fetched automatically — falling back to the bundled copy, frozen at this llmbroker release
+2026-09-24 07:09:34,605 ERROR    llmbroker.broker — pool degraded, no failover left: 1 of 1 providers usable
