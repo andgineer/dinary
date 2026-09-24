@@ -66,9 +66,13 @@ cache is older than 24 hours, or when it has been marked dirty: an expense,
 income or receipt was added, edited or deleted, or a catalog change altered a
 name or entry the page shows (an event, category group or tag changed, the
 category template switched, a category was renamed or moved into a different
-group, or a category was activated, which can place it in a group). A fetch taken while the server is still processing receipts
-does not count as fresh, so the page keeps refetching on open until processing
-finishes; a receipt that has permanently failed does not hold it open. Trends
-change month to month, so nothing finer than this is needed. Event
-breakdowns are kept in memory only, never persisted, and are dropped whenever
-the summary is refetched.
+group, or a category was activated, which can place it in a group). A fetch
+taken while the server is still processing receipts does not count as fresh, so
+the page keeps refetching on open until processing finishes; a receipt that has
+permanently failed does not hold it open. Trends change month to month, so
+nothing finer than this is needed. Event breakdowns are kept in memory only,
+never persisted, and are dropped whenever the summary is refetched.
+
+A failed refetch shows an error toast and leaves the cache dirty, so the next
+open retries. Cached figures stay on screen; with nothing cached the page shows
+an error line instead of staying blank.

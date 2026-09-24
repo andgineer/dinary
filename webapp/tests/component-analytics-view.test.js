@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import AnalyticsView from "../src/views/AnalyticsView.vue";
 import { useAnalyticsStore } from "../src/stores/analytics.js";
 import * as analyticsApi from "../src/api/analytics.js";
+import { useToastStore } from "../src/stores/toast.js";
 
 beforeEach(async () => {
   await allure.epic("Analytics");
@@ -211,5 +212,34 @@ describe("AnalyticsView — event drill-down", () => {
     expect(spy).toHaveBeenCalledTimes(2);
     expect(store.eventDetails[1]).toEqual(updated);
     expect(wrapper.find(".event-detail").attributes("data-state")).toBe("ready");
+  });
+});
+
+describe("AnalyticsView — summary load failure", () => {
+  it("shows an error toast and keeps the cached stats when the refetch fails", async () => {
+    restoreOnLine = mockOnLine(true);
+    localStorage.setItem("dinary:analytics:dirty", "1");
+    const wrapper = await mountView();
+    expect(useToastStore().message).toBe("Couldn't load stats");
+    expect(useToastStore().type).toBe("error");
+    expect(wrapper.findAll("button.event-toggle")).toHaveLength(EVENTS.length);
+    expect(wrapper.text()).not.toContain("Couldn't load stats");
+  });
+
+  it("shows an error line instead of a blank page when there is no cache", async () => {
+    restoreOnLine = mockOnLine(true);
+    localStorage.clear();
+    const wrapper = await mountView();
+    expect(useToastStore().message).toBe("Couldn't load stats");
+    expect(wrapper.find(".empty-state").text()).toBe("Couldn't load stats");
+  });
+
+  it("shows no error when the stats load", async () => {
+    restoreOnLine = mockOnLine(true);
+    localStorage.clear();
+    analyticsApi.fetchAnalyticsSummary.mockResolvedValue({ summary: SUMMARY, events: EVENTS, trends: null });
+    const wrapper = await mountView();
+    expect(useToastStore().visible).toBe(false);
+    expect(wrapper.text()).not.toContain("Couldn't load stats");
   });
 });

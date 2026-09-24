@@ -3,15 +3,28 @@ import { onMounted, ref, watch } from "vue";
 import { ArrowDown, ArrowUp, ChevronDown } from "lucide-vue-next";
 import { useAnalyticsStore } from "../stores/analytics.js";
 import { useOnline } from "../composables/useOnline.js";
+import { useToastStore } from "../stores/toast.js";
 
 const store = useAnalyticsStore();
 const { isOnline } = useOnline();
+const toast = useToastStore();
+const loadFailed = ref(false);
 const expandedEventId = ref(null);
 const detailErrors = ref({});
 const detailLoading = ref({});
 
+async function loadSummary() {
+  loadFailed.value = false;
+  try {
+    await store.loadIfNeeded();
+  } catch {
+    loadFailed.value = true;
+    toast.show("Couldn't load stats", "error");
+  }
+}
+
 onMounted(() => {
-  if (isOnline.value) store.loadIfNeeded();
+  if (isOnline.value) loadSummary();
 });
 
 function toggleEvent(id) {
@@ -230,6 +243,10 @@ function barWidth(categories, share) {
     <!-- no cache + offline -->
     <div v-else-if="!isOnline" class="empty-state">
       <span>Offline — no cached data</span>
+    </div>
+
+    <div v-else-if="loadFailed" class="empty-state">
+      <span>Couldn't load stats</span>
     </div>
   </div>
 </template>
