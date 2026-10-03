@@ -18,12 +18,32 @@ Dinary server is a FastAPI backend that:
 </tr>
 </table>
 
-### Quick start
+## Quick start {#quick-start}
 
-1. [Set up Google Sheets](google-sheets-setup.md) — create a service account and spreadsheet.
-2. Deploy the server:
-      - [Oracle Cloud Free Tier](deploy-oracle.md) — $0/month forever
-      - [Your own computer](deploy-selfhost.md) — $0 (Tailscale Funnel or Cloudflare Tunnel)
-3. Set up HTTPS access — see deployment guides above.
-4. [Install the PWA](pwa-install.md) on your phone.
-5. Run `inv analytics` to talk to [your personal financial analyst](analytics.md).
+Dinary is a small server of your own, and the app on your phone is the page it
+serves. It runs free on an Oracle Cloud Always Free VM, reached through your private
+Tailscale network.
+
+=== "With an AI agent"
+
+    Have Claude Pro or Max, or ChatGPT Plus? Open the **Code** tab of the Claude
+    desktop app, or **Codex** in the ChatGPT desktop app, and paste:
+
+    ```text
+    Install dinary on Oracle Cloud for me, following
+    https://andgineer.github.io/dinary/agent-install/
+    ```
+
+    The agent tells you each step only you can do — signing up for Oracle and
+    Tailscale, putting your key in a file — and does the rest.
+
+=== "By hand"
+
+    1. Deploy the server:
+          - [Oracle Cloud Free Tier](deploy-oracle.md) — $0/month forever
+          - [Your own computer](deploy-selfhost.md) — $0 (Tailscale Funnel or Cloudflare Tunnel)
+    2. Set up HTTPS access — see the deployment guides above.
+    3. [Install the PWA](pwa-install.md) on your phone.
+    4. Optionally, [set up Google Sheets](google-sheets-setup.md) to get a row for
+       every expense in a spreadsheet.
+    5. Run `inv analytics` to talk to [your personal financial analyst](analytics.md).

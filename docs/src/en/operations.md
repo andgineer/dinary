@@ -88,11 +88,11 @@ that ships LTX segments to an SFTP target continuously.
 - VM 2 has `DINARY_REPLICA_HOST` set in `.deploy/.env` on the
   operator machine (e.g. `ubuntu@dinary-replica` via Tailscale
   MagicDNS).
-- VM 1's `~/.ssh/id_ed25519.pub` is in VM 2's
-  `~/.ssh/authorized_keys` — this is the trust that lets
-  `litestream.service` on VM 1 push WAL segments over SFTP. Run
-  `ssh-copy-id` manually once (cross-host trust is out of scope for
-  automation from the operator machine).
+- VM 2 is joined to the same Tailscale network as VM 1:
+  `inv setup-replica` locks VM 2's public SSH.
+- A Yandex.Disk app password for the daily off-site backup:
+  `inv setup-replica` asks for it on its first run, so run that in a
+  terminal.
 
 #### Provisioning VM 2
 
@@ -115,45 +115,32 @@ zstd, the Litestream binary used only for local restore) is added
 by `inv setup-replica` — see "Off-site backup: Yandex.Disk"
 below.
 
-#### One-time Litestream bootstrap on VM 1
+#### Litestream on VM 1
 
-1. Copy the example config locally and fill in the SFTP target:
+The same `inv setup-replica` run configures VM 1 too: it creates
+VM 1's key for the replica, installs it in VM 2's `authorized_keys`,
+adds VM 2 to VM 1's `known_hosts`, installs the Litestream binary,
+writes `/etc/litestream.yml` and starts `litestream.service`.
+Re-running it upgrades the binary and reloads the config.
 
-   ```bash
-   cp .deploy.example/litestream.yml .deploy/litestream.yml
-   # edit .deploy/litestream.yml — set host, user, path, key-path
-   ```
+Confirm replication is healthy:
 
-2. Install the Litestream sidecar on VM 1 (now part of `inv setup-replica`):
+```bash
+inv status --prod
+```
 
-   ```bash
-   inv setup-replica
-   ```
+A healthy sidecar shows an active systemd unit and the managed DB
+path listed by `litestream databases`. An empty output means the
+sidecar either never reached the SFTP host or is still producing its
+first snapshot (first one lands within seconds of the first DB write
+after the sidecar starts).
 
-   This installs the Litestream binary, uploads the config to
-   `/etc/litestream.yml`, creates a `litestream.service` systemd
-   unit, and starts it. The task is idempotent — re-running
-   `inv setup-replica` upgrades the binary and reloads the
-   config.
+After VM 1 is replaced, run `inv setup-replica` and then
+`inv replica-resync`: the replica holds the old VM's history, which
+the new one cannot continue.
 
-3. Confirm replication is healthy:
-
-   ```bash
-   inv status --prod
-   ```
-
-   A healthy sidecar shows an active systemd unit and the managed
-   DB path listed by `litestream databases`. An empty output means
-   the sidecar either never reached the SFTP host or is still
-   producing its first snapshot (first one lands within seconds of
-   the first DB write after the sidecar starts).
-
-`inv setup-server` does not start Litestream automatically even when
-`.deploy/litestream.yml` is present, because the sidecar needs an
-already-reachable SFTP host with VM 1's public key in its
-`authorized_keys` — a cross-host trust relationship we cannot set
-up from the deploy workstation. Run `inv setup-replica`
-manually once that prerequisite is in place.
+`inv setup-server` does not start Litestream: replication needs VM 2
+to exist, so `inv setup-replica` sets it up.
 
 #### What the sidecar does
 
@@ -165,7 +152,7 @@ WAL normally — you just stop accumulating replica state until the
 sidecar restarts. There is no back-pressure; SQLite's checkpoint
 loop is unaffected.
 
-Default settings in the example config: a full snapshot every hour
+Default settings in the generated config: a full snapshot every hour
 and 7 days of LTX history (top-level `snapshot: { interval: 1h,
 retention: 168h }`). That bounds "how far back can I rewind the DB"
 to a week and bounds LTX replay on restore to a one-hour window.

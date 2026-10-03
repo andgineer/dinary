@@ -13,7 +13,7 @@
 
 ## Требования
 
-- JSON-ключ сервисного аккаунта Google — см. [Настройка Google Sheets](google-sheets-setup.md).
+- Только для записи в таблицу: JSON-ключ сервисного аккаунта Google — см. [Настройка Google Sheets](google-sheets-setup.md).
 - Заполненный `.deploy/.env` с нужными переменными (как минимум `DINARY_GOOGLE_SHEETS_CREDENTIALS_PATH`, опционально `DINARY_SHEET_LOGGING_SPREADSHEET` для sheet logging).
 - dinary запущен локально (см. [README](https://github.com/andgineer/dinary#local-development)).
 

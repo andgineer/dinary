@@ -6,6 +6,8 @@ Expense-tracking app for Serbia: scan fiscal receipts via QR code, classify item
 
 For architecture, system layout, technology decisions, data model, deployment, and configuration see [specs/reference/architecture.md](specs/reference/architecture.md).
 
+**Asked to install, update or move dinary, not to change it?** When the person you work for wants it installed on their own server — the Quick start's agent prompt — updated there, or moved to a new VM, follow `docs/includes/agent-install.md` instead. Everything below governs changes to the code and does not apply to those.
+
 ---
 
 ## Key commands

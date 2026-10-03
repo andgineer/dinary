@@ -13,7 +13,7 @@ Run dinary on your Mac or PC and expose it to the internet via a tunnel. Free, a
 
 ## Prerequisites
 
-- A Google service account JSON key — see [Google Sheets Setup](google-sheets-setup.md).
+- Only for sheet logging: a Google service account JSON key — see [Google Sheets Setup](google-sheets-setup.md).
 - A populated `.deploy/.env` with the variables you need (minimally `DINARY_GOOGLE_SHEETS_CREDENTIALS_PATH`; optionally `DINARY_SHEET_LOGGING_SPREADSHEET` for sheet logging).
 - dinary running locally (see [README](https://github.com/andgineer/dinary#local-development)).
 

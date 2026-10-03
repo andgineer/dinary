@@ -25,6 +25,8 @@ Google Sheets export and AI-assisted analysis.
   tags. Keep original currencies alongside converted totals, export to Sheets,
   or ask questions in the local analytics dashboard.
 
+[Install it](https://andgineer.github.io/dinary/#quick-start) by hand, or let
+Claude or ChatGPT do it for you ·
 [Setup and documentation](https://andgineer.github.io/dinary/) ·
 [Install the PWA](https://andgineer.github.io/dinary/pwa-install/) ·
 [Analytics](https://andgineer.github.io/dinary/analytics/)

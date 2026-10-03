@@ -22,7 +22,7 @@ Oracle Cloud Always Free tier provides permanent VMs — enough to run dinary in
 
 ## Prerequisites
 
-- A Google service account JSON key at `~/.config/gspread/service_account.json` — see [Google Sheets Setup](google-sheets-setup.md).
+- Only for sheet logging: a Google service account JSON key at `~/.config/gspread/service_account.json` — see [Google Sheets Setup](google-sheets-setup.md).
 - An SSH key pair for connecting to the VM.
 
 ## 1. Create an account
@@ -120,7 +120,7 @@ This single command performs everything on the VM via SSH:
 - Installs uv (Python package manager)
 - Clones the repo and installs dependencies
 - Syncs your local `.deploy/.env` to the VM
-- Uploads `~/.config/gspread/service_account.json` to the VM
+- Uploads `~/.config/gspread/service_account.json` to the VM, when it exists
 - Creates and starts a `dinary` systemd service
 - Sets up the tunnel (Tailscale by default, or Cloudflare — depending on `DINARY_TUNNEL`)
 

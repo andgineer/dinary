@@ -22,7 +22,7 @@ Oracle Cloud Always Free предоставляет бессрочные VM — 
 
 ## Требования
 
-- JSON-ключ сервисного аккаунта Google в `~/.config/gspread/service_account.json` — см. [Настройка Google Sheets](google-sheets-setup.md).
+- Только для записи в таблицу: JSON-ключ сервисного аккаунта Google в `~/.config/gspread/service_account.json` — см. [Настройка Google Sheets](google-sheets-setup.md).
 - Пара SSH-ключей для подключения к VM.
 
 ## 1. Создание аккаунта
@@ -120,7 +120,7 @@ inv setup-server
 - Устанавливает uv (менеджер пакетов Python)
 - Клонирует репозиторий и устанавливает зависимости
 - Синхронизирует ваш локальный `.deploy/.env` на VM
-- Загружает `~/.config/gspread/service_account.json` на VM
+- Загружает `~/.config/gspread/service_account.json` на VM, если он есть
 - Создаёт и запускает systemd-сервис `dinary`
 - Настраивает туннель (Tailscale по умолчанию, или Cloudflare — в зависимости от `DINARY_TUNNEL`)
 

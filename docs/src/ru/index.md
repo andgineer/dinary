@@ -18,13 +18,35 @@ Dinary server — бэкенд на FastAPI, который:
 </tr>
 </table>
 
-### Быстрый старт
+## Быстрый старт {#quick-start}
 
-1. [Настройте Google Sheets](google-sheets-setup.md) — создайте сервисный аккаунт и таблицу.
-2. Разверните сервер:
-      - [Oracle Cloud Free Tier](deploy-oracle.md) — $0/месяц навсегда
-      - [Свой компьютер](deploy-selfhost.md) — $0 (Tailscale Funnel или Cloudflare Tunnel)
-3. Первоначально загружается [Классификатор](taxonomy.md) который вы далее можете корректировать
-4. Настройте HTTPS-доступ — см. инструкции по деплою выше.
-4. [Установите PWA](pwa-install.md) на телефон.
-5. Запустите `inv analytics` — своего [персонального финансового аналитика](analytics.md).
+Dinary — ваш собственный небольшой сервер, а приложение на телефоне — страница,
+которую он отдаёт. Он бесплатно работает на виртуалке Oracle Cloud Always Free и
+доступен через вашу приватную сеть Tailscale.
+
+=== "С ИИ-агентом"
+
+    Есть подписка Claude Pro или Max либо ChatGPT Plus? Откройте вкладку **Code**
+    в настольном приложении Claude или **Codex** в настольном приложении ChatGPT
+    и вставьте:
+
+    ```text
+    Установи мне dinary на Oracle Cloud по инструкции
+    https://andgineer.github.io/dinary/agent-install/
+    ```
+
+    Агент по шагам скажет, что можете сделать только вы, — зарегистрироваться в
+    Oracle и Tailscale, вписать ключ в файл, — а остальное сделает сам.
+
+=== "Вручную"
+
+    1. Разверните сервер:
+          - [Oracle Cloud Free Tier](deploy-oracle.md) — $0/месяц навсегда
+          - [Свой компьютер](deploy-selfhost.md) — $0 (Tailscale Funnel или Cloudflare Tunnel)
+    2. Настройте HTTPS-доступ — см. инструкции по деплою выше.
+    3. [Установите PWA](pwa-install.md) на телефон.
+    4. Первоначально загружается [классификатор](taxonomy.md), который вы далее можете
+       корректировать.
+    5. При желании [настройте Google Sheets](google-sheets-setup.md), чтобы каждый
+       расход попадал строкой в таблицу.
+    6. Запустите `inv analytics` — своего [персонального финансового аналитика](analytics.md).
