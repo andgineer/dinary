@@ -25,6 +25,32 @@ _LEGACY_REMOTE_FILES = [
 ]
 
 
+# A fixed sleep raced cold-start costs (migrations, Drive prefetch, and the
+# LLM model-list merge, which can spend two 10s fetch timeouts on a bad
+# network) and falsely failed starts that were about to come up cleanly.
+HEALTH_POLL_SCRIPT = (
+    "for i in $(seq 1 60); do "
+    "  if out=$(curl -fsS http://localhost:8000/api/health 2>&1); then "
+    '    echo "$out"; exit 0; '
+    "  fi; "
+    "  sleep 1; "
+    "done; "
+    'echo "health-check failed after 60s; last error: $out" >&2; '
+    "exit 1"
+)
+
+
+def checkout_script(ref: str) -> str:
+    """``git checkout main`` alone would land on the server's local ``main``, which the
+    fetch does not move, and deploy whatever that branch last pointed at."""
+    return (
+        f"git fetch --tags && git checkout {ref} && "
+        "if git symbolic-ref -q HEAD >/dev/null && "
+        "git rev-parse -q --verify '@{u}' >/dev/null; then "
+        "git merge --ff-only '@{u}'; fi"
+    )
+
+
 def sync_remote_deploy_files(c) -> None:
     """Drop deploy files the server no longer reads."""
     for path in _LEGACY_REMOTE_FILES:
@@ -89,7 +115,7 @@ def deploy(c, ref="", no_start=False):
     print("=== Deploying dinary ===")
     ssh_run(
         c,
-        f"cd ~/dinary && git fetch --tags && git checkout {ref} "
+        f"cd ~/dinary && {checkout_script(ref)} "
         "&& source ~/.local/bin/env && uv sync --no-dev --no-group analytics",
     )
 
@@ -121,17 +147,4 @@ def deploy(c, ref="", no_start=False):
 
     ssh_sudo(c, "systemctl restart dinary")
     print("=== Restarted. Waiting for /api/health (up to 60s) ... ===")
-    # A fixed sleep raced cold-start costs (migrations, Drive prefetch, and the
-    # LLM model-list merge, which can spend two 10s fetch timeouts on a bad
-    # network) and falsely failed deploys that were about to come up cleanly.
-    health_check = (
-        "for i in $(seq 1 60); do "
-        "  if out=$(curl -fsS http://localhost:8000/api/health 2>&1); then "
-        '    echo "$out"; exit 0; '
-        "  fi; "
-        "  sleep 1; "
-        "done; "
-        'echo "health-check failed after 60s; last error: $out" >&2; '
-        "exit 1"
-    )
-    ssh_run(c, health_check)
+    ssh_run(c, HEALTH_POLL_SCRIPT)

@@ -163,13 +163,13 @@ def sync_remote_env(c):
 
 def setup_tailscale(c):
     """Configure Tailscale serve for the dinary app on the main host."""
+    # The operator lets the current user manage serve without sudo. It is passed to
+    # `up` itself: a later `up` that omits a non-default setting refuses to run.
     ssh_run(
         c,
         "curl -fsSL https://tailscale.com/install.sh | sudo sh"
-        " && sudo tailscale up --hostname=dinary --ssh=false",
+        " && sudo tailscale up --hostname=dinary --ssh=false --operator=$USER",
     )
-    # Allow the current user to manage serve without sudo, then enable the proxy.
-    ssh_sudo(c, "tailscale set --operator=$USER")
     ssh_run(c, "tailscale serve --bg 8000")
 
 

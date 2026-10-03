@@ -225,3 +225,24 @@ class TestSshCaptureBytes:
         assert "\ufffd" not in decoded
         assert "путешествия" in decoded
         assert "─" in decoded
+
+
+@allure.epic("Infrastructure")
+@allure.feature("Deploy")
+@allure.story("SSH utils")
+class TestSetupTailscale:
+    def test_a_repeated_setup_mentions_every_setting_tailscale_up_was_given(self, monkeypatch):
+        remote: list[str] = []
+        monkeypatch.setattr(tasks.ssh_utils, "ssh_run", lambda c, cmd: remote.append(cmd))
+        monkeypatch.setattr(
+            tasks.ssh_utils,
+            "ssh_sudo",
+            lambda c, cmd: remote.append(f"sudo {cmd}"),
+        )
+
+        tasks.ssh_utils.setup_tailscale(None)
+
+        up = next(cmd for cmd in remote if "tailscale up" in cmd)
+        assert "--operator=$USER" in up
+        assert not any("tailscale set --operator" in cmd for cmd in remote)
+        assert remote[-1] == "tailscale serve --bg 8000"

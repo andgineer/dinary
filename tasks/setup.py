@@ -1,8 +1,10 @@
 """VM setup tasks: setup-server."""
 
+from pathlib import Path
+
 from invoke import task
 
-from tasks.deploy import sync_remote_deploy_files
+from tasks.deploy import HEALTH_POLL_SCRIPT, sync_remote_deploy_files
 from tasks.devtools.constants import DINARY_SERVICE, REPO_URL
 from tasks.devtools.env import bind_host, host, tunnel
 from tasks.ssh_utils import (
@@ -64,15 +66,23 @@ def _setup_system_packages(c, no_swap: bool) -> None:
     ssh_run(c, "mkdir -p ~/dinary/data && " + build_data_dir_permissions_script())
 
 
+LOCAL_GSPREAD_CREDENTIALS = Path.home() / ".config" / "gspread" / "service_account.json"
+
+
 def _setup_credentials(c, setup_host: str) -> None:
     print("=== Syncing .deploy/.env to server ===")
     sync_remote_env(c)
     sync_remote_deploy_files(c)
+    if not LOCAL_GSPREAD_CREDENTIALS.exists():
+        print(
+            f"=== No {LOCAL_GSPREAD_CREDENTIALS}: skipping Google credentials "
+            "(only sheet logging needs them) ===",
+        )
+        return
     print("=== Uploading credentials ===")
     ssh_run(c, "mkdir -p ~/.config/gspread && chmod 700 ~/.config/gspread")
     c.run(
-        f"scp ~/.config/gspread/service_account.json "
-        f"{setup_host}:~/.config/gspread/service_account.json",
+        f"scp {LOCAL_GSPREAD_CREDENTIALS} {setup_host}:~/.config/gspread/service_account.json",
     )
     ssh_run(c, "chmod 600 ~/.config/gspread/service_account.json")
 
@@ -114,13 +124,13 @@ def setup_server(c, no_swap=False, tailscale=False):
 
     _setup_system_packages(c, no_swap)
     _setup_credentials(c, setup_host)
+    # The unit waits for a Tailscale address before it starts, so the tunnel comes first.
+    _setup_tunnel(c, setup_tunnel, tailscale)
 
     bh = bind_host(setup_tunnel)
     print(f"=== Creating dinary service (bind {bh}) ===")
     service = DINARY_SERVICE.format(host=bh)
     create_service(c, "dinary", service)
 
-    _setup_tunnel(c, setup_tunnel, tailscale)
-
-    print("=== Done! Checking health... ===")
-    ssh_run(c, "sleep 15 && curl -s http://localhost:8000/api/health")
+    print("=== Done! Waiting for /api/health (up to 60s) ... ===")
+    ssh_run(c, HEALTH_POLL_SCRIPT)
