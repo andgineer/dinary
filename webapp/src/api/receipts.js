@@ -29,24 +29,10 @@ export function resolveReceipt(
   });
 }
 
-export async function postReceipt({ client_receipt_id, url }) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), POST_RECEIPT_TIMEOUT_MS);
-  try {
-    const resp = await fetch("/api/receipts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ client_receipt_id, url }),
-      signal: ctrl.signal,
-    });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      const e = new Error(err.detail || `HTTP ${resp.status}`);
-      e.status = resp.status;
-      throw e;
-    }
-    return resp.json();
-  } finally {
-    clearTimeout(timer);
-  }
+export function postReceipt({ client_receipt_id, url }) {
+  return apiRequest("/api/receipts", {
+    method: "POST",
+    body: { client_receipt_id, url },
+    timeoutMs: POST_RECEIPT_TIMEOUT_MS,
+  });
 }

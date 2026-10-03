@@ -56,6 +56,7 @@ beforeEach(async () => {
   globalThis.fetch = vi.fn(async () => ({
     ok: true,
     status: 200,
+    headers: { get: () => null },
     json: async () => ({ version: "test" }),
   }));
   vi.spyOn(catalogApi, "fetchCatalog").mockResolvedValue({

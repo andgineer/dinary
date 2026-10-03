@@ -2,6 +2,8 @@
 import { computed, ref, watch } from "vue";
 import { Copy, RefreshCw, X } from "lucide-vue-next";
 import { apiRequest } from "../api/_request.js";
+import { ServerUnreachable } from "../api/serverReach.js";
+import ServerReachHelp from "./ServerReachHelp.vue";
 import { useQueueStore } from "../stores/queue.js";
 import { useReceiptQueueStore } from "../stores/receiptQueue.js";
 import { useToastStore } from "../stores/toast.js";
@@ -18,20 +20,24 @@ const toast = useToastStore();
 
 const APP_VERSION =
   typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
+const VERSION_TIMEOUT_MS = 10_000;
 const serverVersion = ref(null);
 const versionCheckFailed = ref(false);
+const reachKind = ref("");
 
 async function refreshServerVersion() {
   serverVersion.value = null;
   versionCheckFailed.value = false;
+  reachKind.value = "";
   if (!navigator.onLine) return;
   try {
-    const body = await apiRequest("/api/version");
+    const body = await apiRequest("/api/version", { timeoutMs: VERSION_TIMEOUT_MS });
     if (body && typeof body.version === "string") {
       serverVersion.value = body.version;
     }
-  } catch {
-    versionCheckFailed.value = true;
+  } catch (err) {
+    if (err instanceof ServerUnreachable) reachKind.value = err.kind;
+    else versionCheckFailed.value = true;
   }
 }
 
@@ -104,6 +110,8 @@ function close() {
           <X :size="18" aria-hidden="true" />
         </button>
       </div>
+
+      <ServerReachHelp v-if="reachKind" :kind="reachKind" />
 
       <div v-if="queue.lastFlushError" class="queue-error">
         {{ queue.lastFlushError.message ?? String(queue.lastFlushError) }}

@@ -12,6 +12,9 @@ vi.mock("../src/api/_request.js", () => ({
   apiRequest: vi.fn(async () => ({ version: "test" })),
 }));
 
+import { apiRequest } from "../src/api/_request.js";
+import { ServerUnreachable } from "../src/api/serverReach.js";
+
 beforeEach(async () => {
   await allure.epic("Expenses");
   await allure.feature("Frontend");
@@ -114,5 +117,37 @@ describe("QueueModal", () => {
     await wrapper.find(".modal-content").trigger("click");
     // .self modifier blocks bubbling; no new close event from content click.
     expect(wrapper.emitted("close")?.length ?? 0).toBe(0);
+  });
+
+  describe("when the version check fails", () => {
+    afterEach(() => {
+      apiRequest.mockResolvedValue({ version: "test" });
+    });
+
+    it("asks for the server version with a time limit", async () => {
+      apiRequest.mockClear();
+      mount(QueueModal, { props: { open: true } });
+
+      await vi.waitFor(() =>
+        expect(apiRequest).toHaveBeenCalledWith("/api/version", { timeoutMs: 10_000 }),
+      );
+    });
+
+    it("explains a server that does not answer instead of a failed version check", async () => {
+      apiRequest.mockRejectedValue(new ServerUnreachable("no-answer"));
+      const wrapper = mount(QueueModal, { props: { open: true } });
+
+      await vi.waitFor(() => expect(wrapper.find('[data-testid="server-reach"]').exists()).toBe(true));
+      expect(wrapper.get('[data-testid="server-reach"] h3').text()).toBe("The server isn't answering.");
+      expect(wrapper.text()).not.toContain("server version check failed");
+    });
+
+    it("keeps reporting any other version-check failure as before", async () => {
+      apiRequest.mockRejectedValue(Object.assign(new Error("boom"), { status: 500 }));
+      const wrapper = mount(QueueModal, { props: { open: true } });
+
+      await vi.waitFor(() => expect(wrapper.text()).toContain("server version check failed"));
+      expect(wrapper.find('[data-testid="server-reach"]').exists()).toBe(false);
+    });
   });
 });

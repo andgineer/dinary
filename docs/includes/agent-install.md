@@ -45,7 +45,7 @@ Before step 1, ask what they already have, and skip what is done:
   `grep -E '^DINARY_(DEPLOY_HOST|TUNNEL|REPLICA_HOST)=' .deploy/.env`, check with
   `ssh <host> true` whether that VM answers — if it does not, have the user look at
   it in the Oracle Cloud console → Compute → Instances: a **Stopped** VM only needs
-  **Start**, and keeps its address and data — and ask which of three cases this is:
+  **Start**, and keeps its address and data — and ask which of four cases this is:
     - **a session that stopped partway** — a usage limit, a closed app: continue
       from the first step not done. If `.deploy/old-vm/` exists, it was a move;
       `.deploy/old-vm/host` holds the old VM's address.
@@ -57,6 +57,16 @@ Before step 1, ask what they already have, and skip what is done:
       `<old-host>` the host the keys file names now. These instructions cover the
       Tailscale setup only: if `DINARY_TUNNEL` is `cloudflare` or `none`, stop and
       tell the user.
+    - **the app stopped answering**: if ssh is still silent with the VM
+      **Running**, have the user press **Reboot** in the console — it keeps the
+      data — and check again. Once ssh answers, run `uv run inv status --prod` and
+      `uv run inv logs --prod` in the checkout and read them. If
+      `ssh <host> tailscale status` says the VM is logged out, run
+      `ssh <host> 'sudo tailscale up'` in the background — if it refuses, it prints
+      the flags to repeat — give the user the link it prints to approve, and have
+      them disable its key expiry as step 7 describes; if the service is not
+      active, `uv run inv deploy --ref=main` starts it and waits for its health
+      check. Then step 8.
 
 Below, `<checkout>` is that checkout, or `~/dinary` for a first install.
 

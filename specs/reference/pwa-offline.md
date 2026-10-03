@@ -39,6 +39,28 @@ disrupting concurrent sessions.
 
 User-initiated actions (pressing Save, Refresh, Confirm, Delete, etc.) always proceed regardless of `isOnline`. On success they dispatch a synthetic `online` event, which clears the flag if it was stuck and triggers queue flush. This ensures that a stuck offline state — e.g. caused by a stale service worker or a browser event that fired without a corresponding reconnect event — can always be escaped by a single user action without requiring a page reload.
 
+## A server that does not answer
+
+An unreachable server is never reported as a bare network error. Sending a
+queued expense or receipt gives up after a bounded wait instead of the
+browser's own minute, and the failure is told apart by how it looked from the
+page: the device offline, the server's name not reachable (Tailscale off on the
+device fails at once, because public DNS does not know tailnet names), the
+server silent (a stopped VM behind a connected Tailscale never answers), or the
+VM up with the app not running (Tailscale serve answers 502, which the app never
+sends itself). The queue window, opened from the queued-items strip, shows what
+the failure looked like, when the server last answered on this device, and an
+ordered list of what to check — the stopped VM's **Start** button among them.
+The kind of failure decides which check comes first; the app never claims to
+know the cause.
+
+The service worker's self-repair — unregistering the worker and reloading after
+repeated connection failures while the device is online — first fetches the
+worker's own script, which bypasses the worker. It resets only when that fetch
+succeeds: when the server itself cannot be reached, a reset would leave the
+installed app nothing to load from, and it would open on the browser's error
+page until the server came back.
+
 ## QR scanner is fully offline
 
 The `zbar-wasm` library is bundled into the PWA build (not loaded from a CDN). Workbox precaches it on first load. The scanner requires no network access after initial install.

@@ -7,6 +7,7 @@ import { useAnalyticsStore } from "../src/stores/analytics.js";
 import * as expensesApi from "../src/api/expenses.js";
 import * as catalogApi from "../src/api/catalog.js";
 import * as swHealth from "../src/composables/swHealth.js";
+import { ServerUnreachable } from "../src/api/serverReach.js";
 
 beforeEach(async () => {
   await allure.epic("Expenses");
@@ -193,16 +194,30 @@ describe("flushQueue", () => {
     expect(spy).toHaveBeenCalled();
   });
 
-  it("calls reportNetworkFailure on network-level TypeError", async () => {
+  it("calls reportNetworkFailure when the server cannot be reached", async () => {
     const queue = useQueueStore();
     await queue.enqueue({ amount: 1, currency: "RSD", category_id: 10, date: "2026-05-04" });
-    vi.spyOn(expensesApi, "postExpense").mockRejectedValue(new TypeError("Failed to fetch"));
+    vi.spyOn(expensesApi, "postExpense").mockRejectedValue(new ServerUnreachable("unreachable"));
     const spy = vi.spyOn(swHealth, "reportNetworkFailure");
 
     await flushQueue();
 
     expect(spy).toHaveBeenCalled();
   });
+
+  it.each(["no-answer", "app-down", "offline"])(
+    "leaves the service worker alone when the failure is %s",
+    async (kind) => {
+      const queue = useQueueStore();
+      await queue.enqueue({ amount: 1, currency: "RSD", category_id: 10, date: "2026-05-04" });
+      vi.spyOn(expensesApi, "postExpense").mockRejectedValue(new ServerUnreachable(kind));
+      const spy = vi.spyOn(swHealth, "reportNetworkFailure");
+
+      await flushQueue();
+
+      expect(spy).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not call reportNetworkFailure on HTTP errors", async () => {
     const queue = useQueueStore();

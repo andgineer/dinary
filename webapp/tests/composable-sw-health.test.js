@@ -13,8 +13,9 @@ beforeEach(async () => {
 
 function makeSw(controller = {}) {
   const unregister = vi.fn().mockResolvedValue(true);
-  const getRegistrations = vi.fn().mockResolvedValue([{ unregister }]);
-  return { sw: { controller, getRegistrations }, unregister };
+  const update = vi.fn().mockResolvedValue(undefined);
+  const getRegistrations = vi.fn().mockResolvedValue([{ unregister, update }]);
+  return { sw: { controller, getRegistrations }, unregister, update };
 }
 
 function setOnline(value) {
@@ -60,7 +61,10 @@ describe("reportNetworkFailure", () => {
     const unregister = vi.fn().mockResolvedValue(true);
     setServiceWorker({
       controller: {},
-      getRegistrations: vi.fn().mockResolvedValue([{ unregister }, { unregister }]),
+      getRegistrations: vi.fn().mockResolvedValue([
+        { unregister, update: vi.fn().mockResolvedValue(undefined) },
+        { unregister, update: vi.fn().mockResolvedValue(undefined) },
+      ]),
     });
     reportNetworkFailure();
     reportNetworkFailure();
@@ -100,6 +104,41 @@ describe("reportNetworkFailure", () => {
     reportNetworkFailure();
     await new Promise((r) => setTimeout(r, 0));
     expect(sessionStorage.getItem("sw_reset_attempted")).toBe("1");
+  });
+});
+
+describe("a server that cannot be reached", () => {
+  it("is not taken for a broken service worker: the app stays cached and installed", async () => {
+    const { sw, unregister, update } = makeSw();
+    update.mockRejectedValue(new TypeError("Failed to update a ServiceWorker"));
+    setServiceWorker(sw);
+
+    reportNetworkFailure();
+    reportNetworkFailure();
+    reportNetworkFailure();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(update).toHaveBeenCalled();
+    expect(unregister).not.toHaveBeenCalled();
+    expect(reloadMock).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("sw_reset_attempted")).toBeNull();
+  });
+
+  it("checks again only after three more failures", async () => {
+    const { sw, update } = makeSw();
+    update.mockRejectedValue(new TypeError("Failed to update a ServiceWorker"));
+    setServiceWorker(sw);
+    for (let i = 0; i < 3; i++) reportNetworkFailure();
+    await new Promise((r) => setTimeout(r, 0));
+
+    reportNetworkFailure();
+    reportNetworkFailure();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(update).toHaveBeenCalledTimes(1);
+
+    reportNetworkFailure();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(update).toHaveBeenCalledTimes(2);
   });
 });
 

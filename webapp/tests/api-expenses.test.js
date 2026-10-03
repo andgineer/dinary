@@ -25,6 +25,7 @@ describe("postExpense", () => {
     mockFetch(async () => ({
       ok: true,
       status: 200,
+      headers: { get: () => null },
       json: async () => ({ catalog_version: 7, id: 42 }),
     }));
 
@@ -64,6 +65,7 @@ describe("postExpense", () => {
     mockFetch(async () => ({
       ok: true,
       status: 200,
+      headers: { get: () => null },
       json: async () => ({}),
     }));
 

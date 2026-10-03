@@ -25,6 +25,7 @@ describe("postReceipt", () => {
     mockFetch(async () => ({
       ok: true,
       status: 200,
+      headers: { get: () => null },
       json: async () => ({ status: "ok", receipt_id: 7 }),
     }));
 
@@ -49,6 +50,7 @@ describe("postReceipt", () => {
     mockFetch(async () => ({
       ok: true,
       status: 200,
+      headers: { get: () => null },
       json: async () => ({ status: "duplicate", receipt_id: 3 }),
     }));
 

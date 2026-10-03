@@ -4,6 +4,7 @@
 // are treated as success and removed from the local queue.
 
 import { postReceipt } from "../api/receipts.js";
+import { ServerUnreachable } from "../api/serverReach.js";
 import { useAnalyticsStore } from "../stores/analytics.js";
 import { useReceiptQueueStore } from "../stores/receiptQueue.js";
 import { useToastStore } from "../stores/toast.js";
@@ -47,7 +48,7 @@ export async function flushReceiptQueue() {
           continue;
         }
         // Transient error — keep item, stop this sweep.
-        if (err instanceof TypeError) reportNetworkFailure();
+        if (err instanceof ServerUnreachable && err.kind === "unreachable") reportNetworkFailure();
         queue.lastFlushError = err;
         toast.show(err?.message || "Receipt send failed", "error");
         break;

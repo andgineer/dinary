@@ -5,6 +5,7 @@
 // server hands back a newer catalog_version.
 
 import { postExpense } from "../api/expenses.js";
+import { ServerUnreachable } from "../api/serverReach.js";
 import { useAnalyticsStore } from "../stores/analytics.js";
 import { useCatalogStore } from "../stores/catalog.js";
 import { useQueueStore } from "../stores/queue.js";
@@ -65,7 +66,7 @@ export async function flushQueue() {
           toast.show("Session expired — please re-open the app to log in", "error");
           break;
         }
-        if (err instanceof TypeError) reportNetworkFailure();
+        if (err instanceof ServerUnreachable && err.kind === "unreachable") reportNetworkFailure();
         queue.lastFlushError = err;
         toast.show(err?.message || "Send failed", "error");
         break;

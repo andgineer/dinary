@@ -16,34 +16,20 @@ export async function postExpense({
   comment,
   expense_datetime,
 }) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), POST_EXPENSE_TIMEOUT_MS);
-  try {
-    const resp = await fetch("/api/expenses", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_expense_id,
-        amount,
-        currency,
-        category_id,
-        event_id: event_id ?? null,
-        tag_ids: tag_ids ?? [],
-        comment,
-        expense_datetime,
-      }),
-      signal: ctrl.signal,
-    });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      const e = new Error(err.detail || `HTTP ${resp.status}`);
-      e.status = resp.status;
-      throw e;
-    }
-    return resp.json();
-  } finally {
-    clearTimeout(timer);
-  }
+  return apiRequest("/api/expenses", {
+    method: "POST",
+    body: {
+      client_expense_id,
+      amount,
+      currency,
+      category_id,
+      event_id: event_id ?? null,
+      tag_ids: tag_ids ?? [],
+      comment,
+      expense_datetime,
+    },
+    timeoutMs: POST_EXPENSE_TIMEOUT_MS,
+  });
 }
 
 export function deleteExpense(id) {
