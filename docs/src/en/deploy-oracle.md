@@ -18,7 +18,7 @@ Oracle Cloud Always Free tier provides permanent VMs — enough to run dinary in
     **ARM Ampere A1** (`VM.Standard.A1.Flex`, up to 24 GB RAM) is more powerful but often unavailable ("Out of host capacity"). If you get one — great, otherwise use AMD Micro.
 
 !!! warning
-    Oracle may reclaim idle Always Free instances. Running a lightweight server like dinary keeps the instance active. If reclaimed, you can recreate the VM, but the runtime source of truth is `data/dinary.db` on disk, not Google Sheets. Back up `~/dinary/data/` before destructive work and do not treat the sheet-logging spreadsheet as a full restore source.
+    The runtime source of truth is `data/dinary.db` on the VM's disk, not Google Sheets. Back up `~/dinary/data/` before destructive work and do not treat the sheet-logging spreadsheet as a full restore source.
 
 ## Prerequisites
 
@@ -30,6 +30,7 @@ Oracle Cloud Always Free tier provides permanent VMs — enough to run dinary in
 1. Go to [cloud.oracle.com](https://cloud.oracle.com/) → **Sign Up**.
 2. Select your home region (cannot be changed later).
 3. Complete verification (credit card required but never charged for Always Free resources).
+4. On the first sign-in, Oracle enrols your phone as the second sign-in factor. Generate a bypass code right away: Profile menu → **User settings** → **Security** → **Bypass codes** → **Generate**, and keep it off the phone. If the phone is lost, the code gets you back in without Oracle support; each code works once and never expires.
 
 !!! tip "Region selection"
     Your home region is permanent. ARM instance availability varies by region. Community reports suggest **Ashburn**, **Phoenix**, **Frankfurt**, and **London** tend to have better ARM availability. However AMD Micro instances are available in all regions.

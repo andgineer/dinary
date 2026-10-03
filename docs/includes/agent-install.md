@@ -43,7 +43,9 @@ Before step 1, ask what they already have, and skip what is done:
   instead of cloning another: its keys are already filled in. If `git status` there
   shows changes, or it is not on `main`, ask before you pull. Read what it names with
   `grep -E '^DINARY_(DEPLOY_HOST|TUNNEL|REPLICA_HOST)=' .deploy/.env`, check with
-  `ssh <host> true` whether that VM answers, and ask which of three cases this is:
+  `ssh <host> true` whether that VM answers — if it does not, have the user look at
+  it in the Oracle Cloud console → Compute → Instances: a **Stopped** VM only needs
+  **Start**, and keeps its address and data — and ask which of three cases this is:
     - **a session that stopped partway** — a usage limit, a closed app: continue
       from the first step not done. If `.deploy/old-vm/` exists, it was a move;
       `.deploy/old-vm/host` holds the old VM's address.
@@ -134,6 +136,13 @@ can create it. Send them to <https://signup.oraclecloud.com/> and tell them:
 
 Wait until they are signed in to the Oracle Cloud console.
 
+The first sign-in enrols their phone as the second sign-in factor. Have them generate
+a bypass code right away: Profile menu → **User settings** → **Security** →
+**Bypass codes** → **Generate**, and keep it off the phone — on paper or in a
+password manager, never in the chat. On their own account they are its only
+administrator, so if that phone is lost, the code is the way back in short of
+Oracle support. Each code works once and never expires.
+
 ## 4. The VM
 
 **Moving from an old VM.** Do everything that needs the old VM now, before the new
@@ -170,8 +179,8 @@ one exists:
     step 8.
 
     If `<old-host>` does not answer, first have the user check Compute → Instances:
-    Oracle stops a VM it considers idle, and a **Stopped** one is started with
-    **Start** and answers again within minutes — then this is an update, not a move.
+    a **Stopped** VM is started with **Start** and answers again within minutes —
+    then this is an update, not a move.
     Only a VM that is gone means the database has to come from a backup:
     - with a replica (`DINARY_REPLICA_HOST` is set):
       `uv run inv restore-replica -o .deploy/old-vm/dinary.db --yes`
@@ -426,10 +435,6 @@ Tell the user, briefly:
 - that `uv sync --inexact --group analytics`, then `uv run inv analytics`, in
   `<checkout>` opens an analysis dashboard with an AI chat on their computer, if
   they want it
-- Oracle may stop a VM it considers idle. If the app stops answering, they open the
-  Oracle Cloud console → Compute → Instances → the VM → **Start**; the address and
-  the data are kept. Converting the account to Pay As You Go is reported to prevent
-  the stop, and stays free while only Always Free resources are used.
 - how to update later: paste the same prompt into an agent again and ask it to
   update; these instructions cover it
 - moving from an old VM that still exists: it can be terminated in Oracle's console
