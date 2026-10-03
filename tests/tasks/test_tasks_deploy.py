@@ -34,6 +34,13 @@ def _git(cwd, *args):
 
 @allure.epic("Infrastructure")
 @allure.feature("Deploy")
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "the checkout script runs under bash on the Ubuntu VM; Windows runners "
+        "expose only the WSL ``bash.exe`` stub, which has no distribution to run it"
+    ),
+)
 class TestDeployCheckout:
     @pytest.fixture
     def server_behind_origin(self, tmp_path):
