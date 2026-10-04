@@ -1,0 +1,5 @@
+2026-09-20 14:11:33,644 WARNING  llmbroker.broker — preset freetier: nothing cached and nothing is fetched automatically — falling back to the bundled copy, frozen at this llmbroker release
+2026-09-20 14:11:33,645 WARNING  llmbroker.broker — preset paid-catalog: nothing cached and nothing is fetched automatically — falling back to the bundled copy, frozen at this llmbroker release
+2026-09-20 14:11:33,646 WARNING  llmbroker.broker — preset paid-catalog: nothing cached and nothing is fetched automatically — falling back to the bundled copy, frozen at this llmbroker release
+2026-09-20 14:11:33,648 WARNING  llmbroker.broker — preset paid-catalog: nothing cached and nothing is fetched automatically — falling back to the bundled copy, frozen at this llmbroker release
+2026-09-20 14:11:33,650 WARNING  llmbroker.broker — preset paid-catalog: nothing cached and nothing is fetched automatically — falling back to the bundled copy, frozen at this llmbroker release

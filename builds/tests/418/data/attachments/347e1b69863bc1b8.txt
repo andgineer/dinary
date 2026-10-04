@@ -1,0 +1,5 @@
+WARNING  llmbroker.broker:presets.py:154 preset freetier: nothing cached and nothing is fetched automatically — falling back to the bundled copy, frozen at this llmbroker release
+ERROR    llmbroker.broker:catalog.py:354 pool degraded, no failover left: 1 of 1 providers usable
+ERROR    llmbroker.broker:learning.py:100 groq-llama: API key appears dead (HTTP 401) — check api_key_ref 'GROQ_API_KEY'
+ERROR    llmbroker.broker:catalog.py:352 pool cannot serve any request: no provider has a key — no key for GROQ_API_KEY
+INFO     llmbroker.broker:catalog.py:389 api_key_ref 'GROQ_API_KEY' not resolved — groq-llama inactive until the env var / secret is set; this is normal, the pool routes over whatever keys are present

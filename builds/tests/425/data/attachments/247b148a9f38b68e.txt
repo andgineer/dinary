@@ -1,0 +1,1 @@
+2026-10-03 11:25:15,976 WARNING  dinary.background.classification.task — classification execution_failed attempt 1/2 receipt_id=1

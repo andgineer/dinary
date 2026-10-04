@@ -1,0 +1,1 @@
+2026-10-04 10:44:40,752 WARNING  dinary.adapters.receipts.serbian — Empty /specifications for https://suf.purs.gov.rs/v/?vl=test

@@ -1,0 +1,6 @@
+2026-09-20 14:16:36,326 INFO     dinary.db.storage — anchored accounting_currency=EUR in app_metadata
+2026-09-20 14:16:36,334 ERROR    llmbroker.broker — pool degraded, no failover left: 1 of 2 providers usable — no key for OPENROUTER_API_KEY
+2026-09-20 14:16:36,334 INFO     llmbroker.broker — api_key_ref 'OPENROUTER_API_KEY' not resolved — openrouter inactive until the env var / secret is set; this is normal, the pool routes over whatever keys are present — Create a free API key at [openrouter](https://openrouter.ai/keys).
+2026-09-20 14:16:36,344 INFO     dinary.background.sheet_logging.task — sheet-logging task disabled (interval<=0 or DINARY_SHEET_LOGGING_SPREADSHEET unset)
+2026-09-20 14:16:36,414 INFO     dinary.background.rate_prefetch.task — prefetched RSD/EUR rate for 2026-09-20: 0.008518
+2026-09-20 14:16:36,420 WARNING  llmbroker.broker — preset freetier: nothing cached and nothing is fetched automatically — falling back to the bundled copy, frozen at this llmbroker release

@@ -1,0 +1,4 @@
+WARNING  llmbroker.broker:presets.py:154 preset freetier: nothing cached and nothing is fetched automatically — falling back to the bundled copy, frozen at this llmbroker release
+ERROR    llmbroker.broker:catalog.py:354 pool degraded, no failover left: 1 of 1 providers usable
+WARNING  llmbroker.broker:pool.py:448 LLM groq-llama cooling for 60s
+WARNING  llmbroker.broker:broker.py:602 pool under-provisioned: all LLMs are COOLING — add more LLMs to the registry

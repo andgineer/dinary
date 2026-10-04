@@ -1,0 +1,1 @@
+FAIL: journal receipt validation failed — 2026-10-03T10:05:37.079437 | invoice: XYZ | reason: item total mismatch

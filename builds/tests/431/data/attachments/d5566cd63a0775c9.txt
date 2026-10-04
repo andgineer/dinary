@@ -1,0 +1,2 @@
+=== Syncing .deploy/.env to server ===
+=== No /tmp/pytest-of-runner/pytest-0/test_a_server_without_sheet_lo0/absent.json: skipping Google credentials (only sheet logging needs them) ===

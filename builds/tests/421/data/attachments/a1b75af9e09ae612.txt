@@ -1,0 +1,6 @@
+2026-09-20 14:17:16,833 INFO     dinary.background.sheet_logging.sheet_logging — Appended +1500.0 for Food/Essentials in 2026-04 (pk=1)
+2026-09-20 14:17:16,835 INFO     dinary.background.sheet_logging.sheet_logging — Appended +10.0 for Food/Essentials in 2026-06 (pk=2)
+2026-09-20 14:17:16,838 INFO     dinary.background.sheet_logging.sheet_logging — Appended +10.0 for Food/Essentials in 2026-06 (pk=3)
+2026-09-20 14:17:16,840 INFO     dinary.background.sheet_logging.sheet_logging — Appended +10.0 for Food/Essentials in 2026-06 (pk=4)
+2026-09-20 14:17:16,843 INFO     dinary.background.sheet_logging.sheet_logging — Appended +10.0 for Food/Essentials in 2026-06 (pk=5)
+2026-09-20 14:17:16,855 INFO     dinary.background.sheet_logging.sheet_logging — Appended +10.0 for Food/Essentials in 2026-06 (pk=6)

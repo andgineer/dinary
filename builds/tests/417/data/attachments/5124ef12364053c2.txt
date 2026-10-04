@@ -1,0 +1,7 @@
+ERROR    dinary.main:main.py:90 llm pool not provisioned — classification is disabled
+Traceback (most recent call last):
+  File "/home/runner/work/dinary/dinary/src/dinary/main.py", line 86, in _sync_llm_pool
+    await llms.ensure_pool()
+  File "/home/runner/work/dinary/dinary/tests/test_main.py", line 271, in ensure_pool
+    raise self._pool_error
+llmbroker.exceptions.EmptyRegistryError: nothing synced

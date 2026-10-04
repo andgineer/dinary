@@ -1,0 +1,1 @@
+2026-09-20 14:11:08,828 INFO     dinary.background.sheet_logging.sheet_logging — Skipped duplicate for Food/Essentials in 2026-04 (pk=1, marker present)
