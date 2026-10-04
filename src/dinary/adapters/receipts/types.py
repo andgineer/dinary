@@ -24,6 +24,11 @@ class ParserNotIndexedError(Exception):
     likely not indexed yet (transient; resolves once the service processes it)."""
 
 
+class ParserItemsPendingError(ParserNotIndexedError):
+    """Raised when the structured item list is not ready yet and the receipt is too
+    recent to fall back to its journal text (transient)."""
+
+
 @dataclass(slots=True)
 class ReceiptItem:
     name_raw: str

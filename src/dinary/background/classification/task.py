@@ -17,6 +17,7 @@ from llmbroker import AsyncBroker
 from dinary.adapters.receipts.dispatch import parse_receipt
 from dinary.adapters.receipts.types import (
     ParsedReceipt,
+    ParserItemsPendingError,
     ParserNotIndexedError,
     ParserParseError,
     ParserRequestError,
@@ -52,6 +53,7 @@ from dinary.db.receipts import (
 logger = logging.getLogger(__name__)
 
 _FIFTEEN_MINUTES = 900
+_ITEMS_PENDING_RETRY_SEC = 15
 _ONE_DAY = 86400
 _DAILY_THRESHOLD = 100  # retry_count at which 15-min phase ends (~1 day elapsed)
 _FALLBACK_CATEGORY_COUNT = 6  # 1 primary + 5 alternatives
@@ -66,6 +68,7 @@ class InsufficientCategoriesError(Exception):
 
 
 _TRANSIENT_ERROR_REASONS: tuple[tuple[type[Exception], str], ...] = (
+    (ParserItemsPendingError, "Waiting for receipt items from PURS"),
     (ParserNotIndexedError, "Waiting for receipt to appear in PURS"),
     (ParserRequestError, "Could not reach PURS — network issue"),
     (httpx.HTTPError, "Network error, retrying"),
@@ -99,6 +102,12 @@ def _retry_delay(retry_count: int) -> int:
     if retry_count < _DAILY_THRESHOLD:
         return _FIFTEEN_MINUTES
     return _ONE_DAY
+
+
+def _transient_retry_delay(exc: Exception, retry_count: int) -> int:
+    if isinstance(exc, ParserItemsPendingError):
+        return _ITEMS_PENDING_RETRY_SEC
+    return _retry_delay(retry_count)
 
 
 _wakeup_event: asyncio.Event | None = None
@@ -259,7 +268,7 @@ async def _process_job(job: ReceiptJobRow, broker: AsyncBroker) -> None:
     ) as exc:
         # These are transient: retries until the condition clears.
         # delay uses the pre-increment count: retry_count=0 → delay=0 → one free immediate retry.
-        delay = _retry_delay(job.retry_count)
+        delay = _transient_retry_delay(exc, job.retry_count)
         new_retry_count = job.retry_count + 1
         retry_after = (
             None

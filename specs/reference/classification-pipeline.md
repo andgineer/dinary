@@ -38,8 +38,9 @@ eventually replace it.
 ## Error handling strategy
 
 Network/parse errors on receipt fetch are treated differently:
-- Transient errors — network failures and a not-yet-indexed receipt (SUF
-  returns no items via either fetch path) — release the job for retry later,
+- Transient errors — network failures, a not-yet-indexed receipt (SUF
+  returns no items via either fetch path), and a recent Serbian receipt whose
+  structured item list is not ready yet — release the job for retry later,
   with no retry ceiling.
 - Structural parse errors (the response itself is malformed, not just empty):
   poison the job.

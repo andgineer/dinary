@@ -31,11 +31,35 @@ structured endpoint is unavailable, the pipeline uses the journal parser. Every
 such use is logged at warning level so the behaviour remains observable, but the
 fallback alone is not a healthcheck failure.
 
+### Waiting for the structured item list
+
+`/specifications` often has no items for a receipt that was issued a minute or
+two ago, while the official JSON and its journal are already available. The
+structured list is preferred, so the journal fallback is used only once the
+receipt is at least 3 minutes old by its fiscal timestamp. Until then an empty
+structured response is a transient condition: the receipt stays in the queue
+with the reason "Waiting for receipt items from PURS" and is retried every 15
+seconds. When the structured list appears it is used and no fallback happens. A
+receipt older than 3 minutes when it is first fetched, or one without a fiscal
+timestamp, falls back to the journal immediately, because waiting would not make
+its structured list appear.
+
 ### Journal validation and operational status
+
+The journal is rendered at a fixed width of 40 columns. A longer item name wraps
+onto the following lines at an arbitrary character, so a continuation line can
+start with a space or split the tax label. The parser joins the wrapped lines
+back into one name. Every journal name ends with the item's tax label in
+parentheses; the parser separates it into the tax label, so a journal item has
+exactly the same name and tax label as the same item from `/specifications`.
+This keeps classification rules learned from a journal receipt applicable to
+later structured receipts. Checked against 212 production receipts that have
+both sources, the journal parser reproduces every structured name, tax label and
+total.
 
 The journal parser validates its coverage of the item section while parsing it:
 
-- every item-name line must have one following numeric value line;
+- every item name, wrapped or not, must have one following numeric value line;
 - every value line must contain exactly three finite numeric fields: unit price,
   quantity, and item total;
 - value lines without an item name and malformed numeric lines are reported;
@@ -90,11 +114,17 @@ receipts, not longitudinal retries of the same receipt. Several terminals also
 had successful younger receipts followed by an older fallback; one terminal had
 a successful observation at 87.2 seconds and a fallback at 117.3 seconds.
 
-Consequently, this dataset does not justify adding a wait or a store-specific
-retry delay. It supports treating an empty `/specifications` response as
-observable but not erroneous when the journal result validates. A future retry
-policy must first collect longitudinal timing for repeated requests of the same
-receipt.
+A review of all 235 Serbian production receipts on 2026-10-04 confirms the
+pattern. The 23 empty `/specifications` answers came at receipt ages from 30.6
+to 117.3 seconds, and none of the 29 receipts first fetched after 120 seconds
+got an empty answer. The structured list is therefore often missing 30 seconds
+after issue but has never been missing after two minutes. A receipt that fell
+back at 62 seconds of age on 2026-10-04 had its `/specifications` items available
+when fetched again later. The 3-minute limit covers the longest observed delay
+with a one-minute margin, and the 15-second retry keeps the extra wait for a
+normal receipt within one retry of the moment its structured list appears. Each
+retry is logged with the receipt's age, which supplies the per-receipt timing
+that this cross-sectional review lacks.
 
 ## Montenegro — single verification call
 

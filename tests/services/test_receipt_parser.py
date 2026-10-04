@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import allure
@@ -8,10 +9,12 @@ import httpx
 import pytest
 
 from dinary.adapters.receipts.types import (
+    ParserItemsPendingError,
     ParserNotIndexedError,
     ParserRequestError,
 )
 from dinary.adapters.receipts.serbian import (
+    JOURNAL_FALLBACK_MIN_AGE,
     _parse_journal,
     _rsd,
     parse_receipt,
@@ -73,6 +76,25 @@ _SPECS_RESPONSE = {
 _SPECS_EMPTY = {"success": False, "items": []}
 
 
+def _padded_journal(item_lines: list[str]) -> str:
+    """Build a journal the way SUF renders it: every line padded to the 40-column width."""
+    lines = [
+        "========================================",
+        "Назив   Цена         Кол.         Укупно",
+        *item_lines,
+        "----------------------------------------",
+        "Укупан износ:                       0,00",
+    ]
+    return "\n".join(line.ljust(40) for line in lines)
+
+
+def _with_sdc_time(sdc_time: str | None) -> dict:
+    invoice_result = {"totalAmount": 974.76, "invoiceNumber": "TEST-TEST-001"}
+    if sdc_time is not None:
+        invoice_result["sdcTime"] = sdc_time
+    return {**_JSON_RESPONSE, "invoiceResult": invoice_result}
+
+
 def _make_response(status: int, body) -> MagicMock:
     r = MagicMock(spec=httpx.Response)
     r.status_code = status
@@ -118,7 +140,7 @@ class TestParseReceiptPrimary:
         with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
         assert len(receipt.items) == 3
-        assert receipt.items[0].tax_label == "Е"  # tax_label only from /specifications
+        assert receipt.items[0].tax_label == "Е"
 
     def test_kg_decimal_quantity_from_specs(self):
         ctx, _ = _mock_async_client(_JSON_RESPONSE, _HTML_WITH_TOKEN, _SPECS_RESPONSE)
@@ -209,8 +231,37 @@ class TestParseReceiptFallback:
         ctx, _ = _mock_async_client(_JSON_RESPONSE, "<html>no token</html>", _SPECS_RESPONSE)
         with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
             receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
+        assert [(i.name_raw, i.tax_label) for i in receipt.items] == [
+            (item["name"], item["label"]) for item in _SPECS_RESPONSE["items"]
+        ]
+
+    def test_waits_for_specifications_while_receipt_is_recent(self):
+        recent = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
+        ctx, _ = _mock_async_client(_with_sdc_time(recent), _HTML_WITH_TOKEN, _SPECS_EMPTY)
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
+            with pytest.raises(ParserItemsPendingError):
+                asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
+
+    def test_falls_back_once_receipt_is_old_enough(self):
+        old = (datetime.now(UTC) - JOURNAL_FALLBACK_MIN_AGE - timedelta(seconds=5)).isoformat()
+        ctx, _ = _mock_async_client(_with_sdc_time(old), _HTML_WITH_TOKEN, _SPECS_EMPTY)
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
+            receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
+        assert receipt.used_journal_fallback is True
         assert len(receipt.items) == 3
-        assert all(i.tax_label == "" for i in receipt.items)  # no tax label in journal
+
+    def test_falls_back_when_purchase_time_is_unknown(self):
+        ctx, _ = _mock_async_client(_with_sdc_time(None), _HTML_WITH_TOKEN, _SPECS_EMPTY)
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
+            receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
+        assert receipt.used_journal_fallback is True
+
+    def test_recent_receipt_with_specifications_is_not_delayed(self):
+        recent = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
+        ctx, _ = _mock_async_client(_with_sdc_time(recent), _HTML_WITH_TOKEN, _SPECS_RESPONSE)
+        with patch("dinary.adapters.receipts.serbian.httpx.AsyncClient", return_value=ctx):
+            receipt = asyncio.run(parse_receipt("https://suf.purs.gov.rs/v/?vl=test"))
+        assert receipt.used_journal_fallback is False
 
     def test_fallback_kg_decimal_quantity(self):
         ctx, _ = _mock_async_client(_JSON_RESPONSE, "<html>no token</html>", _SPECS_RESPONSE)
@@ -259,6 +310,86 @@ class TestParseJournal:
         assert any("Grejpfrut" in n for n in names)
         assert any("Mesnata" in n for n in names)
         assert any("Karamel" in n for n in names)
+
+    def test_splits_tax_label_from_name(self):
+        items, _ = _parse_journal(_JOURNAL_WITH_KG)
+        assert [(i.name_raw, i.tax_label) for i in items] == [
+            ("Grejpfrut/KG/0080040", "Е"),
+            ("Mesnata slanina/KG/0227734", "Ђ"),
+            ("Karamel čoko/KOM/1002303", "Ђ"),
+        ]
+
+    def test_name_without_tax_label_keeps_empty_label(self):
+        items, errors = _parse_journal(
+            _padded_journal(["Hleb", "        89,99          1           89,99"]),
+        )
+        assert [(i.name_raw, i.tax_label) for i in items] == [("Hleb", "")]
+        assert errors == ()
+
+    def test_joins_names_wrapped_at_journal_width(self):
+        journal = _padded_journal(
+            [
+                "FOLIJA PRIJANJAJUCA 30M BAS BAS (KOM) (Ђ",
+                ")",
+                "       139,99          1          139,99",
+                "BRASNO INTEGRALNO RAZENO VEGA 1KG (KOM) ",
+                "(Е)",
+                "       170,18          1          170,18",
+                "ZITNI BAR BOROVNICA BALANS 44G (KOM) (Ђ)",
+                "        79,99          1           79,99",
+                "ZITNI BAR KAJSIJA JOGOOD 30G (KOM) (Ђ)",
+                "        69,99          1           69,99",
+            ],
+        )
+
+        items, errors = _parse_journal(journal)
+
+        assert [(i.name_raw, i.tax_label, i.total_price) for i in items] == [
+            ("FOLIJA PRIJANJAJUCA 30M BAS BAS (KOM)", "Ђ", pytest.approx(139.99)),
+            ("BRASNO INTEGRALNO RAZENO VEGA 1KG (KOM)", "Е", pytest.approx(170.18)),
+            ("ZITNI BAR BOROVNICA BALANS 44G (KOM)", "Ђ", pytest.approx(79.99)),
+            ("ZITNI BAR KAJSIJA JOGOOD 30G (KOM)", "Ђ", pytest.approx(69.99)),
+        ]
+        assert errors == ()
+
+    def test_wrapped_continuation_may_start_with_space(self):
+        journal = _padded_journal(
+            [
+                "ZACIN MUSKATNI ORAH +RENDE SPM 10G (KOM)",
+                " (Ђ)",
+                "       184,99          1          184,99",
+                "VISKI TALISKER 10 YEAR OLD 0.7L  [KOM] (",
+                "Ђ)",
+                "     7.479,99          1        7.479,99",
+            ],
+        )
+
+        items, errors = _parse_journal(journal)
+
+        assert [(i.name_raw, i.tax_label) for i in items] == [
+            ("ZACIN MUSKATNI ORAH +RENDE SPM 10G (KOM)", "Ђ"),
+            ("VISKI TALISKER 10 YEAR OLD 0.7L  [KOM]", "Ђ"),
+        ]
+        assert errors == ()
+
+    def test_full_width_last_name_line_is_followed_by_value_line(self):
+        journal = _padded_journal(
+            [
+                "MASLINE CRNE STONE ODGORCENE KALAMON BEZ",
+                " KOSTICE\xa0 U RASTVORU BRAOUZIS  [KGR] (Ђ)",
+                "     1.099,99      0,158          173,80",
+            ],
+        )
+
+        items, errors = _parse_journal(journal)
+
+        assert len(items) == 1
+        assert items[0].name_raw == (
+            "MASLINE CRNE STONE ODGORCENE KALAMON BEZ KOSTICE\xa0 U RASTVORU BRAOUZIS  [KGR]"
+        )
+        assert items[0].tax_label == "Ђ"
+        assert items[0].quantity == pytest.approx(0.158)
+        assert errors == ()
 
     def test_reports_malformed_value_line(self):
         journal = _JOURNAL_WITH_KG.replace(

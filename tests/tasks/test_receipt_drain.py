@@ -24,6 +24,7 @@ import httpx
 
 from dinary.adapters.receipts.types import (
     ParsedReceipt,
+    ParserItemsPendingError,
     ParserNotIndexedError,
     ParserParseError,
     ParserRequestError,
@@ -1107,6 +1108,52 @@ class TestRetryBackoff:
             asyncio.run(_process_job(job, _make_broker()))
 
         mock_wakeup.assert_called_once_with(60)
+
+    @pytest.mark.parametrize("retry_count", [0, 1, 5])
+    def test_items_pending_retries_every_15s(self, drain_db, retry_count):  # noqa: ARG002
+        conn = storage.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO receipts (client_receipt_id, url)"
+                f" VALUES ('ip-r{retry_count}', 'https://x')"
+            )
+            receipt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO receipt_classification_jobs (receipt_id, retry_count) VALUES (?, ?)",
+                [receipt_id, retry_count],
+            )
+            job = claim_next_job(conn)
+        finally:
+            conn.close()
+
+        assert job is not None
+
+        with (
+            patch(
+                "dinary.background.classification.task.parse_receipt",
+                side_effect=ParserItemsPendingError("no structured items yet"),
+            ),
+            patch("dinary.background.classification.task.notify_new_receipt") as mock_notify,
+            patch("dinary.background.classification.task._schedule_wakeup") as mock_wakeup,
+        ):
+            asyncio.run(_process_job(job, _make_broker()))
+
+        conn = storage.get_connection()
+        try:
+            job_row = conn.execute(
+                "SELECT status, last_error, retry_count, retry_after"
+                " FROM receipt_classification_jobs WHERE receipt_id = ?",
+                [receipt_id],
+            ).fetchone()
+        finally:
+            conn.close()
+
+        mock_wakeup.assert_called_once_with(15)
+        mock_notify.assert_not_called()
+        assert job_row[0] == "pending"
+        assert job_row[1] == "Waiting for receipt items from PURS"
+        assert job_row[2] == retry_count + 1
+        assert job_row[3] is not None
 
     def test_classification_job_counts_all_states(self, drain_db):  # noqa: ARG002
         """classification_job_counts returns correct counts for all four buckets."""

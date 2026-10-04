@@ -5,7 +5,7 @@ Primary path (3 steps):
 2. HTML GET  → session token (embedded in page JS for the /specifications call)
 3. POST /specifications → structured item list with decimal quantities
 
-Fallback path (if /specifications fails or returns empty items):
+Fallback path (if /specifications fails or returns empty items once the receipt is old enough):
   Parse the `journal` text field from the JSON response. The journal is always
   present in the official JSON response and has a fixed column-aligned format.
 """
@@ -16,7 +16,7 @@ import logging
 import math
 import re
 import struct
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
 
@@ -24,6 +24,7 @@ import httpx
 
 from dinary.adapters.receipts.types import (
     ParsedReceipt,
+    ParserItemsPendingError,
     ParserNotIndexedError,
     ParserParseError,
     ParserRequestError,
@@ -37,6 +38,8 @@ _SPECS_URL = "https://suf.purs.gov.rs/specifications"
 _TOKEN_RE = re.compile(r"viewModel\.Token\('([^']+)'\)")
 _REQUEST_TIMEOUT = 30.0
 _TOTAL_TOLERANCE = 0.02
+_TAX_LABEL_RE = re.compile(r"\s*\(([^()\s])\)$")
+JOURNAL_FALLBACK_MIN_AGE = timedelta(minutes=3)
 
 
 def decode_qr_payload(url: str) -> QrPayload | None:
@@ -78,100 +81,123 @@ def _find_item_section_start(lines: list[str]) -> int | None:
     return None
 
 
-def _try_parse_value_line(name: str, line: str) -> ReceiptItem | None:
+def _parse_value_fields(line: str) -> tuple[float, float, float] | None:
     parts = line.split()
     if len(parts) != 3:
         return None
     try:
-        unit_price = _rsd(parts[0])
-        quantity = _rsd(parts[1])
-        total_price = _rsd(parts[2])
+        unit_price, quantity, total_price = (_rsd(part) for part in parts)
     except ValueError:
-        logger.warning(
-            "Journal fallback: skipping malformed value line %r (item: %r)",
-            line,
-            name,
-        )
         return None
     if not all(math.isfinite(value) for value in (unit_price, quantity, total_price)):
         return None
-    return ReceiptItem(
-        name_raw=name,
-        unit_price=unit_price,
-        quantity=quantity,
-        total_price=total_price,
-        tax_label="",
-    )
+    return unit_price, quantity, total_price
+
+
+def _join_name_lines(name_lines: list[str]) -> str:
+    # The journal hard-wraps at its width, so a fragment may end or begin mid-word.
+    return "".join(name_lines).strip()
+
+
+def _split_tax_label(name: str) -> tuple[str, str]:
+    match = _TAX_LABEL_RE.search(name)
+    if match is None:
+        return name, ""
+    return name[: match.start()], match.group(1)
+
+
+def _is_name_continuation(name_lines: list[str], line: str, width: int) -> bool:
+    return bool(name_lines) and len(name_lines[-1]) >= width and _parse_value_fields(line) is None
 
 
 def _consume_journal_item_line(
     line_number: int,
     line: str,
-    current_name: str | None,
+    name_lines: list[str],
     items: list[ReceiptItem],
     errors: list[str],
-) -> str | None:
+) -> list[str]:
     if not line[0].isspace():
-        if current_name is not None:
-            errors.append(f"missing value line for item {current_name!r}")
-        return line.strip()
+        if name_lines:
+            errors.append(f"missing value line for item {_join_name_lines(name_lines)!r}")
+        return [line]
 
-    if current_name is None:
+    if not name_lines:
         errors.append(f"orphan value line at journal line {line_number}")
-        return None
+        return []
 
-    item = _try_parse_value_line(current_name, line)
-    if item is None:
-        errors.append(f"malformed value line for item {current_name!r}")
-    else:
-        items.append(item)
-        expected_total = round(item.unit_price * item.quantity, 2)
-        if abs(expected_total - item.total_price) > _TOTAL_TOLERANCE:
-            errors.append(
-                f"item arithmetic mismatch for {current_name!r}: "
-                f"{item.unit_price:.2f} * {item.quantity:g} = {expected_total:.2f}, "
-                f"journal has {item.total_price:.2f}",
-            )
-    return None
+    journal_name = _join_name_lines(name_lines)
+    values = _parse_value_fields(line)
+    if values is None:
+        logger.warning(
+            "Journal fallback: skipping malformed value line %r (item: %r)",
+            line,
+            journal_name,
+        )
+        errors.append(f"malformed value line for item {journal_name!r}")
+        return []
+
+    unit_price, quantity, total_price = values
+    name_raw, tax_label = _split_tax_label(journal_name)
+    items.append(
+        ReceiptItem(
+            name_raw=name_raw,
+            unit_price=unit_price,
+            quantity=quantity,
+            total_price=total_price,
+            tax_label=tax_label,
+        ),
+    )
+    expected_total = round(unit_price * quantity, 2)
+    if abs(expected_total - total_price) > _TOTAL_TOLERANCE:
+        errors.append(
+            f"item arithmetic mismatch for {journal_name!r}: "
+            f"{unit_price:.2f} * {quantity:g} = {expected_total:.2f}, "
+            f"journal has {total_price:.2f}",
+        )
+    return []
 
 
 def _parse_journal(journal: str) -> tuple[list[ReceiptItem], tuple[str, ...]]:
     """Parse and structurally validate items from the fiscal receipt journal text.
 
-    Each item is exactly two lines:
-      - Name line: no leading whitespace
-      - Value line: leading whitespace  (unit_price  qty  total)
-    Correctly handles decimal quantities (KG by-weight items).
+    Each item is a name followed by one indented value line (unit_price  qty  total).
+    A name longer than the journal width wraps onto further lines, and the name ends
+    with the item's tax label in parentheses.
     """
     lines = journal.replace("\r\n", "\n").splitlines()
     start = _find_item_section_start(lines)
     if start is None:
         return [], ("item section header not found",)
 
+    width = len(lines[start - 1])
     items: list[ReceiptItem] = []
     errors: list[str] = []
-    current_name: str | None = None
+    name_lines: list[str] = []
     section_ended = False
 
     for line_number, line in enumerate(lines[start:], start=start + 1):
         if not line.strip():
             continue
         if line.strip().startswith("---") or line.strip().startswith("Укупан"):
-            if current_name is not None:
-                errors.append(f"missing value line for item {current_name!r}")
-                current_name = None
+            if name_lines:
+                errors.append(f"missing value line for item {_join_name_lines(name_lines)!r}")
+                name_lines = []
             section_ended = True
             break
-        current_name = _consume_journal_item_line(
+        if _is_name_continuation(name_lines, line, width):
+            name_lines.append(line)
+            continue
+        name_lines = _consume_journal_item_line(
             line_number,
             line,
-            current_name,
+            name_lines,
             items,
             errors,
         )
 
-    if current_name is not None:
-        errors.append(f"missing value line for item {current_name!r}")
+    if name_lines:
+        errors.append(f"missing value line for item {_join_name_lines(name_lines)!r}")
     if not section_ended:
         errors.append("item section terminator not found")
 
@@ -232,11 +258,11 @@ async def _fetch_specs_items(
         html_resp.raise_for_status()
         token_match = _TOKEN_RE.search(html_resp.text)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("HTML fetch failed for %s (%s), falling back to journal", url, exc)
+        logger.warning("HTML fetch failed for %s (%s)", url, exc)
         return []
 
     if not token_match:
-        logger.warning("Token not found in HTML for %s, falling back to journal", url)
+        logger.warning("Token not found in HTML for %s", url)
         return []
 
     try:
@@ -258,15 +284,37 @@ async def _fetch_specs_items(
                 )
                 for item in spec_items
             ]
-        logger.warning("Empty /specifications for %s, falling back to journal", url)
+        logger.warning("Empty /specifications for %s", url)
         return []
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "/specifications failed for %s (%s), falling back to journal",
+            "/specifications failed for %s (%s)",
             url,
             exc,
         )
         return []
+
+
+def _receipt_age(purchase_datetime: str | None) -> timedelta | None:
+    if not purchase_datetime:
+        return None
+    try:
+        issued = datetime.fromisoformat(purchase_datetime)
+    except ValueError:
+        return None
+    if issued.tzinfo is None:
+        issued = issued.replace(tzinfo=UTC)
+    return datetime.now(UTC) - issued
+
+
+def _ensure_journal_fallback_allowed(purchase_datetime: str | None, invoice_number: str) -> None:
+    age = _receipt_age(purchase_datetime)
+    if age is not None and age < JOURNAL_FALLBACK_MIN_AGE:
+        raise ParserItemsPendingError(
+            f"/specifications has no items yet for {invoice_number} issued "
+            f"{age.total_seconds():.0f}s ago; journal fallback waits until "
+            f"{JOURNAL_FALLBACK_MIN_AGE.total_seconds():.0f}s",
+        )
 
 
 async def parse_receipt(url: str) -> ParsedReceipt:
@@ -274,10 +322,11 @@ async def parse_receipt(url: str) -> ParsedReceipt:
 
     Tries /specifications first (structured JSON with decimal quantities and
     tax details). Falls back to journal text parsing if /specifications is
-    unavailable or returns empty items.
+    unavailable or returns empty items once the receipt is old enough.
 
-    Raises ParserRequestError on network errors, ParserParseError if
-    neither path yields any items.
+    Raises ParserRequestError on network errors, ParserItemsPendingError while a
+    recent receipt has no structured items yet, ParserNotIndexedError if neither
+    path yields any items.
     """
     async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
         (
@@ -293,6 +342,7 @@ async def parse_receipt(url: str) -> ParsedReceipt:
     used_journal_fallback = False
     journal_validation_errors: tuple[str, ...] = ()
     if not items and journal:
+        _ensure_journal_fallback_allowed(purchase_datetime, invoice_number)
         items, journal_validation_errors = _parse_journal(journal)
         used_journal_fallback = True
 
