@@ -3,11 +3,11 @@ import { computed, ref, watch } from "vue";
 import { useCurrencyStore } from "../stores/currency.js";
 import { useToastStore } from "../stores/toast.js";
 import { WORLD_CURRENCIES } from "../data/world-currencies.js";
+import { currencyColor } from "../data/currency-colors.js";
 import IconBtn from "./IconBtn.vue";
 
 const props = defineProps({
   modelValue: { type: String, default: "" },
-  accentColor: { type: String, default: "var(--accent)" },
 });
 const emit = defineEmits(["update:modelValue", "close"]);
 
@@ -111,6 +111,7 @@ watch(
         type="button"
         class="currency-chip"
         :class="{ 'currency-chip-selected': value === code }"
+        :style="{ '--chip-color': currencyColor(code) }"
         :disabled="pendingCode === code"
         @click="onSelect(code)"
       >
@@ -197,8 +198,8 @@ watch(
   display: inline-flex;
   flex-direction: column;
   align-items: center;
-  background: var(--surface-2);
-  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--chip-color) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chip-color) 70%, transparent);
   border-radius: 8px;
   padding: 0.25rem 0.55rem;
   font-size: 0.75rem;
@@ -210,8 +211,8 @@ watch(
 }
 
 .currency-chip-selected {
-  border-color: v-bind(accentColor);
-  background: v-bind(accentColor);
+  border-color: #fff;
+  background: var(--chip-color);
   color: #fff;
 }
 

@@ -418,12 +418,11 @@ A behavioural pattern, not just a token choice: every top-level view has one pri
 
 Practical consequences:
 
-- The currency pill, the bottom Save bar, and `KeyboardSaveBar` *all share the view's color* — they're the same call to action in three places.
+- The bottom Save bar and `KeyboardSaveBar` *share the view's color* — they're the same call to action in two places. The currency pill is the exception: it carries the currency's own color (see `design-language.md#currency-colors--the-rule`).
 - Selected-state chips inside that view also use the view's color (`CategoryQuickPicks` orange; selected event chip orange; future income tag selection should be green if anyone adds tag support there).
 - Hover / focus states still use `--accent` — it's the global UI focus color even in coloured contexts (see the underline-on-focus in `ExpenseForm`'s hero amount: `--accent`).
-- `CurrencyPicker` accepts an `accentColor` prop so the selected-chip fill follows the host context.
 
-References: `ExpenseForm.vue` (orange), `IncomeForm.vue` (green), `ExpenseEditSheet.vue` + `CurrencyAmountRow.vue` (sky-blue), `CurrencyPicker.vue`.
+References: `ExpenseForm.vue` (orange), `IncomeForm.vue` (green), `ExpenseEditSheet.vue` (sky-blue).
 
 ## Hierarchy connector (legacy)
 

@@ -7,6 +7,7 @@ import CurrencyPicker from "./CurrencyPicker.vue";
 import { useIncomeStore } from "../stores/income.js";
 import { useToastStore } from "../stores/toast.js";
 import { useCurrencyStore } from "../stores/currency.js";
+import { currencyColor } from "../data/currency-colors.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -116,6 +117,7 @@ async function confirmDelete() {
           class="currency-pill"
           :class="{ 'is-open': currencyPickerOpen }"
           aria-label="Select currency"
+          :style="{ background: currencyColor(selectedCurrency || 'EUR') }"
           @click="currencyPickerOpen = !currencyPickerOpen"
         >
           {{ selectedCurrency || "EUR" }}
@@ -224,8 +226,7 @@ async function confirmDelete() {
   display: inline-flex;
   align-items: center;
   padding: 0.3rem 0.6rem;
-  background: var(--success);
-  color: #04140a;
+  color: #fff;
   border: none;
   border-radius: 8px;
   font-size: 0.78rem;

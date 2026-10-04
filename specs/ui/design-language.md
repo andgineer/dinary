@@ -42,11 +42,11 @@ These are alpha-on-white, so they tint with the underlying surface. Never use a 
 
 | Token | Hex | Use | Never |
 |---|---|---|---|
-| `--accent` | `#e94560` | Focus rings, tag-picker selected chips, active manage-list divider, `IconBtn[tone=accent]`, doubtful-row primary commit cue, queue-chip "ready", currency-chip selected | Primary save action (use a per-context color instead, see below) |
-| `--success` | `#22c55e` | **Income view's primary color** (currency pill, Save bar, IncomeRow border, year totals), status-dot "ok", approve chip + Confirm-all button, success toast | Generic primary actions outside the Income context |
+| `--accent` | `#e94560` | Focus rings, tag-picker selected chips, active manage-list divider, `IconBtn[tone=accent]`, doubtful-row primary commit cue, queue-chip "ready" | Primary save action (use a per-context color instead, see below) |
+| `--success` | `#22c55e` | **Income view's primary color** (Save bar, IncomeRow border, year totals), status-dot "ok", approve chip + Confirm-all button, success toast | Generic primary actions outside the Income context |
 | `--warning` | `#f59e0b` | Doubtful left-border (c2), rate-limit pill, queue badge, NEEDS REVIEW label, dev banner | Background fills (except low-alpha tints inside cards) |
 | `--error` / `--danger` | `#ef4444` / `#e94560` | Destructive confirm button, status-dot "error", inline error text, doubtful left-border (c1) | Anything that isn't an error or destructive action |
-| `--expense` | `#f97316` | **Add view's primary color** (Add tab, currency pill, Save & Scan buttons, selected event chip, selected category quick-pick) | Anything outside the expense-entry context |
+| `--expense` | `#f97316` | **Add view's primary color** (Add tab, Save & Scan buttons, selected event chip, selected category quick-pick) | Anything outside the expense-entry context |
 | `--review` | `#60a5fa` | **Review view's primary color** (Review tab fill, edit-sheet Save, sky-blue accent) | Anything outside the review context |
 | `--income` | `#22c55e` | **Income view's primary color** — alias for `--success` in nav context (Income tab fill) | Generic success states — use `--success` there |
 | `--stat` | `#818cf8` | **Analytics view's primary color** (Analytics tab fill, open-event accent, hero card gradient) | Anything outside the analytics context |
@@ -56,17 +56,27 @@ These are alpha-on-white, so they tint with the underlying surface. Never use a 
 
 ### Per-context primary color — the rule
 
-Every top-level view picks **one** primary color and uses it for its main commit action and its currency pill. The view's color is what tells the user "this is where you are":
+Every top-level view picks **one** primary color and uses it for its main commit action. The view's color is what tells the user "this is where you are":
 
 | View | Primary | Where it shows |
 |---|---|---|
-| **Add** | `--expense` (orange) | Add tab fill, hero currency pill, bottom Save + Scan, KeyboardSaveBar, selected event chip, selected `CategoryQuickPicks` pill |
-| **Income** | `--income` / `--success` (green) | Income tab fill, IncomeForm currency pill, hero amount underline, bottom Save bar, KeyboardSaveBar, IncomeRow left-border, year-total label |
+| **Add** | `--expense` (orange) | Add tab fill, bottom Save + Scan, KeyboardSaveBar, selected event chip, selected `CategoryQuickPicks` pill |
+| **Income** | `--income` / `--success` (green) | Income tab fill, hero amount underline, bottom Save bar, KeyboardSaveBar, IncomeRow left-border, year-total label |
 | **Review** | `--review` (sky-blue) + `--success` (approve chip) | Review tab fill, edit-sheet Save, Confirm-all button (green) |
 | **Analytics** | `--stat` (indigo) | Analytics tab fill, open-event left-border + dot + OPEN pill, hero card gradient |
 | **LLM** | `--llm` (cyan) | LLM tab fill |
 
-**Never invent a hue** beyond what's listed. Each new view must pick one of the existing per-context tokens.
+**Never invent a hue** beyond what's listed. Each new view must pick one of the existing per-context tokens. The only other palette is the currency colors below.
+
+### Currency colors — the rule
+
+Every currency pill and every chip in the currency picker is filled with **that currency's own color**, the same on every screen. The user recognises the selected currency at a glance without reading the code, so entering an amount in the wrong currency is hard to miss.
+
+- The common currencies (RSD, EUR, USD, RUB, GBP, CHF) have hand-picked colors that are clearly distinct from each other.
+- Every other currency gets a stable color from a small reserve palette that never repeats a common currency's color. Two uncommon currencies may share a color.
+- Every currency color carries white text at ≥3:1 contrast.
+- The currency color replaces the view's primary color on the pill: the pill says which currency, not which screen.
+- In the picker, unselected chips are a translucent tint of their color; the selected chip is filled solid with a white border.
 
 ## Typography
 

@@ -2,6 +2,7 @@
 import { ref, onMounted } from "vue";
 import CurrencyPicker from "./CurrencyPicker.vue";
 import { useCurrencyStore } from "../stores/currency.js";
+import { currencyColor } from "../data/currency-colors.js";
 import { useIncomeStore } from "../stores/income.js";
 import { useToastStore } from "../stores/toast.js";
 
@@ -94,12 +95,13 @@ defineExpose({ save });
           class="currency-pill"
           :class="{ 'is-open': currencyPickerOpen }"
           aria-label="Select currency"
+          :style="{ background: currencyColor(selectedCurrency || 'EUR') }"
           @click="currencyPickerOpen = !currencyPickerOpen"
         >
           {{ selectedCurrency || "EUR" }}
         </button>
         <div v-if="currencyPickerOpen" class="currency-picker-wrap">
-          <CurrencyPicker v-model="selectedCurrency" accent-color="var(--success)" @close="currencyPickerOpen = false" />
+          <CurrencyPicker v-model="selectedCurrency" @close="currencyPickerOpen = false" />
         </div>
       </div>
 
@@ -154,8 +156,7 @@ defineExpose({ save });
   display: inline-flex;
   align-items: center;
   padding: 0.3rem 0.6rem;
-  background: var(--success);
-  color: #04140a;
+  color: #fff;
   border: none;
   border-radius: 8px;
   font-size: 0.78rem;

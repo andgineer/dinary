@@ -3,6 +3,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import IncomeView from "../src/views/IncomeView.vue";
 import { useIncomeStore } from "../src/stores/income.js";
+import { currencyColor } from "../src/data/currency-colors.js";
 
 beforeEach(async () => {
   await allure.epic("Income");
@@ -106,5 +107,21 @@ describe("IncomeView — online/offline button state", () => {
     } finally {
       restore();
     }
+  });
+});
+
+describe("IncomeView — currency pill color", () => {
+  it("fills the pill with the default currency's color", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const income = useIncomeStore(pinia);
+    vi.spyOn(income, "loadIfNeeded").mockResolvedValue();
+    const wrapper = mountView(pinia);
+    await flushPromises();
+
+    const pill = wrapper.find(".currency-pill");
+    expect(pill.text()).toBe("RSD");
+    expect(pill.element.style.background).toBe(currencyColor("RSD"));
+    wrapper.unmount();
   });
 });

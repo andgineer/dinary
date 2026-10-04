@@ -95,7 +95,7 @@ Owned by `views/AddView.vue` + `components/ExpenseForm.vue`.
 
 ### Hero row
 
-- **Currency pill** — left, rectangular, `--expense` fill, white text, mono. Tap opens `CurrencyPicker` in a popover (orange accent).
+- **Currency pill** — left, rectangular, filled with the selected currency's color (see `design-language.md#currency-colors--the-rule`), white text, mono. Tap opens `CurrencyPicker` in a popover.
 - **Amount input** — center, right-aligned, 2-rem mono weight 500, transparent with a bottom-line underline that turns `--accent` on focus.
 - **Date** — right, compact `<input type="date">` (12.5 px, muted), bottom-line treatment with a leading `Calendar` glyph.
 
@@ -151,7 +151,7 @@ The income-tracking view. Accessed via the inline `income` tab.
 ```
 ┌──────────────────────────────────────┐
 │ ┌──────────────────────────────────┐ │ IncomeForm card
-│ │ [EUR]   0           ───────────  │ │ hero row (green currency pill)
+│ │ [EUR]   0           ───────────  │ │ hero row (currency pill)
 │ │                                  │ │
 │ │ For month             Received   │ │
 │ │ ┌─────────┐         ┌─────────┐  │ │

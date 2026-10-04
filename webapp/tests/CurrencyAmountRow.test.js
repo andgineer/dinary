@@ -1,6 +1,7 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import CurrencyAmountRow from "../src/components/CurrencyAmountRow.vue";
+import { currencyColor } from "../src/data/currency-colors.js";
 
 beforeEach(async () => {
   await allure.epic("Currencies");
@@ -32,6 +33,20 @@ describe("CurrencyAmountRow — rendering", () => {
   it("falls back to RSD when currency is empty", () => {
     const wrapper = mountRow({ currency: "" });
     expect(wrapper.find("[data-testid='currency-pill']").text()).toBe("RSD");
+  });
+
+  it("fills the pill with the currency's color", async () => {
+    const wrapper = mountRow({ currency: "EUR" });
+    const pill = wrapper.find("[data-testid='currency-pill']");
+    expect(pill.element.style.background).toBe(currencyColor("EUR"));
+    await wrapper.setProps({ currency: "USD" });
+    expect(pill.element.style.background).toBe(currencyColor("USD"));
+  });
+
+  it("uses the RSD color when currency is empty", () => {
+    const wrapper = mountRow({ currency: "" });
+    const pill = wrapper.find("[data-testid='currency-pill']");
+    expect(pill.element.style.background).toBe(currencyColor("RSD"));
   });
 
   it("shows the amount value in the input", () => {

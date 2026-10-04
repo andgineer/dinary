@@ -6,7 +6,7 @@
 .claude/
 allure-results/
 dist/
-data/
+/data/
 build/
 _static/
 local/

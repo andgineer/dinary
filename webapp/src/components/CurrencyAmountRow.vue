@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from "vue";
 import CurrencyPicker from "./CurrencyPicker.vue";
+import { currencyColor } from "../data/currency-colors.js";
 
 defineProps({
   amount: { type: String, default: "" },
@@ -20,6 +21,7 @@ const pickerOpen = ref(false);
         :class="{ 'is-open': pickerOpen }"
         aria-label="Select currency"
         data-testid="currency-pill"
+        :style="{ background: currencyColor(currency || 'RSD') }"
         @click="pickerOpen = !pickerOpen"
       >
         {{ currency || "RSD" }}
@@ -27,7 +29,6 @@ const pickerOpen = ref(false);
       <div v-if="pickerOpen" class="currency-picker-wrap">
         <CurrencyPicker
           :model-value="currency"
-          accent-color="#60a5fa"
           @update:model-value="emit('update:currency', $event)"
           @close="pickerOpen = false"
         />
@@ -64,7 +65,6 @@ const pickerOpen = ref(false);
   display: inline-flex;
   align-items: center;
   padding: 0.3rem 0.6rem;
-  background: #60a5fa;
   color: #fff;
   border: none;
   border-radius: 8px;

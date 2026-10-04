@@ -5,7 +5,7 @@ Checklist for adding a new screen so it feels like part of Dinary. Read this bef
 ## Checklist
 
 - [ ] **Have I read `design-language.md`?** No new colors outside the per-context primary set; no new font sizes outside the scale.
-- [ ] **Have I picked a per-context primary color?** Orange / green / sky-blue / accent-red are the options — see `design-language.md#per-context-primary-color`. Currency pill, bottom Save bar, and `KeyboardSaveBar` all use it.
+- [ ] **Have I picked a per-context primary color?** Orange / green / sky-blue / accent-red are the options — see `design-language.md#per-context-primary-color`. The bottom Save bar and `KeyboardSaveBar` use it; a currency pill does not — it always carries the currency's color.
 - [ ] **Is this actually a new view, or a sheet from an existing one?** Default to sheet — see "Where does this belong" below.
 - [ ] **If it's a top-level view: frequent or rare?** Frequent → add it as a third inline tab in `HeaderSegmented` (shrink Add + Review accordingly). Rare → append to `RARE_TABS`. No layout change needed for rare.
 - [ ] **Does an existing pattern in `patterns.md` cover the interaction?** If yes, use it verbatim.

@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import CurrencyPicker from "../src/components/CurrencyPicker.vue";
 import { useCurrencyStore } from "../src/stores/currency.js";
 import * as currenciesApi from "../src/api/currencies.js";
+import { currencyColor } from "../src/data/currency-colors.js";
 
 beforeEach(async () => {
   await allure.epic("Currencies");
@@ -51,6 +52,13 @@ describe("CurrencyPicker — saved chips", () => {
     const wrapper = mountPicker({ modelValue: "USD" });
     const usdChip = wrapper.findAll(".currency-chip")[1];
     expect(usdChip.classes()).toContain("currency-chip-selected");
+  });
+
+  it("colors each chip with its own currency color", () => {
+    const wrapper = mountPicker();
+    const [rsdChip, usdChip] = wrapper.findAll(".currency-chip");
+    expect(rsdChip.element.style.getPropertyValue("--chip-color")).toBe(currencyColor("RSD"));
+    expect(usdChip.element.style.getPropertyValue("--chip-color")).toBe(currencyColor("USD"));
   });
 
   it("emits update:modelValue and persists last-used on click", async () => {

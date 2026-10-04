@@ -14,6 +14,7 @@ import { useCatalogStore } from "../stores/catalog.js";
 import { useQueueStore } from "../stores/queue.js";
 import { useToastStore } from "../stores/toast.js";
 import { useCurrencyStore } from "../stores/currency.js";
+import { currencyColor } from "../data/currency-colors.js";
 import { flushQueue } from "../composables/flushQueue.js";
 import { useCatalogManage } from "../composables/catalogManage.js";
 import { addResultMessage, validateTagName } from "../composables/addResult.js";
@@ -295,12 +296,13 @@ defineExpose({ save, reset });
           :class="{ 'is-open': currencyPickerOpen }"
           aria-label="Select currency"
           data-testid="currency-pill"
+          :style="{ background: currencyColor(selectedCurrency || 'RSD') }"
           @click="currencyPickerOpen = !currencyPickerOpen"
         >
           {{ selectedCurrency || "RSD" }}
         </button>
         <div v-if="currencyPickerOpen" class="currency-picker-wrap">
-          <CurrencyPicker v-model="selectedCurrency" accent-color="var(--expense)" @close="currencyPickerOpen = false" />
+          <CurrencyPicker v-model="selectedCurrency" @close="currencyPickerOpen = false" />
         </div>
       </div>
 
@@ -489,7 +491,6 @@ defineExpose({ save, reset });
   display: inline-flex;
   align-items: center;
   padding: 0.3rem 0.6rem;
-  background: var(--expense);
   color: #fff;
   border: none;
   border-radius: 8px;

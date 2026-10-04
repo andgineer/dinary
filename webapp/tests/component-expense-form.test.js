@@ -6,6 +6,7 @@ import { useCatalogStore } from "../src/stores/catalog.js";
 import { useQueueStore, _resetForTest as resetQueueStore } from "../src/stores/queue.js";
 import { useCurrencyStore } from "../src/stores/currency.js";
 import * as flushQueueModule from "../src/composables/flushQueue.js";
+import { currencyColor } from "../src/data/currency-colors.js";
 
 beforeEach(async () => {
   await allure.epic("Expenses");
@@ -161,6 +162,29 @@ describe("ExpenseForm: defaults and selectors", () => {
     expect(wrapper.find(".group-category-block").exists()).toBe(false);
     expect(wrapper.find('[data-testid="catalog-trigger-group"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="catalog-trigger-category"]').exists()).toBe(false);
+  });
+});
+
+describe("ExpenseForm: currency pill color", () => {
+  it("fills the pill with the color of the picked currency", async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ codes: ["EUR", "RSD"], default_code: "RSD" }),
+    }));
+    seedCatalog();
+    const wrapper = mountForm();
+    await flushPromises();
+    const pill = wrapper.find('[data-testid="currency-pill"]');
+    expect(pill.element.style.background).toBe(currencyColor("RSD"));
+
+    await pill.trigger("click");
+    const eurChip = wrapper.findAll(".currency-chip").find((c) => c.text() === "EUR");
+    await eurChip.trigger("click");
+
+    expect(pill.text()).toBe("EUR");
+    expect(pill.element.style.background).toBe(currencyColor("EUR"));
+    wrapper.unmount();
   });
 });
 
