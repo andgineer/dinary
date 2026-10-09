@@ -75,7 +75,7 @@ Fix `inv pre` errors in the same change even when they look pre-existing or unre
 ### Language
 - All comments, docstrings, plan files, and in-repo docs (`docs/**/*.md`, `README.md`): **English only**. Exception: user-facing docs written for a Russian audience (e.g. `docs/src/ru/`) stay in Russian.
 - Data literals cited in prose (category names, sheet headers, envelope names like `"командировка"`) stay in their **original script** and in quotes so they remain grep-able — do not transliterate or translate. String literals in code are data, not prose: this rule does not restrict them.
-- Reply to the user in whichever language they used, in its native script. The maintainer (git user `andgineer`) wants every reply in Russian, even to a message written in English.
+- Reply to the user in whichever language they used, in its native script. The maintainer (git user `andgineer`) wants every reply in English, even to a message written in another language.
 - Write replies and reports as plain technical prose: complete, connected sentences, kept short. Keep the technical terms and drop the padding. Avoid fragments without a verb, several thoughts glued together with dashes, a dash standing in for a reason that is never stated, and table cells of clipped fragments.
 
 ### Imports
