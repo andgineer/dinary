@@ -13,7 +13,7 @@ Ask things like:
 - *"How much did the Italy trip cost, broken down by category?"*
 - *"What's my savings rate for 2025?"*
 
-The analyst knows your full expense history, categories, events, and tags. It queries your local database live — nothing leaves your machine.
+The analyst knows your full expense history, categories, events, and tags. It queries a copy of your ledger kept on your own machine. To answer, it sends your question and the query results it needs to the AI model's provider (OpenAI); the charts work without sending anything.
 
 ## Charts
 

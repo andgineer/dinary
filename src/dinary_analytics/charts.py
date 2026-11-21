@@ -22,6 +22,7 @@ def make_chart_pair(
     year_df: pl.DataFrame,
     total_income: float,
     category_order: list[str],
+    currency: str,
     period_title: str | None = None,
     size: ChartSize = _DEFAULT_CHART_SIZE,
 ) -> alt.HConcatChart:
@@ -95,7 +96,7 @@ def make_chart_pair(
         )
         .encode(
             x=alt.X("month:O"),
-            y=alt.Y("saved:Q", title="Saved (EUR)", axis=alt.Axis(orient="right")),
+            y=alt.Y("saved:Q", title=f"Saved ({currency})", axis=alt.Axis(orient="right")),
             tooltip=["month:O", alt.Tooltip("saved:Q", format=".0f", title="Saved")],
         )
     )
@@ -138,7 +139,7 @@ def make_chart_pair(
         .encode(**year_enc)
     )
     saved_text = (
-        alt.Chart(pl.DataFrame({"t": [f"Saved {sign}{annual_saved:,.0f}€"]}))
+        alt.Chart(pl.DataFrame({"t": [f"Saved {sign}{annual_saved:,.0f} {currency}"]}))
         .mark_text(fontSize=13, fontWeight="bold", align="center", baseline="middle")
         .encode(
             x=alt.value(size.year_width / 2),
@@ -174,6 +175,7 @@ def make_chart_pair(
 def make_event_chart(
     expense_df: pl.DataFrame,
     title: str,
+    currency: str,
     size: int = 280,
 ) -> alt.FacetChart | alt.LayerChart:
     """Return a donut chart of expense breakdown by category for an event.
@@ -201,7 +203,7 @@ def make_event_chart(
     _donut = _base.mark_arc(innerRadius=inner_r, outerRadius=outer_r).encode(
         theta=_theta,
         color=alt.Color("category:N", scale=alt.Scale(scheme="tableau20"), legend=None),
-        tooltip=["category:N", alt.Tooltip("total:Q", format=".0f", title="EUR")],
+        tooltip=["category:N", alt.Tooltip("total:Q", format=".0f", title=currency)],
     )
     _label_enc = {"theta": _theta, "text": alt.Text("category:N")}
     _labels_bg = _base.mark_text(
@@ -221,12 +223,13 @@ def make_event_chart(
     return alt.layer(_donut, _labels_bg, _labels_fg).properties(
         width=size,
         height=size,
-        title=alt.TitleParams(text=title, subtitle=f"€{total:,.0f}"),
+        title=alt.TitleParams(text=title, subtitle=f"{total:,.0f} {currency}"),
     )
 
 
 def make_basket_chart(
     df: pl.DataFrame,
+    currency: str,
     title: str = "",
     width: int = 700,
     height: int = 350,
@@ -248,7 +251,7 @@ def make_basket_chart(
         .mark_bar()
         .encode(
             x=alt.X("year_month:O", title=None),
-            y=alt.Y("basket_total:Q", stack=True, title="EUR", axis=alt.Axis(format="~s")),
+            y=alt.Y("basket_total:Q", stack=True, title=currency, axis=alt.Axis(format="~s")),
             color=alt.Color(
                 "basket_name:N",
                 scale=alt.Scale(scheme="tableau20"),
@@ -258,7 +261,7 @@ def make_basket_chart(
             tooltip=[
                 alt.Tooltip("year_month:O", title="Month"),
                 alt.Tooltip("basket_name:N", title="Basket"),
-                alt.Tooltip("basket_total:Q", format=".0f", title="EUR"),
+                alt.Tooltip("basket_total:Q", format=".0f", title=currency),
             ],
         )
         .add_params(sel)
@@ -274,7 +277,7 @@ def make_basket_chart(
         )
         .mark_bar()
         .encode(
-            x=alt.X("group_total:Q", title="EUR", axis=alt.Axis(format="~s")),
+            x=alt.X("group_total:Q", title=currency, axis=alt.Axis(format="~s")),
             y=alt.Y("group_name:N", sort="-x", title=None),
             color=alt.Color(
                 "group_name:N",
@@ -283,7 +286,7 @@ def make_basket_chart(
             ),
             tooltip=[
                 alt.Tooltip("group_name:N", title="Category group"),
-                alt.Tooltip("group_total:Q", format=".0f", title="EUR"),
+                alt.Tooltip("group_total:Q", format=".0f", title=currency),
             ],
         )
         .properties(width=width, title="Category breakdown")

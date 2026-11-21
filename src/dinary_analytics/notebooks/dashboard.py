@@ -17,7 +17,12 @@ def _():
     import polars as pl
 
     from dinary_analytics.charts import make_basket_chart, make_chart_pair, make_event_chart
-    from dinary_analytics.connection import LEDGER_SCHEMA, load_query, open_ledger
+    from dinary_analytics.connection import (
+        accounting_currency,
+        ledger_schema,
+        load_query,
+        open_ledger,
+    )
     from dinary_analytics.llm import chat_key_available, key_ref, run_chat_turn
     from dinary_analytics.paths import MCP_PORT
     from dinary_analytics.refresh import get_app_url, save_server_address
@@ -30,8 +35,8 @@ def _():
     from dinary_analytics.views import empty_view_frame, load_pinned_view_frames, load_view_frame
 
     return (
-        LEDGER_SCHEMA,
         MCP_PORT,
+        accounting_currency,
         alt,
         chat_key_available,
         contextlib,
@@ -43,6 +48,7 @@ def _():
         get_config_json,
         json,
         key_ref,
+        ledger_schema,
         load_pinned_view_frames,
         load_query,
         load_view_frame,
@@ -267,6 +273,14 @@ def _(
 
 
 @app.cell
+def _(accounting_currency, ledger_schema, replica_status):
+    _ = replica_status
+    currency = accounting_currency()
+    ledger_schema_sql = ledger_schema()
+    return currency, ledger_schema_sql
+
+
+@app.cell
 def _(open_ledger, pl, replica_status):
     _ = replica_status
     _con = open_ledger()
@@ -344,6 +358,7 @@ def _(open_ledger, pl, replica_status):
 @app.cell
 def _(
     category_order,
+    currency,
     expense_monthly_df,
     income_monthly_df,
     make_chart_pair,
@@ -356,6 +371,7 @@ def _(
         year_df,
         total_annual_income,
         category_order,
+        currency,
     )
 
 
@@ -532,6 +548,7 @@ def _(
     comp_expense_monthly_df,
     comp_income_monthly_df,
     comp_year_df,
+    currency,
     make_chart_pair,
     total_comp_income,
     year_selector,
@@ -545,13 +562,23 @@ def _(
             comp_year_df,
             total_comp_income,
             category_order,
+            currency,
             period_title=_title,
         )
     _chart
 
 
 @app.cell
-def _(all_events_info, event_selector, make_event_chart, mo, open_ledger, pl, replica_status):
+def _(
+    all_events_info,
+    currency,
+    event_selector,
+    make_event_chart,
+    mo,
+    open_ledger,
+    pl,
+    replica_status,
+):
     _ = replica_status
     _eid = event_selector.value
     if not _eid:
@@ -580,13 +607,22 @@ def _(all_events_info, event_selector, make_event_chart, mo, open_ledger, pl, re
         if _expense_df.is_empty():
             event_chart = mo.md(f"*No expenses for {_ev_title}.*")
         else:
-            event_chart = make_event_chart(_expense_df, _ev_title)
+            event_chart = make_event_chart(_expense_df, _ev_title, currency)
 
     return (event_chart,)
 
 
 @app.cell
-def _(make_event_chart, mo, open_ledger, pl, tag_name_map, tag_selector, tag_year_selector):
+def _(
+    currency,
+    make_event_chart,
+    mo,
+    open_ledger,
+    pl,
+    tag_name_map,
+    tag_selector,
+    tag_year_selector,
+):
     _tid = tag_selector.value
     _yr = tag_year_selector.value
     if not _tid or not _yr:
@@ -615,7 +651,11 @@ def _(make_event_chart, mo, open_ledger, pl, tag_name_map, tag_selector, tag_yea
         if _expense_df.is_empty():
             tag_chart = mo.md(f"*No expenses for this tag in {_yr}.*")
         else:
-            tag_chart = make_event_chart(_expense_df, f"{tag_name_map.get(_tid, _tid)} {_yr}")
+            tag_chart = make_event_chart(
+                _expense_df,
+                f"{tag_name_map.get(_tid, _tid)} {_yr}",
+                currency,
+            )
 
     return (tag_chart,)
 
@@ -799,16 +839,18 @@ def _(draft_view, empty_view_frame, load_view_frame, period_date_from, period_se
 
 
 @app.cell
-def _(
-    chat_history,
-    clear_chat,
-    draft_view,
-    make_basket_chart,
-    mo,
-    pending,
-    retry_last,
-    view_data_df,
-):
+def _(currency, draft_view, make_basket_chart, mo, pending, view_data_df):
+    draft_chart_blocks: list = []
+    if pending() is None and draft_view() is not None and not view_data_df.is_empty():
+        draft_chart_blocks = [
+            mo.md("**Proposed view** — pin it below to keep it:"),
+            make_basket_chart(view_data_df, currency, draft_view().get("name", "Draft view")),
+        ]
+    return (draft_chart_blocks,)
+
+
+@app.cell
+def _(chat_history, clear_chat, draft_chart_blocks, mo, pending, retry_last):
     _msgs = chat_history()
     _job = pending()
     _blocks: list = []
@@ -818,10 +860,7 @@ def _(
         else:
             _blocks.append(mo.md(f"**Analyst:** {_m['content']}"))
 
-    # Inline draft chart, right under the latest reply, with a caption tying it to the chat.
-    if _job is None and draft_view() is not None and not view_data_df.is_empty():
-        _blocks.append(mo.md("**Proposed view** — pin it below to keep it:"))
-        _blocks.append(make_basket_chart(view_data_df, draft_view().get("name", "Draft view")))
+    _blocks.extend(draft_chart_blocks)
 
     if _job is not None:
         _blocks.append(mo.callout(mo.md(f"**You:** {_job['text']}"), kind="neutral"))
@@ -928,6 +967,7 @@ def _(load_pinned_view_frames, period_date_from, period_selector, view_list_ver)
 @app.cell
 def _(
     bump_view_list,
+    currency,
     delete_view,
     make_basket_chart,
     mo,
@@ -949,7 +989,7 @@ def _(
         for _vid, _cfg, _df in pinned_frames:
             _name = _cfg.get("name", _vid)
             _chart = (
-                make_basket_chart(_df, _name)
+                make_basket_chart(_df, currency, _name)
                 if not _df.is_empty()
                 else mo.md(f"**{_name}**\n\n*No data for this period.*")
             )
@@ -977,7 +1017,7 @@ def _(
 
 
 @app.cell
-def _(LEDGER_SCHEMA, category_order, chat_key_available, key_ref, mo):
+def _(category_order, chat_key_available, currency, key_ref, ledger_schema_sql, mo):
     if not chat_key_available():
         ai_status = mo.callout(
             mo.md(f"**No key for the AI chat** — add `{key_ref()}` to `.deploy/.env`."),
@@ -992,7 +1032,7 @@ def _(LEDGER_SCHEMA, category_order, chat_key_available, key_ref, mo):
         "Use the query_ledger tool to answer questions about the user's expenses. "
         "Tables are in the 'ledger' schema — prefix all table names: "
         "ledger.expenses, ledger.categories, ledger.events, ledger.tags, etc. "
-        "The amount column in ledger.expenses is in EUR (accounting currency). "
+        f"The amount column in ledger.expenses is in {currency} (the accounting currency). "
         "\n\nDashboard context: the stacked area chart shows the top-10 expense categories "
         "by spending over the last 12 months, plus 'Other'. "
         f"The 10 categories shown individually are: {', '.join(_top10)}. "
@@ -1012,7 +1052,7 @@ def _(LEDGER_SCHEMA, category_order, chat_key_available, key_ref, mo):
         "The draft chart renders live below the chat. To pin the current "
         "draft permanently call save_current_view(name) — or the user can press the Pin "
         "button. Never ask the user to name categories, events or tags; do it from data.\n\n"
-        "Schema:\n" + LEDGER_SCHEMA
+        "Schema:\n" + ledger_schema_sql
     )
     return ai_status, ai_system_prompt
 
@@ -1113,7 +1153,7 @@ def _(MCP_PORT, mo):
             "Connect external AI client (Claude Desktop / Claude Code)": mo.vstack(
                 [
                     mo.md(
-                        f"MCP server runs at **`http://localhost:{MCP_PORT}/mcp`** while `inv analytics` is active."
+                        f"MCP server runs at **`http://localhost:{MCP_PORT}/mcp`** as a background service."
                         " Only Claude Desktop and Claude Code support MCP.\n\n"
                         "### Claude Desktop\n\n"
                         "Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:",
@@ -1137,8 +1177,8 @@ def _(MCP_PORT, mo):
                     ),
                     mo.md(
                         "Verify with `claude mcp list`. "
-                        "Tools: `query`, `schema`, `list_views`, `get_view`, `save_view`,"
-                        " `delete_view`, `get_config`, `set_config`.",
+                        "Tools: `query`, `schema`, `list_views`, `get_view_tool`, `save_view_tool`,"
+                        " `delete_view_tool`, `get_config_tool`, `set_config_tool`.",
                     ),
                 ],
             ),

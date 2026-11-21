@@ -24,15 +24,17 @@ the `analytics` dependency group in the root `pyproject.toml`.
 
 ```
 src/dinary_analytics/
-  connection.py       # read-only DuckDB ATTACH to the ledger replica
-  ai_service.py       # background app: MCP server + health/refresh-now HTTP routes + replica-refresh daemon
+  connection.py       # read-only DuckDB ATTACH to the ledger replica; ledger schema and currency
+  ai_service.py       # background app: MCP server + health/refresh-now HTTP routes
+  refresh.py          # replica-refresh daemon
+  llm.py              # chat turn against the paid model
+  views.py            # basket view data
+  charts.py           # chart builders
   settings.py         # analytics.db read/write (LMDB)
   backup.py           # analytics.db backup/restore CLI
   queries/            # named .sql files for reusable analytical queries
   notebooks/
-    dashboard.py      # main app: charts + Gemini chat + AI views
-    events.py         # event/trip cost breakdown
-    tags.py           # tag-bucket comparison
+    dashboard.py      # the one dashboard: charts + AI chat + basket views
 ```
 
 ## Runtime directory
@@ -42,7 +44,7 @@ Both files live side by side in the platform-specific local app-data directory
 
 ```
   dinary-ai.db          # read-only SQLite replica of the dinary ledger, refreshed by the daemon
-  analytics.db          # app database: view configs, history (LMDB)
+  analytics.db          # app database: pinned views, dashboard selections (LMDB)
 ```
 
 ## Storage
@@ -57,7 +59,10 @@ writable.
 
 ### analytics.db — LMDB
 
-Holds: analytics view configs, dashboard configurations, LLM conversation history.
+Holds the pinned analytics views and the dashboard's remembered selections. The chat
+conversation lives in the open dashboard page and ends with it; what the user wants
+to keep from a conversation is a pinned view.
+
 DuckDB never stores application state; any materialized caches there are disposable
 and regenerated from the replica.
 
@@ -80,8 +85,17 @@ outage of that model is reported in the chat and the user retries. The model's k
 resolves from the dashboard process's environment, which the launcher fills from the
 deploy env file, so analytics reads neither the server nor its database. The
 request/response transport and tool-calling loop are shared with the server's LLM
-broker. The model receives the ledger schema and executes DuckDB queries via tool
-calls.
+broker. The model executes DuckDB queries via tool calls.
+
+**What the model is told about the ledger.** The schema of the bookkeeping tables —
+expenses, categories, category groups, events, tags, income and exchange rates — and
+the ledger's accounting currency. Both are read from the replica itself, so the
+description always matches the data the queries run against.
+
+**What leaves the machine.** The charts are computed locally and send nothing. The
+chat sends the user's question, the ledger description above and the results of the
+queries the model runs to the model's provider. An external MCP client does the same
+with whatever provider it uses.
 
 **Power users — Claude Code / Claude Desktop via MCP.** User connects their Claude
 subscription to the `dinary-analytics` MCP server. Claude can answer arbitrary
@@ -98,18 +112,18 @@ replica readiness and lets the user trigger a refresh on demand.
 
 ## MCP server
 
-- `query(sql)` — read-only DuckDB query against the ledger replica, returns JSON.
-- `schema()` — ledger schema for LLM context.
-- `get_config(key)` — reads a config entry from `analytics.db`.
-- `set_config(key, value)` — writes a config entry to `analytics.db`.
-- `list_views()`, `get_view(id)`, `save_view(config)`, `delete_view(id)` — manage analytics view configs.
+Runs inside the background service, so it is available whether or not the dashboard is
+open. It gives an external client four things: a read-only DuckDB query against the
+ledger replica, the same ledger description the dashboard chat gets, the pinned views
+(list, read, save, delete), and the dashboard's remembered selections (read, write).
 
-`set_config` and the view management tools are the only write paths to `analytics.db`.
+Saving or deleting a view and writing a selection are the only write paths to
+`analytics.db`.
 
-## PWA integration
+## Currency
 
-View configs and tag bucket definitions sync to the PWA via `PUT /api/analytics/config`
-on the dinary server (see `analytics-pwa.md`).
+Every amount on the dashboard and in the chat is in the ledger's accounting currency
+and is labelled with it. The currency is read from the replica.
 
 ## Runtime tiers
 
@@ -124,7 +138,7 @@ achievable without rewrite.
 - Analytics is strictly read-only against `ledger.*`. `ATTACH (READ_ONLY)` enforced at connection level.
 - `dinary` server package never depends on `dinary_analytics`.
 - DuckDB is a query engine only — no application state stored there.
-- `analytics.db` is the sole write target for configs and history.
+- `analytics.db` is the sole write target for pinned views and dashboard selections.
 
 ---
 
@@ -145,14 +159,10 @@ not to confirm obvious ones (e.g. rent dominates). A good top-level set has 5–
 baskets where each basket is both meaningful in share and something the user can
 actually track or influence.
 
-The LLM starts from PWA category groups as a baseline and reorganises freely:
-splitting a group, merging negligible ones, or extracting a cross-cutting basket
-(e.g. "Travel" by tag, "Relocation" by event). Items that are each individually
-negligible and not worth tracking separately are merged into the default basket.
-
-Drill-down into any basket produces a second-level basket set (5–10 items) breaking
-down that basket by sub-category, sub-tag, or sub-event, generated by the LLM on
-demand using the same methodology.
+A basket collects expenses by event or by tag, so baskets cut across the category
+tree: "Travel" by tag, "Relocation" by event. Items that are each individually
+negligible and not worth tracking separately are left to the default basket, which
+also receives every expense that carries neither a matching event nor a matching tag.
 
 ### Basket structure
 

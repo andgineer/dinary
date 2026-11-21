@@ -3,7 +3,12 @@ import sqlite3
 import allure
 import pytest
 
-from dinary_analytics.connection import LEDGER_SCHEMA, open_ledger
+from dinary_analytics.connection import (
+    LEDGER_TABLES,
+    accounting_currency,
+    ledger_schema,
+    open_ledger,
+)
 
 
 @pytest.fixture
@@ -82,8 +87,64 @@ def test_open_ledger_can_query_join(ledger_sqlite):
 
 @allure.epic("Analytics")
 @allure.feature("Ledger Connection")
-def test_ledger_schema_is_non_empty_string():
-    assert isinstance(LEDGER_SCHEMA, str)
-    assert "expenses" in LEDGER_SCHEMA
-    assert "categories" in LEDGER_SCHEMA
-    assert "income" in LEDGER_SCHEMA
+def test_ledger_schema_is_read_from_the_replica(ledger_sqlite):
+    con = sqlite3.connect(str(ledger_sqlite))
+    con.executescript("""
+        ALTER TABLE expenses ADD COLUMN store_id INTEGER;
+        CREATE TABLE llmbroker_secrets (ref TEXT, value TEXT);
+    """)
+    con.commit()
+    con.close()
+
+    schema = ledger_schema(replica_path=ledger_sqlite)
+
+    assert "store_id" in schema
+    assert "CREATE TABLE categories" in schema
+    assert f"-- expenses: {LEDGER_TABLES['expenses']}" in schema
+    assert schema.index("CREATE TABLE expenses") < schema.index("CREATE TABLE categories")
+    assert "llmbroker_secrets" not in schema
+    assert "CREATE TABLE income" not in schema
+
+
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
+def test_ledger_schema_handles_a_path_with_spaces(ledger_sqlite, tmp_path):
+    spaced = tmp_path / "Application Support"
+    spaced.mkdir()
+    target = spaced / "replica.db"
+    target.write_bytes(ledger_sqlite.read_bytes())
+
+    assert "CREATE TABLE expenses" in ledger_schema(replica_path=target)
+
+
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
+def test_accounting_currency_comes_from_the_replica(ledger_sqlite):
+    con = sqlite3.connect(str(ledger_sqlite))
+    con.executescript("""
+        CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO app_metadata VALUES ('accounting_currency', 'RSD');
+    """)
+    con.commit()
+    con.close()
+
+    assert accounting_currency(replica_path=ledger_sqlite) == "RSD"
+
+
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
+def test_accounting_currency_missing_table_is_reported(ledger_sqlite):
+    with pytest.raises(LookupError, match="app_metadata"):
+        accounting_currency(replica_path=ledger_sqlite)
+
+
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
+def test_accounting_currency_missing_row_is_reported(ledger_sqlite):
+    con = sqlite3.connect(str(ledger_sqlite))
+    con.execute("CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    con.commit()
+    con.close()
+
+    with pytest.raises(LookupError, match="accounting currency"):
+        accounting_currency(replica_path=ledger_sqlite)

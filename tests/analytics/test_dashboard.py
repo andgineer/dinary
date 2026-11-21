@@ -11,6 +11,7 @@ import allure
 import polars as pl
 import pytest
 
+import dinary_analytics.connection as connection_module
 import dinary_analytics.notebooks.dashboard as _dash_module
 from dinary_analytics.charts import ChartSize, make_basket_chart, make_chart_pair, make_event_chart
 from dinary_analytics.connection import open_ledger
@@ -186,7 +187,7 @@ def event_expense_df(ledger_db):
 @allure.feature("Dashboard")
 def test_make_chart_pair_builds_valid_spec(chart_data):
     exp_df, inc_df, yr_df, total_inc, cat_order = chart_data
-    chart = make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order)
+    chart = make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order, "EUR")
     spec = chart.to_dict()
     assert "hconcat" in spec
     assert len(spec["hconcat"]) == 2
@@ -196,7 +197,7 @@ def test_make_chart_pair_builds_valid_spec(chart_data):
 @allure.feature("Dashboard")
 def test_make_chart_pair_with_title(chart_data):
     exp_df, inc_df, yr_df, total_inc, cat_order = chart_data
-    chart = make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order, period_title="2025")
+    chart = make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order, "EUR", period_title="2025")
     spec = chart.to_dict()
     main = spec["hconcat"][0]
     assert main.get("title") == "2025"
@@ -206,7 +207,7 @@ def test_make_chart_pair_with_title(chart_data):
 @allure.feature("Dashboard")
 def test_make_chart_pair_main_layers(chart_data):
     exp_df, inc_df, yr_df, total_inc, cat_order = chart_data
-    chart = make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order)
+    chart = make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order, "EUR")
     spec = chart.to_dict()
     main = spec["hconcat"][0]
     assert "layer" in main
@@ -223,9 +224,67 @@ def test_make_chart_pair_main_layers(chart_data):
 @allure.feature("Dashboard")
 def test_make_chart_pair_no_invalid_mark_params(chart_data):
     exp_df, inc_df, yr_df, total_inc, cat_order = chart_data
-    chart = make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order)
+    chart = make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order, "EUR")
     spec_str = json.dumps(chart.to_dict())
     assert "paintOrder" not in spec_str
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_charts_label_amounts_with_the_given_currency(chart_data, basket_df):
+    exp_df, inc_df, yr_df, total_inc, cat_order = chart_data
+    pair = json.dumps(make_chart_pair(exp_df, inc_df, yr_df, total_inc, cat_order, "RSD").to_dict())
+    basket = json.dumps(make_basket_chart(basket_df, "RSD").to_dict())
+    assert "Saved (RSD)" in pair
+    assert '"title": "RSD"' in basket
+    assert "EUR" not in pair + basket
+    assert "€" not in pair + basket
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_ledger_facts_cell_reads_currency_and_schema_from_the_replica(ledger_db, monkeypatch):
+    con = sqlite3.connect(str(ledger_db))
+    con.executescript("""
+        CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO app_metadata VALUES ('accounting_currency', 'RSD');
+    """)
+    con.commit()
+    con.close()
+    monkeypatch.setattr(connection_module, "REPLICA_PATH", ledger_db)
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    cell = next(c for c in cells if "ledger_schema_sql" in c.defs)
+    _, defs = cell.run(
+        accounting_currency=connection_module.accounting_currency,
+        ledger_schema=connection_module.ledger_schema,
+        replica_status={"ok": True},
+    )
+
+    assert defs["currency"] == "RSD"
+    assert "CREATE TABLE expenses" in defs["ledger_schema_sql"]
+    assert "app_metadata" not in defs["ledger_schema_sql"]
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_chat_prompt_cell_names_the_ledger_currency_and_schema():
+    import marimo as mo
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    cell = next(c for c in cells if "ai_system_prompt" in c.defs)
+    _, defs = cell.run(
+        category_order=["food", "Other"],
+        chat_key_available=lambda: True,
+        currency="RSD",
+        key_ref=lambda: "SOME_KEY",
+        ledger_schema_sql="CREATE TABLE expenses (id INTEGER);",
+        mo=mo,
+    )
+
+    assert "is in RSD (the accounting currency)" in defs["ai_system_prompt"]
+    assert defs["ai_system_prompt"].endswith("CREATE TABLE expenses (id INTEGER);")
+    assert "EUR" not in defs["ai_system_prompt"]
 
 
 @allure.epic("Analytics")
@@ -238,6 +297,7 @@ def test_make_chart_pair_custom_size(chart_data):
         yr_df,
         total_inc,
         cat_order,
+        "EUR",
         size=ChartSize(width=400, height=280, year_width=120),
     )
     spec = chart.to_dict()
@@ -299,7 +359,7 @@ def test_dashboard_selectors_cell_runs(ledger_db, monkeypatch):
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
 def test_make_event_chart_builds_valid_spec(event_expense_df):
-    chart = make_event_chart(event_expense_df, "vacation")
+    chart = make_event_chart(event_expense_df, "vacation", "EUR")
     spec = chart.to_dict()
     # make_event_chart returns a LayerChart; the arc mark is in the first layer
     assert spec["layer"][0]["mark"]["type"] == "arc"
@@ -308,11 +368,11 @@ def test_make_event_chart_builds_valid_spec(event_expense_df):
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
 def test_make_event_chart_with_subtitle(event_expense_df):
-    chart = make_event_chart(event_expense_df, "vacation")
+    chart = make_event_chart(event_expense_df, "vacation", "RSD")
     spec = chart.to_dict()
     title = spec.get("title", {})
     assert title.get("text") == "vacation"
-    assert "€" in title.get("subtitle", "")
+    assert title.get("subtitle", "").endswith(" RSD")
 
 
 @allure.epic("Analytics")
@@ -324,7 +384,7 @@ def test_make_event_chart_top9_plus_other():
             "total": [float(100 - i * 5) for i in range(12)],
         }
     )
-    chart = make_event_chart(many_cats, "big event")
+    chart = make_event_chart(many_cats, "big event", "EUR")
     spec_str = json.dumps(chart.to_dict())
     # bottom 3 categories must be merged into Other
     assert "Other" in spec_str
@@ -354,7 +414,7 @@ def test_make_event_chart_multi_event(ledger_db):
     expense_df = pl.DataFrame(
         {"category": [r[0] for r in rows], "total": [float(r[1]) for r in rows]}
     )
-    chart = make_event_chart(expense_df, "combined")
+    chart = make_event_chart(expense_df, "combined", "EUR")
     spec = chart.to_dict()
     assert spec["layer"][0]["mark"]["type"] == "arc"
 
@@ -374,7 +434,7 @@ def basket_df():
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
 def test_make_basket_chart_builds_valid_spec(basket_df):
-    chart = make_basket_chart(basket_df, "My View")
+    chart = make_basket_chart(basket_df, "EUR", "My View")
     spec = chart.to_dict()
     assert "vconcat" in spec
     assert len(spec["vconcat"]) == 2
@@ -383,7 +443,7 @@ def test_make_basket_chart_builds_valid_spec(basket_df):
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
 def test_make_basket_chart_top_panel_is_bar(basket_df):
-    chart = make_basket_chart(basket_df)
+    chart = make_basket_chart(basket_df, "EUR")
     spec = chart.to_dict()
     top = spec["vconcat"][0]
     mark = top.get("mark", {})
@@ -394,7 +454,7 @@ def test_make_basket_chart_top_panel_is_bar(basket_df):
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
 def test_make_basket_chart_has_selection_param(basket_df):
-    chart = make_basket_chart(basket_df)
+    chart = make_basket_chart(basket_df, "EUR")
     spec = chart.to_dict()
     # Altair hoists params to the outermost vconcat level
     all_params = spec.get("params", []) + spec["vconcat"][0].get("params", [])
@@ -404,7 +464,7 @@ def test_make_basket_chart_has_selection_param(basket_df):
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
 def test_make_basket_chart_bottom_has_filter_transform(basket_df):
-    chart = make_basket_chart(basket_df)
+    chart = make_basket_chart(basket_df, "EUR")
     spec = chart.to_dict()
     bottom = spec["vconcat"][1]
     transforms = bottom.get("transform", [])
@@ -414,7 +474,7 @@ def test_make_basket_chart_bottom_has_filter_transform(basket_df):
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
 def test_make_basket_chart_independent_color_scales(basket_df):
-    chart = make_basket_chart(basket_df)
+    chart = make_basket_chart(basket_df, "EUR")
     spec = chart.to_dict()
     resolve = spec.get("resolve", {})
     assert resolve.get("scale", {}).get("color") == "independent"
@@ -769,20 +829,35 @@ def _runner_cell():
     return next(c for c in cells if "run_chat_turn" in c.refs and not c.defs)
 
 
-def _run_log(*, chat_history, pending, view_data_df):
+def _draft_chart_cell():
+    cells = list(_dash_module.app._cell_manager.cells())
+    return next(c for c in cells if "draft_chart_blocks" in c.defs)
+
+
+def _draft_chart_blocks(*, draft, pending, view_data_df):
     import marimo as mo
 
-    from dinary_analytics.charts import make_basket_chart
+    _, defs = _draft_chart_cell().run(
+        currency="EUR",
+        draft_view=lambda: draft,
+        make_basket_chart=make_basket_chart,
+        mo=mo,
+        pending=lambda: pending,
+        view_data_df=view_data_df,
+    )
+    return defs["draft_chart_blocks"]
+
+
+def _run_log(*, chat_history, pending, draft_chart_blocks=()):
+    import marimo as mo
 
     output, _ = _log_cell().run(
         chat_history=lambda: chat_history,
         clear_chat=lambda: None,
-        draft_view=lambda: None,
-        make_basket_chart=make_basket_chart,
+        draft_chart_blocks=list(draft_chart_blocks),
         mo=mo,
         pending=lambda: pending,
         retry_last=lambda: None,
-        view_data_df=view_data_df,
     )
     return output
 
@@ -791,13 +866,10 @@ def _run_log(*, chat_history, pending, view_data_df):
 @allure.feature("Dashboard")
 def test_chat_log_cell_empty_pending_and_populated():
     """Log cell: placeholder when empty, thinking bubble when pending, bubbles when populated."""
-    from dinary_analytics.views import empty_view_frame
-
-    empty_df = empty_view_frame()
-    assert _run_log(chat_history=[], pending=None, view_data_df=empty_df) is not None
-    assert _run_log(chat_history=[], pending={"text": "hi"}, view_data_df=empty_df) is not None
+    assert _run_log(chat_history=[], pending=None) is not None
+    assert _run_log(chat_history=[], pending={"text": "hi"}) is not None
     msgs = [{"role": "user", "content": "hi"}, {"role": "model", "content": "hello"}]
-    assert _run_log(chat_history=msgs, pending=None, view_data_df=empty_df) is not None
+    assert _run_log(chat_history=msgs, pending=None) is not None
 
 
 @allure.epic("Analytics")
@@ -971,20 +1043,33 @@ def test_view_data_cell_with_draft(ledger_db):
 
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
-def test_chat_log_renders_inline_draft_chart(basket_df):
-    """The log cell renders the proposed-view chart inline when a draft exists."""
-    import marimo as mo
+def test_draft_chart_cell_shows_the_chart_only_for_a_settled_draft_with_data(basket_df):
+    from dinary_analytics.views import empty_view_frame
 
     draft = {"name": "Test View", "baskets": [], "default_basket": "Other"}
-    output, _ = _log_cell().run(
-        chat_history=lambda: [{"role": "model", "content": "here is a view"}],
-        clear_chat=lambda: None,
-        draft_view=lambda: draft,
-        make_basket_chart=make_basket_chart,
-        mo=mo,
-        pending=lambda: None,
-        retry_last=lambda: None,
+
+    shown = _draft_chart_blocks(draft=draft, pending=None, view_data_df=basket_df)
+    assert len(shown) == 2
+    assert "Test View" in json.dumps(shown[1].to_dict())
+
+    assert _draft_chart_blocks(draft=None, pending=None, view_data_df=basket_df) == []
+    assert _draft_chart_blocks(draft=draft, pending={"text": "hi"}, view_data_df=basket_df) == []
+    assert _draft_chart_blocks(draft=draft, pending=None, view_data_df=empty_view_frame()) == []
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_chat_log_renders_inline_draft_chart(basket_df):
+    """The log cell renders the proposed-view chart inline when a draft exists."""
+    blocks = _draft_chart_blocks(
+        draft={"name": "Test View", "baskets": [], "default_basket": "Other"},
+        pending=None,
         view_data_df=basket_df,
+    )
+    output = _run_log(
+        chat_history=[{"role": "model", "content": "here is a view"}],
+        pending=None,
+        draft_chart_blocks=blocks,
     )
 
     assert output is not None
@@ -1081,6 +1166,7 @@ def test_gallery_cell_empty():
     output, defs = gallery_cell.run(
         bump_view_list=lambda _v: None,
         delete_view=lambda _i: None,
+        currency="EUR",
         make_basket_chart=make_basket_chart,
         mo=mo,
         pinned_frames=[],
@@ -1105,6 +1191,7 @@ def test_gallery_cell_with_saved_view(basket_df):
     output, defs = gallery_cell.run(
         bump_view_list=lambda _v: None,
         delete_view=lambda _i: None,
+        currency="EUR",
         make_basket_chart=make_basket_chart,
         mo=mo,
         pinned_frames=frames,

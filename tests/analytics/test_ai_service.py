@@ -22,9 +22,9 @@ from dinary_analytics.ai_service import (
     list_views,
     refresh_now,
     save_view_tool,
+    schema,
     set_config_tool,
 )
-from dinary_analytics.connection import LEDGER_SCHEMA
 from dinary_analytics.refresh import get_db_path, start_refresh_daemon
 
 
@@ -94,12 +94,28 @@ def test_run_query_wraps_duckdb_error(patched_replica):
 
 @allure.epic("Analytics")
 @allure.feature("AI Service")
-def test_schema_contains_key_tables():
-    assert "expenses" in LEDGER_SCHEMA
-    assert "categories" in LEDGER_SCHEMA
-    assert "income" in LEDGER_SCHEMA
-    assert "exchange_rates" in LEDGER_SCHEMA
-    assert "ledger" not in LEDGER_SCHEMA
+def test_schema_tool_describes_the_replica_and_its_currency(patched_replica):
+    con = sqlite3.connect(str(patched_replica))
+    con.executescript("""
+        CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO app_metadata VALUES ('accounting_currency', 'RSD');
+    """)
+    con.commit()
+    con.close()
+
+    text = schema()
+
+    assert text.startswith("-- accounting currency: RSD\n")
+    assert "CREATE TABLE expenses" in text
+    assert "app_metadata (" not in text
+
+
+@allure.epic("Analytics")
+@allure.feature("AI Service")
+def test_schema_tool_without_a_replica_is_a_tool_error(monkeypatch):
+    monkeypatch.setattr(refresh_module, "_db_path", None)
+    with pytest.raises(ToolError, match="not yet available"):
+        schema()
 
 
 @pytest.fixture

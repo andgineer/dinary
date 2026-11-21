@@ -1,84 +1,62 @@
 """DuckDB connection over the ledger SQLite replica."""
 
+import sqlite3
 from pathlib import Path
 
 import duckdb
 
 from dinary_analytics.paths import QUERIES_DIR, REPLICA_PATH
 
-LEDGER_SCHEMA = """\
--- expenses: one row per expense; amount is in accounting currency (EUR)
-CREATE TABLE expenses (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    datetime          TIMESTAMP NOT NULL,
-    amount            DECIMAL(12,2) NOT NULL,      -- accounting currency (EUR)
-    amount_original   DECIMAL(12,2) NOT NULL,      -- amount as entered by user
-    currency_original TEXT NOT NULL,               -- currency the user entered
-    category_id       INTEGER NOT NULL,
-    event_id          INTEGER,
-    comment           TEXT,
-    sheet_category    TEXT,
-    sheet_group       TEXT
-);
+LEDGER_TABLES: dict[str, str] = {
+    "expenses": (
+        "one row per expense; amount is in the accounting currency, "
+        "amount_original and currency_original are what the user entered"
+    ),
+    "categories": "expense classification leaf nodes",
+    "category_groups": "top-level grouping of categories",
+    "events": "named occasions (trips, projects) optionally attached to expenses",
+    "tags": "free-form labels on expenses",
+    "expense_tags": "many-to-many link between expenses and tags",
+    "income": "income entries; amount is in the accounting currency",
+    "exchange_rates": "daily rates to the accounting currency",
+}
 
--- categories: expense classification leaf nodes
-CREATE TABLE categories (
-    id        INTEGER PRIMARY KEY,
-    name      TEXT NOT NULL,
-    group_id  INTEGER,
-    is_active BOOLEAN NOT NULL DEFAULT 1
-);
 
--- category_groups: top-level grouping of categories
-CREATE TABLE category_groups (
-    id         INTEGER PRIMARY KEY,
-    name       TEXT NOT NULL,
-    sort_order INTEGER NOT NULL,
-    is_active  BOOLEAN NOT NULL DEFAULT 1
-);
+def _connect_replica(replica_path: Path | None) -> sqlite3.Connection:
+    path = replica_path or REPLICA_PATH
+    return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
 
--- events: named occasions (trips, projects) optionally attached to expenses
-CREATE TABLE events (
-    id        INTEGER PRIMARY KEY,
-    name      TEXT NOT NULL,
-    date_from DATE NOT NULL,
-    date_to   DATE NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT 1
-);
 
--- tags and expense_tags: free-form labels on expenses (many-to-many)
-CREATE TABLE tags (
-    id        INTEGER PRIMARY KEY,
-    name      TEXT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT 1
-);
-CREATE TABLE expense_tags (
-    expense_id INTEGER NOT NULL,
-    tag_id     INTEGER NOT NULL,
-    PRIMARY KEY (expense_id, tag_id)
-);
+def ledger_schema(replica_path: Path | None = None) -> str:
+    """Return the CREATE statements of the ledger tables as they exist in the replica."""
+    con = _connect_replica(replica_path)
+    try:
+        ddl = dict(
+            con.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'").fetchall(),
+        )
+    finally:
+        con.close()
+    return "\n".join(
+        f"-- {table}: {note}\n{ddl[table]};\n"
+        for table, note in LEDGER_TABLES.items()
+        if table in ddl
+    )
 
--- income: monthly income entries
-CREATE TABLE income (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    year             INTEGER NOT NULL,
-    month            INTEGER NOT NULL,
-    income_date      DATE NOT NULL,
-    amount           DECIMAL(12,2) NOT NULL,      -- accounting currency (EUR)
-    amount_original  DECIMAL(12,2) NOT NULL,      -- amount as entered by user
-    currency_original TEXT NOT NULL,
-    comment          TEXT,
-    CHECK (month BETWEEN 1 AND 12)
-);
 
--- exchange_rates: daily rates to accounting currency (EUR)
-CREATE TABLE exchange_rates (
-    currency TEXT NOT NULL,
-    date     DATE NOT NULL,
-    rate     DECIMAL(18,6) NOT NULL,
-    PRIMARY KEY (currency, date)
-);
-"""
+def accounting_currency(replica_path: Path | None = None) -> str:
+    """Return the currency every ledger amount is denominated in."""
+    con = _connect_replica(replica_path)
+    try:
+        row = con.execute(
+            "SELECT value FROM app_metadata WHERE key = 'accounting_currency'",
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        raise LookupError("the ledger replica has no app_metadata table") from exc
+    finally:
+        con.close()
+    if row is None:
+        raise LookupError("the ledger replica does not record its accounting currency")
+    return row[0]
 
 
 def open_ledger(replica_path: Path | None = None) -> duckdb.DuckDBPyConnection:

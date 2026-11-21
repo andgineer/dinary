@@ -149,11 +149,11 @@ on first boot and cannot change without explicit migration — see
 
 ### LMDB for analytics.db
 
-`analytics.db` (dashboard configs, tag bucket definitions, LLM conversation
-history) uses LMDB. PoloDB was evaluated but its PyPI package ships wheels only
+`analytics.db` (pinned analytics views and the dashboard's remembered selections)
+uses LMDB. PoloDB was evaluated but its PyPI package ships wheels only
 for Python 3.9/3.10; the project requires 3.13+. LMDB installs cleanly on 3.13,
 is ACID-compliant, and its key-value model maps naturally to named config keys
-and sequence-keyed history entries with standard-library JSON encode/decode.
+with standard-library JSON encode/decode.
 
 ### Google Sheets as export-only
 
@@ -236,10 +236,9 @@ step that is caused by a missing analytics import means the boundary has been vi
 | 0 — Manual entry + QR total | Done | PWA + FastAPI; QR scanning; Google Sheets write path |
 | 1 — 3D ledger | Done | SQLite ledger; idempotent ingestion on `client_expense_id`; export-only Sheets; catalog |
 | 2 — Receipt pipeline | Done | `sr-invoice-parser`; LLM classification; confidence levels; review UI |
-| 3 — Mobile input expansion | Planned | Full receipt-oriented PWA flow; review ergonomics |
-| 4 — AI classification + desktop | Planned | Rust daemon + GUI; `claude -p` batch analysis |
-| 5 — Dashboards | Planned | Operational and analytical dashboards; DuckDB-on-laptop analytics |
-| 6 — AI analysis | Planned | Spending analysis via `claude -p`; scheduled Sheets sync |
+| 3 — Mobile input expansion | Done | Full receipt-oriented PWA flow; review ergonomics |
+| 5 — Dashboards | Done | Analytics page in the PWA; DuckDB-on-laptop dashboard over a local ledger replica |
+| 6 — AI analysis | Partly done | Done: spending analysis in the dashboard's AI chat and through MCP clients. Planned: scheduled Sheets sync |
 
 ---
 

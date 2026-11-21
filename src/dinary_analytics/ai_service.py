@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import json
+from pathlib import Path
 
 import duckdb
 from mcp.server.fastmcp import FastMCP
@@ -8,7 +9,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from dinary_analytics.connection import LEDGER_SCHEMA, open_ledger
+from dinary_analytics.connection import accounting_currency, ledger_schema, open_ledger
 from dinary_analytics.paths import MCP_PORT
 from dinary_analytics.refresh import (
     get_db_path,
@@ -29,13 +30,17 @@ from dinary_analytics.settings import (
 mcp = FastMCP("dinary-analytics")
 
 
-def _run_query(sql: str) -> str:
+def _replica_path() -> Path:
     db_path = get_db_path()
     if db_path is None:
         raise ToolError(
             "ledger replica is not yet available — dinary-ai hasn't completed its first refresh",
         )
-    con = open_ledger(db_path)
+    return db_path
+
+
+def _run_query(sql: str) -> str:
+    con = open_ledger(_replica_path())
     try:
         result = con.execute(sql)
         columns = [desc[0] for desc in result.description]
@@ -56,7 +61,8 @@ def query(sql: str) -> str:
 @mcp.tool()
 def schema() -> str:
     """Return the ledger database schema as SQL CREATE statements for LLM context."""
-    return LEDGER_SCHEMA
+    db_path = _replica_path()
+    return f"-- accounting currency: {accounting_currency(db_path)}\n\n{ledger_schema(db_path)}"
 
 
 @mcp.tool()
