@@ -65,17 +65,17 @@
 | src/dinary/main.py                                             |      111 |        8 |     93% |46-48, 163, 169, 175, 185, 195 |
 | src/dinary/sheets/sheet\_mapping.py                            |      224 |       47 |     79% |224, 289-291, 308-309, 316-322, 369, 372-377, 391-392, 402-420, 434-462, 478, 489-494, 499-500 |
 | src/dinary/sheets/sheets.py                                    |      104 |        6 |     94% |51-52, 71, 100, 118, 201 |
-| src/dinary\_analytics/ai\_service.py                           |       77 |       10 |     87% |53, 59, 132-138, 142 |
+| src/dinary\_analytics/ai\_service.py                           |       81 |        9 |     89% |58, 138-144, 148 |
 | src/dinary\_analytics/backup.py                                |       66 |       21 |     68% |18-19, 36-37, 54-55, 69-87, 91 |
 | src/dinary\_analytics/charts.py                                |       57 |        0 |    100% |           |
-| src/dinary\_analytics/connection.py                            |       11 |        0 |    100% |           |
+| src/dinary\_analytics/connection.py                            |       31 |        0 |    100% |           |
 | src/dinary\_analytics/llm.py                                   |       65 |        2 |     97% |   97, 100 |
-| src/dinary\_analytics/notebooks/dashboard.py                   |      425 |      166 |     61% |32, 77, 86, 99, 116, 132-135, 149-191, 213-215, 217, 221-222, 271-341, 353, 444, 456-526, 539-550, 555-585, 590-620, 632-645, 650-652, 684-692, 703, 708-712, 717-721, 747, 763, 896, 912-914, 981-1017, 1022-1045, 1066-1069, 1073-1077, 1081-1085, 1089-1091, 1105-1106, 1111, 1150 |
+| src/dinary\_analytics/notebooks/dashboard.py                   |      435 |      160 |     63% |37, 83, 92, 105, 122, 138-141, 155-197, 219-221, 223, 227-228, 285-355, 368, 460, 472-542, 556-568, 582-612, 626-660, 672-685, 690-692, 724-732, 743, 748-752, 757-761, 787, 803, 935, 951-953, 1022, 1062-1085, 1106-1109, 1113-1117, 1121-1125, 1129-1131, 1145-1146, 1151, 1190 |
 | src/dinary\_analytics/paths.py                                 |       17 |        0 |    100% |           |
 | src/dinary\_analytics/refresh.py                               |      100 |        2 |     98% |   50, 157 |
 | src/dinary\_analytics/settings.py                              |       49 |        1 |     98% |        56 |
 | src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        62 |
-| **TOTAL**                                                      | **5431** |  **646** | **88%** |           |
+| **TOTAL**                                                      | **5465** |  **639** | **88%** |           |
 
 
 ## Setup coverage badge
