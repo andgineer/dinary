@@ -44,6 +44,7 @@ thresholds AS (
 )
 SELECT
     p.kind,
+    p.id,
     p.name,
     p.recent,
     p.prior,

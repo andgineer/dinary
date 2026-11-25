@@ -12,7 +12,9 @@ beforeEach(async () => {
 const EMPTY_QUEUE = { pending: 0, in_progress: 0, sleeping: 0, poisoned: 0 };
 const SUMMARY = { this_month_total: "100", ytd_total: "900", currency: "RSD" };
 const EVENTS = [{ id: 1, name: "trip", date_range: "1–3 May 2026", total: "50", currency: "RSD", open: false }];
-const TRENDS = [{ basket_name: "Food", direction: "up", pct: "12%" }];
+const TRENDS = [
+  { kind: "group", id: 3, basket_name: "Food", direction: "up", pct: "12%", reason: { kind: "event", names: ["trip"] } },
+];
 
 function response(queue = EMPTY_QUEUE) {
   return { summary: SUMMARY, events: EVENTS, trends: TRENDS, receipts_queue: queue };
@@ -20,7 +22,7 @@ function response(queue = EMPTY_QUEUE) {
 
 function seedFreshCache() {
   localStorage.setItem("dinary:analytics:fetchedAt", String(Date.now() - 60_000));
-  localStorage.setItem("dinary:analytics:v1", JSON.stringify({ summary: SUMMARY, events: EVENTS, trends: TRENDS }));
+  localStorage.setItem("dinary:analytics:v2", JSON.stringify({ summary: SUMMARY, events: EVENTS, trends: TRENDS }));
 }
 
 beforeEach(() => {
@@ -41,9 +43,9 @@ describe("analytics store: cache hydration", () => {
     expect(store.trends).toEqual(TRENDS);
   });
 
-  it("reads a cache entry written by the old build and still refetches once", async () => {
+  it("hydrates from a cache entry with no fetch timestamp and still refetches once", async () => {
     localStorage.setItem(
-      "dinary:analytics:v1",
+      "dinary:analytics:v2",
       JSON.stringify({ summary: SUMMARY, events: EVENTS, trends: TRENDS, lastFetched: Date.now() }),
     );
     const spy = vi.spyOn(analyticsApi, "fetchAnalyticsSummary").mockResolvedValue(response());
@@ -52,6 +54,21 @@ describe("analytics store: cache hydration", () => {
     expect(store.isStale()).toBe(true);
     await store.loadIfNeeded();
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a fresh cache written under the previous data key and refetches", async () => {
+    localStorage.setItem("dinary:analytics:fetchedAt", String(Date.now() - 60_000));
+    localStorage.setItem(
+      "dinary:analytics:v1",
+      JSON.stringify({ summary: SUMMARY, events: EVENTS, trends: [{ basket_name: "Food", direction: "up", pct: "12%" }] }),
+    );
+    const spy = vi.spyOn(analyticsApi, "fetchAnalyticsSummary").mockResolvedValue(response());
+    const store = useAnalyticsStore();
+    expect(store.summary).toBeNull();
+    expect(store.isStale()).toBe(true);
+    await store.loadIfNeeded();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(store.trends).toEqual(TRENDS);
   });
 });
 
@@ -79,7 +96,7 @@ describe("analytics store: loadIfNeeded()", () => {
     vi.spyOn(analyticsApi, "fetchAnalyticsSummary").mockResolvedValue(response());
     const store = useAnalyticsStore();
     await store.loadIfNeeded();
-    expect(JSON.parse(localStorage.getItem("dinary:analytics:v1"))).toEqual({
+    expect(JSON.parse(localStorage.getItem("dinary:analytics:v2"))).toEqual({
       summary: SUMMARY,
       events: EVENTS,
       trends: TRENDS,
@@ -237,6 +254,98 @@ describe("analytics store: event detail", () => {
     await expect(store.loadEventDetail(1)).rejects.toThrow("down");
     expect(store.eventDetails[1]).toBeUndefined();
     expect(await store.loadEventDetail(1)).toEqual(DETAIL);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
+
+const TREND_DETAIL = {
+  kind: "group",
+  id: 3,
+  name: "Food",
+  direction: "up",
+  pct: "12%",
+  currency: "RSD",
+  recent: "150",
+  prior: "100",
+  delta: "+50",
+  blocks: [],
+};
+
+describe("analytics store: trend detail", () => {
+  it("fetches a detail once, keyed by kind and id, and serves it from memory afterwards", async () => {
+    const spy = vi.spyOn(analyticsApi, "fetchTrendDetail").mockResolvedValue(TREND_DETAIL);
+    const store = useAnalyticsStore();
+    expect(await store.loadTrendDetail("group", 3)).toEqual(TREND_DETAIL);
+    expect(await store.loadTrendDetail("group", 3)).toEqual(TREND_DETAIL);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith("group", 3);
+    expect(store.trendDetails["group-3"]).toEqual(TREND_DETAIL);
+  });
+
+  it("keeps a tag and a group with the same id apart", async () => {
+    const tagDetail = { ...TREND_DETAIL, kind: "tag", name: "Food tag" };
+    const spy = vi
+      .spyOn(analyticsApi, "fetchTrendDetail")
+      .mockImplementation(async (kind) => (kind === "tag" ? tagDetail : TREND_DETAIL));
+    const store = useAnalyticsStore();
+    await store.loadTrendDetail("group", 3);
+    await store.loadTrendDetail("tag", 3);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(store.trendDetails["group-3"]).toEqual(TREND_DETAIL);
+    expect(store.trendDetails["tag-3"]).toEqual(tagDetail);
+  });
+
+  it("shares one request between concurrent callers", async () => {
+    const spy = vi.spyOn(analyticsApi, "fetchTrendDetail").mockResolvedValue(TREND_DETAIL);
+    const store = useAnalyticsStore();
+    await Promise.all([store.loadTrendDetail("group", 3), store.loadTrendDetail("group", 3)]);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not share a request with an event detail of the same id", async () => {
+    const trendSpy = vi.spyOn(analyticsApi, "fetchTrendDetail").mockResolvedValue(TREND_DETAIL);
+    const eventSpy = vi.spyOn(analyticsApi, "fetchEventDetail").mockResolvedValue(DETAIL);
+    const store = useAnalyticsStore();
+    await Promise.all([store.loadTrendDetail("group", 1), store.loadEventDetail(1)]);
+    expect(trendSpy).toHaveBeenCalledTimes(1);
+    expect(eventSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears cached details after a successful summary refetch", async () => {
+    vi.spyOn(analyticsApi, "fetchTrendDetail").mockResolvedValue(TREND_DETAIL);
+    vi.spyOn(analyticsApi, "fetchAnalyticsSummary").mockResolvedValue(response());
+    const store = useAnalyticsStore();
+    await store.loadTrendDetail("group", 3);
+    await store.loadIfNeeded();
+    expect(store.trendDetails).toEqual({});
+  });
+
+  it("refetches instead of storing a detail that was in flight when the summary refetch landed", async () => {
+    const stale = { ...TREND_DETAIL, delta: "+10" };
+    let resolveStale;
+    const spy = vi
+      .spyOn(analyticsApi, "fetchTrendDetail")
+      .mockReturnValueOnce(new Promise((resolve) => { resolveStale = resolve; }))
+      .mockResolvedValueOnce(TREND_DETAIL);
+    vi.spyOn(analyticsApi, "fetchAnalyticsSummary").mockResolvedValue(response());
+    const store = useAnalyticsStore();
+    const pending = store.loadTrendDetail("group", 3);
+    await store.loadIfNeeded();
+    resolveStale(stale);
+    expect(await pending).toEqual(TREND_DETAIL);
+    expect(store.trendDetails["group-3"]).toEqual(TREND_DETAIL);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache a failed detail request", async () => {
+    const spy = vi
+      .spyOn(analyticsApi, "fetchTrendDetail")
+      .mockRejectedValueOnce(new Error("down"))
+      .mockResolvedValueOnce(TREND_DETAIL);
+    const store = useAnalyticsStore();
+    await expect(store.loadTrendDetail("group", 3)).rejects.toThrow("down");
+    expect(store.trendDetails["group-3"]).toBeUndefined();
+    expect(await store.loadTrendDetail("group", 3)).toEqual(TREND_DETAIL);
     expect(spy).toHaveBeenCalledTimes(2);
   });
 });

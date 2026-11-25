@@ -1,13 +1,17 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { fetchAnalyticsSummary, fetchEventDetail } from "../api/analytics.js";
+import { fetchAnalyticsSummary, fetchEventDetail, fetchTrendDetail } from "../api/analytics.js";
 import { useStaleCache } from "../composables/useStaleCache.js";
+
+export function trendKey(kind, id) {
+  return `${kind}-${id}`;
+}
 
 export const useAnalyticsStore = defineStore("analytics", () => {
   const { dirtyFlag, lastFetchedAt, markDirty, beginFetch, stampFresh, isStale, readCache, writeCache } = useStaleCache({
     dirtyKey: "dinary:analytics:dirty",
     fetchedKey: "dinary:analytics:fetchedAt",
-    dataKey: "dinary:analytics:v1",
+    dataKey: "dinary:analytics:v2",
   });
   const cached = readCache();
   const summary = ref(cached?.summary ?? null);
@@ -15,7 +19,7 @@ export const useAnalyticsStore = defineStore("analytics", () => {
   const trends = ref(cached?.trends ?? null);
   const loading = ref(false);
   const eventDetails = ref({});
-  const detailRequests = new Map();
+  const trendDetails = ref({});
   let summaryGeneration = 0;
 
   async function loadIfNeeded() {
@@ -29,6 +33,7 @@ export const useAnalyticsStore = defineStore("analytics", () => {
       trends.value = data.trends;
       writeCache({ summary: summary.value, events: events.value, trends: trends.value });
       eventDetails.value = {};
+      trendDetails.value = {};
       summaryGeneration += 1;
       stampFresh(fetchToken);
       // A poisoned job is terminal, so it must not keep the cache dirty forever.
@@ -39,27 +44,42 @@ export const useAnalyticsStore = defineStore("analytics", () => {
     }
   }
 
-  // A detail fetched before a summary refetch landed may predate the change that made the
-  // summary stale, so it is fetched again rather than stored.
-  async function fetchCurrentDetail(eventId) {
-    for (;;) {
-      const generation = summaryGeneration;
-      const detail = await fetchEventDetail(eventId);
-      if (generation === summaryGeneration) {
-        eventDetails.value = { ...eventDetails.value, [eventId]: detail };
-        return detail;
+  function detailLoader(fetchDetail, target) {
+    const requests = new Map();
+
+    // A detail fetched before a summary refetch landed may predate the change that made
+    // the summary stale, so it is fetched again rather than stored.
+    async function fetchCurrent(key, args) {
+      for (;;) {
+        const generation = summaryGeneration;
+        const detail = await fetchDetail(...args);
+        if (generation === summaryGeneration) {
+          target.value = { ...target.value, [key]: detail };
+          return detail;
+        }
       }
     }
+
+    return (key, ...args) => {
+      const cachedDetail = target.value[key];
+      if (cachedDetail) return Promise.resolve(cachedDetail);
+      if (!requests.has(key)) {
+        const request = fetchCurrent(key, args).finally(() => requests.delete(key));
+        requests.set(key, request);
+      }
+      return requests.get(key);
+    };
   }
 
+  const loadEvent = detailLoader((eventId) => fetchEventDetail(eventId), eventDetails);
+  const loadTrend = detailLoader((kind, id) => fetchTrendDetail(kind, id), trendDetails);
+
   function loadEventDetail(eventId) {
-    const cachedDetail = eventDetails.value[eventId];
-    if (cachedDetail) return Promise.resolve(cachedDetail);
-    if (!detailRequests.has(eventId)) {
-      const request = fetchCurrentDetail(eventId).finally(() => detailRequests.delete(eventId));
-      detailRequests.set(eventId, request);
-    }
-    return detailRequests.get(eventId);
+    return loadEvent(eventId, eventId);
+  }
+
+  function loadTrendDetail(kind, id) {
+    return loadTrend(trendKey(kind, id), kind, id);
   }
 
   return {
@@ -68,11 +88,13 @@ export const useAnalyticsStore = defineStore("analytics", () => {
     trends,
     loading,
     eventDetails,
+    trendDetails,
     dirtyFlag,
     lastFetchedAt,
     isStale,
     markDirty,
     loadIfNeeded,
     loadEventDetail,
+    loadTrendDetail,
   };
 });

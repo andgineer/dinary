@@ -1,15 +1,19 @@
 <script setup>
 import { onMounted, ref, watch } from "vue";
 import { ArrowDown, ArrowUp, ChevronDown } from "lucide-vue-next";
-import { useAnalyticsStore } from "../stores/analytics.js";
+import BreakdownPanel from "../components/BreakdownPanel.vue";
+import BreakdownRow from "../components/BreakdownRow.vue";
+import { trendKey, useAnalyticsStore } from "../stores/analytics.js";
 import { useOnline } from "../composables/useOnline.js";
 import { useToastStore } from "../stores/toast.js";
+
+const BLOCK_HEADINGS = { category: "BY CATEGORY", event: "BY EVENT", chain: "BY SHOP", item: "BY ITEM" };
 
 const store = useAnalyticsStore();
 const { isOnline } = useOnline();
 const toast = useToastStore();
 const loadFailed = ref(false);
-const expandedEventId = ref(null);
+const expanded = ref(null);
 const detailErrors = ref({});
 const detailLoading = ref({});
 
@@ -27,40 +31,92 @@ onMounted(() => {
   if (isOnline.value) loadSummary();
 });
 
-function toggleEvent(id) {
-  expandedEventId.value = expandedEventId.value === id ? null : id;
+function eventTarget(ev) {
+  return { type: "event", key: ev.id, load: () => store.loadEventDetail(ev.id) };
 }
 
-async function ensureDetail(id) {
-  if (store.eventDetails[id] || detailLoading.value[id] || !isOnline.value) return;
-  detailLoading.value = { ...detailLoading.value, [id]: true };
-  detailErrors.value = { ...detailErrors.value, [id]: false };
+function trendTarget(t) {
+  return { type: "trend", key: trendKey(t.kind, t.id), load: () => store.loadTrendDetail(t.kind, t.id) };
+}
+
+function isExpanded(type, key) {
+  return expanded.value?.type === type && expanded.value.key === key;
+}
+
+function toggle(target) {
+  expanded.value = isExpanded(target.type, target.key) ? null : target;
+}
+
+function cachedDetail(type, key) {
+  return type === "event" ? store.eventDetails[key] : store.trendDetails[key];
+}
+
+async function ensureDetail(target) {
+  const slot = `${target.type}-${target.key}`;
+  if (cachedDetail(target.type, target.key) || detailLoading.value[slot] || !isOnline.value) return;
+  detailLoading.value = { ...detailLoading.value, [slot]: true };
+  detailErrors.value = { ...detailErrors.value, [slot]: false };
   try {
-    await store.loadEventDetail(id);
+    await target.load();
   } catch {
-    detailErrors.value = { ...detailErrors.value, [id]: true };
+    detailErrors.value = { ...detailErrors.value, [slot]: true };
   } finally {
-    detailLoading.value = { ...detailLoading.value, [id]: false };
+    detailLoading.value = { ...detailLoading.value, [slot]: false };
   }
 }
 
-watch([expandedEventId, () => store.eventDetails, isOnline], () => {
-  if (expandedEventId.value !== null) ensureDetail(expandedEventId.value);
+watch([expanded, () => store.eventDetails, () => store.trendDetails, isOnline], () => {
+  if (expanded.value !== null) ensureDetail(expanded.value);
 });
 
-function detailState(id) {
-  const detail = store.eventDetails[id];
-  if (detail) return detail.categories.length ? "ready" : "empty";
-  if (detailLoading.value[id]) return "loading";
-  if (detailErrors.value[id]) return "error";
+function trendDetail(t) {
+  return store.trendDetails[trendKey(t.kind, t.id)];
+}
+
+function isEmpty(type, detail) {
+  if (type === "event") return !detail.categories.length;
+  return detail.blocks.every((b) => !b.rows.length);
+}
+
+function detailState(type, key) {
+  const slot = `${type}-${key}`;
+  const detail = cachedDetail(type, key);
+  if (detail) return isEmpty(type, detail) ? "empty" : "ready";
+  if (detailLoading.value[slot]) return "loading";
+  if (detailErrors.value[slot]) return "error";
   if (!isOnline.value) return "offline";
   return "loading";
 }
 
-function barWidth(categories, share) {
+function eventBarWidth(categories, share) {
   const top = categories[0]?.share ?? 0;
-  if (top <= 0) return "0%";
-  return `${Math.max(0, Math.min(1, share / top)) * 100}%`;
+  return top > 0 ? share / top : 0;
+}
+
+function directionColor(direction) {
+  return direction === "up" ? "var(--up)" : "var(--down)";
+}
+
+function reasonLine(reason) {
+  return `mostly ${reason.names.join(", ")}`;
+}
+
+function rowLabel(row) {
+  if (row.label !== null) return row.label;
+  return row.count !== null ? `other (${row.count})` : "no event";
+}
+
+function rowSublabel(t, block, row) {
+  if (t.kind !== "tag" || block.dimension !== "category" || row.label === null) return null;
+  return row.sublabel ?? "No group";
+}
+
+function headerDirection(detail) {
+  return detail.delta === "0" ? null : detail.direction;
+}
+
+function rowDirection(row) {
+  return row.share > 0 ? row.direction : null;
 }
 </script>
 
@@ -123,39 +179,98 @@ function barWidth(categories, share) {
       </div>
 
       <!-- TRENDS (only when data present) -->
-      <div v-if="store.trends?.length" class="trends-wrap">
-        <div
-          v-for="t in store.trends"
-          :key="t.basket_name"
-          class="trend-chip"
-        >
-          <span class="trend-name">{{ t.basket_name }}</span>
-          <span
-            class="trend-pct"
-            :style="{ color: t.direction === 'up' ? 'var(--up)' : 'var(--down)' }"
-          >
-            <ArrowUp v-if="t.direction === 'up'" :size="11" stroke-width="3" aria-hidden="true" />
-            <ArrowDown v-else :size="11" stroke-width="3" aria-hidden="true" />
-            {{ t.pct }}
-          </span>
+      <template v-if="store.trends?.length">
+        <div class="eyebrow">
+          <span class="eyebrow-label" style="color: var(--stat)">TRENDS</span>
+          <span class="eyebrow-hint">last 3 months vs the 3 before</span>
         </div>
-      </div>
+        <div class="trends-list">
+          <div
+            v-for="t in store.trends"
+            :key="trendKey(t.kind, t.id)"
+            class="list-row trend-row"
+            :class="{ 'row-expanded': isExpanded('trend', trendKey(t.kind, t.id)) }"
+          >
+            <button
+              type="button"
+              class="row-toggle trend-toggle"
+              :aria-expanded="isExpanded('trend', trendKey(t.kind, t.id)) ? 'true' : 'false'"
+              :aria-controls="`trend-detail-${trendKey(t.kind, t.id)}`"
+              @click="toggle(trendTarget(t))"
+            >
+              <div class="row-left">
+                <span class="trend-name">{{ t.basket_name }}</span>
+                <span v-if="t.reason" class="trend-reason">{{ reasonLine(t.reason) }}</span>
+              </div>
+              <span class="trend-pct" :style="{ color: directionColor(t.direction) }">
+                <ArrowUp v-if="t.direction === 'up'" :size="11" stroke-width="3" aria-hidden="true" />
+                <ArrowDown v-else :size="11" stroke-width="3" aria-hidden="true" />
+                {{ t.pct }}
+              </span>
+              <ChevronDown class="row-chevron" :size="16" aria-hidden="true" />
+            </button>
+
+            <BreakdownPanel
+              v-if="isExpanded('trend', trendKey(t.kind, t.id))"
+              :id="`trend-detail-${trendKey(t.kind, t.id)}`"
+              class="trend-detail"
+              :state="detailState('trend', trendKey(t.kind, t.id))"
+              empty-text="No spend in either period"
+            >
+              <template v-if="trendDetail(t)">
+                <div class="detail-block trend-summary">
+                  <span class="detail-heading">3 MONTHS BEFORE → LAST 3 MONTHS</span>
+                  <BreakdownRow
+                    :label="`${trendDetail(t).prior} → ${trendDetail(t).recent}`"
+                    :amount="trendDetail(t).delta"
+                    :currency="trendDetail(t).currency"
+                    :direction="headerDirection(trendDetail(t))"
+                  />
+                </div>
+                <div
+                  v-for="block in trendDetail(t).blocks"
+                  :key="block.dimension"
+                  class="detail-block"
+                  :data-dimension="block.dimension"
+                >
+                  <div class="detail-heading-row">
+                    <span class="detail-heading">{{ BLOCK_HEADINGS[block.dimension] }}</span>
+                    <span v-if="block.receipt_backed_only" class="detail-caption">
+                      receipts only · {{ block.prior }} → {{ block.recent }} · {{ block.delta }}
+                    </span>
+                  </div>
+                  <BreakdownRow
+                    v-for="(row, i) in block.rows"
+                    :key="row.key ?? `${row.count === null ? 'none' : 'other'}-${i}`"
+                    :label="rowLabel(row)"
+                    :sublabel="rowSublabel(t, block, row)"
+                    :amount="row.delta"
+                    :detail="`${row.prior} → ${row.recent}`"
+                    :width="row.share"
+                    :direction="rowDirection(row)"
+                  />
+                </div>
+              </template>
+            </BreakdownPanel>
+          </div>
+        </div>
+      </template>
 
       <div v-if="store.events.length" class="events-list">
         <div
           v-for="ev in store.events"
           :key="ev.id"
-          class="event-row"
-          :class="{ 'event-open': ev.open, 'event-expanded': expandedEventId === ev.id }"
+          class="list-row event-row"
+          :class="{ 'event-open': ev.open, 'row-expanded': isExpanded('event', ev.id) }"
         >
           <button
             type="button"
-            class="event-toggle"
-            :aria-expanded="expandedEventId === ev.id ? 'true' : 'false'"
+            class="row-toggle event-toggle"
+            :aria-expanded="isExpanded('event', ev.id) ? 'true' : 'false'"
             :aria-controls="`event-detail-${ev.id}`"
-            @click="toggleEvent(ev.id)"
+            @click="toggle(eventTarget(ev))"
           >
-            <div class="event-left">
+            <div class="row-left">
               <div class="event-title-row">
                 <span v-if="ev.open" class="event-dot" aria-hidden="true" />
                 <span class="event-name">{{ ev.name }}</span>
@@ -167,71 +282,39 @@ function barWidth(categories, share) {
               {{ ev.total }}
               <span class="event-currency">{{ ev.currency }}</span>
             </span>
-            <ChevronDown class="event-chevron" :size="16" aria-hidden="true" />
+            <ChevronDown class="row-chevron" :size="16" aria-hidden="true" />
           </button>
 
-          <div
-            v-if="expandedEventId === ev.id"
+          <BreakdownPanel
+            v-if="isExpanded('event', ev.id)"
             :id="`event-detail-${ev.id}`"
             class="event-detail"
-            :data-state="detailState(ev.id)"
+            :state="detailState('event', ev.id)"
           >
-            <div v-if="detailState(ev.id) === 'loading'" class="detail-skeleton">
-              <div class="skeleton skeleton-line" />
-              <div class="skeleton skeleton-line" />
-              <div class="skeleton skeleton-line" />
+            <div class="detail-block">
+              <span class="detail-heading">BY CATEGORY</span>
+              <BreakdownRow
+                v-for="c in store.eventDetails[ev.id].categories"
+                :key="c.category_id"
+                :label="c.category_name"
+                :sublabel="c.group_name ?? 'No group'"
+                :amount="c.total"
+                :currency="c.currency"
+                :width="eventBarWidth(store.eventDetails[ev.id].categories, c.share)"
+              />
             </div>
-            <p v-else-if="detailState(ev.id) === 'offline'" class="detail-note">
-              Offline — details unavailable
-            </p>
-            <p v-else-if="detailState(ev.id) === 'error'" class="detail-note">
-              Failed to load details
-            </p>
-            <p v-else-if="detailState(ev.id) === 'empty'" class="detail-note">
-              No expenses yet
-            </p>
-            <template v-else>
-              <div class="detail-block">
-                <span class="detail-heading">BY CATEGORY</span>
-                <div
-                  v-for="c in store.eventDetails[ev.id].categories"
-                  :key="c.category_id"
-                  class="detail-row"
-                >
-                  <div class="detail-row-main">
-                    <span class="detail-name">
-                      {{ c.category_name }}
-                      <span class="detail-group">{{ c.group_name ?? "No group" }}</span>
-                    </span>
-                    <span class="detail-amount">
-                      {{ c.total }}
-                      <span class="event-currency">{{ c.currency }}</span>
-                    </span>
-                  </div>
-                  <div class="detail-bar-track" aria-hidden="true">
-                    <div
-                      class="detail-bar"
-                      :style="{ width: barWidth(store.eventDetails[ev.id].categories, c.share) }"
-                    />
-                  </div>
-                </div>
-              </div>
-              <div class="detail-block">
-                <span class="detail-heading">LAST 7 DAYS WITH SPEND</span>
-                <div
-                  v-for="d in store.eventDetails[ev.id].days"
-                  :key="d.date"
-                  class="detail-row-main detail-day"
-                >
-                  <span class="detail-name">{{ d.date_label }}</span>
-                  <span class="detail-amount">
-                    {{ d.total }}
-                    <span class="event-currency">{{ d.currency }}</span>
-                  </span>
-                </div>
-              </div>
-            </template>
-          </div>
+            <div class="detail-block">
+              <span class="detail-heading">LAST 7 DAYS WITH SPEND</span>
+              <BreakdownRow
+                v-for="d in store.eventDetails[ev.id].days"
+                :key="d.date"
+                class="detail-day"
+                :label="d.date_label"
+                :amount="d.total"
+                :currency="d.currency"
+              />
+            </div>
+          </BreakdownPanel>
         </div>
       </div>
 
@@ -357,50 +440,20 @@ function barWidth(categories, share) {
   color: var(--muted);
 }
 
-/* ── Trends ── */
-.trends-wrap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 1.375rem;
-}
-
-.trend-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0.35rem 0.6rem;
-  background: var(--field);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 0.78rem;
-  color: var(--text);
-}
-
-.trend-name { color: var(--text); }
-
-.trend-pct {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-family: var(--font-num);
-  font-weight: 600;
-  font-size: 0.74rem;
-}
-
-/* ── Events ── */
-.events-list,
-.events-empty {
-  margin-top: 1.375rem;
-}
-
+/* ── Trends and events ── */
+.trends-list,
 .events-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.event-row {
+.events-list,
+.events-empty {
+  margin-top: 1.375rem;
+}
+
+.list-row {
   background: var(--field);
   border-radius: 10px;
   border: 1px solid var(--border);
@@ -408,7 +461,7 @@ function barWidth(categories, share) {
   border-left-color: transparent;
 }
 
-.event-toggle {
+.row-toggle {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -422,25 +475,60 @@ function barWidth(categories, share) {
   cursor: pointer;
 }
 
-.event-chevron {
+.row-chevron {
   flex-shrink: 0;
   color: var(--muted-2);
   transition: transform 0.15s ease;
 }
 
-.event-expanded .event-chevron { transform: rotate(180deg); }
+.row-expanded .row-chevron { transform: rotate(180deg); }
 
-.event-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 0.9rem;
-  padding: 0 0.85rem 0.8rem;
+.trend-name {
+  display: block;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+.trend-reason {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trend-pct {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  font-family: var(--font-num);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+/* ── Breakdown content ── */
 .detail-block {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.trend-summary :deep(.detail-name) {
+  font-family: var(--font-num);
+}
+
+.detail-heading-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .detail-heading {
@@ -451,74 +539,20 @@ function barWidth(categories, share) {
   color: var(--muted);
 }
 
-.detail-row {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.detail-row-main {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.detail-name {
-  min-width: 0;
-  font-size: 0.85rem;
-  color: var(--text);
+.detail-caption {
+  font-family: var(--font-num);
+  font-size: 0.68rem;
+  color: var(--muted-2);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
-
-.detail-group {
-  margin-left: 4px;
-  font-size: 0.7rem;
-  color: var(--muted-2);
-}
-
-.detail-amount {
-  flex-shrink: 0;
-  font-family: var(--font-num);
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.detail-bar-track {
-  height: 4px;
-  border-radius: 999px;
-  background: var(--border);
-  overflow: hidden;
-}
-
-.detail-bar {
-  height: 100%;
-  border-radius: 999px;
-  background: var(--stat);
-}
-
-.detail-note {
-  margin: 0;
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
-.detail-skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.skeleton-line { height: 14px; border-radius: 6px; }
 
 .event-open {
   border-left-color: var(--stat);
 }
 
-.event-left {
+.row-left {
   min-width: 0;
   flex: 1;
 }

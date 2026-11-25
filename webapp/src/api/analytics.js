@@ -9,3 +9,11 @@ export async function fetchEventDetail(eventId) {
   if (!res.ok) throw new Error(`analytics event ${res.status}`);
   return res.json();
 }
+
+export async function fetchTrendDetail(kind, id) {
+  const res = await fetch(
+    `/api/analytics/trends/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`,
+  );
+  if (!res.ok) throw new Error(`analytics trend ${res.status}`);
+  return res.json();
+}

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import allure
 
+from dinary.api import analytics as analytics_api
 from dinary.config import settings
 from dinary.db import storage
 
@@ -559,3 +560,401 @@ class TestDbSnapshot:
             snap_con.close()
 
         assert snap_count in (before_count, before_count + 1)
+
+
+_RECENT = 30
+_PRIOR = 120
+_CHAIN_ID = 1
+_STORE_ID = 1
+
+
+def _seed_trend_expense(
+    days_ago: int,
+    amount: float,
+    category_id: int = 1,
+    *,
+    event_id: int | None = None,
+    tag_ids: tuple[int, ...] = (),
+    item: str | None = None,
+) -> None:
+    """Seed one expense; with ``item`` it is receipt-backed, bought in the one seeded store."""
+    con = storage.get_connection()
+    try:
+        receipt_id = store_id = None
+        if item is not None:
+            con.execute(
+                "INSERT OR IGNORE INTO shop_chains (id, name) VALUES (?, 'Lidl')",
+                (_CHAIN_ID,),
+            )
+            con.execute(
+                "INSERT OR IGNORE INTO stores (id, name, chain_id) VALUES (?, 'Lidl 1', ?)",
+                (_STORE_ID, _CHAIN_ID),
+            )
+            receipt_id = con.execute(
+                "INSERT INTO receipts (client_receipt_id, url, store_id) VALUES (?, 'https://x', ?)",
+                (f"r-{days_ago}-{amount}-{item}", _STORE_ID),
+            ).lastrowid
+            store_id = _STORE_ID
+        expense_id = con.execute(
+            "INSERT INTO expenses (datetime, amount, amount_original, currency_original,"
+            " category_id, event_id, receipt_id, store_id)"
+            " VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?)",
+            (
+                f"{_day(days_ago)} 12:00:00",
+                amount,
+                amount,
+                category_id,
+                event_id,
+                receipt_id,
+                store_id,
+            ),
+        ).lastrowid
+        for tag_id in tag_ids:
+            con.execute(
+                "INSERT INTO expense_tags (expense_id, tag_id) VALUES (?, ?)",
+                (expense_id, tag_id),
+            )
+        if item is not None:
+            con.execute(
+                "INSERT INTO receipt_items (receipt_id, name_raw, name_normalized, expense_id)"
+                " VALUES (?, ?, ?, ?)",
+                (receipt_id, item, item, expense_id),
+            )
+    finally:
+        con.close()
+
+
+def _seed_trend_event(event_id: int, name: str) -> None:
+    con = storage.get_connection()
+    try:
+        con.execute(
+            "INSERT INTO events (id, name, date_from, date_to, auto_attach_enabled, is_active)"
+            " VALUES (?, ?, ?, ?, 0, 1)",
+            (event_id, name, _day(_PRIOR + 10), _day(_RECENT - 10)),
+        )
+    finally:
+        con.close()
+
+
+def _seed_food_categories(count: int) -> list[int]:
+    """Add ``count`` categories to the Food group; returns their ids, named ``cat-<id>``."""
+    ids = list(range(10, 10 + count))
+    con = storage.get_connection()
+    try:
+        for category_id in ids:
+            con.execute(
+                "INSERT INTO categories (id, name, group_id, is_active) VALUES (?, ?, 1, TRUE)",
+                (category_id, f"cat-{category_id}"),
+            )
+    finally:
+        con.close()
+    return ids
+
+
+def _trend(client, kind: str, basket_id: int) -> dict:
+    trends = client.get("/api/analytics/summary").json()["trends"] or []
+    return next(t for t in trends if t["kind"] == kind and t["id"] == basket_id)
+
+
+def _trend_detail(client, kind: str, basket_id: int) -> dict:
+    resp = client.get(f"/api/analytics/trends/{kind}/{basket_id}")
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def _block(detail: dict, dimension: str) -> dict:
+    return next(b for b in detail["blocks"] if b["dimension"] == dimension)
+
+
+def _signed(value: str) -> int:
+    return int(value.replace(" ", "").replace("−", "-"))
+
+
+def _rows_delta(block: dict) -> int:
+    return sum(_signed(r["delta"]) for r in block["rows"])
+
+
+@allure.epic("Analytics")
+@allure.feature("API")
+class TestAnalyticsTrendIdentity:
+    def test_trends_carry_kind_and_id(self, client):
+        _seed_trend_expense(_PRIOR, 100)
+        _seed_trend_expense(_RECENT, 300)
+        trend = _trend(client, "group", 1)
+        assert trend["basket_name"] == "Food"
+        assert trend["direction"] == "up"
+        assert trend["pct"] == "200%"
+
+    def test_tag_and_group_with_same_name_stay_distinct(self, client):
+        con = storage.get_connection()
+        try:
+            con.execute("INSERT INTO tags (id, name, is_active) VALUES (10, 'Food', TRUE)")
+        finally:
+            con.close()
+        _seed_trend_expense(_PRIOR, 100, tag_ids=(10,))
+        _seed_trend_expense(_RECENT, 300, tag_ids=(10,))
+        trends = client.get("/api/analytics/summary").json()["trends"]
+        food = {(t["kind"], t["id"]) for t in trends if t["basket_name"] == "Food"}
+        assert food == {("group", 1), ("tag", 10)}
+
+
+@allure.epic("Analytics")
+@allure.feature("API")
+class TestAnalyticsTrendReason:
+    def test_event_explaining_half_is_named(self, client):
+        _seed_food_categories(1)
+        _seed_trend_event(100, "Trip")
+        _seed_trend_expense(_PRIOR, 100)
+        _seed_trend_expense(_RECENT, 100)
+        _seed_trend_expense(_RECENT, 300, 10, event_id=100)
+        assert _trend(client, "group", 1)["reason"] == {"kind": "event", "names": ["Trip"]}
+
+    def test_no_event_is_never_named(self, client):
+        _seed_food_categories(1)
+        _seed_trend_event(100, "Trip")
+        _seed_trend_expense(_PRIOR, 100)
+        _seed_trend_expense(_RECENT, 400)
+        _seed_trend_expense(_RECENT, 50, 10, event_id=100)
+        assert _trend(client, "group", 1)["reason"] == {"kind": "category", "names": ["food"]}
+
+    def test_top_two_categories_when_none_explains_half(self, client):
+        _seed_food_categories(3)
+        _seed_trend_expense(_PRIOR, 100)
+        _seed_trend_expense(_RECENT, 200)
+        _seed_trend_expense(_RECENT, 200, 10)
+        _seed_trend_expense(_RECENT, 150, 11)
+        _seed_trend_expense(_RECENT, 120, 12)
+        assert _trend(client, "group", 1)["reason"] == {
+            "kind": "category",
+            "names": ["cat-10", "cat-11"],
+        }
+
+    def test_flat_basket_has_no_reason(self, client):
+        _seed_food_categories(1)
+        _seed_trend_expense(_PRIOR, 100)
+        _seed_trend_expense(_RECENT, 100, 10)
+        assert _trend(client, "group", 1)["reason"] is None
+
+    def test_only_same_sign_contributors_are_candidates(self):
+        fell = analytics_api._Driver(1, "fell", "Food", 0, 300)
+        rose = analytics_api._Driver(2, "rose", "Food", 10, 0)
+        assert analytics_api._trend_reason(False, 100, [fell, rose], []) == {
+            "kind": "category",
+            "names": ["rose"],
+        }
+        assert analytics_api._trend_reason(False, 100, [fell], [fell]) is None
+
+    def test_single_category_group_never_names_its_category(self, client):
+        _seed_trend_expense(_PRIOR, 100, 2)
+        _seed_trend_expense(_RECENT, 300, 2)
+        assert _trend(client, "group", 2)["reason"] is None
+
+    def test_group_with_one_spending_category_names_it(self, client):
+        _seed_food_categories(1)
+        _seed_trend_expense(_PRIOR, 100)
+        _seed_trend_expense(_RECENT, 300)
+        assert _trend(client, "group", 1)["reason"] == {"kind": "category", "names": ["food"]}
+
+    def test_single_category_group_still_names_an_event(self, client):
+        _seed_trend_event(100, "Trip")
+        _seed_trend_expense(_PRIOR, 100, 2)
+        _seed_trend_expense(_RECENT, 300, 2, event_id=100)
+        assert _trend(client, "group", 2)["reason"] == {"kind": "event", "names": ["Trip"]}
+
+
+@allure.epic("Analytics")
+@allure.feature("API")
+class TestAnalyticsTrendDetail:
+    def test_header_matches_summary(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "accounting_currency", "EUR")
+        _seed_trend_expense(_PRIOR, 300)
+        _seed_trend_expense(_RECENT, 410)
+        trend = _trend(client, "group", 1)
+        detail = _trend_detail(client, "group", 1)
+        assert (detail["pct"], detail["direction"]) == (trend["pct"], trend["direction"])
+        assert detail["name"] == "Food"
+        assert detail["currency"] == "EUR"
+        assert (detail["recent"], detail["prior"], detail["delta"]) == ("410", "300", "+110")
+
+    def test_six_categories_fold_into_other(self, client):
+        ids = [1, *_seed_food_categories(5)]
+        for n, category_id in enumerate(ids):
+            _seed_trend_expense(_PRIOR, 10, category_id)
+            _seed_trend_expense(_RECENT, 10 + 100 * (n + 1), category_id)
+        detail = _trend_detail(client, "group", 1)
+        block = _block(detail, "category")
+        assert len(block["rows"]) == 5
+        other = block["rows"][-1]
+        assert (other["key"], other["label"], other["count"]) == (None, None, 2)
+        assert _rows_delta(block) == _signed(detail["delta"])
+        assert block["delta"] == detail["delta"]
+
+    def test_five_categories_are_all_shown(self, client):
+        ids = [1, *_seed_food_categories(4)]
+        for n, category_id in enumerate(ids):
+            _seed_trend_expense(_RECENT, 10 * (n + 1), category_id)
+        block = _block(_trend_detail(client, "group", 1), "category")
+        assert [r["label"] for r in block["rows"]] == [
+            "cat-13",
+            "cat-12",
+            "cat-11",
+            "cat-10",
+            "food",
+        ]
+        assert all(r["count"] is None for r in block["rows"])
+        assert block["rows"][0]["share"] == 1.0
+        assert block["rows"][-1]["share"] == 0.2
+
+    def test_event_block_adds_up_with_no_event_row(self, client):
+        _seed_trend_event(100, "Trip")
+        _seed_trend_event(101, "Party")
+        _seed_trend_expense(_PRIOR, 100)
+        _seed_trend_expense(_PRIOR, 50, event_id=101)
+        _seed_trend_expense(_RECENT, 300, event_id=100)
+        _seed_trend_expense(_RECENT, 70)
+        detail = _trend_detail(client, "group", 1)
+        block = _block(detail, "event")
+        assert [(r["label"], r["delta"]) for r in block["rows"]] == [
+            ("Trip", "+300"),
+            ("Party", "−50"),
+            (None, "−30"),
+        ]
+        no_event = block["rows"][-1]
+        assert (no_event["key"], no_event["count"]) == (None, None)
+        assert _rows_delta(block) == _signed(detail["delta"]) == 220
+
+    def test_no_event_row_is_never_folded(self, client):
+        for n in range(6):
+            _seed_trend_event(100 + n, f"Trip-{n}")
+            _seed_trend_expense(_RECENT, 100 * (n + 1), event_id=100 + n)
+        _seed_trend_expense(_PRIOR, 20)
+        _seed_trend_expense(_RECENT, 25)
+        detail = _trend_detail(client, "group", 1)
+        rows = _block(detail, "event")["rows"]
+        assert [r["label"] for r in rows] == ["Trip-5", "Trip-4", "Trip-3", "Trip-2", None, None]
+        no_event, other = rows[-2], rows[-1]
+        assert (no_event["key"], no_event["count"], no_event["delta"]) == (None, None, "+5")
+        assert (other["key"], other["count"], other["delta"]) == (None, 2, "+300")
+        assert _rows_delta(_block(detail, "event")) == _signed(detail["delta"]) == 2105
+
+    def test_event_block_omitted_without_events(self, client):
+        _seed_trend_expense(_PRIOR, 100)
+        _seed_trend_expense(_RECENT, 300)
+        dims = [b["dimension"] for b in _trend_detail(client, "group", 1)["blocks"]]
+        assert dims == ["category"]
+
+    def test_receipt_blocks_omitted_with_receipts_in_one_window(self, client):
+        _seed_trend_expense(_PRIOR, 100)
+        _seed_trend_expense(_RECENT, 300, item="milk")
+        dims = [b["dimension"] for b in _trend_detail(client, "group", 1)["blocks"]]
+        assert dims == ["category"]
+
+    def test_receipt_blocks_present_with_receipts_in_both_windows(self, client):
+        _seed_trend_expense(_PRIOR, 100)
+        _seed_trend_expense(_PRIOR, 40, item="milk")
+        _seed_trend_expense(_RECENT, 300)
+        _seed_trend_expense(_RECENT, 60, item="milk")
+        _seed_trend_expense(_RECENT, 25, item="bread")
+        detail = _trend_detail(client, "group", 1)
+        assert [b["dimension"] for b in detail["blocks"]] == ["category", "chain", "item"]
+        assert _block(detail, "category")["receipt_backed_only"] is False
+        for dimension in ("chain", "item"):
+            block = _block(detail, dimension)
+            assert block["receipt_backed_only"] is True
+            assert (block["recent"], block["prior"], block["delta"]) == ("85", "40", "+45")
+        assert [r["label"] for r in _block(detail, "chain")["rows"]] == ["Lidl"]
+        items = _block(detail, "item")["rows"]
+        assert [(r["label"], r["delta"]) for r in items] == [("bread", "+25"), ("milk", "+20")]
+
+    def test_item_without_normalised_name_uses_raw_name(self, client):
+        _seed_trend_expense(_PRIOR, 40, item="milk")
+        _seed_trend_expense(_RECENT, 60, item="milk")
+        _seed_trend_expense(_RECENT, 25, item="Hleb 500g")
+        con = storage.get_connection()
+        try:
+            con.execute(
+                "UPDATE receipt_items SET name_normalized = NULL WHERE name_raw = 'Hleb 500g'",
+            )
+            con.execute("UPDATE receipt_items SET name_normalized = '' WHERE name_raw = 'milk'")
+        finally:
+            con.close()
+        block = _block(_trend_detail(client, "group", 1), "item")
+        assert [(r["key"], r["label"], r["delta"]) for r in block["rows"]] == [
+            ("Hleb 500g", "Hleb 500g", "+25"),
+            ("milk", "milk", "+20"),
+        ]
+        assert block["delta"] == "+45"
+
+    def test_expense_with_two_tags_counts_once(self, client):
+        _seed_trend_expense(_PRIOR, 100, tag_ids=(1, 2))
+        _seed_trend_expense(_RECENT, 250, tag_ids=(1, 2))
+        detail = _trend_detail(client, "tag", 1)
+        assert (detail["recent"], detail["prior"], detail["delta"]) == ("250", "100", "+150")
+        block = _block(detail, "category")
+        assert [(r["label"], r["recent"], r["prior"]) for r in block["rows"]] == [
+            ("food", "250", "100"),
+        ]
+
+    def test_tag_basket_lists_categories_with_their_group(self, client):
+        con = storage.get_connection()
+        try:
+            con.execute(
+                "INSERT INTO categories (id, name, group_id, is_active, is_retired)"
+                " VALUES (9, 'retired-orphan', NULL, FALSE, TRUE)",
+            )
+        finally:
+            con.close()
+        _seed_trend_expense(_PRIOR, 100, 1, tag_ids=(1,))
+        _seed_trend_expense(_RECENT, 200, 1, tag_ids=(1,))
+        _seed_trend_expense(_RECENT, 50, 2, tag_ids=(1,))
+        _seed_trend_expense(_RECENT, 30, 9, tag_ids=(1,))
+        _seed_trend_expense(_RECENT, 999, 1)
+        detail = _trend_detail(client, "tag", 1)
+        assert detail["name"] == "dog"
+        block = _block(detail, "category")
+        assert [(r["label"], r["sublabel"]) for r in block["rows"]] == [
+            ("food", "Food"),
+            ("transit", "Transport"),
+            ("retired-orphan", None),
+        ]
+        assert _rows_delta(block) == _signed(detail["delta"]) == 180
+
+    def test_falling_basket(self, client):
+        _seed_trend_expense(_PRIOR, 500)
+        _seed_trend_expense(_RECENT, 200)
+        detail = _trend_detail(client, "group", 1)
+        assert detail["direction"] == "down"
+        assert detail["pct"] == "60%"
+        assert detail["delta"] == "−300"
+        row = _block(detail, "category")["rows"][0]
+        assert (row["delta"], row["direction"]) == ("−300", "down")
+
+    def test_zero_prior_has_no_pct(self, client):
+        _seed_trend_expense(_RECENT, 100)
+        detail = _trend_detail(client, "group", 1)
+        assert detail["pct"] is None
+        assert detail["direction"] == "up"
+
+    def test_unknown_basket_is_404(self, client):
+        assert client.get("/api/analytics/trends/group/999").status_code == 404
+        assert client.get("/api/analytics/trends/tag/999").status_code == 404
+
+    def test_inactive_tag_is_404(self, client):
+        con = storage.get_connection()
+        try:
+            con.execute("UPDATE tags SET is_active = 0 WHERE id = 1")
+        finally:
+            con.close()
+        assert client.get("/api/analytics/trends/tag/1").status_code == 404
+
+    def test_bad_kind_is_422(self, client):
+        assert client.get("/api/analytics/trends/event/1").status_code == 422
+
+
+@allure.epic("Analytics")
+@allure.feature("API")
+class TestAnalyticsTrendFormatting:
+    def test_signed_amounts(self):
+        assert analytics_api._fmt_signed(1533.4) == "+1 533"
+        assert analytics_api._fmt_signed(-260) == "−260"
+        assert analytics_api._fmt_signed(0.2) == "0"
