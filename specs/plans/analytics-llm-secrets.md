@@ -20,7 +20,7 @@ reproduce a file carrying a secret on every such machine.
   ledger snapshot.
 - **The server's keys are not a source for the chat.** They are physically present in the
   replica file, because the snapshot is a full copy of the server database
-  (`analytics-ledger-visibility.md`), but analytics must not read them: the broker owns that
+  (`specs/reference/analytics-ai.md`), but analytics must not read them: the broker owns that
   storage and its format, and the chat's model is paid while the pipeline's are free-tier, so
   the two do not share a key.
 - **llmbroker changes go into llmbroker.** If the direction below needs anything llmbroker does

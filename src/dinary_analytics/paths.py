@@ -18,6 +18,7 @@ def _app_data_dir() -> Path:
 
 
 QUERIES_DIR = Path(__file__).parent / "queries"
+LEDGER_CACHE_FILENAME = "ledger-cache.duckdb"
 REPLICA_PATH = _app_data_dir() / "dinary-ai.db"
 ANALYTICS_DB_PATH = _app_data_dir() / "analytics.db"
 LOCAL_CONFIG_PATH = _app_data_dir() / "dinary-ai-config.json"

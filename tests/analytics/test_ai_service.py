@@ -20,6 +20,7 @@ from dinary_analytics.ai_service import (
     get_view_tool,
     health,
     list_views,
+    query,
     refresh_now,
     save_view_tool,
     schema,
@@ -90,6 +91,26 @@ def test_run_query_wraps_duckdb_error(patched_replica):
     """A query DuckDB rejects (e.g. unknown table) must surface as ToolError, not leak raw."""
     with pytest.raises(ToolError, match="query failed"):
         _run_query("SELECT * FROM ledger.no_such_table")
+
+
+@allure.epic("Analytics")
+@allure.feature("AI Service")
+def test_query_tool_refuses_tables_outside_the_ledger(patched_replica):
+    con = sqlite3.connect(str(patched_replica))
+    con.executescript("""
+        CREATE TABLE llmbroker_secrets (ref TEXT, value TEXT);
+        INSERT INTO llmbroker_secrets VALUES ('openai', 'sk-secret-marker-7f3a');
+    """)
+    con.commit()
+    con.close()
+
+    for sql in (
+        "SELECT * FROM ledger.llmbroker_secrets",
+        f"SELECT * FROM sqlite_scan('{patched_replica}', 'llmbroker_secrets')",
+    ):
+        with pytest.raises(ToolError) as exc_info:
+            query(sql)
+        assert "sk-secret-marker-7f3a" not in str(exc_info.value)
 
 
 @allure.epic("Analytics")

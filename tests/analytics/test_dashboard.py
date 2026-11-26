@@ -8,6 +8,7 @@ import sqlite3
 from functools import partial
 
 import allure
+import duckdb
 import polars as pl
 import pytest
 
@@ -1201,3 +1202,32 @@ def test_gallery_cell_with_saved_view(basket_df):
 
     assert defs["saved_gallery"] is not None
     assert output is not None
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_query_ledger_tool_reads_only_the_ledger(ledger_db, monkeypatch):
+    con = sqlite3.connect(str(ledger_db))
+    con.executescript("""
+        CREATE TABLE llmbroker_secrets (ref TEXT, value TEXT);
+        INSERT INTO llmbroker_secrets VALUES ('openai', 'sk-secret-marker-7f3a');
+    """)
+    con.commit()
+    con.close()
+    monkeypatch.setattr(connection_module, "REPLICA_PATH", ledger_db)
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    tools_cell = next(c for c in cells if "ai_ledger_tools_pair" in c.defs)
+    _, defs = tools_cell.run(
+        json=json,
+        load_query=connection_module.load_query,
+        open_ledger=connection_module.open_ledger,
+        open_ledger_restricted=connection_module.open_ledger_restricted,
+    )
+    query_ledger, query_summary = defs["ai_ledger_tools_pair"]
+
+    assert len(json.loads(query_ledger("SELECT id FROM ledger.expenses"))) == 3
+    with pytest.raises(duckdb.Error) as exc_info:
+        query_ledger("SELECT * FROM ledger.llmbroker_secrets")
+    assert "sk-secret-marker-7f3a" not in str(exc_info.value)
+    assert json.loads(query_summary()) is not None

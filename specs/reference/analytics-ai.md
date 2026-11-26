@@ -39,12 +39,13 @@ src/dinary_analytics/
 
 ## Runtime directory
 
-Both files live side by side in the platform-specific local app-data directory
+These files live side by side in the platform-specific local app-data directory
 (e.g. `~/Library/Application Support/dinary/` on macOS):
 
 ```
   dinary-ai.db          # read-only SQLite replica of the dinary ledger, refreshed by the daemon
   analytics.db          # app database: pinned views, dashboard selections (LMDB)
+  ledger-cache.duckdb   # bookkeeping tables only, rebuilt from the replica; what model-written SQL reads
 ```
 
 ## Storage
@@ -66,7 +67,7 @@ to keep from a conversation is a pinned view.
 DuckDB never stores application state; any materialized caches there are disposable
 and regenerated from the replica.
 
-`analytics.db` must be backed up. The ledger replica is reproducible and excluded
+`analytics.db` must be backed up. The ledger replica and its cache are reproducible and excluded
 from backup.
 
 ## SQL-first design
@@ -139,6 +140,10 @@ achievable without rewrite.
 - `dinary` server package never depends on `dinary_analytics`.
 - DuckDB is a query engine only — no application state stored there.
 - `analytics.db` is the sole write target for pinned views and dashboard selections.
+- SQL written by a model, in the dashboard chat or through an MCP client, runs against the
+  bookkeeping tables only: it cannot see any other table, read or write any file, or load
+  an extension. The snapshot itself is a full copy of the server database, so the replica
+  file is to be treated as holding the server's secrets.
 
 ---
 

@@ -9,7 +9,11 @@ from mcp.server.fastmcp.exceptions import ToolError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from dinary_analytics.connection import accounting_currency, ledger_schema, open_ledger
+from dinary_analytics.connection import (
+    accounting_currency,
+    ledger_schema,
+    open_ledger_restricted,
+)
 from dinary_analytics.paths import MCP_PORT
 from dinary_analytics.refresh import (
     get_db_path,
@@ -40,7 +44,7 @@ def _replica_path() -> Path:
 
 
 def _run_query(sql: str) -> str:
-    con = open_ledger(_replica_path())
+    con = open_ledger_restricted(_replica_path())
     try:
         result = con.execute(sql)
         columns = [desc[0] for desc in result.description]

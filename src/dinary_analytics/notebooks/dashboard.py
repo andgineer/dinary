@@ -22,6 +22,7 @@ def _():
         ledger_schema,
         load_query,
         open_ledger,
+        open_ledger_restricted,
     )
     from dinary_analytics.llm import chat_key_available, key_ref, run_chat_turn
     from dinary_analytics.paths import MCP_PORT
@@ -57,6 +58,7 @@ def _():
         make_event_chart,
         mo,
         open_ledger,
+        open_ledger_restricted,
         pl,
         run_chat_turn,
         save_server_address,
@@ -1058,10 +1060,10 @@ def _(category_order, chat_key_available, currency, key_ref, ledger_schema_sql, 
 
 
 @app.cell
-def _(json, load_query, open_ledger):
+def _(json, load_query, open_ledger, open_ledger_restricted):
     def _query_ledger_fn(sql: str) -> str:
         """Execute read-only SQL against the expense ledger. Use 'ledger.' prefix for all tables."""
-        _con = open_ledger()
+        _con = open_ledger_restricted()
         try:
             _res = _con.execute(sql)
             _cols = [d[0] for d in _res.description]

@@ -36,8 +36,8 @@ before relying on the apportioning; if they do not (discounts, rounding), say so
 
 `receipts.url` is the fiscal-portal link of each receipt. It is not needed for analysis and is
 sent to the model provider with any `SELECT *`. Decide in implementation between leaving it
-and describing a narrower view; the recommended answer is to leave it out, which this plan
-can do only after `analytics-ledger-visibility.md` (the sanitized cache can copy chosen
+and describing a narrower view; the recommended answer is to leave it out, which the
+sanitized ledger cache that model-written SQL reads makes possible (it can copy chosen
 columns; a plain attach cannot hide one).
 
 ### Summary query
@@ -70,9 +70,8 @@ above. One new starter button, e.g. "Where do I shop most?".
 
 ## Order
 
-After `analytics-ledger-visibility.md`. Until that lands the model can already read every
-table in the replica, so this plan adds no exposure; it is ordered second only because the
-column-level choice for `receipts.url` depends on the sanitized cache.
+Unblocked: model-written SQL already reads the sanitized ledger cache, which the column-level
+choice for `receipts.url` depends on.
 
 ## When done
 
