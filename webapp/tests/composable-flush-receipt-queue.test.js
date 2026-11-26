@@ -141,6 +141,30 @@ describe("flushReceiptQueue", () => {
     expect(queue.lastFlushError?.message).toBe("network down");
   });
 
+  it("reports a queue read failure and sends the receipts on the next sweep", async () => {
+    const queue = useReceiptQueueStore();
+    await queue.enqueue("https://example.com/r1");
+    await queue.enqueue("https://example.com/r2");
+
+    const err = new Error("Could not read receipt queue");
+    vi.spyOn(queue, "refresh").mockRejectedValueOnce(err);
+    const post = vi.spyOn(receiptsApi, "postReceipt").mockResolvedValue({ status: "ok" });
+    const show = vi.spyOn(useToastStore(), "show");
+
+    await flushReceiptQueue();
+
+    expect(post).not.toHaveBeenCalled();
+    expect(queue.items).toHaveLength(2);
+    expect(queue.lastFlushError?.message).toBe(err.message);
+    expect(show).toHaveBeenCalledWith(err.message, "error");
+
+    await flushReceiptQueue();
+
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(queue.items).toHaveLength(0);
+    expect(queue.lastFlushError).toBeNull();
+  });
+
   it("stops the sweep on a 500 error and keeps remaining items", async () => {
     const queue = useReceiptQueueStore();
     await queue.enqueue("https://example.com/r1");

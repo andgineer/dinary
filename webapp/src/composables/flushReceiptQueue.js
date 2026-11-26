@@ -1,5 +1,5 @@
 // Flush the offline receipt URL queue to the server.
-// Silently retains items on network failure so they are retried on the
+// Retains items on network failure so they are retried on the
 // next online event or retry timer tick.  Duplicate responses (200/409)
 // are treated as success and removed from the local queue.
 
@@ -21,8 +21,8 @@ export async function flushReceiptQueue() {
   const queue = useReceiptQueueStore();
   const toast = useToastStore();
   queue.lastFlushError = null;
-  await queue.refresh();
   try {
+    await queue.refresh();
     for (const item of [...queue.items]) {
       try {
         const body = await postReceipt({ client_receipt_id: item.client_receipt_id, url: item.url });
@@ -47,13 +47,13 @@ export async function flushReceiptQueue() {
           await queue.remove(item.id);
           continue;
         }
-        // Transient error — keep item, stop this sweep.
-        if (err instanceof ServerUnreachable && err.kind === "unreachable") reportNetworkFailure();
-        queue.lastFlushError = err;
-        toast.show(err?.message || "Receipt send failed", "error");
-        break;
+        throw err;
       }
     }
+  } catch (err) {
+    if (err instanceof ServerUnreachable && err.kind === "unreachable") reportNetworkFailure();
+    queue.lastFlushError = err;
+    toast.show(err?.message || "Receipt send failed", "error");
   } finally {
     _inFlight = false;
   }
