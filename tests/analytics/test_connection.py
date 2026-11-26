@@ -7,6 +7,7 @@ import pytest
 
 import dinary_analytics.connection as connection_module
 from dinary_analytics.connection import (
+    LEDGER_COLUMNS,
     LEDGER_TABLES,
     accounting_currency,
     build_ledger_cache,
@@ -114,6 +115,142 @@ def test_ledger_schema_is_read_from_the_replica(ledger_sqlite):
     assert "CREATE TABLE income" not in schema
 
 
+def _cache_of(replica):
+    return replica.with_name(LEDGER_CACHE_FILENAME)
+
+
+RECEIPT_URL = "https://suf.purs.gov.rs/v/?vl=receipt-url-marker-91c2"
+STORE_TABLES = ("stores", "shop_chains", "receipts", "receipt_items")
+
+
+@pytest.fixture
+def replica_with_receipts(ledger_sqlite):
+    con = sqlite3.connect(str(ledger_sqlite))
+    con.executescript(f"""
+        CREATE TABLE shop_chains (
+            id   INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+        );
+        CREATE TABLE stores (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            name     TEXT NOT NULL,
+            chain_id INTEGER REFERENCES shop_chains(id),
+            pib      TEXT UNIQUE
+        );
+        CREATE TABLE receipts (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_receipt_id     TEXT UNIQUE NOT NULL,
+            url                   TEXT NOT NULL,
+            store_id              INTEGER REFERENCES stores(id),
+            store_name_raw        TEXT NOT NULL DEFAULT '',
+            store_pib_raw         TEXT NOT NULL DEFAULT '',
+            total_amount          DECIMAL(12,2) NOT NULL DEFAULT 0,
+            invoice_number        TEXT NOT NULL DEFAULT '',
+            purchase_datetime     TEXT,
+            parsed_at             TIMESTAMP,
+            used_journal_fallback BOOLEAN NOT NULL DEFAULT 0,
+            created_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE receipt_items (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            receipt_id      INTEGER NOT NULL REFERENCES receipts(id) ON DELETE CASCADE,
+            name_raw        TEXT NOT NULL,
+            name_normalized TEXT,
+            unit_price      DECIMAL(12,4) NOT NULL DEFAULT 0,
+            quantity        DECIMAL(12,4) NOT NULL DEFAULT 0,
+            total_price     DECIMAL(12,2) NOT NULL DEFAULT 0,
+            tax_label       TEXT NOT NULL DEFAULT '',
+            expense_id      INTEGER REFERENCES expenses(id) ON DELETE SET NULL
+        );
+        INSERT INTO shop_chains VALUES (1, 'Lidl');
+        INSERT INTO stores VALUES (1, 'Lidl Novi Sad', 1, '100000001');
+        INSERT INTO receipts (id, client_receipt_id, url, store_id, store_name_raw, total_amount,
+                              purchase_datetime)
+            VALUES (1, 'c-1', '{RECEIPT_URL}', 1, 'LIDL NS', 4950.0, '2024-03-15T10:00:00');
+        INSERT INTO receipt_items (receipt_id, name_raw, name_normalized, unit_price, quantity,
+                                   total_price, expense_id)
+            VALUES (1, 'KAFA 200G', 'coffee', 4950.0, 1, 4950.0, 1);
+    """)
+    con.commit()
+    con.close()
+    return ledger_sqlite
+
+
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
+def test_ledger_schema_includes_the_store_and_receipt_tables(replica_with_receipts):
+    schema = ledger_schema(replica_path=replica_with_receipts)
+
+    for table in STORE_TABLES:
+        assert f"-- {table}: {LEDGER_TABLES[table]}" in schema
+    assert "CREATE TABLE receipt_items" in schema
+    assert "name_normalized" in schema
+
+
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
+def test_ledger_schema_omits_store_tables_the_replica_lacks(ledger_sqlite):
+    schema = ledger_schema(replica_path=ledger_sqlite)
+
+    for table in STORE_TABLES:
+        assert f"-- {table}:" not in schema
+
+
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
+def test_ledger_schema_shows_only_the_chosen_receipt_columns(replica_with_receipts):
+    schema = ledger_schema(replica_path=replica_with_receipts)
+    receipts_ddl = schema.split("-- receipts:")[1].split("-- receipt_items:")[0]
+
+    assert " url " not in receipts_ddl
+    assert "client_receipt_id" not in receipts_ddl
+    for column in LEDGER_COLUMNS["receipts"]:
+        assert f"    {column} " in receipts_ddl
+    assert "id INTEGER PRIMARY KEY" in receipts_ddl
+    assert "store_id INTEGER REFERENCES stores(id)" in receipts_ddl
+    assert "total_amount DECIMAL(12,2) NOT NULL" in receipts_ddl
+
+
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
+def test_restricted_connection_never_reads_the_receipt_url(replica_with_receipts):
+    con = open_ledger_restricted(replica_path=replica_with_receipts)
+    try:
+        columns = [row[0] for row in con.execute("DESCRIBE ledger.receipts").fetchall()]
+        items = con.execute(
+            "SELECT i.name_normalized, s.name, c.name FROM ledger.receipt_items i "
+            "JOIN ledger.receipts r ON r.id = i.receipt_id "
+            "JOIN ledger.stores s ON s.id = r.store_id "
+            "JOIN ledger.shop_chains c ON c.id = s.chain_id",
+        ).fetchall()
+    finally:
+        con.close()
+    assert columns == list(LEDGER_COLUMNS["receipts"])
+    assert items == [("coffee", "Lidl Novi Sad", "Lidl")]
+    assert RECEIPT_URL.encode() not in _cache_of(replica_with_receipts).read_bytes()
+
+
+@allure.epic("Analytics")
+@allure.feature("Ledger Connection")
+def test_ledger_cache_is_rebuilt_when_the_column_selection_changes(
+    replica_with_receipts,
+    monkeypatch,
+):
+    narrower = {"receipts": ("id", "total_amount")}
+
+    def receipt_columns():
+        con = open_ledger_restricted(replica_path=replica_with_receipts)
+        try:
+            return [row[0] for row in con.execute("DESCRIBE ledger.receipts").fetchall()]
+        finally:
+            con.close()
+
+    assert receipt_columns() == list(LEDGER_COLUMNS["receipts"])
+    monkeypatch.setattr(connection_module, "LEDGER_COLUMNS", narrower)
+
+    assert receipt_columns() == ["id", "total_amount"]
+
+
 @allure.epic("Analytics")
 @allure.feature("Ledger Connection")
 def test_ledger_schema_handles_a_path_with_spaces(ledger_sqlite, tmp_path):
@@ -168,10 +305,6 @@ def replica_with_secrets(ledger_sqlite):
     con.commit()
     con.close()
     return ledger_sqlite
-
-
-def _cache_of(replica):
-    return replica.with_name(LEDGER_CACHE_FILENAME)
 
 
 @allure.epic("Analytics")

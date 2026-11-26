@@ -1,5 +1,6 @@
 """DuckDB connection over the ledger SQLite replica."""
 
+import json
 import os
 import sqlite3
 import uuid
@@ -21,6 +22,33 @@ LEDGER_TABLES: dict[str, str] = {
     "expense_tags": "many-to-many link between expenses and tags",
     "income": "income entries; amount is in the accounting currency",
     "exchange_rates": "daily rates to the accounting currency",
+    "stores": "a shop; chain_id links shops of one chain; pib is the Serbian tax ID",
+    "shop_chains": 'a retail chain; group stores by it to answer "at Lidl" across branches',
+    "receipts": (
+        "a scanned fiscal receipt; total_amount is in the receipt's own currency (RSD), "
+        "not the accounting currency"
+    ),
+    "receipt_items": (
+        "one line of a receipt; unit_price and total_price are in the receipt's currency; "
+        "expense_id links the line to the expense it was booked into, and the lines of one "
+        "expense sum exactly to its amount_original, so a line's share of the expense is "
+        "expenses.amount * total_price / expenses.amount_original; name_normalized is the "
+        "cleaned item name, name_raw the printed one"
+    ),
+}
+
+# Tables listed here reach model-written SQL and the model's schema with only these columns.
+# receipts.url is the fiscal-portal link of a receipt and is never sent to a model provider.
+LEDGER_COLUMNS: dict[str, tuple[str, ...]] = {
+    "receipts": (
+        "id",
+        "store_id",
+        "store_name_raw",
+        "store_pib_raw",
+        "total_amount",
+        "purchase_datetime",
+        "created_at",
+    ),
 }
 
 
@@ -36,6 +64,9 @@ def ledger_schema(replica_path: Path | None = None) -> str:
         ddl = dict(
             con.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'").fetchall(),
         )
+        for table, columns in LEDGER_COLUMNS.items():
+            if table in ddl:
+                ddl[table] = _narrowed_ddl(con, table, columns)
     finally:
         con.close()
     return "\n".join(
@@ -43,6 +74,24 @@ def ledger_schema(replica_path: Path | None = None) -> str:
         for table, note in LEDGER_TABLES.items()
         if table in ddl
     )
+
+
+def _narrowed_ddl(con: sqlite3.Connection, table: str, columns: tuple[str, ...]) -> str:
+    references = {
+        row[3]: f" REFERENCES {row[2]}({row[4]})"
+        for row in con.execute(f"PRAGMA foreign_key_list({table})").fetchall()
+    }
+    definitions = [
+        f"    {name} {col_type}"
+        + (" PRIMARY KEY" if pk else "")
+        + (" NOT NULL" if notnull and not pk else "")
+        + references.get(name, "")
+        for _cid, name, col_type, notnull, _default, pk in con.execute(
+            f"PRAGMA table_info({table})",
+        ).fetchall()
+        if name in columns
+    ]
+    return f"CREATE TABLE {table} (\n" + ",\n".join(definitions) + "\n)"
 
 
 def accounting_currency(replica_path: Path | None = None) -> str:
@@ -80,8 +129,13 @@ def build_ledger_cache(replica_path: Path, cache_path: Path) -> None:
         con.execute(f"ATTACH '{replica_path}' AS src (TYPE sqlite, READ_ONLY)")  # noqa: S608
         con.execute(f"ATTACH '{tmp_path}' AS cache")  # noqa: S608
         con.execute("CREATE SCHEMA cache.ledger")
+        con.execute("CREATE TABLE cache.main.ledger_layout (layout VARCHAR)")
+        con.execute("INSERT INTO cache.main.ledger_layout VALUES (?)", [_ledger_layout()])
         for table in _present_ledger_tables(con, "src"):
-            con.execute(f"CREATE TABLE cache.ledger.{table} AS SELECT * FROM src.{table}")  # noqa: S608
+            selected = _selected_columns(con, "src", table)
+            con.execute(
+                f"CREATE TABLE cache.ledger.{table} AS SELECT {selected} FROM src.{table}",  # noqa: S608
+            )
         con.execute("DETACH cache")
     except BaseException:
         con.close()
@@ -103,10 +157,35 @@ def _present_ledger_tables(con: duckdb.DuckDBPyConnection, database: str) -> lis
     return [table for table in LEDGER_TABLES if table in present]
 
 
+def _selected_columns(con: duckdb.DuckDBPyConnection, database: str, table: str) -> str:
+    if table not in LEDGER_COLUMNS:
+        return "*"
+    present = {
+        row[0]
+        for row in con.execute(
+            "SELECT column_name FROM duckdb_columns() WHERE database_name = ? AND table_name = ?",
+            [database, table],
+        ).fetchall()
+    }
+    return ", ".join(f'"{column}"' for column in LEDGER_COLUMNS[table] if column in present)
+
+
+def _ledger_layout() -> str:
+    return json.dumps({table: LEDGER_COLUMNS.get(table, "*") for table in LEDGER_TABLES})
+
+
 def _cache_is_stale(replica_path: Path, cache_path: Path) -> bool:
     if not cache_path.exists():
         return True
-    return cache_path.stat().st_mtime_ns != replica_path.stat().st_mtime_ns
+    if cache_path.stat().st_mtime_ns != replica_path.stat().st_mtime_ns:
+        return True
+    # A cache built for another table or column selection could still hold a column now excluded.
+    with duckdb.connect(str(cache_path), read_only=True) as cache:
+        try:
+            row = cache.execute("SELECT layout FROM main.ledger_layout").fetchone()
+        except duckdb.CatalogException:
+            return True
+    return row is None or row[0] != _ledger_layout()
 
 
 def open_ledger_restricted(replica_path: Path | None = None) -> duckdb.DuckDBPyConnection:

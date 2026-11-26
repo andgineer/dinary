@@ -812,6 +812,7 @@ def _(mo, send_message):
         "Which unusual expenses are worth pulling into their own basket?",
         "Merge all my trips into one basket",
         "Break the largest basket down in more detail",
+        "Where do I shop most?",
     ]
     _chips = mo.hstack(
         [mo.ui.button(label=_p, on_click=lambda _v, _q=_p: send_message(_q)) for _p in _STARTERS],
@@ -1035,6 +1036,13 @@ def _(category_order, chat_key_available, currency, key_ref, ledger_schema_sql, 
         "Tables are in the 'ledger' schema — prefix all table names: "
         "ledger.expenses, ledger.categories, ledger.events, ledger.tags, etc. "
         f"The amount column in ledger.expenses is in {currency} (the accounting currency). "
+        "Stores, shop chains, receipts and receipt items are in ledger.stores, "
+        "ledger.shop_chains, ledger.receipts and ledger.receipt_items. "
+        "Money by store or by item always comes from ledger.expenses.amount, never from "
+        "receipt prices, which are in the receipt's own currency: for a store or chain, sum "
+        "expenses.amount joined through expenses.store_id; for an item, join "
+        "receipt_items.expense_id to expenses and take "
+        "expenses.amount * receipt_items.total_price / expenses.amount_original. "
         "\n\nDashboard context: the stacked area chart shows the top-10 expense categories "
         "by spending over the last 12 months, plus 'Other'. "
         f"The 10 categories shown individually are: {', '.join(_top10)}. "
@@ -1076,7 +1084,7 @@ def _(json, load_query, open_ledger, open_ledger_restricted):
             _con.close()
 
     def _query_summary_fn() -> str:
-        """Return a JSON summary of events, tags and category groups for the last 12 months."""
+        """Return a JSON summary of events, tags, category groups and top stores for the last 12 months."""
         _con = open_ledger()
         try:
             return _con.execute(load_query("spending_summary")).fetchone()[0]

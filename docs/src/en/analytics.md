@@ -12,8 +12,10 @@ Ask things like:
 - *"How does my food spending compare to last year?"*
 - *"How much did the Italy trip cost, broken down by category?"*
 - *"What's my savings rate for 2025?"*
+- *"How much did I spend at Lidl this year, across all its shops?"*
+- *"How much did coffee beans cost me this year?"*
 
-The analyst knows your full expense history, categories, events, and tags. It queries a copy of your ledger kept on your own machine. To answer, it sends your question and the query results it needs to the AI model's provider (OpenAI); the charts work without sending anything.
+The analyst knows your full expense history, categories, events and tags, and the stores and items of your scanned receipts. It queries a copy of your ledger kept on your own machine. To answer, it sends your question and the query results it needs to the AI model's provider (OpenAI); the charts work without sending anything.
 
 ## Charts
 

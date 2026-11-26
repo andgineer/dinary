@@ -89,9 +89,22 @@ request/response transport and tool-calling loop are shared with the server's LL
 broker. The model executes DuckDB queries via tool calls.
 
 **What the model is told about the ledger.** The schema of the bookkeeping tables —
-expenses, categories, category groups, events, tags, income and exchange rates — and
-the ledger's accounting currency. Both are read from the replica itself, so the
-description always matches the data the queries run against.
+expenses, categories, category groups, events, tags, income, exchange rates, stores,
+shop chains, receipts and receipt items — and the ledger's accounting currency. Both are
+read from the replica itself, so the description always matches the data the queries run
+against.
+
+Money by store or by receipt item is always taken from expense amounts, which are in the
+accounting currency; receipt totals and item prices are in the receipt's own currency and
+are never added to them. Money by store sums the expenses booked at that store. Money by
+item takes the expense the item was booked into and scales it by the item's price over the
+amount the user entered for that expense. The lines of one expense sum exactly to that
+entered amount, so the shares add back up to the expense, and an item's share stays the
+same whatever other items a question filters out.
+
+The receipt's fiscal-portal link identifies the receipt on the tax authority's site and is
+not needed for analysis, so model-written SQL cannot read it and the schema given to the
+model does not show it.
 
 **What leaves the machine.** The charts are computed locally and send nothing. The
 chat sends the user's question, the ledger description above and the results of the

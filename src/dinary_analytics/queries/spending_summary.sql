@@ -1,5 +1,5 @@
--- Returns ONE ROW with ONE column 'summary': a JSON object with three keys:
---   events, tags, category_groups
+-- Returns ONE ROW with ONE column 'summary': a JSON object with four keys:
+--   events, tags, category_groups, stores
 
 WITH cutoff AS (
     SELECT (CURRENT_DATE - INTERVAL '12 months')::DATE AS dt
@@ -40,6 +40,21 @@ group_totals AS (
       AND e.datetime::TIMESTAMP::DATE >= (SELECT dt FROM cutoff)
     GROUP BY cg.id, cg.name
 ),
+store_totals AS (
+    SELECT
+        s.id,
+        s.name,
+        sc.name AS chain_name,
+        COUNT(*) AS expense_count,
+        CAST(SUM(e.amount) AS DOUBLE) AS total_amount
+    FROM ledger.expenses e
+    JOIN ledger.stores s ON e.store_id = s.id
+    LEFT JOIN ledger.shop_chains sc ON s.chain_id = sc.id
+    WHERE e.datetime::TIMESTAMP::DATE >= (SELECT dt FROM cutoff)
+    GROUP BY s.id, s.name, sc.name
+    ORDER BY total_amount DESC, s.id
+    LIMIT 20
+),
 events_json AS (
     SELECT COALESCE(
         to_json(list({
@@ -75,9 +90,23 @@ groups_json AS (
         '[]'
     ) AS val
     FROM group_totals
+),
+stores_json AS (
+    SELECT COALESCE(
+        to_json(list({
+            'id':            id,
+            'name':          name,
+            'chain_name':    chain_name,
+            'expense_count': expense_count,
+            'total_amount':  total_amount
+        } ORDER BY total_amount DESC, id)),
+        '[]'
+    ) AS val
+    FROM store_totals
 )
 SELECT json_object(
     'events',           (SELECT val FROM events_json),
     'tags',             (SELECT val FROM tags_json),
-    'category_groups',  (SELECT val FROM groups_json)
+    'category_groups',  (SELECT val FROM groups_json),
+    'stores',           (SELECT val FROM stores_json)
 ) AS summary

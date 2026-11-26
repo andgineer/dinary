@@ -93,6 +93,14 @@ def ledger_db(tmp_path):
         INSERT INTO expense_tags VALUES (2, 1);
         INSERT INTO income VALUES ({older.year}, {older.month}, 2000.0);
         INSERT INTO income VALUES ({newer.year}, {newer.month}, 2100.0);
+        CREATE TABLE shop_chains (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+        CREATE TABLE stores (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            chain_id INTEGER REFERENCES shop_chains(id),
+            pib TEXT UNIQUE
+        );
+        ALTER TABLE expenses ADD COLUMN store_id INTEGER REFERENCES stores(id);
     """)
     con.commit()
     con.close()
@@ -284,6 +292,15 @@ def test_chat_prompt_cell_names_the_ledger_currency_and_schema():
     )
 
     assert "is in RSD (the accounting currency)" in defs["ai_system_prompt"]
+    assert (
+        "Money by store or by item always comes from ledger.expenses.amount"
+        in (defs["ai_system_prompt"])
+    )
+    assert (
+        "expenses.amount * receipt_items.total_price / expenses.amount_original"
+        in (defs["ai_system_prompt"])
+    )
+    assert "OVER (PARTITION BY" not in defs["ai_system_prompt"]
     assert defs["ai_system_prompt"].endswith("CREATE TABLE expenses (id INTEGER);")
     assert "EUR" not in defs["ai_system_prompt"]
 
