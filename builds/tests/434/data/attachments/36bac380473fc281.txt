@@ -1,0 +1,2 @@
+2026-11-21 08:26:45,784 WARNING  dinary.adapters.receipts.serbian — Token not found in HTML for https://suf.purs.gov.rs/v/?vl=test
+2026-11-21 08:26:45,784 WARNING  dinary.adapters.receipts.serbian — Using journal fallback for https://suf.purs.gov.rs/v/?vl=test; validation passed

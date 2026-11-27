@@ -1,0 +1,1 @@
+2026-11-27 13:25:01,041 WARNING  dinary.sheets.sheet_mapping — events.auto_tags for event_id=1 is not valid JSON ('not-json'); treating as empty

@@ -1,0 +1,1 @@
+2026-11-21 08:26:45,535 WARNING  dinary.background.classification.receipt_classifier — LLM parse error (Expecting value: line 1 column 1 (char 0)): not valid json

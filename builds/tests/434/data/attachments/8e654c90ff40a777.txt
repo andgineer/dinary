@@ -1,0 +1,2 @@
+=== Syncing .deploy/.env to server ===
+=== Uploading credentials ===

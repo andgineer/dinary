@@ -1,0 +1,4 @@
+2026-10-03 11:05:40,396 WARNING  llmbroker.broker — preset freetier: nothing cached and nothing is fetched automatically — falling back to the bundled copy, frozen at this llmbroker release
+2026-10-03 11:05:40,414 ERROR    llmbroker.broker — pool degraded, no failover left: 1 of 1 providers usable
+2026-10-03 11:05:40,421 WARNING  llmbroker.broker — LLM groq-llama cooling for 60s
+2026-10-03 11:05:40,425 WARNING  llmbroker.broker — pool under-provisioned: all LLMs are COOLING — add more LLMs to the registry

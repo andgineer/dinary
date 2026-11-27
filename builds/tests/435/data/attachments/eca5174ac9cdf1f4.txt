@@ -1,0 +1,2 @@
+=== Creating dinary service (bind 127.0.0.1) ===
+=== Done! Waiting for /api/health (up to 60s) ... ===

@@ -1,0 +1,2 @@
+2026-11-27 13:24:59,686 WARNING  dinary.adapters.receipts.serbian — Empty /specifications for https://suf.purs.gov.rs/v/?vl=test
+2026-11-27 13:24:59,686 WARNING  dinary.adapters.receipts.serbian — Using journal fallback for https://suf.purs.gov.rs/v/?vl=test; validation passed

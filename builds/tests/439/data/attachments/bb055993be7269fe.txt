@@ -1,0 +1,2 @@
+2026-11-27 13:25:00,713 INFO     dinary.background.sheet_logging.sheet_logging — Appended +1500.0 for Food/Essentials in 2026-04 (pk=1)
+2026-11-27 13:25:00,714 ERROR    dinary.background.sheet_logging.sheet_logging — Append succeeded for pk=1 but claim stolen; force-deleted

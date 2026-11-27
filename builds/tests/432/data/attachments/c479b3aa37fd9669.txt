@@ -1,0 +1,1 @@
+2026-10-04 10:44:44,766 INFO     dinary.background.classification.task — Receipt classification drain started

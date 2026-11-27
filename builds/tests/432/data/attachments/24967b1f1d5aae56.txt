@@ -1,0 +1,1 @@
+2026-10-04 10:44:40,956 WARNING  dinary.adapters.receipts.serbian — Journal fallback: skipping malformed value line '       malformed values' (item: 'Mesnata slanina/KG/0227734 (Ђ)')

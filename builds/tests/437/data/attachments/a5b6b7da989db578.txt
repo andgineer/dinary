@@ -1,0 +1,3 @@
+From /tmp/pytest-of-runner/pytest-0/test_a_branch_ref_deploys_what0/origin
+   8726a6a..8f6572c  main       -> origin/main
+Already on 'main'

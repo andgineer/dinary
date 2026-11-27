@@ -1,0 +1,1 @@
+WARNING  dinary.adapters.receipts.serbian:serbian.py:132 Journal fallback: skipping malformed value line '       819,99      0,440          360,80      unexpected' (item: 'Mesnata slanina/KG/0227734 (Ђ)')
