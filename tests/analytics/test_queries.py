@@ -8,6 +8,7 @@ import allure
 import pytest
 
 from dinary_analytics.connection import load_query, open_ledger
+from dinary_analytics.views import drill_down_view
 
 
 def _months_ago(months: int) -> datetime.date:
@@ -127,7 +128,7 @@ def test_spending_summary_returns_single_row(full_ledger_db):
 
 @allure.epic("Analytics")
 @allure.feature("Queries")
-def test_spending_summary_has_four_keys(full_ledger_db):
+def test_spending_summary_has_five_keys(full_ledger_db):
     sql = load_query("spending_summary")
     con = open_ledger(replica_path=full_ledger_db)
     try:
@@ -139,6 +140,7 @@ def test_spending_summary_has_four_keys(full_ledger_db):
     assert "tags" in summary
     assert "category_groups" in summary
     assert summary["stores"] == []
+    assert summary["uncovered"] == {"total_amount": 0.0, "share": 0}
 
 
 @allure.epic("Analytics")
@@ -388,3 +390,181 @@ def test_view_data_empty_baskets_no_underflow(full_ledger_db):
         con.close()
     assert rows  # every expense routed to the default basket
     assert {r[0] for r in rows} == {"Misc"}
+
+
+@pytest.fixture
+def basket_ledger_db(full_ledger_db):
+    """Adds a café category and expenses that carry neither an event nor a tag.
+
+    Expenses in the window: 1 food 500 (event, tag), 2 rent 300 (event),
+    3 food 200 (tag), 4 food 100, 5 rent 1000, 6 café 50.
+    """
+    con = sqlite3.connect(str(full_ledger_db))
+    con.executescript(f"""
+        INSERT INTO categories VALUES (3, 'café', 1, 1);
+        INSERT INTO expenses (id, datetime, amount, amount_original, currency_original,
+                              category_id)
+            VALUES (4, '{NEWER_MONTH.replace(day=6)} 10:00:00', 100.0, 11000.0, 'RSD', 1),
+                   (5, '{NEWER_MONTH.replace(day=7)} 10:00:00', 1000.0, 110000.0, 'RSD', 2),
+                   (6, '{NEWER_MONTH.replace(day=8)} 10:00:00', 50.0, 5500.0, 'RSD', 3);
+    """)
+    con.commit()
+    con.close()
+    return full_ledger_db
+
+
+TRAVEL = {"name": "Travel", "triggers": {"tags": [1]}}
+FOOD = {"name": "Food", "triggers": {"categories": [1]}}
+
+
+def _basket_totals(replica, config: dict) -> dict[str, float]:
+    con = open_ledger(replica_path=replica)
+    try:
+        rows = con.execute(load_query("view_data"), [json.dumps(config), SINCE]).fetchall()
+    finally:
+        con.close()
+    totals: dict[str, float] = {}
+    for basket_name, _month, _group, amount in rows:
+        totals[basket_name] = totals.get(basket_name, 0.0) + amount
+    return totals
+
+
+@allure.epic("Analytics")
+@allure.feature("Queries")
+def test_view_data_category_trigger(basket_ledger_db):
+    totals = _basket_totals(basket_ledger_db, {"baskets": [FOOD], "default_basket": "Rest"})
+
+    assert totals == {"Food": 800.0, "Rest": 1350.0}
+
+
+@allure.epic("Analytics")
+@allure.feature("Queries")
+def test_view_data_category_group_trigger(basket_ledger_db):
+    config = {
+        "baskets": [{"name": "Nutrition", "triggers": {"category_groups": [1]}}],
+        "default_basket": "Rest",
+    }
+
+    assert _basket_totals(basket_ledger_db, config) == {"Nutrition": 850.0, "Rest": 1300.0}
+
+
+@allure.epic("Analytics")
+@allure.feature("Queries")
+def test_view_data_group_trigger_follows_the_category_current_group(basket_ledger_db):
+    con = sqlite3.connect(str(basket_ledger_db))
+    con.execute("UPDATE categories SET group_id = 2 WHERE id = 3")
+    con.commit()
+    con.close()
+    config = {
+        "baskets": [{"name": "Housing", "triggers": {"category_groups": [2]}}],
+        "default_basket": "Rest",
+    }
+
+    assert _basket_totals(basket_ledger_db, config)["Housing"] == 1350.0
+
+
+@allure.epic("Analytics")
+@allure.feature("Queries")
+def test_view_data_tag_basket_first_takes_the_tagged_food(basket_ledger_db):
+    totals = _basket_totals(basket_ledger_db, {"baskets": [TRAVEL, FOOD], "default_basket": "Rest"})
+
+    assert totals == {"Travel": 700.0, "Food": 100.0, "Rest": 1350.0}
+
+
+@allure.epic("Analytics")
+@allure.feature("Queries")
+def test_view_data_category_basket_first_leaves_travel_only_the_rest(basket_ledger_db):
+    totals = _basket_totals(basket_ledger_db, {"baskets": [FOOD, TRAVEL], "default_basket": "Rest"})
+
+    assert totals == {"Food": 800.0, "Rest": 1350.0}
+
+
+@allure.epic("Analytics")
+@allure.feature("Queries")
+def test_view_data_view_without_the_new_trigger_keys(basket_ledger_db):
+    config = {
+        "baskets": [
+            {"name": "Trip", "triggers": {"events": [1], "tags": []}},
+            {"name": "Nothing"},
+        ],
+        "default_basket": "Rest",
+    }
+
+    assert _basket_totals(basket_ledger_db, config) == {"Trip": 800.0, "Rest": 1350.0}
+
+
+@allure.epic("Analytics")
+@allure.feature("Queries")
+def test_view_data_scope_excludes_what_a_preceding_basket_took(basket_ledger_db):
+    config = {
+        "baskets": [{"name": "Groceries", "triggers": {"categories": [1]}}],
+        "default_basket": "Other food",
+        "scope": {
+            "name": "Food",
+            "required": [FOOD["triggers"]],
+            "excluded": [TRAVEL["triggers"]],
+        },
+    }
+
+    assert _basket_totals(basket_ledger_db, config) == {"Groceries": 100.0}
+
+
+@allure.epic("Analytics")
+@allure.feature("Queries")
+def test_view_data_scope_on_the_default_basket(basket_ledger_db):
+    config = {
+        "baskets": [{"name": "Housing", "triggers": {"category_groups": [2]}}],
+        "default_basket": "Rest",
+        "scope": {
+            "name": "Main",
+            "required": [],
+            "excluded": [TRAVEL["triggers"], FOOD["triggers"]],
+        },
+    }
+
+    assert _basket_totals(basket_ledger_db, config) == {"Housing": 1300.0, "Rest": 50.0}
+
+
+@allure.epic("Analytics")
+@allure.feature("Queries")
+def test_view_data_drilled_totals_add_up_to_the_parent_basket(basket_ledger_db):
+    parent = {"baskets": [TRAVEL, FOOD], "default_basket": "Main"}
+    parent_totals = _basket_totals(basket_ledger_db, parent)
+    breakdown = [
+        {"name": "Nutrition", "triggers": {"category_groups": [1]}},
+        {"name": "Trip", "triggers": {"events": [1]}},
+    ]
+
+    for basket_name, parent_total in parent_totals.items():
+        child = drill_down_view(parent, basket_name, breakdown, "Rest")
+        child_totals = _basket_totals(basket_ledger_db, child)
+        assert sum(child_totals.values()) == pytest.approx(parent_total), basket_name
+
+
+@allure.epic("Analytics")
+@allure.feature("Queries")
+def test_spending_summary_reports_uncovered_spend(basket_ledger_db):
+    con = open_ledger(replica_path=basket_ledger_db)
+    try:
+        summary = json.loads(con.execute(load_query("spending_summary")).fetchone()[0])
+    finally:
+        con.close()
+
+    assert summary["uncovered"] == {"total_amount": 1150.0, "share": round(1150 / 2150, 4)}
+
+
+@allure.epic("Analytics")
+@allure.feature("Queries")
+def test_spending_summary_nests_categories_under_their_group(basket_ledger_db):
+    con = open_ledger(replica_path=basket_ledger_db)
+    try:
+        summary = json.loads(con.execute(load_query("spending_summary")).fetchone()[0])
+    finally:
+        con.close()
+
+    nutrition = next(g for g in summary["category_groups"] if g["name"] == "Nutrition")
+    assert nutrition["total_amount"] == 850.0
+    assert nutrition["categories"] == [
+        {"id": 1, "name": "food", "total_amount": 800.0},
+        {"id": 3, "name": "café", "total_amount": 50.0},
+    ]

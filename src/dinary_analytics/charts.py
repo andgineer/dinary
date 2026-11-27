@@ -233,13 +233,17 @@ def make_basket_chart(
     title: str = "",
     width: int = 700,
     height: int = 350,
+    scope_name: str = "",
 ) -> alt.VConcatChart:
     """Return a two-panel vconcat chart.
 
     Top panel: stacked bar by basket/month. Bottom panel: category group breakdown.
     df columns: basket_name, year_month, group_name, total_amount.
     Click a bar segment to filter the bottom panel to that basket/month combination.
+    A drill-down view passes its scope name, which leads the title.
     """
+    if scope_name:
+        title = f"{scope_name} ▸ {title}" if title else scope_name
     sel = alt.selection_point(fields=["basket_name", "year_month"])
 
     top = (

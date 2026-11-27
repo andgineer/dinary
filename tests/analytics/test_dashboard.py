@@ -2,20 +2,36 @@
 ``dinary_analytics.charts`` (same functions the notebook imports) plus
 ``cell.run()`` tests against a real SQLite test DB."""
 
+import contextlib
 import datetime
 import json
 import sqlite3
+import types
+import urllib.error
+import urllib.request
 from functools import partial
+from unittest.mock import MagicMock
 
 import allure
 import duckdb
+import marimo as mo
 import polars as pl
 import pytest
 
+import dinary_analytics.charts as charts_module
 import dinary_analytics.connection as connection_module
 import dinary_analytics.notebooks.dashboard as _dash_module
+import dinary_analytics.settings as settings_module
 from dinary_analytics.charts import ChartSize, make_basket_chart, make_chart_pair, make_event_chart
 from dinary_analytics.connection import open_ledger
+from dinary_analytics.llm import tool_name
+from dinary_analytics.views import (
+    drill_down_view,
+    duplicate_basket_name,
+    empty_view_frame,
+    load_pinned_view_frames,
+    load_view_frame,
+)
 
 
 def _months_ago(months: int) -> datetime.date:
@@ -278,7 +294,6 @@ def test_ledger_facts_cell_reads_currency_and_schema_from_the_replica(ledger_db,
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
 def test_chat_prompt_cell_names_the_ledger_currency_and_schema():
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     cell = next(c for c in cells if "ai_system_prompt" in c.defs)
@@ -302,6 +317,13 @@ def test_chat_prompt_cell_names_the_ledger_currency_and_schema():
     )
     assert "OVER (PARTITION BY" not in defs["ai_system_prompt"]
     assert defs["ai_system_prompt"].endswith("CREATE TABLE expenses (id INTEGER);")
+    for phrase in (
+        "categories and category_groups",
+        "FIRST basket",
+        "drill_into",
+        "back_to_parent",
+    ):
+        assert phrase in defs["ai_system_prompt"]
     assert "EUR" not in defs["ai_system_prompt"]
 
 
@@ -327,12 +349,10 @@ def test_make_chart_pair_custom_size(chart_data):
 @allure.feature("Dashboard")
 def test_dashboard_notebook_imports():
     """Verify the notebook module loads and both chart functions are importable."""
-    import dinary_analytics.charts as charts_module
-    import dinary_analytics.notebooks.dashboard as dash_module
 
     assert hasattr(charts_module, "make_chart_pair")
     assert hasattr(charts_module, "make_event_chart")
-    assert dash_module.app is not None
+    assert _dash_module.app is not None
 
 
 @allure.epic("Analytics")
@@ -340,16 +360,11 @@ def test_dashboard_notebook_imports():
 def test_dashboard_selectors_cell_runs(ledger_db, monkeypatch):
     """Uses ``cell.run()`` so a regression in the real notebook code is caught
     here, not via duplicated logic."""
-    import datetime
-    import marimo as mo
-
-    import dinary_analytics.notebooks.dashboard as dash_module
-    from dinary_analytics.connection import open_ledger as _real_open_ledger
 
     def _mock_open_ledger():
-        return _real_open_ledger(replica_path=ledger_db)
+        return open_ledger(replica_path=ledger_db)
 
-    cells = list(dash_module.app._cell_manager.cells())
+    cells = list(_dash_module.app._cell_manager.cells())
     sel_cell = next(c for c in cells if "event_selector" in c.defs)
 
     _, defs = sel_cell.run(
@@ -514,7 +529,6 @@ class _DropdownStub:
 @allure.feature("Dashboard")
 def test_period_selector_cell_runs():
     """Period selector cell builds the dropdown with the default period."""
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     sel_cell = next(c for c in cells if "period_selector" in c.defs)
@@ -529,10 +543,6 @@ def test_period_selector_cell_runs():
 @allure.feature("Dashboard")
 def test_fetch_replica_status_survives_refresh_post_failure(monkeypatch):
     """A failed POST /refresh/now (service restarted mid-click) must not raise."""
-    import contextlib
-    import urllib.error
-    import urllib.request
-    from unittest.mock import MagicMock
 
     health_response = MagicMock()
     health_response.read.return_value = json.dumps(
@@ -565,8 +575,6 @@ def test_fetch_replica_status_survives_refresh_post_failure(monkeypatch):
 @allure.feature("Dashboard")
 def test_status_bar_cell_surfaces_refresh_error():
     """A non-null refresh error is shown even when the replica is otherwise ok."""
-    import datetime
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     cell = next(
@@ -597,8 +605,6 @@ def test_status_bar_cell_surfaces_refresh_error():
 @allure.feature("Dashboard")
 def test_status_bar_cell_hides_error_callout_when_refresh_ok():
     """No error callout is shown when the last refresh succeeded."""
-    import datetime
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     cell = next(
@@ -628,8 +634,6 @@ def test_status_bar_cell_hides_error_callout_when_refresh_ok():
 @allure.feature("Dashboard")
 def test_status_bar_cell_shows_refresh_requested_feedback_right_after_click():
     """Clicking 'Refresh now' shows immediate feedback that the request was sent."""
-    import datetime
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     cell = next(
@@ -659,8 +663,6 @@ def test_status_bar_cell_shows_refresh_requested_feedback_right_after_click():
 @allure.feature("Dashboard")
 def test_status_bar_cell_hides_refresh_requested_feedback_after_timeout():
     """The 'Refresh requested' feedback disappears once enough time has passed."""
-    import datetime
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     cell = next(
@@ -690,8 +692,6 @@ def test_status_bar_cell_hides_refresh_requested_feedback_after_timeout():
 @allure.feature("Dashboard")
 def test_status_bar_cell_hides_refresh_requested_feedback_once_refresh_completes():
     """The 'Refresh requested' feedback disappears as soon as last_refresh advances past the click."""
-    import datetime
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     cell = next(
@@ -723,7 +723,6 @@ def test_status_bar_cell_hides_refresh_requested_feedback_once_refresh_completes
 @allure.feature("Dashboard")
 def test_address_gate_cell_shows_field_above_instructions_in_one_panel():
     """The address field comes first, with the lookup instructions below it, in one panel."""
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     cell = next(
@@ -752,7 +751,6 @@ def test_address_gate_cell_shows_field_above_instructions_in_one_panel():
 @allure.feature("Dashboard")
 def test_followups_cell_renders_clickable_buttons_and_hides_while_pending():
     """Follow-up suggestions render as clickable buttons; hidden while a reply is pending."""
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     cell = next(c for c in cells if c.refs == {"mo", "pending", "send_message", "suggestions"})
@@ -784,10 +782,11 @@ def test_suggest_next_tool_sets_suggestions():
 
     stored: dict = {}
     _, defs = tools_cell.run(
+        ai_draft_tools=(),
         bump_view_list=lambda _v: None,
         delete_view=lambda _i: None,
+        draft_view=lambda: None,
         save_view=lambda _cfg: "id",
-        set_draft_view=lambda _c: None,
         set_suggestions=lambda s: stored.__setitem__("s", s),
         view_list_ver=lambda: 0,
     )
@@ -802,7 +801,6 @@ def test_suggest_next_tool_sets_suggestions():
 @allure.feature("Dashboard")
 def test_chips_cell_builds_clickable_starters():
     """The starter-suggestions cell builds clickable buttons (not plain prose)."""
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     chips_cell = next(c for c in cells if c.refs == {"mo", "send_message"})
@@ -816,7 +814,6 @@ def test_chips_cell_builds_clickable_starters():
 @allure.feature("Dashboard")
 def test_chat_input_cell_builds():
     """The input cell builds a text area + send button without invalid marimo params."""
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     input_cell = next(c for c in cells if "msg_input" in c.defs)
@@ -852,11 +849,23 @@ def _draft_chart_cell():
     return next(c for c in cells if "draft_chart_blocks" in c.defs)
 
 
-def _draft_chart_blocks(*, draft, pending, view_data_df):
-    import marimo as mo
+def _draft_controls_cell():
+    cells = list(_dash_module.app._cell_manager.cells())
+    return next(c for c in cells if "draft_controls" in c.defs)
 
+
+def _draft_chart_blocks(*, draft, pending, view_data_df, stack=(), fake_mo=None, sent=None):
+    _, controls = _draft_controls_cell().run(
+        back_to_parent=lambda: "",
+        draft_stack=lambda: list(stack),
+        draft_view=lambda: draft,
+        mo=fake_mo or mo,
+        send_message=(sent.append if sent is not None else lambda _t: None),
+        view_data_df=view_data_df,
+    )
     _, defs = _draft_chart_cell().run(
         currency="EUR",
+        draft_controls=controls["draft_controls"],
         draft_view=lambda: draft,
         make_basket_chart=make_basket_chart,
         mo=mo,
@@ -867,7 +876,6 @@ def _draft_chart_blocks(*, draft, pending, view_data_df):
 
 
 def _run_log(*, chat_history, pending, draft_chart_blocks=()):
-    import marimo as mo
 
     output, _ = _log_cell().run(
         chat_history=lambda: chat_history,
@@ -1013,7 +1021,6 @@ def test_llm_runner_cell_idle_when_no_pending():
 @allure.feature("Dashboard")
 def test_view_data_cell_no_draft():
     """View data cell returns an empty DataFrame when draft_view is None."""
-    from dinary_analytics.views import empty_view_frame
 
     cells = list(_dash_module.app._cell_manager.cells())
     data_cell = next(c for c in cells if "view_data_df" in c.defs)
@@ -1035,7 +1042,6 @@ def test_view_data_cell_no_draft():
 @allure.feature("Dashboard")
 def test_view_data_cell_with_draft(ledger_db):
     """View data cell runs view_data.sql against the real test DB and returns rows."""
-    from dinary_analytics.views import empty_view_frame, load_view_frame
 
     cells = list(_dash_module.app._cell_manager.cells())
     data_cell = next(c for c in cells if "view_data_df" in c.defs)
@@ -1062,12 +1068,11 @@ def test_view_data_cell_with_draft(ledger_db):
 @allure.epic("Analytics")
 @allure.feature("Dashboard")
 def test_draft_chart_cell_shows_the_chart_only_for_a_settled_draft_with_data(basket_df):
-    from dinary_analytics.views import empty_view_frame
 
     draft = {"name": "Test View", "baskets": [], "default_basket": "Other"}
 
     shown = _draft_chart_blocks(draft=draft, pending=None, view_data_df=basket_df)
-    assert len(shown) == 2
+    assert len(shown) == 3
     assert "Test View" in json.dumps(shown[1].to_dict())
 
     assert _draft_chart_blocks(draft=None, pending=None, view_data_df=basket_df) == []
@@ -1097,7 +1102,6 @@ def test_chat_log_renders_inline_draft_chart(basket_df):
 @allure.feature("Dashboard")
 def test_pin_controls_cell_hidden_without_draft():
     """Pin controls cell renders nothing when there is no draft view."""
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     pin_cell = next(c for c in cells if "pin_controls" in c.defs)
@@ -1118,7 +1122,6 @@ def test_pin_controls_cell_hidden_without_draft():
 @allure.feature("Dashboard")
 def test_pin_controls_cell_shows_for_draft():
     """Pin controls cell builds a name input + pin button when a draft view exists."""
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     pin_cell = next(c for c in cells if "pin_controls" in c.defs)
@@ -1140,11 +1143,9 @@ def test_pin_controls_cell_shows_for_draft():
 @allure.feature("Dashboard")
 def test_pinned_frames_cell_loads(ledger_db, tmp_path):
     """The pinned-frames data cell loads (id, config, frame) tuples for saved views."""
-    from dinary_analytics.settings import save_view as _real_save_view
-    from dinary_analytics.views import load_pinned_view_frames
 
     settings_db = tmp_path / "settings.db"
-    _real_save_view(
+    settings_module.save_view(
         {
             "name": "Vacation",
             "baskets": [{"name": "Vacation", "triggers": {"events": [1], "tags": []}}],
@@ -1176,7 +1177,6 @@ def test_pinned_frames_cell_loads(ledger_db, tmp_path):
 @allure.feature("Dashboard")
 def test_gallery_cell_empty():
     """Saved-views gallery shows a placeholder when there are no pinned frames."""
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     gallery_cell = next(c for c in cells if "saved_gallery" in c.defs)
@@ -1187,8 +1187,8 @@ def test_gallery_cell_empty():
         currency="EUR",
         make_basket_chart=make_basket_chart,
         mo=mo,
+        open_in_draft=lambda _c: None,
         pinned_frames=[],
-        set_draft_view=lambda _c: None,
         view_list_ver=lambda: 0,
     )
 
@@ -1200,7 +1200,6 @@ def test_gallery_cell_empty():
 @allure.feature("Dashboard")
 def test_gallery_cell_with_saved_view(basket_df):
     """Gallery renders a card per pinned frame."""
-    import marimo as mo
 
     cells = list(_dash_module.app._cell_manager.cells())
     gallery_cell = next(c for c in cells if "saved_gallery" in c.defs)
@@ -1212,8 +1211,8 @@ def test_gallery_cell_with_saved_view(basket_df):
         currency="EUR",
         make_basket_chart=make_basket_chart,
         mo=mo,
+        open_in_draft=lambda _c: None,
         pinned_frames=frames,
-        set_draft_view=lambda _c: None,
         view_list_ver=lambda: 1,
     )
 
@@ -1248,3 +1247,318 @@ def test_query_ledger_tool_reads_only_the_ledger(ledger_db, monkeypatch):
         query_ledger("SELECT * FROM ledger.llmbroker_secrets")
     assert "sk-secret-marker-7f3a" not in str(exc_info.value)
     assert json.loads(query_summary()) is not None
+
+
+class _StateStub:
+    """Getter/setter pair standing in for one ``mo.state``."""
+
+    def __init__(self, value) -> None:
+        self.value = value
+
+    def get(self):
+        return self.value
+
+    def set(self, value) -> None:
+        self.value = value
+
+
+PARENT_DRAFT = {
+    "name": "Life",
+    "baskets": [
+        {"name": "Travel", "triggers": {"tags": [1]}},
+        {"name": "Food", "triggers": {"category_groups": [1]}},
+    ],
+    "default_basket": "Main",
+    "chart_type": "stacked_bar_monthly",
+}
+FOOD_BREAKDOWN = [{"name": "Groceries", "triggers": {"categories": [1]}}]
+
+
+def _navigation(draft, stack):
+    cells = list(_dash_module.app._cell_manager.cells())
+    names_cell = next(c for c in cells if "basket_names_error" in c.defs)
+    _, names = names_cell.run(duplicate_basket_name=duplicate_basket_name)
+    edit_cell = next(c for c in cells if "ai_draft_edit_tools" in c.defs)
+    _, edit = edit_cell.run(
+        basket_names_error=names["basket_names_error"],
+        draft_view=draft.get,
+        set_draft_stack=stack.set,
+        set_draft_view=draft.set,
+    )
+    nav_cell = next(c for c in cells if "drill_into" in c.defs)
+    _, defs = nav_cell.run(
+        ai_draft_edit_tools=edit["ai_draft_edit_tools"],
+        basket_names_error=names["basket_names_error"],
+        draft_stack=stack.get,
+        draft_view=draft.get,
+        drill_down_view=drill_down_view,
+        set_draft_stack=stack.set,
+        set_draft_view=draft.set,
+    )
+    return defs
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_drill_into_pushes_the_parent_and_sets_the_scoped_draft():
+    draft, stack = _StateStub(PARENT_DRAFT), _StateStub([])
+
+    _navigation(draft, stack)["drill_into"]("Food", FOOD_BREAKDOWN, "Other food", "by category")
+
+    assert stack.value == [PARENT_DRAFT]
+    assert draft.value["name"] == "by category"
+    assert draft.value["baskets"] == FOOD_BREAKDOWN
+    assert draft.value["scope"] == {
+        "name": "Food",
+        "required": [{"category_groups": [1]}],
+        "excluded": [{"tags": [1]}],
+    }
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_drill_into_an_unknown_basket_leaves_the_draft_alone():
+    draft, stack = _StateStub(PARENT_DRAFT), _StateStub([])
+
+    reply = _navigation(draft, stack)["drill_into"]("Nope", FOOD_BREAKDOWN, "Rest")
+
+    assert "Nope" in reply
+    assert draft.value is PARENT_DRAFT
+    assert stack.value == []
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_back_to_parent_restores_the_parent_draft():
+    draft, stack = _StateStub(PARENT_DRAFT), _StateStub([])
+    nav = _navigation(draft, stack)
+    nav["drill_into"]("Main", FOOD_BREAKDOWN, "Rest")
+
+    nav["back_to_parent"]()
+
+    assert draft.value is PARENT_DRAFT
+    assert stack.value == []
+    assert "no parent" in nav["back_to_parent"]()
+
+
+def _recording_mo(buttons: list):
+    """A ``mo`` whose buttons are recorded as (label, on_click) pairs."""
+
+    def _button(**kwargs):
+        buttons.append((kwargs["label"], kwargs["on_click"]))
+        return mo.ui.button(**kwargs)
+
+    return types.SimpleNamespace(
+        md=mo.md,
+        hstack=mo.hstack,
+        ui=types.SimpleNamespace(button=_button),
+    )
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_break_down_control_sends_the_request_into_the_conversation(basket_df):
+    buttons: list = []
+    sent: list = []
+    draft = {
+        "name": "Life",
+        "baskets": [{"name": "Travel"}, {"name": "Food"}],
+        "default_basket": "Main",
+    }
+
+    _draft_chart_blocks(
+        draft=draft,
+        pending=None,
+        view_data_df=basket_df,
+        fake_mo=_recording_mo(buttons),
+        sent=sent,
+    )
+
+    assert [label for label, _ in buttons] == ["🔍 Break down Travel", "🔍 Break down Food"]
+    buttons[1][1](None)
+    assert sent == ["Break down the basket “Food”"]
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_draft_chart_offers_back_and_shows_the_scope_for_a_breakdown(basket_df):
+    buttons: list = []
+    draft = {
+        "name": "by category",
+        "baskets": [{"name": "Food"}],
+        "default_basket": "Travel",
+        "scope": {"name": "Life", "required": [], "excluded": []},
+    }
+
+    blocks = _draft_chart_blocks(
+        draft=draft,
+        pending=None,
+        view_data_df=basket_df,
+        stack=[PARENT_DRAFT],
+        fake_mo=_recording_mo(buttons),
+    )
+
+    assert "◂ Back to parent view" in [label for label, _ in buttons]
+    assert blocks[1].to_dict()["vconcat"][0]["title"] == "Life ▸ by category"
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_pin_keeps_the_scope_of_a_drilled_draft():
+    drilled = drill_down_view(PARENT_DRAFT, "Food", FOOD_BREAKDOWN, "Other food", "by category")
+    saved: list = []
+    cells = list(_dash_module.app._cell_manager.cells())
+    pin_cell = next(c for c in cells if "pin_controls" in c.defs)
+    _, defs = pin_cell.run(
+        bump_view_list=lambda _v: None,
+        draft_view=lambda: drilled,
+        mo=mo,
+        save_view=saved.append,
+        view_list_ver=lambda: 0,
+    )
+
+    defs["pin_button"]._on_click(None)
+
+    assert saved == [drilled]
+
+
+def _view_tools(draft, stack, saved=None):
+    cells = list(_dash_module.app._cell_manager.cells())
+    tools_cell = next(c for c in cells if "ai_view_tools_tuple" in c.defs)
+    _, defs = tools_cell.run(
+        ai_draft_tools=_navigation(draft, stack)["ai_draft_tools"],
+        bump_view_list=lambda _v: None,
+        delete_view=lambda _i: None,
+        draft_view=draft.get,
+        save_view=(saved.append if saved is not None else lambda _cfg: "id"),
+        set_suggestions=lambda _s: None,
+        view_list_ver=lambda: 0,
+    )
+    return {tool_name(fn): fn for fn in defs["ai_view_tools_tuple"]}
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_view_tools_include_drill_down_navigation():
+    tools = _view_tools(_StateStub(None), _StateStub([]))
+
+    assert {"drill_into", "back_to_parent", "propose_view"} <= set(tools)
+    doc = tools["propose_view"].__doc__
+    for trigger_list in ("events", "tags", "categories", "category_groups"):
+        assert f'"{trigger_list}"' in doc
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_propose_view_refines_a_breakdown_and_top_level_starts_over():
+    drilled = drill_down_view(PARENT_DRAFT, "Food", FOOD_BREAKDOWN, "Other food", "by category")
+    draft, stack = _StateStub(drilled), _StateStub([PARENT_DRAFT])
+    tools = _view_tools(draft, stack)
+
+    tools["propose_view"]([{"name": "Cafés", "triggers": {"categories": [3]}}], "Rest")
+    assert draft.value["scope"] == drilled["scope"]
+    assert draft.value["name"] == "by category"
+    assert stack.value == [PARENT_DRAFT]
+
+    tools["propose_view"](PARENT_DRAFT["baskets"], "Main", top_level=True)
+    assert "scope" not in draft.value
+    assert stack.value == []
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_save_current_view_keeps_the_scope():
+    drilled = drill_down_view(PARENT_DRAFT, "Main", FOOD_BREAKDOWN, "Rest")
+    saved: list = []
+    tools = _view_tools(_StateStub(drilled), _StateStub([PARENT_DRAFT]), saved)
+
+    tools["save_current_view"]("Main by category")
+
+    assert saved == [{**drilled, "name": "Main by category"}]
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_make_basket_chart_title_leads_with_the_scope_name(basket_df):
+    spec = make_basket_chart(basket_df, "EUR", "by category", scope_name="Food").to_dict()
+    assert spec["vconcat"][0]["title"] == "Food ▸ by category"
+
+    plain = make_basket_chart(basket_df, "EUR", "Life").to_dict()
+    assert plain["vconcat"][0]["title"] == "Life"
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_open_in_draft_leaves_breakdown_navigation_behind():
+    draft, stack = _StateStub(PARENT_DRAFT), _StateStub([PARENT_DRAFT])
+    pinned = {"name": "Pinned", "baskets": [], "default_basket": "Other"}
+
+    _navigation(draft, stack)["open_in_draft"](pinned)
+
+    assert draft.value is pinned
+    assert stack.value == []
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+@pytest.mark.parametrize(
+    ("baskets", "default_basket"),
+    [
+        ([{"name": "Other", "triggers": {"tags": [1]}}], "Other"),
+        ([{"name": "Food"}, {"name": "Food", "triggers": {"tags": [1]}}], "Rest"),
+    ],
+)
+def test_propose_view_rejects_a_repeated_basket_name(baskets, default_basket):
+    draft, stack = _StateStub(PARENT_DRAFT), _StateStub([])
+    tools = _view_tools(draft, stack)
+
+    reply = tools["propose_view"](baskets, default_basket)
+
+    assert reply.startswith("Rejected:")
+    assert draft.value is PARENT_DRAFT
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+@pytest.mark.parametrize(
+    ("baskets", "default_basket"),
+    [
+        ([{"name": "Other", "triggers": {"tags": [1]}}], "Other"),
+        ([{"name": "Food"}, {"name": "Food", "triggers": {"tags": [1]}}], "Rest"),
+    ],
+)
+def test_drill_into_rejects_a_repeated_basket_name(baskets, default_basket):
+    draft, stack = _StateStub(PARENT_DRAFT), _StateStub([])
+
+    reply = _navigation(draft, stack)["drill_into"]("Food", baskets, default_basket)
+
+    assert reply.startswith("Rejected:")
+    assert draft.value is PARENT_DRAFT
+    assert stack.value == []
+
+
+@allure.epic("Analytics")
+@allure.feature("Dashboard")
+def test_gallery_card_of_a_pinned_breakdown_shows_the_scope_title(basket_df):
+    drilled = drill_down_view(PARENT_DRAFT, "Food", FOOD_BREAKDOWN, "Other food", "by category")
+    charts: list = []
+
+    def _recording_chart(*args, **kwargs):
+        chart = make_basket_chart(*args, **kwargs)
+        charts.append(chart)
+        return chart
+
+    cells = list(_dash_module.app._cell_manager.cells())
+    gallery_cell = next(c for c in cells if "saved_gallery" in c.defs)
+    gallery_cell.run(
+        bump_view_list=lambda _v: None,
+        delete_view=lambda _i: None,
+        currency="EUR",
+        make_basket_chart=_recording_chart,
+        mo=mo,
+        open_in_draft=lambda _c: None,
+        pinned_frames=[("vid-1", drilled, basket_df)],
+        view_list_ver=lambda: 1,
+    )
+
+    assert [c.to_dict()["vconcat"][0]["title"] for c in charts] == ["Food ▸ by category"]

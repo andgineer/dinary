@@ -7,5 +7,4 @@ deleted (anything spec-worthy moves into `specs/` first) and its row here goes w
 
 | # | Plan | Blocked by | Notes |
 |---|---|---|---|
-| 1 | `analytics-baskets-by-category.md` | — | Baskets by category and group; LLM drill-down into a basket |
 | — | `analytics-llm-secrets.md` | — | Direction chosen (key entered once in the dashboard). Not scheduled until analytics runs on a second machine |

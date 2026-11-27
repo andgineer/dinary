@@ -33,7 +33,13 @@ def _():
         save_view,
         set_config_json,
     )
-    from dinary_analytics.views import empty_view_frame, load_pinned_view_frames, load_view_frame
+    from dinary_analytics.views import (
+        drill_down_view,
+        duplicate_basket_name,
+        empty_view_frame,
+        load_pinned_view_frames,
+        load_view_frame,
+    )
 
     return (
         MCP_PORT,
@@ -44,6 +50,8 @@ def _():
         date,
         datetime,
         delete_view,
+        drill_down_view,
+        duplicate_basket_name,
         empty_view_frame,
         get_app_url,
         get_config_json,
@@ -697,6 +705,7 @@ def _(set_config_json, tag_selector, tag_year_selector, year_selector):
 @app.cell
 def _(get_app_url, mo):
     draft_view, set_draft_view = mo.state(None)
+    draft_stack, set_draft_stack = mo.state([])  # parent drafts of a drill-down, innermost last
     view_list_ver, bump_view_list = mo.state(0)
     address_configured, set_address_configured = mo.state(
         get_app_url() is not None,
@@ -709,11 +718,13 @@ def _(get_app_url, mo):
         address_configured,
         address_warning,
         bump_view_list,
+        draft_stack,
         draft_view,
         refresh_requested,
         refreshing,
         set_address_configured,
         set_address_warning,
+        set_draft_stack,
         set_draft_view,
         set_refresh_requested,
         set_refreshing,
@@ -842,12 +853,42 @@ def _(draft_view, empty_view_frame, load_view_frame, period_date_from, period_se
 
 
 @app.cell
-def _(currency, draft_view, make_basket_chart, mo, pending, view_data_df):
+def _(back_to_parent, draft_stack, draft_view, mo, send_message, view_data_df):
+    _draft = draft_view() or {}
+    _present = set(view_data_df["basket_name"].to_list())
+    _order = [_b.get("name") for _b in _draft.get("baskets") or []]
+    _order.append(_draft.get("default_basket"))
+    _controls = [
+        mo.ui.button(
+            label=f"🔍 Break down {_n}",
+            on_click=lambda _v, _b=_n: send_message(f"Break down the basket “{_b}”"),
+        )
+        for _n in dict.fromkeys(_order)
+        if _n in _present
+    ]
+    if draft_stack():
+        _controls.insert(
+            0,
+            mo.ui.button(label="◂ Back to parent view", on_click=lambda _v: back_to_parent()),
+        )
+    draft_controls = mo.hstack(_controls, justify="start", wrap=True)
+    return (draft_controls,)
+
+
+@app.cell
+def _(currency, draft_controls, draft_view, make_basket_chart, mo, pending, view_data_df):
     draft_chart_blocks: list = []
-    if pending() is None and draft_view() is not None and not view_data_df.is_empty():
+    _draft = draft_view()
+    if pending() is None and _draft is not None and not view_data_df.is_empty():
         draft_chart_blocks = [
             mo.md("**Proposed view** — pin it below to keep it:"),
-            make_basket_chart(view_data_df, currency, draft_view().get("name", "Draft view")),
+            make_basket_chart(
+                view_data_df,
+                currency,
+                _draft.get("name", "Draft view"),
+                scope_name=(_draft.get("scope") or {}).get("name", ""),
+            ),
+            draft_controls,
         ]
     return (draft_chart_blocks,)
 
@@ -974,8 +1015,8 @@ def _(
     delete_view,
     make_basket_chart,
     mo,
+    open_in_draft,
     pinned_frames,
-    set_draft_view,
     view_list_ver,
 ):
     if not pinned_frames:
@@ -991,14 +1032,15 @@ def _(
         _cards = []
         for _vid, _cfg, _df in pinned_frames:
             _name = _cfg.get("name", _vid)
+            _scope_name = (_cfg.get("scope") or {}).get("name", "")
             _chart = (
-                make_basket_chart(_df, currency, _name)
+                make_basket_chart(_df, currency, _name, scope_name=_scope_name)
                 if not _df.is_empty()
                 else mo.md(f"**{_name}**\n\n*No data for this period.*")
             )
             _open_btn = mo.ui.button(
                 label="Open in draft",
-                on_click=lambda _value, _c=_cfg: set_draft_view(_c),
+                on_click=lambda _value, _c=_cfg: open_in_draft(_c),
             )
             _del_btn = mo.ui.button(
                 label="Delete",
@@ -1050,14 +1092,32 @@ def _(category_order, chat_key_available, currency, key_ref, ledger_schema_sql, 
         "there is no category literally named 'Other' in the DB. "
         f"To query 'Other' expenses use: WHERE c.name NOT IN ({_top10_sql}).\n\n"
         "Analytics Views: you are the analyst, the user is the client who reacts. "
-        "A view groups expenses into named 'baskets' by event or tag membership. "
-        "When asked to build or rebuild a view: first call query_summary to "
-        "examine actual events, tags and category groups; then call propose_view with "
-        "5–10 baskets that reveal non-obvious, actionable patterns — avoid obvious dominant "
-        "items like rent, use events for trips/projects and tags for themes, merge "
-        "negligible items into the default basket. Justify each basket with concrete numbers "
+        "A view groups expenses into named 'baskets'. A basket's triggers hold four lists "
+        "of IDs — events, tags, categories and category_groups — and the basket matches an "
+        "expense when any one of them does; a category_groups entry matches every category "
+        "currently in that group. Always use IDs, never names. Each expense goes to the "
+        "FIRST basket in the list that matches it, and whatever no basket matches goes to "
+        "the default basket — so order is your tool: a cross-cutting basket such as "
+        "'Travel' by tag placed before 'Food' by category takes the travel meals out of Food. "
+        "When asked to build or rebuild a view: first call query_summary to examine actual "
+        "events, tags, category groups with their categories, and 'uncovered' — the spend "
+        "with neither an event nor a tag, which only category or group baskets can split. "
+        "Start from the category groups as a baseline and reorganise: split a large group "
+        "into its categories, merge negligible ones into the default basket, pull out "
+        "cross-cutting baskets by event (trips, projects) or tag (themes). Then call "
+        "propose_view with 5–10 baskets that reveal non-obvious, actionable patterns — "
+        "avoid obvious dominant items like rent. Justify each basket with concrete numbers "
         "(amount and share of total). Use set_chart_type/propose_view again to refine when "
-        "the user reacts. End every turn by calling suggest_next with 3–5 short follow-up "
+        "the user reacts.\n\n"
+        "Drill-down: when the user asks to break a basket down, check that basket's own "
+        "expenses with query_ledger, then call drill_into with its name and 5–10 "
+        "second-level baskets (by category, tag or event) that split only that basket, "
+        "plus a short name such as 'by category'. Breaking down the default basket covers "
+        "what none of the view's baskets matched. Go one level at a time. While a breakdown "
+        "is the draft, propose_view refines the breakdown; call back_to_parent to return "
+        "to the view it came from, or propose_view with top_level=true to start a new "
+        "top-level view.\n\n"
+        "End every turn by calling suggest_next with 3–5 short follow-up "
         "questions — do NOT list them in your text, they render as clickable buttons. "
         "The draft chart renders live below the chat. To pin the current "
         "draft permanently call save_current_view(name) — or the user can press the Pin "
@@ -1096,9 +1156,132 @@ def _(json, load_query, open_ledger, open_ledger_restricted):
 
 
 @app.cell
-def _(bump_view_list, delete_view, save_view, set_draft_view, set_suggestions, view_list_ver):
-    _ts: dict = {"draft": None}
+def _(duplicate_basket_name):
+    def basket_names_error(baskets: list[dict], default_basket: str) -> str | None:
+        """Explain to the model why a basket list with a repeated name is refused."""
+        _duplicate = duplicate_basket_name(baskets, default_basket)
+        if _duplicate is None:
+            return None
+        return (
+            f"Rejected: the name '{_duplicate}' is used by more than one basket or by a "
+            "basket and the default basket. Every basket and the default basket need "
+            "distinct names; merge those baskets' triggers into one basket or rename one, "
+            "then call again."
+        )
 
+    return (basket_names_error,)
+
+
+@app.cell
+def _(basket_names_error, draft_view, set_draft_stack, set_draft_view):
+    def _propose_view(
+        baskets: list[dict],
+        default_basket: str,
+        chart_type: str = "stacked_bar_monthly",
+        top_level: bool = False,
+    ) -> str:
+        """Propose a complete analytics view draft. Always pass the full basket list.
+
+        Each basket is {"name": str, "triggers": {"events": [IDs], "tags": [IDs],
+        "categories": [IDs], "category_groups": [IDs]}}; an omitted list is empty.
+        While the draft is a breakdown this refines it; top_level=true starts a new
+        top-level view instead. Basket names, and the default basket's, must be distinct.
+        """
+        _error = basket_names_error(baskets, default_basket)
+        if _error:
+            return _error
+        _cfg: dict = {
+            "baskets": baskets,
+            "default_basket": default_basket,
+            "chart_type": chart_type,
+        }
+        _cur = draft_view() or {}
+        if top_level:
+            set_draft_stack([])
+        elif _cur.get("scope"):
+            _cfg["scope"] = _cur["scope"]
+            _cfg["name"] = _cur.get("name", "Breakdown")
+        set_draft_view(_cfg)
+        return f"View draft set with {len(baskets)} baskets, default '{default_basket}'."
+
+    def _set_chart_type(chart_type: str) -> str:
+        """Set the chart_type on the current draft view."""
+        _cur = dict(draft_view() or {"baskets": [], "default_basket": "Other"})
+        _cur["chart_type"] = chart_type
+        set_draft_view(_cur)
+        return f"Chart type set to '{chart_type}'."
+
+    ai_draft_edit_tools = (_propose_view, _set_chart_type)
+    return (ai_draft_edit_tools,)
+
+
+@app.cell
+def _(
+    ai_draft_edit_tools,
+    basket_names_error,
+    draft_stack,
+    draft_view,
+    drill_down_view,
+    set_draft_stack,
+    set_draft_view,
+):
+    def drill_into(
+        basket_name: str,
+        baskets: list[dict],
+        default_basket: str,
+        name: str = "Breakdown",
+    ) -> str:
+        """Break one basket of the current draft down into a second-level view.
+
+        basket_name is a basket of the current draft, or its default basket. baskets and
+        default_basket have the same shape as in propose_view and split only that
+        basket's expenses. name is a short title such as "by category".
+        """
+        _error = basket_names_error(baskets, default_basket)
+        if _error:
+            return _error
+        _parent = draft_view()
+        if _parent is None:
+            return "There is no draft to break down; call propose_view first."
+        try:
+            _child = drill_down_view(_parent, basket_name, baskets, default_basket, name)
+        except ValueError as _exc:
+            return str(_exc)
+        set_draft_stack([*draft_stack(), _parent])
+        set_draft_view(_child)
+        return (
+            f"Breaking down '{basket_name}' into {len(baskets)} baskets, "
+            f"default '{default_basket}'."
+        )
+
+    def back_to_parent() -> str:
+        """Return from a breakdown to the view it was drilled from."""
+        _stack = draft_stack()
+        if not _stack:
+            return "The draft is not a breakdown; there is no parent view."
+        set_draft_view(_stack[-1])
+        set_draft_stack(_stack[:-1])
+        return f"Back to '{_stack[-1].get('name', 'the parent view')}'."
+
+    def open_in_draft(config: dict) -> None:
+        """Make a pinned view the draft, leaving any breakdown navigation behind."""
+        set_draft_stack([])
+        set_draft_view(config)
+
+    ai_draft_tools = (*ai_draft_edit_tools, drill_into, back_to_parent)
+    return ai_draft_tools, back_to_parent, open_in_draft
+
+
+@app.cell
+def _(
+    ai_draft_tools,
+    bump_view_list,
+    delete_view,
+    draft_view,
+    save_view,
+    set_suggestions,
+    view_list_ver,
+):
     def _suggest_next(questions: list[str]) -> str:
         """Offer up to 5 follow-up questions as clickable buttons.
 
@@ -1107,28 +1290,9 @@ def _(bump_view_list, delete_view, save_view, set_draft_view, set_suggestions, v
         set_suggestions([str(_q) for _q in questions][:5])
         return f"Offered {len(questions)} follow-up questions."
 
-    def _propose_view(
-        baskets: list[dict],
-        default_basket: str,
-        chart_type: str = "stacked_bar_monthly",
-    ) -> str:
-        """Propose a complete analytics view draft. Always pass the full basket list."""
-        _cfg = {"baskets": baskets, "default_basket": default_basket, "chart_type": chart_type}
-        _ts["draft"] = _cfg
-        set_draft_view(_cfg)
-        return f"View draft set with {len(baskets)} baskets, default '{default_basket}'."
-
-    def _set_chart_type(chart_type: str) -> str:
-        """Set the chart_type on the current draft view."""
-        _cur = dict(_ts.get("draft") or {"baskets": [], "default_basket": "Other"})
-        _cur["chart_type"] = chart_type
-        _ts["draft"] = _cur
-        set_draft_view(_cur)
-        return f"Chart type set to '{chart_type}'."
-
     def _save_current_view(name: str) -> str:
         """Save the current draft view under a name. Returns the assigned ID."""
-        _cur = dict(_ts.get("draft") or {"baskets": [], "default_basket": "Other"})
+        _cur = dict(draft_view() or {"baskets": [], "default_basket": "Other"})
         _cur["name"] = name
         _vid = save_view(_cur)
         bump_view_list(view_list_ver() + 1)
@@ -1141,8 +1305,7 @@ def _(bump_view_list, delete_view, save_view, set_draft_view, set_suggestions, v
         return f"View {view_id} deleted."
 
     ai_view_tools_tuple = (
-        _propose_view,
-        _set_chart_type,
+        *ai_draft_tools,
         _save_current_view,
         _delete_view_fn,
         _suggest_next,

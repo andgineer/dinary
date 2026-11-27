@@ -28,6 +28,10 @@ Alongside the chat, four visual summaries give you the big picture at a glance:
 | **Event** | Where the money went during a trip or project |
 | **Tag** | Spending pattern for a label (e.g. "work", "dog") across a chosen year |
 
+## Baskets
+
+Ask the analyst to rebuild your spending into baskets and it proposes a chart of 5–10 baskets made from your categories, category groups, trips and tags, explaining each with its amount and share. Under the chart every basket has a **Break down** button: press it, and the analyst splits just that basket into finer baskets, for example "Food" by category or the catch-all basket by what is actually in it. **Back to parent view** returns to the chart you came from. Pin any chart, a breakdown included, to keep it; a pinned breakdown is titled after the basket it splits, such as "Food ▸ by category".
+
 ## Setup
 
 The chat requires `OPENAI_API_KEY` in `.deploy/.env` — it runs on one paid OpenAI model, not the free providers the receipt pipeline uses. Without the key, the charts still work — only the chat shows a warning.

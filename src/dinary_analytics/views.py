@@ -26,6 +26,63 @@ def empty_view_frame() -> pl.DataFrame:
     )
 
 
+def duplicate_basket_name(baskets: list[dict], default_basket: str) -> str | None:
+    """Return a name shared by two baskets, or by a basket and the default basket.
+
+    The chart merges baskets by name, so a repeated name shows one bar that no single
+    basket's triggers describe.
+    """
+    seen: set[str | None] = {default_basket}
+    for basket in baskets:
+        name = basket.get("name")
+        if name in seen:
+            return name
+        seen.add(name)
+    return None
+
+
+def drill_down_view(
+    parent: dict,
+    basket_name: str,
+    baskets: list[dict],
+    default_basket: str,
+    name: str = "Breakdown",
+) -> dict:
+    """Return a view that splits one basket of ``parent`` into ``baskets``.
+
+    The scope composes with the parent's own scope, so a drill-down can nest. An
+    expense the parent assigned to an earlier basket stays out of the drilled one,
+    and drilling into the default basket keeps only what none of the parent's
+    baskets matched. Raises ValueError for a basket the parent does not have.
+    """
+    parent_baskets = parent.get("baskets") or []
+    parent_scope = parent.get("scope") or {}
+    required = list(parent_scope.get("required") or [])
+    excluded = list(parent_scope.get("excluded") or [])
+    duplicate = duplicate_basket_name(parent_baskets, parent.get("default_basket", ""))
+    if duplicate is not None:
+        raise ValueError(f"The view uses the basket name {duplicate!r} more than once.")
+    names = [b.get("name") for b in parent_baskets]
+    if basket_name in names:
+        position = names.index(basket_name)
+        required.append(parent_baskets[position].get("triggers") or {})
+        excluded.extend(b.get("triggers") or {} for b in parent_baskets[:position])
+    elif basket_name == parent.get("default_basket"):
+        excluded.extend(b.get("triggers") or {} for b in parent_baskets)
+    else:
+        raise ValueError(f"The view has no basket named {basket_name!r}.")
+    scope_name = (
+        f"{parent_scope['name']} ▸ {basket_name}" if parent_scope.get("name") else basket_name
+    )
+    return {
+        "name": name,
+        "baskets": baskets,
+        "default_basket": default_basket,
+        "chart_type": parent.get("chart_type", "stacked_bar_monthly"),
+        "scope": {"name": scope_name, "required": required, "excluded": excluded},
+    }
+
+
 def load_view_frame(
     config: dict,
     date_from: str,

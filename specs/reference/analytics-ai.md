@@ -177,10 +177,14 @@ not to confirm obvious ones (e.g. rent dominates). A good top-level set has 5–
 baskets where each basket is both meaningful in share and something the user can
 actually track or influence.
 
-A basket collects expenses by event or by tag, so baskets cut across the category
-tree: "Travel" by tag, "Relocation" by event. Items that are each individually
-negligible and not worth tracking separately are left to the default basket, which
-also receives every expense that carries neither a matching event nor a matching tag.
+A basket collects expenses by category, by category group, by event or by tag. The
+analyst starts from the category groups as a baseline and reorganises them: splits a
+large group into its categories, merges negligible ones, and pulls out cross-cutting
+baskets such as "Travel" by tag or "Relocation" by event. Categories and groups matter
+because a large share of spend carries neither an event nor a tag, and no event or tag
+basket can ever split it; the analyst is told how large that share is. Items that are
+each individually negligible and not worth tracking separately are left to the default
+basket, which also receives every expense no basket matches.
 
 ### Basket structure
 
@@ -189,27 +193,53 @@ expenses. A basket matches an expense if any of its trigger conditions are met (
 logic within triggers). Priority is first-match: an expense is assigned to the first
 basket whose triggers match it.
 
-Basket triggers:
-- `events` — list of event IDs: matches any expense belonging to those events.
-- `tags` — list of tag IDs: matches any expense carrying any of those tags.
+Every basket of a view, the default basket included, has a distinct name: the chart
+shows one bar per name, and a breakdown must split exactly what that bar shows.
 
-Within each basket the breakdown by category group is always available as a
-drill-down.
+A basket's triggers are four lists, any of which may be empty or absent:
+- events: matches any expense belonging to one of those events;
+- tags: matches any expense carrying one of those tags;
+- categories: matches any expense in one of those categories;
+- category groups: matches any expense whose category is currently in one of those
+  groups.
 
-View config stored in `analytics.db` under key `view:<uuid>`:
+Categories and groups are referenced by identity, never by name, so a rename or a
+switch of category template leaves a view intact. A group basket follows the category's
+current group: moving a category to another group moves its whole history between group
+baskets. A view that must not shift that way lists categories instead of groups.
 
-```json
-{
-  "id": "<uuid>",
-  "name": "Life meaning",
-  "baskets": [
-    { "name": "Relocation", "triggers": { "events": [3], "tags": [] } },
-    { "name": "Travel", "triggers": { "events": [], "tags": [7] } }
-  ],
-  "default_basket": "Main",
-  "chart_type": "stacked_bar_monthly"
-}
-```
+Because priority is first-match, the order of baskets is the analyst's tool for
+cross-cutting baskets: "Travel" by tag placed before "Food" by category takes the meals
+eaten while travelling, and placed after it gets only the travel spend that is not food.
+
+Under each basket chart the fixed breakdown by category group stays available. It costs
+no model call and answers the common question; the analyst's drill-down is for when it
+is not enough.
+
+Each view is stored in `analytics.db` with its baskets, default basket, chart type and,
+for a breakdown, its scope.
+
+### Drill-down
+
+From any basket of the draft the user can ask to break it down, either by typing or
+through the basket's "Break down" control, which sends that request into the
+conversation. The analyst examines that basket's own expenses with the same data-first
+method and proposes a second-level set of 5–10 baskets, by category, tag or event, that
+covers only that basket.
+
+A breakdown is a view with a scope. The scope keeps exactly the expenses the parent view
+put in the drilled basket: those that match it and none of the baskets ahead of it, so a
+breakdown of "Food" never re-includes the travel meals "Travel" took. Breaking down the
+default basket keeps the expenses none of the parent's baskets matched — usually the most
+valuable case. Expenses outside the scope are left out of the breakdown entirely, not
+sent to its default basket, so a breakdown's totals add up to the parent basket's total.
+Scopes compose, so a breakdown can itself be broken down, but the analyst goes one level
+at a time.
+
+The page remembers the chain of parent drafts, and a "back" control (or the analyst, on
+request) returns to the parent. Refining a breakdown keeps its scope; starting a new
+top-level view drops it. Pinning a breakdown saves it with its scope, and its chart title
+leads with the scope's name, e.g. "Food ▸ by category".
 
 ### LLM interaction model
 
