@@ -68,14 +68,14 @@
 | src/dinary\_analytics/ai\_service.py                           |       81 |        8 |     90% |142-148, 152 |
 | src/dinary\_analytics/backup.py                                |       66 |       21 |     68% |18-19, 36-37, 54-55, 69-87, 91 |
 | src/dinary\_analytics/charts.py                                |       57 |        0 |    100% |           |
-| src/dinary\_analytics/connection.py                            |       76 |        7 |     91% |86-89, 136-138 |
+| src/dinary\_analytics/connection.py                            |      102 |        9 |     91% |140-143, 186-187, 215-217 |
 | src/dinary\_analytics/llm.py                                   |       65 |        2 |     97% |   97, 100 |
-| src/dinary\_analytics/notebooks/dashboard.py                   |      435 |      145 |     67% |38, 85, 94, 107, 124, 140-143, 157-199, 221-223, 225, 229-230, 287-357, 370, 462, 474-544, 558-570, 584-614, 628-662, 674-687, 692-694, 726-734, 745, 750-754, 759-763, 789, 805, 937, 953-955, 1024, 1108-1111, 1115-1119, 1123-1127, 1131-1133, 1147-1148, 1153, 1192 |
+| src/dinary\_analytics/notebooks/dashboard.py                   |      435 |      145 |     67% |38, 85, 94, 107, 124, 140-143, 157-199, 221-223, 225, 229-230, 287-357, 370, 462, 474-544, 558-570, 584-614, 628-662, 674-687, 692-694, 726-734, 745, 750-754, 759-763, 789, 805, 938, 954-956, 1025, 1116-1119, 1123-1127, 1131-1135, 1139-1141, 1155-1156, 1161, 1200 |
 | src/dinary\_analytics/paths.py                                 |       18 |        0 |    100% |           |
 | src/dinary\_analytics/refresh.py                               |      100 |        2 |     98% |   50, 157 |
 | src/dinary\_analytics/settings.py                              |       49 |        1 |     98% |        56 |
 | src/dinary\_analytics/views.py                                 |       23 |        1 |     96% |        62 |
-| **TOTAL**                                                      | **5600** |  **630** | **89%** |           |
+| **TOTAL**                                                      | **5626** |  **632** | **89%** |           |
 
 
 ## Setup coverage badge
